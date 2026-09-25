@@ -14,6 +14,7 @@ use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerInvoiceLine;
+use Modules\Sales\Models\SalesIssueOrder;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
 use Modules\Sales\Models\SalesRequest;
@@ -30,6 +31,7 @@ class CustomerInvoiceService
         private readonly SalesCycleAuditService $audit,
         private readonly SalesUnitConversionService $unitConversions,
         private readonly PriceListPricingService $priceLists,
+        private readonly SalesIssueOrderService $issueOrders,
     ) {}
 
     /** @param array<string, mixed> $data */
@@ -296,6 +298,7 @@ class CustomerInvoiceService
             }
             $journal = $this->accounting->postInvoice($locked);
             $locked->update(['status' => CustomerInvoice::StatusPosted, 'posting_status' => 'posted', 'is_closed' => true, 'journal_entry_id' => $journal->getKey(), 'issued_by' => auth()->id(), 'issued_at' => now(), 'updated_by' => auth()->id()]);
+            $this->issueOrders->ensureForPostedInvoice($locked->refresh()->load(['lines', 'order', 'deliveries.lines']));
             $this->audit->record($locked, 'customer_invoice.posted', ['journal_entry' => $journal->doc_num]);
 
             return $locked->refresh()->load(['lines', 'paymentSchedules']);
@@ -524,6 +527,7 @@ class CustomerInvoiceService
             if ($locked->electronic_invoice_uuid !== null || ! in_array($locked->electronic_invoice_status, ['not_configured', 'draft', 'rejected'], true)) {
                 throw new DomainException(__('A submitted electronic invoice must be corrected through the tax-authority amendment workflow.'));
             }
+            $locked->issueOrder()->where('status', SalesIssueOrder::StatusPending)->delete();
             $revision = ((int) $locked->posting_revision) + 1;
             $reversal = $this->accounting->reverseInvoice($locked, $reason, $revision);
             $locked->update([

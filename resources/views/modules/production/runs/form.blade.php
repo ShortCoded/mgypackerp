@@ -211,7 +211,7 @@
         <template id="production-run-batch-row-template">
             <tr data-production-run-batch-row>
                 <td><x-forms.select variant="local" name="lines[__INDEX__][production_order_line_public_id]" data-order-line-choice required disabled><option value="">{{ __('production_execution.runs.select_order_item') }}</option></x-forms.select></td>
-                <td><x-forms.select variant="ajax" name="lines[__INDEX__][production_order_stage_snapshot_public_id]" :url="route('admin.production.runs.select2.stages')" data-run-line-stage data-depends-on="#production-run-batch-line-__INDEX__" data-dependent-param="production_order_line_public_id" data-disable-when-dependency-empty="true" :placeholder="__('production_execution.runs.select_stage')" disabled /></td>
+                <td><x-forms.select variant="ajax" name="lines[__INDEX__][production_order_stage_snapshot_public_id]" :url="route('admin.production.runs.select2.stages')" data-run-line-stage data-depends-on="#production-run-batch-line-__INDEX__" data-dependent-param="production_order_line_public_id" :placeholder="__('production_execution.runs.select_stage')" disabled /><small class="text-600 d-block mt-1" data-run-stage-hint hidden></small></td>
                 <td><x-forms.numeric-input name="lines[__INDEX__][planned_quantity]" :scale="8" step="0.00000001" arrow-step="1" min="0.00000001" required disabled /></td>
                 <td><button class="btn btn-outline-danger btn-sm" type="button" data-remove-production-run-line aria-label="{{ __('common.actions.delete') }}"><span class="fas fa-times"></span></button></td>
             </tr>

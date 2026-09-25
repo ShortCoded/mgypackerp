@@ -100,9 +100,9 @@ class SalesFulfillmentService
     }
 
     /** @param list<array{sales_order_line_id: int, quantity: string|int|float}> $lines @param array<string, mixed> $logistics */
-    public function deliver(SalesOrder $order, array $lines, array $logistics = []): InventoryDocument
+    public function deliver(SalesOrder $order, array $lines, array $logistics = [], bool $allowCompanyWarehouse = false): InventoryDocument
     {
-        return DB::transaction(function () use ($order, $lines, $logistics): InventoryDocument {
+        return DB::transaction(function () use ($order, $lines, $logistics, $allowCompanyWarehouse): InventoryDocument {
             if ($lines === [] || count(array_unique(array_column($lines, 'sales_order_line_id'))) !== count($lines)) {
                 throw new DomainException(__('Select each delivery order line once and enter its total quantity.'));
             }
@@ -117,11 +117,15 @@ class SalesFulfillmentService
 
             $documentDate = $logistics['document_date'] ?? now()->toDateString();
             $period = $this->periods->resolveOpenForPostingDate((int) $lockedOrder->company_id, $documentDate, lockForUpdate: true);
-            BranchStore::query()->where('branch_id', $lockedOrder->branch_id)->lockForUpdate()->findOrFail($branchStoreId);
+            $branchStore = BranchStore::query()->with('branch')->lockForUpdate()->findOrFail($branchStoreId);
+            if ((int) $branchStore->branch?->company_id !== (int) $lockedOrder->company_id
+                || (! $allowCompanyWarehouse && (int) $branchStore->branch_id !== (int) $lockedOrder->branch_id)) {
+                throw new DomainException(__('sales_issue.messages.store_not_eligible'));
+            }
             $numbers = $this->documents->nextForCompany('inventory_documents', InventoryDocument::class, (int) $lockedOrder->company_id);
             $document = InventoryDocument::query()->create([
                 ...$numbers, 'company_id' => $lockedOrder->company_id, 'financial_period_id' => $period->getKey(),
-                'branch_id' => $lockedOrder->branch_id, 'branch_store_id' => $branchStoreId,
+                'branch_id' => $branchStore->branch_id, 'branch_store_id' => $branchStoreId,
                 'document_type' => InventoryDocument::TypeSalesDelivery, 'document_date' => $documentDate,
                 'purpose' => 'Sales delivery', 'source_document_type' => SalesOrder::class,
                 'source_document_id' => $lockedOrder->getKey(), 'source_doc_num' => $lockedOrder->doc_num,
@@ -183,28 +187,51 @@ class SalesFulfillmentService
      * @param  list<array{customer_invoice_line_id: int, quantity: string|int|float}>  $lines
      * @param  array<string, mixed>  $logistics
      */
-    public function deliverInvoice(CustomerInvoice $invoice, array $lines, array $logistics): InventoryDocument
+    public function deliverInvoice(CustomerInvoice $invoice, array $lines, array $logistics, bool $allowCompanyWarehouse = false): InventoryDocument
     {
-        return DB::transaction(function () use ($invoice, $lines, $logistics): InventoryDocument {
+        return DB::transaction(function () use ($invoice, $lines, $logistics, $allowCompanyWarehouse): InventoryDocument {
             if ($lines === [] || count(array_unique(array_column($lines, 'customer_invoice_line_id'))) !== count($lines)) {
                 throw new DomainException(__('Select each invoice line once and enter its delivery quantity.'));
             }
 
             $lockedInvoice = CustomerInvoice::query()->with(['order', 'lines.orderLine', 'lines.product', 'deliveries.lines'])
                 ->lockForUpdate()->findOrFail($invoice->getKey());
+            $lockedInvoice->setRelation('deliveries', $lockedInvoice->deliveries->where('status', InventoryDocument::StatusPosted));
             if ($lockedInvoice->document_type !== CustomerInvoice::TypeInvoice || $lockedInvoice->posting_status !== CustomerInvoice::StatusPosted) {
                 throw new DomainException(__('Only a posted sales invoice can be delivered.'));
             }
             if (! $lockedInvoice->order) {
-                return $this->deliverDirectInvoice($lockedInvoice, $lines, $logistics);
+                return $this->deliverDirectInvoice($lockedInvoice, $lines, $logistics, $allowCompanyWarehouse);
             }
 
-            $branchStore = BranchStore::query()
-                ->where('branch_id', $lockedInvoice->branch_id)
+            $branchStore = BranchStore::query()->with('branch')
                 ->where('public_uuid', $logistics['branch_store_uuid'] ?? '')
                 ->lockForUpdate()
                 ->firstOrFail();
-            $deliveryLines = [];
+            if ((int) $branchStore->branch?->company_id !== (int) $lockedInvoice->company_id
+                || (! $allowCompanyWarehouse && (int) $branchStore->branch_id !== (int) $lockedInvoice->branch_id)) {
+                throw new DomainException(__('sales_issue.messages.store_not_eligible'));
+            }
+            $deliveredByOrderLine = [];
+            foreach ($lockedInvoice->deliveries->flatMap->lines as $documentLine) {
+                if ($documentLine->source_line_type !== SalesOrderLine::class) {
+                    continue;
+                }
+                $sourceId = (int) $documentLine->source_line_id;
+                $deliveredByOrderLine[$sourceId] = bcadd($deliveredByOrderLine[$sourceId] ?? '0', (string) $documentLine->transaction_quantity, 8);
+            }
+            $remainingByInvoiceLine = [];
+            foreach ($lockedInvoice->lines as $invoiceLine) {
+                if ($invoiceLine->is_service || $invoiceLine->sales_order_line_id === null) {
+                    continue;
+                }
+                $sourceId = (int) $invoiceLine->sales_order_line_id;
+                $delivered = $deliveredByOrderLine[$sourceId] ?? '0';
+                $consumed = bccomp($delivered, (string) $invoiceLine->quantity, 8) > 0 ? (string) $invoiceLine->quantity : $delivered;
+                $remainingByInvoiceLine[$invoiceLine->getKey()] = bcsub((string) $invoiceLine->quantity, $consumed, 8);
+                $deliveredByOrderLine[$sourceId] = bcsub($delivered, $consumed, 8);
+            }
+            $deliveryQuantities = [];
             foreach ($lines as $input) {
                 $invoiceLine = CustomerInvoiceLine::query()->with('orderLine')->where('customer_invoice_id', $lockedInvoice->getKey())
                     ->lockForUpdate()->findOrFail($input['customer_invoice_line_id']);
@@ -212,22 +239,22 @@ class SalesFulfillmentService
                     throw new DomainException(__('Service invoice lines do not generate warehouse deliveries.'));
                 }
 
-                $deliveredForInvoice = (string) $lockedInvoice->deliveries
-                    ->flatMap->lines
-                    ->where('source_line_type', SalesOrderLine::class)
-                    ->where('source_line_id', $invoiceLine->sales_order_line_id)
-                    ->sum('transaction_quantity');
-                $remaining = $this->amounts->subtract((string) $invoiceLine->quantity, $deliveredForInvoice, 8);
+                $remaining = $remainingByInvoiceLine[$invoiceLine->getKey()] ?? '0';
                 $quantity = (string) $input['quantity'];
                 $this->amounts->assertPositive($quantity, __('Delivery quantity must be greater than zero.'));
                 $this->amounts->assertNotGreaterThan($quantity, $remaining, __('Delivery quantity exceeds the invoiced quantity remaining for delivery.'));
-                $deliveryLines[] = ['sales_order_line_id' => $invoiceLine->sales_order_line_id, 'quantity' => $quantity];
+                $sourceId = (int) $invoiceLine->sales_order_line_id;
+                $deliveryQuantities[$sourceId] = bcadd($deliveryQuantities[$sourceId] ?? '0', $quantity, 8);
+            }
+            $deliveryLines = [];
+            foreach ($deliveryQuantities as $sourceId => $quantity) {
+                $deliveryLines[] = ['sales_order_line_id' => $sourceId, 'quantity' => $quantity];
             }
 
             $document = $this->deliver($lockedInvoice->order, $deliveryLines, [
                 ...$logistics,
                 'branch_store_id' => $branchStore->getKey(),
-            ]);
+            ], $allowCompanyWarehouse);
             $document->update(['source_doc_num' => $lockedInvoice->doc_num]);
             $lockedInvoice->deliveries()->syncWithoutDetaching([$document->getKey()]);
             if (! $lockedInvoice->delivery_document_id) {
@@ -242,19 +269,22 @@ class SalesFulfillmentService
      * @param  list<array{customer_invoice_line_id: int, quantity: string|int|float}>  $lines
      * @param  array<string, mixed>  $logistics
      */
-    private function deliverDirectInvoice(CustomerInvoice $invoice, array $lines, array $logistics): InventoryDocument
+    private function deliverDirectInvoice(CustomerInvoice $invoice, array $lines, array $logistics, bool $allowCompanyWarehouse): InventoryDocument
     {
-        $branchStore = BranchStore::query()
-            ->where('branch_id', $invoice->branch_id)
+        $branchStore = BranchStore::query()->with('branch')
             ->where('public_uuid', $logistics['branch_store_uuid'] ?? '')
             ->lockForUpdate()
             ->firstOrFail();
+        if ((int) $branchStore->branch?->company_id !== (int) $invoice->company_id
+            || (! $allowCompanyWarehouse && (int) $branchStore->branch_id !== (int) $invoice->branch_id)) {
+            throw new DomainException(__('sales_issue.messages.store_not_eligible'));
+        }
         $documentDate = $logistics['document_date'] ?? now()->toDateString();
         $period = $this->periods->resolveOpenForPostingDate((int) $invoice->company_id, $documentDate, lockForUpdate: true);
         $numbers = $this->documents->nextForCompany('inventory_documents', InventoryDocument::class, (int) $invoice->company_id);
         $document = InventoryDocument::query()->create([
             ...$numbers,
-            'company_id' => $invoice->company_id, 'financial_period_id' => $period->getKey(), 'branch_id' => $invoice->branch_id,
+            'company_id' => $invoice->company_id, 'financial_period_id' => $period->getKey(), 'branch_id' => $branchStore->branch_id,
             'branch_store_id' => $branchStore->getKey(), 'document_type' => InventoryDocument::TypeSalesDelivery,
             'document_date' => $documentDate, 'purpose' => 'Sales delivery',
             'source_document_type' => CustomerInvoice::class, 'source_document_id' => $invoice->getKey(), 'source_doc_num' => $invoice->doc_num,

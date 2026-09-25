@@ -11,6 +11,7 @@ use Modules\Sales\Http\Controllers\PriceListController;
 use Modules\Sales\Http\Controllers\QuotationController;
 use Modules\Sales\Http\Controllers\SalesCycleController;
 use Modules\Sales\Http\Controllers\SalesCycleReportController;
+use Modules\Sales\Http\Controllers\SalesDeliveryReceiptController;
 use Modules\Sales\Http\Controllers\SalesDocumentAttachmentController;
 use Modules\Sales\Http\Controllers\SalesRequestController;
 use Modules\Sales\Services\SalesSelect2Service;
@@ -32,6 +33,10 @@ Route::middleware('auth')
             Route::post('/{salesRequest}/convert', 'convert')->middleware('can:sales_requests.convert')->middleware(IdempotentDocumentSubmission::class)->name('convert');
             Route::get('/{salesRequest}', 'show')->middleware('can:sales_requests.view')->name('show');
         });
+        Route::get('/delivery-receipts/create/{inventoryDocument}', [SalesDeliveryReceiptController::class, 'create'])->middleware('can:sales_deliveries.receive')->name('delivery-receipts.create');
+        Route::post('/delivery-receipts/{inventoryDocument}', [SalesDeliveryReceiptController::class, 'store'])->middleware(['can:sales_deliveries.receive', IdempotentDocumentSubmission::class])->name('delivery-receipts.store');
+        Route::get('/delivery-receipts/{salesDeliveryReceipt}', [SalesDeliveryReceiptController::class, 'show'])->middleware('can:sales_deliveries.view')->name('delivery-receipts.show');
+        Route::get('/delivery-receipts/{salesDeliveryReceipt}/signature', [SalesDeliveryReceiptController::class, 'signature'])->middleware('can:sales_deliveries.view')->name('delivery-receipts.signature');
         Route::post('/documents/{kind}/{document}/attachments', [SalesDocumentAttachmentController::class, 'store'])->name('document-attachments.store');
         Route::controller(SalesCycleController::class)->group(function (): void {
             Route::get('/sales-orders', 'orders')->middleware('can:sales_orders.view')->name('sales-orders.index');
@@ -96,6 +101,7 @@ Route::middleware('auth')
 
             Route::get('/delivery-notes', 'deliveries')->middleware('can:sales_deliveries.view')->name('delivery-notes.index');
             Route::get('/delivery-notes/create', 'createDelivery')->middleware(['can:sales_deliveries.create', 'can:customer_invoices.view'])->name('delivery-notes.create');
+            Route::get('/issue-orders/{salesIssueOrder}', 'showIssueOrder')->middleware('can:sales_deliveries.view')->name('issue-orders.show');
             Route::get('/delivery-notes/{inventoryDocument}', 'showDelivery')->middleware('can:sales_deliveries.view')->name('delivery-notes.show');
             Route::get('/delivery-notes/{inventoryDocument}/print', 'printDelivery')->middleware('can:sales_deliveries.print')->name('delivery-notes.print');
             Route::get('/sales-deliveries/{inventoryDocument}', 'showDelivery')->middleware('can:sales_deliveries.view')->name('sales-deliveries.show');

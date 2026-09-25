@@ -126,41 +126,14 @@
         </div>
     </div>
     @if($record->posting_status === 'posted')
-        @php
-            $invoiceDeliveryLines = $record->lines->reject(fn ($line) => $line->is_service)->map(function ($line) use ($record) {
-                $deliverySourceType = $line->sales_order_line_id ? \Modules\Sales\Models\SalesOrderLine::class : \Modules\Sales\Models\CustomerInvoiceLine::class;
-                $deliverySourceId = $line->sales_order_line_id ?: $line->getKey();
-                $delivered = $record->deliveries->flatMap->lines
-                    ->where('source_line_type', $deliverySourceType)
-                    ->where('source_line_id', $deliverySourceId)
-                    ->sum('transaction_quantity');
-                $remaining = bcsub((string) $line->quantity, (string) $delivered, 8);
-
-                return ['line' => $line, 'delivered' => $delivered, 'remaining' => bccomp($remaining, '0', 8) > 0 ? $remaining : '0.00000000'];
-            })->filter(fn ($row) => bccomp($row['remaining'], '0', 8) > 0);
-        @endphp
-        @if($invoiceDeliveryLines->isNotEmpty() && auth()->user()?->can('sales_deliveries.create'))
-            <details class="card mb-3" data-invoice-action-panel>
-                <summary class="card-header py-2 fw-semibold">{{ __('sales_ui.create_delivery') }}</summary>
-                <form id="sales-invoice-delivery" data-sales-ui class="js-sales-cycle-action card-body py-3 border-top" action="{{ route('admin.sales.sales-invoices.deliveries.store', $record) }}" method="POST">
-                    @csrf
-                    <x-forms.line-item-cards :line-label="__('sales_ui.line')" />
-                    <p class="small text-600 mb-3">{{ __('sales_ui.delivery_from_invoice_help') }}</p>
-                    <div class="row g-2 mb-3">
-                        <div class="col-md-4"><x-forms.label for="delivery_branch_store_uuid" :label="__('Delivery warehouse')" required /><x-forms.select id="delivery_branch_store_uuid" name="branch_store_uuid" variant="ajax" :url="route('admin.sales.select2.stores')" :placeholder="__('Select store')" :allow-clear="false" required></x-forms.select></div>
-                        <div class="col-md-2"><x-forms.label for="delivery_document_date" :label="__('Date')" required /><x-forms.date-input id="delivery_document_date" name="document_date" :value="$today" required /></div>
-                        <div class="col-md-3"><x-forms.label for="delivery_recipient_name" :label="__('Recipient')" /><x-forms.input class="form-control" id="delivery_recipient_name" name="recipient_name" /></div>
-                        <div class="col-md-3"><x-forms.label for="delivery_recipient_phone" :label="__('Recipient phone')" /><x-forms.input class="form-control" id="delivery_recipient_phone" name="recipient_phone" /></div>
-                        <div class="col-md-3"><x-forms.label for="delivery_vehicle_number" :label="__('Vehicle')" /><x-forms.input class="form-control" id="delivery_vehicle_number" name="vehicle_number" /></div>
-                        <div class="col-md-3"><x-forms.label for="delivery_driver_name" :label="__('Driver')" /><x-forms.input class="form-control" id="delivery_driver_name" name="driver_name" /></div>
-                        <div class="col-md-6"><x-forms.label for="delivery_notes" :label="__('Notes')" /><x-forms.input class="form-control" id="delivery_notes" name="notes" /></div>
-                    </div>
-                    <div class="table-responsive mb-3"><table class="table table-sm table-bordered align-middle mb-0"><thead><tr><th>{{ __('Product') }}</th><th class="text-end">{{ __('Invoiced') }}</th><th class="text-end">{{ __('Previously delivered') }}</th><th>{{ __('Deliver now') }}</th></tr></thead><tbody>
-                        @foreach($invoiceDeliveryLines as $index => $row)<tr><td>{{ $row['line']->product?->doc_num }} / {{ $row['line']->product?->name }}<x-forms.input type="hidden" name="lines[{{ $index }}][invoice_line_public_id]" value="{{ $row['line']->public_id }}" /></td><td class="text-end">{{ $numbers->format($row['line']->quantity) }} {{ $row['line']->unit?->name }}</td><td class="text-end">{{ $numbers->format($row['delivered']) }}</td><td><x-forms.input class="form-control form-control-sm text-end" name="lines[{{ $index }}][quantity]" value="{{ $numbers->formatForInput($row['remaining']) }}" max="{{ $row['remaining'] }}" inputmode="decimal" required /></td></tr>@endforeach
-                    </tbody></table></div>
-                    <button class="btn btn-falcon-primary btn-sm" type="submit">{{ __('Post Delivery') }}</button>
-                </form>
-            </details>
+        @if($record->issueOrder)
+            <div class="card mb-3" id="sales-invoice-delivery">
+                <div class="card-header py-2 fw-semibold">{{ __('sales_issue.issue_order') }} {{ $record->issueOrder->doc_num }}</div>
+                <div class="card-body py-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+                    <span>{{ __('sales_issue.'.$record->issueOrder->status) }}</span>
+                    @can('sales_deliveries.view')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.sales.issue-orders.show', $record->issueOrder) }}">{{ __('sales_issue.view_order') }}</a>@endcan
+                </div>
+            </div>
         @endif
         @if($record->canReopenSafely()) @can('customer_invoices.reopen')
             <details class="card mb-3" data-invoice-action-panel>

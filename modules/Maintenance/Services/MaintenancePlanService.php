@@ -7,7 +7,6 @@ use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingContextService;
-use Modules\FixedAssets\Models\FixedAsset;
 use Modules\Maintenance\Models\MaintenanceMeterReading;
 use Modules\Maintenance\Models\MaintenancePlan;
 use Modules\Maintenance\Models\MaintenancePlanDue;
@@ -21,6 +20,7 @@ class MaintenancePlanService
         private readonly DocumentNumberService $documents,
         private readonly OperatingContextService $context,
         private readonly MaintenanceWorkflowService $workflow,
+        private readonly MaintenanceAssetEligibilityService $eligibleAssets,
     ) {}
 
     /** @param array<string, mixed> $data */
@@ -29,7 +29,7 @@ class MaintenancePlanService
         return DB::transaction(function () use ($data): MaintenancePlan {
             $context = $this->requiredContext();
             $asset = filled($data['fixed_asset_id'] ?? null)
-                ? FixedAsset::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->lockForUpdate()->findOrFail($data['fixed_asset_id'])
+                ? $this->eligibleAssets->findForUpdate($context, (int) $data['fixed_asset_id'])
                 : null;
             $mold = filled($data['production_mold_id'] ?? null)
                 ? ProductionMold::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->lockForUpdate()->findOrFail($data['production_mold_id'])

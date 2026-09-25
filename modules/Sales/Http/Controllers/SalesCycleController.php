@@ -54,6 +54,7 @@ use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerInvoiceLine;
 use Modules\Sales\Models\CustomerInvoicePaymentSchedule;
 use Modules\Sales\Models\CustomerReceipt;
+use Modules\Sales\Models\SalesIssueOrder;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
 use Modules\Sales\Models\SalesRequest;
@@ -67,6 +68,7 @@ use Modules\Sales\Services\CustomerReceiptSettlementService;
 use Modules\Sales\Services\ElectronicInvoiceService;
 use Modules\Sales\Services\PriceListPricingService;
 use Modules\Sales\Services\SalesFulfillmentService;
+use Modules\Sales\Services\SalesIssueOrderService;
 use Modules\Sales\Services\SalesOrderService;
 use Modules\Sales\Services\SalesRequestService;
 use Modules\Sales\Services\SalesReturnService;
@@ -162,7 +164,15 @@ class SalesCycleController extends Controller
 
     public function deliveries(Request $request): View|JsonResponse
     {
-        return $this->listing($request, 'sales_deliveries', InventoryDocument::query()->with('customer')->where('document_type', InventoryDocument::TypeSalesDelivery)->latest('document_date'));
+        $context = $this->requiredContext($request);
+        $orders = SalesIssueOrder::query()->with(['invoice.customer', 'branchStore', 'issues'])
+            ->where('company_id', $context['company_id'])
+            ->where('branch_id', $context['branch_id'])
+            ->when($request->filled('document'), fn ($query) => $query->where('doc_num', 'like', '%'.trim($request->string('document')->toString()).'%'))
+            ->when($request->filled('status'), fn ($query) => $query->where('status', $request->string('status')->toString()))
+            ->latest('id')->paginate(20)->withQueryString();
+
+        return view('modules.sales.issue-orders.index', ['orders' => $orders]);
     }
 
     public function createDelivery(Request $request): View|RedirectResponse
@@ -180,7 +190,24 @@ class SalesCycleController extends Controller
             ->where('doc_num', $request->string('invoice_doc_num')->toString())
             ->firstOrFail();
 
-        return redirect()->to(route('admin.sales.sales-invoices.show', $invoice).'#sales-invoice-delivery');
+        $issueOrder = $invoice->issueOrder ?? app(SalesIssueOrderService::class)->ensureForPostedInvoice($invoice);
+        abort_unless($issueOrder, 422, __('sales_issue.messages.physical_lines_required'));
+
+        return redirect()->route('admin.sales.issue-orders.show', $issueOrder);
+    }
+
+    public function showIssueOrder(Request $request, SalesIssueOrder $salesIssueOrder, SalesIssueOrderService $issues): View
+    {
+        $context = $this->requiredContext($request);
+        abort_unless((int) $salesIssueOrder->company_id === $context['company_id']
+            && (int) $salesIssueOrder->branch_id === $context['branch_id'], 404);
+
+        $salesIssueOrder->load(['invoice.customer', 'invoice.lines.product', 'invoice.lines.unit', 'invoice.deliveries.lines', 'branchStore', 'issues.customerDeliveryReceipt']);
+
+        return view('modules.sales.issue-orders.show', [
+            'order' => $salesIssueOrder,
+            'lines' => $issues->remainingLines($salesIssueOrder->invoice),
+        ]);
     }
 
     public function showOrder(
@@ -297,7 +324,7 @@ class SalesCycleController extends Controller
     public function showInvoice(CustomerInvoice $customerInvoice): View
     {
         $record = $customerInvoice->load([
-            'customer', 'order', 'delivery', 'deliveries.lines', 'originalInvoice', 'lines.product', 'lines.unit',
+            'customer', 'order', 'delivery', 'deliveries.lines', 'issueOrder.issues.customerDeliveryReceipt', 'originalInvoice', 'lines.product', 'lines.unit',
             'lines.orderLine', 'lines.deliveryLine.document', 'lines.returnLines.salesReturn', 'paymentSchedules',
             'allocations.receipt', 'journalEntry.lines', 'reversalJournalEntry', 'returns.creditNote', 'creditNotes',
             'creditAllocations.targetInvoice', 'appliedCredits.creditNote', 'creditRefunds.cashbox',
@@ -413,7 +440,7 @@ class SalesCycleController extends Controller
     {
         abort_unless($inventoryDocument->document_type === InventoryDocument::TypeSalesDelivery, 404);
 
-        $relations = ['customer', 'customerInvoices', 'branchStore', 'lines.product', 'lines.unit', 'lines.transactionUnit'];
+        $relations = ['customer', 'customerInvoices', 'branchStore', 'salesIssueOrder', 'customerDeliveryReceipt', 'lines.product', 'lines.unit', 'lines.transactionUnit'];
         if ($inventoryDocument->source_document_type === SalesOrder::class) {
             $relations[] = 'salesOrder.salesEmployee';
         }
@@ -524,17 +551,7 @@ class SalesCycleController extends Controller
 
     public function deliverInvoice(CreateDeliveryRequest $request, CustomerInvoice $customerInvoice, SalesFulfillmentService $service): JsonResponse
     {
-        $data = $request->validated();
-        $lines = collect($data['lines'])->map(fn (array $line): array => [
-            'customer_invoice_line_id' => CustomerInvoiceLine::query()
-                ->where('customer_invoice_id', $customerInvoice->getKey())
-                ->where('public_id', $line['invoice_line_public_id'])
-                ->firstOrFail()
-                ->getKey(),
-            'quantity' => $line['quantity'],
-        ])->all();
-
-        return $this->created($service->deliverInvoice($customerInvoice, $lines, collect($data)->except('lines')->all()), 'admin.sales.delivery-notes.show');
+        return response()->json(['message' => __('sales_issue.messages.warehouse_issue_required')], 409);
     }
 
     public function reserveOrder(ReserveSalesStockRequest $request, SalesOrder $salesOrder, SalesFulfillmentService $service): JsonResponse

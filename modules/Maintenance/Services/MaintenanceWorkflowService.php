@@ -27,6 +27,7 @@ class MaintenanceWorkflowService
         private readonly DocumentNumberService $documents,
         private readonly OperatingContextService $context,
         private readonly MaintenanceMaterialRequestService $materials,
+        private readonly MaintenanceAssetEligibilityService $eligibleAssets,
     ) {}
 
     /** @param array<string, mixed> $data */
@@ -494,12 +495,7 @@ class MaintenanceWorkflowService
     /** @param array{company_id: int, financial_period_id: int, branch_id: int} $context */
     private function asset(array $context, int $assetId): FixedAsset
     {
-        return FixedAsset::query()
-            ->where('company_id', $context['company_id'])
-            ->where('branch_id', $context['branch_id'])
-            ->whereNotIn('status', [FixedAsset::StatusDisposed, FixedAsset::StatusSold, FixedAsset::StatusWrittenOff])
-            ->lockForUpdate()
-            ->findOrFail($assetId);
+        return $this->eligibleAssets->findForUpdate($context, $assetId);
     }
 
     /** @param array{company_id: int, financial_period_id: int, branch_id: int} $context */

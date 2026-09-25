@@ -125,8 +125,10 @@ class ProductionRunController extends Controller
             ->where('financial_period_id', $context['financial_period_id'])
             ->where('branch_id', $context['branch_id'])
             ->whereIn('status', [ProductionOrder::StatusReleased, ProductionOrder::StatusInProgress, ProductionOrder::StatusPartiallyCompleted])
-            ->with(['lines.product', 'lines.unit'])
+            ->with(['lines.product', 'lines.unit', 'lines.stageSnapshots', 'orderStageSnapshots'])
             ->firstOrFail();
+
+        $hasOrderStages = $order->orderStageSnapshots->contains('is_required', true);
 
         return response()->json([
             'data' => [
@@ -139,6 +141,7 @@ class ProductionRunController extends Controller
                         'quantity' => $numbers->format($line->quantity),
                         'unit' => $line->unit?->name ?? '',
                     ]),
+                    'has_stages' => $hasOrderStages || $line->stageSnapshots->contains('is_required', true),
                 ])->values(),
             ],
         ]);
@@ -475,7 +478,7 @@ class ProductionRunController extends Controller
     {
         $this->assertRunInCurrentContext($request, $productionRun);
         $record = $productionRun->load([
-            'order.company', 'order.salesOrder', 'orderLine', 'product', 'fixedAsset', 'stageSnapshot', 'shift',
+            'order.company', 'order.salesOrder', 'orderLine.product.unit', 'orderLine.product.equivalentUnit', 'product', 'fixedAsset', 'stageSnapshot', 'shift',
             'requirements.product', 'requirements.unit', 'progressEntries', 'inspections.results',
         ]);
 

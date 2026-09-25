@@ -92,6 +92,76 @@ class PermissionRegistryService
             ]);
         }
 
+        $screenGroups = [];
+
+        foreach ($this->erpUiScreens->screens() as $screen) {
+            if ($screen->key() === 'core_user_tasks') {
+                continue;
+            }
+
+            $permissions = [];
+
+            foreach ($screen->actions() as $action) {
+                $permission = $this->canonicalPermission($screen->permission($action));
+
+                if (! $remaining->has($permission)) {
+                    continue;
+                }
+
+                $permissions[] = [
+                    'name' => $permission,
+                    'label' => $this->permissionLabel($action, $permission),
+                ];
+                $remaining->forget($permission);
+            }
+
+            if ($permissions === []) {
+                continue;
+            }
+
+            $module = $screen->module();
+
+            if (! isset($screenGroups[$module])) {
+                $screenGroups[$module] = [
+                    'key' => $this->nodeKey('registered_screens', $module),
+                    'label' => $screen->localized($screen->get('menu_title')) ?: $screen->title(),
+                    'permissions' => [],
+                    'children' => [],
+                ];
+            }
+
+            $screenGroups[$module]['children'][] = [
+                'key' => $this->nodeKey('registered_screen', $screen->key()),
+                'label' => $screen->title(),
+                'permissions' => $permissions,
+                'children' => [],
+            ];
+        }
+
+        foreach ($screenGroups as $screenGroup) {
+            $existingIndex = collect($groups)->search(fn (array $group): bool => $group['label'] === $screenGroup['label']);
+
+            if ($existingIndex === false) {
+                $groups[] = $screenGroup;
+
+                continue;
+            }
+
+            array_push($groups[$existingIndex]['children'], ...$screenGroup['children']);
+        }
+
+        if ($remaining->isNotEmpty()) {
+            $groups[] = [
+                'key' => 'other_permissions',
+                'label' => __('roles.other_permissions'),
+                'permissions' => $remaining->keys()->map(fn (string $permission): array => [
+                    'name' => $permission,
+                    'label' => $this->permissionLabel((string) Str::afterLast($permission, '.'), $permission),
+                ])->values()->all(),
+                'children' => [],
+            ];
+        }
+
         return $groups;
     }
 
@@ -122,28 +192,7 @@ class PermissionRegistryService
      */
     public function formAssignablePermissions(): array
     {
-        return $this->memo->remember('permissions.registry.form_assignable', function (): array {
-            $permissions = array_merge(
-                $this->erpUiScreens->permissions(),
-            );
-
-            foreach ($this->menuConfigFiles() as $file) {
-                $items = require $file;
-
-                if (is_array($items)) {
-                    $permissions = array_merge($permissions, $this->extractFormAssignableFromMenuItems($items));
-                }
-            }
-
-            $permissions = array_filter($permissions, fn (mixed $permission): bool => is_string($permission) && trim($permission) !== '');
-            $permissions = array_map(fn (string $permission): string => trim($permission), $permissions);
-            $permissions = array_map(fn (string $permission): string => $this->canonicalPermission($permission), $permissions);
-            $permissions = array_values(array_unique($permissions));
-
-            sort($permissions);
-
-            return $permissions;
-        });
+        return $this->all();
     }
 
     /**
@@ -388,7 +437,7 @@ class PermissionRegistryService
         }
 
         if ($action !== null && $action !== '') {
-            $actionKey = "roles.permission_labels.{$action}";
+            $actionKey = 'roles.permission_labels.'.str_replace('.', '_', $action);
 
             if (trans()->has($actionKey)) {
                 return __($actionKey);
@@ -598,8 +647,9 @@ class PermissionRegistryService
     private function permissionRowsForMenuItem(array $item, Collection $remaining): array
     {
         $permissions = [];
+        $itemPermissions = $this->permissionsForMenuItem($item);
 
-        foreach ($this->permissionsForMenuItem($item) as $action => $permission) {
+        foreach ($itemPermissions as $action => $permission) {
             if (! $remaining->has($permission)) {
                 continue;
             }
@@ -609,6 +659,25 @@ class PermissionRegistryService
                 'label' => $this->permissionLabel((string) $action, $permission),
             ];
             $remaining->forget($permission);
+        }
+
+        $prefixes = collect($itemPermissions)
+            ->filter(fn (string $permission): bool => str_ends_with($permission, '.view'))
+            ->map(fn (string $permission): string => Str::beforeLast($permission, '.'))
+            ->unique();
+
+        foreach ($prefixes as $prefix) {
+            foreach ($remaining->keys() as $permission) {
+                if (! str_starts_with($permission, $prefix.'.')) {
+                    continue;
+                }
+                $action = Str::after($permission, $prefix.'.');
+                if (str_contains($action, '.') && ! str_starts_with($action, 'document_number')) {
+                    continue;
+                }
+                $permissions[] = ['name' => $permission, 'label' => $this->permissionLabel(str_replace('.', '_', $action), $permission)];
+                $remaining->forget($permission);
+            }
         }
 
         return $permissions;

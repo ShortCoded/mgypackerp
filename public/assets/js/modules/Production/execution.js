@@ -19,12 +19,14 @@
     required: 'المطلوب',
     productComponents: 'احتياجات مكونات المنتج',
     noProductComponents: 'لا توجد مكونات مسجلة لهذا المنتج.',
+    noProductEquivalence: 'معادلة الصنف غير محددة. راجع الوحدة وما يعادلها في بيانات المنتج قبل حساب احتياجات الإنتاج.',
     equivalentOutput: 'ما يعادل كمية الإنتاج',
     selectOrderFirst: 'اختر أمر الإنتاج لعرض بنوده.',
     loadingOrderItems: 'جارٍ تحميل بنود أمر الإنتاج…',
     orderHasNoItems: 'لا توجد بنود متاحة في أمر الإنتاج المختار.',
     orderItemsLoadFailed: 'تعذر تحميل بنود أمر الإنتاج.',
     selectOrderItem: 'اختر بند أمر الإنتاج',
+    noRunStages: 'لا توجد مراحل محددة لهذا البند؛ يمكنك إنشاء التشغيلة بدون مرحلة.',
   } : {
     invalidTableConfiguration: 'Invalid table configuration.',
     deleteConfirm: 'Delete this record?',
@@ -40,12 +42,14 @@
     required: 'Required',
     productComponents: 'Product component requirements',
     noProductComponents: 'No product components are configured.',
+    noProductEquivalence: 'The product conversion is not configured. Set the unit and its equivalent on the product before calculating production requirements.',
     equivalentOutput: 'Equivalent output',
     selectOrderFirst: 'Select a production order to load its items.',
     loadingOrderItems: 'Loading production-order items…',
     orderHasNoItems: 'The selected production order has no available items.',
     orderItemsLoadFailed: 'Could not load production-order items.',
     selectOrderItem: 'Select a production-order item',
+    noRunStages: 'No stages are set for this item; you can create the run without a stage.',
   };
 
   function fallbackMessage(key) {
@@ -869,6 +873,16 @@
       return;
     }
 
+    if (row.dataset.equivalenceConfigured === '0') {
+      output.textContent = '';
+      if (components) {
+        const componentRows = JSON.parse(row.dataset.componentPreview || '[]');
+        components.textContent = componentRows.length === 0 ? fallbackMessage('noProductComponents') : '';
+        components.classList.toggle('d-none', componentRows.length > 0);
+      }
+      return;
+    }
+
     const outputQuantity = multiplyDecimals(normalizedQuantity, outputFactor);
     output.textContent = `${fallbackMessage('equivalentOutput')}: ${outputQuantity} ${row.dataset.equivalentUnit || ''}`.trim();
     if (!components) return;
@@ -909,19 +923,25 @@
     }).done(function (payload) {
       if (row.dataset.detailsVersion !== version) return;
       row.dataset.outputFactor = payload.output_factor || '1';
+      row.dataset.equivalenceConfigured = payload.equivalence_configured ? '1' : '0';
       row.dataset.equivalentUnit = payload.equivalent_unit || payload.base_unit || '';
       row.dataset.componentPreview = JSON.stringify((payload.components || []).map(function (component) {
         return { product: component.product, unit: component.unit, quantity_per_output: component.required_quantity, percentage: component.percentage };
       }));
       const unit = row.querySelector('[data-line-unit-details]');
       if (unit) {
-        const factor = window.AppNumbers?.format?.(payload.output_factor || '1') || payload.output_factor || '1';
-        unit.textContent = `1 ${payload.unit} = ${factor} ${row.dataset.equivalentUnit}`;
+        if (payload.equivalence_configured) {
+          const factor = window.AppNumbers?.format?.(payload.output_factor || '1') || payload.output_factor || '1';
+          unit.textContent = `1 ${payload.unit} = ${factor} ${row.dataset.equivalentUnit}`;
+        } else {
+          unit.textContent = fallbackMessage('noProductEquivalence');
+        }
       }
       updateProductionLinePreview(row);
     }).fail(function () {
       if (row.dataset.detailsVersion !== version) return;
       row.dataset.outputFactor = '';
+      row.dataset.equivalenceConfigured = '';
       row.dataset.componentPreview = '[]';
       updateProductionLinePreview(row);
     });
@@ -1130,7 +1150,13 @@
   }
 
   function clearProductionSourceLines() {
-    $('[data-production-order-form] [name$="[source_line_reference]"]').val(null).trigger('change');
+    const form = document.querySelector('[data-production-order-form]');
+    const body = form?.querySelector('[data-production-order-lines]');
+    if (!form || !body) return;
+
+    $(body).find('select.select2-hidden-accessible').each(function () { $(this).select2('destroy'); });
+    body.replaceChildren();
+    addProductionOrderLine(form, {}, null, false);
   }
 
   function loadAllProductionSourceLines() {
@@ -1353,12 +1379,15 @@
   function setProductionRunLineOptions(container, row, selectedId) {
     const line = row.querySelector('[data-order-line-choice]');
     const stage = row.querySelector('[data-run-line-stage]');
+    const stageHint = row.querySelector('[data-run-stage-hint]');
     const quantity = row.querySelector('[name$="[planned_quantity]"]');
     if (!line) return;
     const lines = container._orderLines || [];
     line.replaceChildren(new Option(fallbackMessage('selectOrderItem'), ''));
     lines.forEach(function (option) {
-      line.add(new Option(option.text, option.id, false, String(option.id) === String(selectedId || '')));
+      const choice = new Option(option.text, option.id, false, String(option.id) === String(selectedId || ''));
+      choice.dataset.hasStages = option.has_stages ? '1' : '0';
+      line.add(choice);
     });
     line.disabled = lines.length === 0;
     line.required = lines.length > 0;
@@ -1366,6 +1395,7 @@
       stage.value = '';
       stage.disabled = true;
     }
+    if (stageHint) stageHint.hidden = true;
     if (quantity) {
       quantity.value = '';
       quantity.disabled = lines.length === 0;
@@ -1444,10 +1474,16 @@
   $(document).on('change', '[data-order-line-choice]', function () {
     const row = this.closest('[data-production-run-batch-row]');
     const stage = row?.querySelector('[data-run-line-stage]');
+    const stageHint = row?.querySelector('[data-run-stage-hint]');
     const quantity = row?.querySelector('[name$="[planned_quantity]"]');
     if (!row || !stage || !quantity) return;
+    const hasStages = this.selectedOptions[0]?.dataset.hasStages === '1';
     stage.value = '';
-    stage.disabled = !this.value;
+    stage.disabled = !this.value || !hasStages;
+    if (stageHint) {
+      stageHint.hidden = !this.value || hasStages;
+      stageHint.textContent = stageHint.hidden ? '' : fallbackMessage('noRunStages');
+    }
     quantity.disabled = !this.value;
     if (!this.value) quantity.value = '';
     $(stage).trigger('change.select2');

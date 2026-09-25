@@ -877,6 +877,49 @@
         return $scope.find('.js-permission-checkbox');
     }
 
+    function permissionIndex($selector) {
+        const cached = $selector.data('permissionIndex');
+
+        if (cached) {
+            return cached;
+        }
+
+        const all = permissionCheckboxes($selector);
+        const byNode = new Map();
+        const byResource = new Map();
+
+        all.each(function () {
+            const checkbox = this;
+            const nodes = String(checkbox.getAttribute('data-permission-nodes') || '').split(/\s+/);
+            const resource = checkbox.getAttribute('data-permission-resource');
+
+            nodes.forEach(function (node) {
+                if (!node) {
+                    return;
+                }
+
+                if (!byNode.has(node)) {
+                    byNode.set(node, []);
+                }
+
+                byNode.get(node).push(checkbox);
+            });
+
+            if (resource) {
+                if (!byResource.has(resource)) {
+                    byResource.set(resource, []);
+                }
+
+                byResource.get(resource).push(checkbox);
+            }
+        });
+
+        const index = { all, byNode, byResource };
+        $selector.data('permissionIndex', index);
+
+        return index;
+    }
+
     function permissionCheckboxesForNode($selector, node) {
         const nodeKey = String(node || '');
 
@@ -884,11 +927,7 @@
             return $();
         }
 
-        return permissionCheckboxes($selector).filter(function () {
-            const nodes = String($(this).attr('data-permission-nodes') || '').split(/\s+/);
-
-            return nodes.indexOf(nodeKey) !== -1;
-        });
+        return $(permissionIndex($selector).byNode.get(nodeKey) || []);
     }
 
     function permissionCheckboxesForResource($selector, resource) {
@@ -898,9 +937,7 @@
             return $();
         }
 
-        return permissionCheckboxes($selector).filter(function () {
-            return String($(this).attr('data-permission-resource') || '') === resourceKey;
-        });
+        return $(permissionIndex($selector).byResource.get(resourceKey) || []);
     }
 
     function setCheckboxState($checkbox, $checkboxes) {
@@ -913,7 +950,7 @@
     }
 
     function updatePermissionSelector($selector) {
-        setCheckboxState($selector.find('.js-permission-global-check'), permissionCheckboxes($selector));
+        setCheckboxState($selector.find('.js-permission-global-check'), permissionIndex($selector).all);
 
         $selector.find('.js-permission-group-check').each(function () {
             const $checkbox = $(this);
@@ -943,7 +980,7 @@
                 const $global = $(this);
                 const $selector = $global.closest('.js-permission-selector');
 
-                permissionCheckboxes($selector).prop('checked', $global.is(':checked'));
+                permissionIndex($selector).all.prop('checked', $global.is(':checked'));
                 updatePermissionSelector($selector);
             });
 

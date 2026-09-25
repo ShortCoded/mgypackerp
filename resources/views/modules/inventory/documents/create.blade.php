@@ -42,6 +42,9 @@
                         @endif
                     </div>
                     <div class="col-auto">
+                        @if(!$record && !($isClone ?? false) && auth()->user()?->can('inventory.documents.issue'))
+                            <a class="btn btn-falcon-primary btn-sm me-2" href="{{ route('admin.inventory.documents.sales-issue.create') }}">{{ __('sales_issue.warehouse_issue') }}</a>
+                        @endif
                         <div data-standard-movement-actions>
                             @include('modules.inventory.documents.partials.form-actions', compact('mode', 'record'))
                         </div>

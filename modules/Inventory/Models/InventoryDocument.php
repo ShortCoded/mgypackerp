@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Models\BranchStore;
@@ -17,6 +18,8 @@ use Modules\Production\Models\ProductionRun;
 use Modules\Production\Models\ProductionRunBatch;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
+use Modules\Sales\Models\SalesDeliveryReceipt;
+use Modules\Sales\Models\SalesIssueOrder;
 use Modules\Sales\Models\SalesOrder;
 
 class InventoryDocument extends Model
@@ -141,6 +144,16 @@ class InventoryDocument extends Model
     public function customerInvoices(): BelongsToMany
     {
         return $this->belongsToMany(CustomerInvoice::class, 'customer_invoice_deliveries')->withTimestamps();
+    }
+
+    public function salesIssueOrder(): BelongsTo
+    {
+        return $this->belongsTo(SalesIssueOrder::class, 'sales_issue_order_id');
+    }
+
+    public function customerDeliveryReceipt(): HasOne
+    {
+        return $this->hasOne(SalesDeliveryReceipt::class, 'inventory_document_id');
     }
 
     public function productionOrder(): BelongsTo

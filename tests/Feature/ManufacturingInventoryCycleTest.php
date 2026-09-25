@@ -124,6 +124,21 @@ function manufacturingInventoryFixture(): array
     return compact('user', 'company', 'branch', 'period', 'store', 'unit', 'finished', 'raw', 'machine', 'mold');
 }
 
+/** @param array<string, mixed> $fixture */
+function manufacturingMaintenanceAssetAccount(array $fixture): Account
+{
+    return Account::query()
+        ->where('company_id', $fixture['company']->getKey())
+        ->where('status', 'active')
+        ->where('is_group', false)
+        ->where('is_postable', true)
+        ->whereDoesntHave('fixedAsset')
+        ->whereHas('classification', fn ($query) => $query
+            ->where('code', AccountClassification::FixedAssets)
+            ->where('status', 'active'))
+        ->firstOrFail();
+}
+
 /** @param array<string, mixed> $fixture @return array<string, mixed> */
 function manufacturingIntegrityRun(array $fixture, string $plannedQuantity = '1'): array
 {
@@ -1274,6 +1289,7 @@ test('maintenance draft documents can be edited soft deleted and restored in the
         'company_id' => $fixture['company']->getKey(),
         'branch_id' => $fixture['branch']->getKey(),
         'period_id' => $fixture['period']->getKey(),
+        'account_id' => manufacturingMaintenanceAssetAccount($fixture)->getKey(),
         'asset_date' => now()->toDateString(),
         'asset_name' => 'Maintenance CRUD Asset',
         'status' => FixedAsset::StatusActive,
@@ -2989,20 +3005,93 @@ test('receipt layers preserve aging and enforce FEFO without consuming expired s
 
 test('maintenance flows from a breakdown report through external work completion and formal reporting', function () {
     $fixture = manufacturingInventoryFixture();
+    $fixedAssetAccount = manufacturingMaintenanceAssetAccount($fixture);
     $asset = FixedAsset::query()->create([
         'doc_number' => 9910,
         'doc_num' => 'FA-MAINT-9910',
         'company_id' => $fixture['company']->getKey(),
         'branch_id' => $fixture['branch']->getKey(),
         'period_id' => $fixture['period']->getKey(),
+        'account_id' => $fixedAssetAccount->getKey(),
         'asset_date' => now()->toDateString(),
         'asset_name' => 'Injection Line Main Motor',
+        'status' => FixedAsset::StatusActive,
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+    $maintenanceAccount = function (int $number, string $name) use ($fixedAssetAccount, $fixture): Account {
+        return Account::query()->create([
+            'doc_number' => $number,
+            'doc_num' => 'ACC-MAINT-'.$number,
+            'company_id' => $fixture['company']->getKey(),
+            'account_code' => '129'.$number,
+            'name' => $name,
+            'parent_id' => $fixedAssetAccount->parent_id,
+            'level' => $fixedAssetAccount->level,
+            'account_classification_id' => $fixedAssetAccount->account_classification_id,
+            'account_type' => $fixedAssetAccount->account_type,
+            'statement_type' => $fixedAssetAccount->statement_type,
+            'normal_balance' => $fixedAssetAccount->normal_balance,
+            'is_group' => false,
+            'is_postable' => true,
+            'status' => 'active',
+        ]);
+    };
+    $disposedAsset = FixedAsset::query()->create([
+        'doc_number' => 9911,
+        'doc_num' => 'FA-MAINT-9911',
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'period_id' => $fixture['period']->getKey(),
+        'account_id' => $maintenanceAccount(9911, 'Disposed maintenance asset account')->getKey(),
+        'asset_date' => now()->toDateString(),
+        'asset_name' => 'Disposed Maintenance Machine',
+        'status' => FixedAsset::StatusDisposed,
+        'disposed_at' => now()->toDateString(),
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+    $otherBranch = Branch::query()->create([
+        'doc_number' => 9912,
+        'doc_num' => 'BR-MAINT-9912',
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Other Maintenance Branch',
+        'type' => Branch::TypeFactory,
+        'status' => 'active',
+    ]);
+    $foreignBranchAsset = FixedAsset::query()->create([
+        'doc_number' => 9912,
+        'doc_num' => 'FA-MAINT-9912',
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $otherBranch->getKey(),
+        'period_id' => $fixture['period']->getKey(),
+        'account_id' => $maintenanceAccount(9912, 'Foreign branch maintenance asset account')->getKey(),
+        'asset_date' => now()->toDateString(),
+        'asset_name' => 'Foreign Branch Maintenance Machine',
+        'status' => FixedAsset::StatusActive,
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+    $nonFixedAssetAccount = Account::query()
+        ->where('company_id', $fixture['company']->getKey())
+        ->where('status', 'active')
+        ->where('is_group', false)
+        ->whereHas('classification', fn ($query) => $query->where('code', '!=', AccountClassification::FixedAssets)->where('status', 'active'))
+        ->firstOrFail();
+    $nonFixedClassificationAsset = FixedAsset::query()->create([
+        'doc_number' => 9913,
+        'doc_num' => 'FA-MAINT-9913',
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'period_id' => $fixture['period']->getKey(),
+        'account_id' => $nonFixedAssetAccount->getKey(),
+        'asset_date' => now()->toDateString(),
+        'asset_name' => 'Non Fixed Account Machine',
         'status' => FixedAsset::StatusActive,
         'created_by' => $fixture['user']->getKey(),
     ]);
     $permissions = [
         'maintenance.requests.view',
         'maintenance.requests.create',
+        'maintenance.plans.view',
+        'maintenance.plans.create',
         'maintenance.orders.view',
         'maintenance.orders.create',
         'maintenance.orders.approve',
@@ -3052,6 +3141,53 @@ test('maintenance flows from a breakdown report through external work completion
         ->getJson(route('admin.maintenance.select2', ['lookup' => 'assets', 'q' => $asset->doc_num]))
         ->assertOk()
         ->assertJsonPath('results.0.id', (string) $asset->getKey());
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.maintenance.select2', ['lookup' => 'assets', 'q' => $disposedAsset->doc_num]))
+        ->assertOk()
+        ->assertJsonCount(0, 'results');
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.maintenance.select2', ['lookup' => 'assets', 'q' => $foreignBranchAsset->doc_num]))
+        ->assertOk()
+        ->assertJsonCount(0, 'results');
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.maintenance.select2', ['lookup' => 'assets', 'q' => $nonFixedClassificationAsset->doc_num]))
+        ->assertOk()
+        ->assertJsonCount(0, 'results');
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.maintenance.plans.index'))
+        ->assertOk()
+        ->assertSee($asset->asset_name)
+        ->assertDontSee($disposedAsset->asset_name)
+        ->assertDontSee($foreignBranchAsset->asset_name)
+        ->assertDontSee($nonFixedClassificationAsset->asset_name);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->from(route('admin.maintenance.requests.create'))
+        ->post(route('admin.maintenance.requests.store'), [
+            'fixed_asset_id' => $nonFixedClassificationAsset->getKey(),
+            'request_type' => 'breakdown',
+            'discipline' => 'mechanical',
+            'priority' => 'normal',
+            'symptoms' => 'Must not accept an asset outside fixed asset accounts.',
+        ])
+        ->assertRedirect(route('admin.maintenance.requests.create'))
+        ->assertSessionHasErrors('request');
+    expect(MaintenanceRequest::query()->count())->toBe(0);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->from(route('admin.maintenance.plans.index'))
+        ->post(route('admin.maintenance.plans.store'), [
+            'fixed_asset_id' => $nonFixedClassificationAsset->getKey(),
+            'name' => 'Invalid asset plan',
+            'maintenance_type' => 'preventive',
+            'service_mode' => 'internal',
+            'frequency_basis' => MaintenancePlan::FrequencyCalendar,
+            'interval_value' => 30,
+            'schedule_anchor' => MaintenancePlan::AnchorPlanned,
+            'next_due_at' => now()->addMonth()->toDateString(),
+            'task_template' => 'This plan must be rejected.',
+        ])
+        ->assertRedirect(route('admin.maintenance.plans.index'))
+        ->assertSessionHasErrors('plan');
+    expect(MaintenancePlan::query()->count())->toBe(0);
 
     $this->actingAs($fixture['user'])->withSession($session)
         ->post(route('admin.maintenance.requests.store'), [
@@ -3341,6 +3477,7 @@ test('an approved maintenance plan generates idempotent calendar and meter dues 
         'company_id' => $fixture['company']->getKey(),
         'branch_id' => $fixture['branch']->getKey(),
         'period_id' => $fixture['period']->getKey(),
+        'account_id' => manufacturingMaintenanceAssetAccount($fixture)->getKey(),
         'asset_date' => now()->toDateString(),
         'asset_name' => 'Planned Maintenance Asset',
         'status' => FixedAsset::StatusActive,

@@ -135,6 +135,35 @@ test('an order snapshots only its selected route and stage inputs are not duplic
     ]);
 
     $cycle->releaseOrder($order);
+    $unroutedOrder = $cycle->createMakeToStockOrder([
+        'company_id' => $company->getKey(),
+        'financial_period_id' => $period->getKey(),
+        'branch_id' => $branch->getKey(),
+        'source_type' => 'make_to_stock',
+        'production_order_date' => now()->toDateString(),
+    ], [[
+        'product_id' => $finishedProduct->getKey(),
+        'unit_id' => $unit->getKey(),
+        'quantity' => '1',
+    ]]);
+    $cycle->releaseOrder($unroutedOrder);
+    Permission::findOrCreate('production.runs.view', 'web');
+    $user->givePermissionTo('production.runs.view');
+    $context = [
+        OperatingContextService::CompanyIdKey => $company->getKey(),
+        OperatingContextService::CompanyDocNumKey => $company->doc_num,
+        OperatingContextService::BranchIdKey => $branch->getKey(),
+        OperatingContextService::BranchDocNumKey => $branch->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $period->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $period->doc_num,
+    ];
+    $this->actingAs($user)->withSession($context)
+        ->getJson(route('admin.production.runs.orders.lines', ['docNum' => $order->doc_num]))
+        ->assertOk()->assertJsonPath('data.lines.0.has_stages', true);
+    $this->actingAs($user)->withSession($context)
+        ->getJson(route('admin.production.runs.orders.lines', ['docNum' => $unroutedOrder->doc_num]))
+        ->assertOk()->assertJsonPath('data.lines.0.has_stages', false);
+
     $stages = $cycle->stagesForLine($order, $line);
     expect(fn () => $cycle->createRun($line, [
         'production_order_stage_snapshot_id' => $legacyDuplicate->getKey(),
@@ -582,10 +611,20 @@ test('production route lookups search and line details return formatted unit and
         ->json();
 
     expect($details['output_factor'])->toBe('3000.00000000')
+        ->and($details['equivalence_configured'])->toBeTrue()
         ->and($details['unit'])->toBe('Carton')
         ->and($details['equivalent_unit'])->toBe('Piece')
         ->and($details['components'][0]['unit'])->toBe('Gram')
         ->and($details['components'][0]['required_quantity'])->toBe(app(NumericFormatService::class)->format('6000'));
+
+    $finishedProduct->update(['equivalent_value' => null, 'equivalent_unit_id' => null]);
+    $this->actingAs($user)->withSession($context)
+        ->getJson(route('admin.production.work-orders.select2.line-details', [
+            'source_type' => 'make_to_stock',
+            'source_line_reference' => 'product:'.$finishedProduct->doc_num,
+        ]))
+        ->assertOk()
+        ->assertJsonPath('equivalence_configured', false);
 });
 
 test('one production batch can produce partial quantities for multiple order lines on each selected line stage', function (): void {

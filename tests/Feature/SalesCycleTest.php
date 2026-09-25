@@ -2,10 +2,13 @@
 
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\LedgerQueryService;
+use Modules\Core\Models\Branch;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
+use Modules\Core\Models\ProductComponent;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cheque;
 use Modules\HR\Models\HrArea;
@@ -1029,6 +1032,41 @@ test('linked production orders cannot collectively exceed the sales source quant
         ->sum('base_quantity'))->toBe('10');
 });
 
+test('approved sales demand can start production before a finished goods warehouse is chosen', function (): void {
+    $fixture = salesCycleFixture();
+    $salesOrder = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
+        'branch_store_id' => null,
+        'lines' => [[
+            'product_id' => $fixture['finished']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Produce before assigning a warehouse',
+            'quantity' => '3',
+            'unit_price' => '10',
+        ]],
+        'payment_schedules' => [['title' => 'Due', 'amount' => '30', 'due_date' => now()->addMonth()->toDateString()]],
+    ])));
+    $salesLine = $salesOrder->lines->sole();
+
+    $production = app(ProductionCycleService::class)->createMakeToStockOrder([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'sales_order_id' => $salesOrder->getKey(),
+        'customer_id' => $fixture['customer']->getKey(),
+        'source_type' => 'sales_order',
+        'source_id' => $salesOrder->getKey(),
+        'production_order_date' => now()->toDateString(),
+    ], [[
+        'product_id' => $fixture['finished']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'sales_order_line_id' => $salesLine->getKey(),
+        'quantity' => '3',
+    ]]);
+
+    expect($production->lines->sole()->sales_order_line_id)->toBe($salesLine->getKey())
+        ->and($salesLine->fresh()->production_requested_quantity)->toBe('3.00000000');
+});
+
 test('linked production orders cannot collectively exceed the invoice source quantity', function (): void {
     $fixture = salesCycleFixture();
     $salesOrder = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
@@ -1154,6 +1192,94 @@ test('restricted production and warehouse browser responses do not expose commer
     $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture))
         ->get(route('admin.sales.delivery-notes.show', $delivery))
         ->assertOk()->assertDontSee('987.6543')->assertDontSee('Unit price')->assertDontSee('Sealed export carton');
+});
+
+test('production orders from mixed sales lines skip archived products and print the released formula', function (): void {
+    $fixture = salesCycleFixture();
+    $fixture['branch']->update(['type' => Branch::TypeFactory]);
+    $fixture['finished']->update([
+        'equivalent_value' => '2',
+        'equivalent_unit_id' => $fixture['unit']->getKey(),
+    ]);
+    ProductComponent::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'product_id' => $fixture['finished']->getKey(),
+        'component_product_id' => $fixture['raw']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'calculation_method' => ProductComponent::CalculationDirect,
+        'quantity' => '3',
+    ]);
+    $archived = Product::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'doc_number' => 8088,
+        'doc_num' => 'Product-ARCHIVED-FG',
+        'name' => 'Archived Finished Crate',
+        'item_classification' => Product::ClassificationFinishedProduct,
+        'item_unit_id' => $fixture['unit']->getKey(),
+        'status' => 'active',
+    ]);
+    $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
+        'lines' => [
+            ['product_id' => $fixture['finished']->getKey(), 'unit_id' => $fixture['unit']->getKey(), 'description' => 'Finished Crate', 'quantity' => '2', 'unit_price' => '10', 'discount_amount' => 0, 'tax_amount' => 0],
+            ['product_id' => $archived->getKey(), 'unit_id' => $fixture['unit']->getKey(), 'description' => 'Archived Finished Crate', 'quantity' => '1', 'unit_price' => '10', 'discount_amount' => 0, 'tax_amount' => 0],
+        ],
+        'payment_schedules' => [['title' => 'Full order value', 'amount' => '30', 'due_date' => now()->addMonth()->toDateString()]],
+    ])));
+    $activeLine = $order->lines->firstWhere('product_id', $fixture['finished']->getKey());
+    $archivedLine = $order->lines->firstWhere('product_id', $archived->getKey());
+    $archived->delete();
+
+    foreach (['production.orders.create', 'production.orders.view', 'production.orders.print'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $fixture['user']->givePermissionTo($permission);
+    }
+    $session = salesCycleSession($fixture);
+    $session['locale'] = 'ar';
+
+    $sourceResults = $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.production.work-orders.select2.sources', ['source_type' => 'sales_order', 'q' => $order->doc_num]))
+        ->assertOk()->json('results');
+    expect(collect($sourceResults)->pluck('id'))->toContain($order->doc_num);
+
+    $payload = [
+        'source_type' => 'sales_order',
+        'source_doc_num' => $order->doc_num,
+        'production_order_date' => now()->toDateString(),
+        'priority' => 'normal',
+        'lines' => [[
+            'source_line_reference' => 'sales_order_line:'.$archivedLine->public_id,
+            'quantity' => '1',
+        ]],
+    ];
+    $invalidResponse = $this->actingAs($fixture['user'])->withSession($session)
+        ->withHeader('Idempotency-Key', (string) Str::uuid())
+        ->postJson(route('admin.production.work-orders.store'), $payload)
+        ->assertUnprocessable();
+    $errors = $invalidResponse->json('errors');
+    expect($errors['lines.0.source_line_reference'][0])->toBe(__('production_execution.messages.source_product_unavailable'));
+
+    $payload['lines'][0] = [
+        'source_line_reference' => 'sales_order_line:'.$activeLine->public_id,
+        'quantity' => '2',
+    ];
+    $this->withoutExceptionHandling();
+    $created = $this->actingAs($fixture['user'])->withSession($session)
+        ->withHeader('Idempotency-Key', (string) Str::uuid())
+        ->postJson(route('admin.production.work-orders.store'), $payload)
+        ->assertCreated();
+    $production = ProductionOrder::query()->where('doc_num', $created->json('doc_num'))->firstOrFail();
+    expect($production->lines)->toHaveCount(1);
+
+    $draftText = salesPdfText($this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.work-orders.print', $production))
+        ->assertOk()->getContent());
+    expect($draftText)->toContain('Product-RAW');
+
+    app(ProductionCycleService::class)->releaseOrder($production);
+    $releasedText = salesPdfText($this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.work-orders.print', $production))
+        ->assertOk()->getContent());
+    expect($releasedText)->toContain('Product-RAW');
 });
 
 test('authorized users can load the concrete create edit collection reporting and print screens', function () {

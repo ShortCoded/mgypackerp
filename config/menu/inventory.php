@@ -21,7 +21,6 @@ return [
                 'keywords' => ['stock balance inquiry', 'inventory availability', 'استعلام الأرصدة', 'أرصدة المخزون'],
                 'actions' => [
                     'view' => 'inventory.reports.operational',
-                    'financial' => 'inventory.reports.financial',
                     'export' => 'inventory.reports.export',
                 ],
                 'active' => ['admin.inventory.stock-balances.*'],
@@ -64,7 +63,6 @@ return [
                 'keywords' => ['inventory reports', 'stock balance', 'stock card', 'reservations'],
                 'actions' => [
                     'view' => 'inventory.reports.operational',
-                    'financial' => 'inventory.reports.financial',
                     'export' => 'inventory.reports.export',
                 ],
                 'active' => ['admin.inventory.reports.*'],

@@ -18,6 +18,7 @@ use Modules\Production\Models\ProductionMaterialRequirement;
 use Modules\Production\Models\ProductionQualityInspection;
 use Modules\Production\Models\ProductionRun;
 use Modules\Sales\Models\CustomerInvoice;
+use Modules\Sales\Models\SalesIssueOrder;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
 use Modules\Sales\Models\SalesReturn;
@@ -204,6 +205,9 @@ class InventoryDocumentPostingService
 
             $salesOrder = null;
             if ($locked->document_type === InventoryDocument::TypeSalesDelivery) {
+                if ($locked->sales_issue_order_id !== null && $locked->customerDeliveryReceipt()->exists()) {
+                    throw new DomainException(__('sales_issue.messages.signed_issue_cannot_reverse'));
+                }
                 if ($locked->source_document_type === SalesOrder::class) {
                     $salesOrder = SalesOrder::query()->lockForUpdate()->findOrFail($locked->source_document_id);
                 }
@@ -297,6 +301,27 @@ class InventoryDocumentPostingService
                 'reversed_at' => now(),
                 'updated_by' => auth()->id(),
             ]);
+            if ($locked->sales_issue_order_id !== null) {
+                $issueOrder = SalesIssueOrder::query()->with('invoice.order')->lockForUpdate()->findOrFail($locked->sales_issue_order_id);
+                $issueInvoice = CustomerInvoice::query()->lockForUpdate()->findOrFail($issueOrder->customer_invoice_id);
+                if ((int) $issueInvoice->delivery_document_id === (int) $locked->getKey()) {
+                    $replacementDeliveryId = DB::table('customer_invoice_deliveries as link')
+                        ->join('inventory_documents as document', 'document.id', '=', 'link.inventory_document_id')
+                        ->where('link.customer_invoice_id', $issueInvoice->getKey())
+                        ->where('document.id', '!=', $locked->getKey())
+                        ->where('document.status', InventoryDocument::StatusPosted)
+                        ->whereNull('document.deleted_at')
+                        ->orderBy('document.id')
+                        ->value('document.id');
+                    $issueInvoice->update(['delivery_document_id' => $replacementDeliveryId]);
+                }
+                $issueOrder->update([
+                    'status' => SalesIssueOrder::StatusPending,
+                    'branch_store_id' => $issueOrder->invoice?->order?->branch_store_id,
+                    'issued_by' => null,
+                    'issued_at' => null,
+                ]);
+            }
 
             return $locked->refresh()->load(['lines', 'transactions']);
         });

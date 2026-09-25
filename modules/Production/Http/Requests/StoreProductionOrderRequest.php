@@ -159,6 +159,9 @@ class StoreProductionOrderRequest extends FormRequest
                     : ($sourceType === 'sales_order'
                     ? $source->lines()
                         ->where('product_classification_snapshot', Product::ClassificationFinishedProduct)
+                        ->whereHas('product', fn ($products) => $products
+                            ->whereNull('products.deleted_at')
+                            ->where('products.status', 'active'))
                         ->get()
                         ->filter(fn (SalesOrderLine $line): bool => bccomp($line->remainingProductionDemandQuantity(), '0', 8) > 0)
                         ->mapWithKeys(fn (SalesOrderLine $line): array => [
@@ -166,7 +169,10 @@ class StoreProductionOrderRequest extends FormRequest
                         ])
                     : $source->lines()
                         ->where('is_service', false)
-                        ->whereHas('product', fn ($query) => $query->where('item_classification', Product::ClassificationFinishedProduct))
+                        ->whereHas('product', fn ($query) => $query
+                            ->where('item_classification', Product::ClassificationFinishedProduct)
+                            ->where('status', 'active')
+                            ->whereNull('products.deleted_at'))
                         ->get()
                         ->mapWithKeys(function (CustomerInvoiceLine $line): array {
                             $plannedBase = (string) ProductionOrderLine::query()
@@ -215,7 +221,8 @@ class StoreProductionOrderRequest extends FormRequest
                         ->whereHas('product', fn ($query) => $query
                             ->where('company_id', $context['company_id'])
                             ->where('item_classification', Product::ClassificationFinishedProduct)
-                            ->where('status', 'active'))
+                            ->where('status', 'active')
+                            ->whereNull('products.deleted_at'))
                         ->exists(),
                     'customer_invoice' => $referenceType === 'customer_invoice_line' && CustomerInvoiceLine::query()
                         ->where('customer_invoice_id', $source?->getKey())
@@ -224,13 +231,31 @@ class StoreProductionOrderRequest extends FormRequest
                         ->whereHas('product', fn ($query) => $query
                             ->where('company_id', $context['company_id'])
                             ->where('item_classification', Product::ClassificationFinishedProduct)
-                            ->where('status', 'active'))
+                            ->where('status', 'active')
+                            ->whereNull('products.deleted_at'))
                         ->exists(),
                     default => false,
                 };
 
                 if (! $isValid) {
-                    $validator->errors()->add("lines.{$index}.source_line_reference", __('production_execution.messages.invalid_source_line'));
+                    $sourceLine = match ($sourceType) {
+                        'sales_order' => SalesOrderLine::query()
+                            ->where('sales_order_id', $source?->getKey())
+                            ->where('public_id', $publicReference)
+                            ->with('product')
+                            ->first(),
+                        'customer_invoice' => CustomerInvoiceLine::query()
+                            ->where('customer_invoice_id', $source?->getKey())
+                            ->where('public_id', $publicReference)
+                            ->with('product')
+                            ->first(),
+                        default => null,
+                    };
+                    $product = $sourceLine?->product;
+                    $message = $product instanceof Product && ($product->trashed() || $product->status !== 'active')
+                        ? __('production_execution.messages.source_product_unavailable')
+                        : __('production_execution.messages.invalid_source_line');
+                    $validator->errors()->add("lines.{$index}.source_line_reference", $message);
                 }
             }
         }];

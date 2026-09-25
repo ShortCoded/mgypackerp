@@ -263,7 +263,18 @@ class ProductionOrderController extends Controller
         $type = $request->validate(['source_type' => ['required', Rule::in(['sales_order', 'customer_invoice'])]])['source_type'];
         $query = $type === 'sales_order'
             ? SalesOrder::query()->where('company_id', $context['company_id'])->whereIn('status', [SalesOrder::StatusApproved, SalesOrder::StatusPartiallyFulfilled])
-            : CustomerInvoice::query()->where('company_id', $context['company_id'])->where('document_type', CustomerInvoice::TypeInvoice)->where('status', CustomerInvoice::StatusPosted);
+                ->whereHas('lines', fn ($lines) => $lines
+                    ->where('product_classification_snapshot', Product::ClassificationFinishedProduct)
+                    ->whereHas('product', fn ($products) => $products
+                        ->whereNull('products.deleted_at')
+                        ->where('products.status', 'active')))
+            : CustomerInvoice::query()->where('company_id', $context['company_id'])->where('document_type', CustomerInvoice::TypeInvoice)->where('status', CustomerInvoice::StatusPosted)
+                ->whereHas('lines', fn ($lines) => $lines
+                    ->where('is_service', false)
+                    ->whereHas('product', fn ($products) => $products
+                        ->whereNull('products.deleted_at')
+                        ->where('products.status', 'active')
+                        ->where('products.item_classification', Product::ClassificationFinishedProduct)));
         $query->orderByDesc($type === 'sales_order' ? 'order_date' : 'invoice_date');
         $terms = $search->terms($request->input('q', $request->input('term')));
 
@@ -396,11 +407,15 @@ class ProductionOrderController extends Controller
         };
         $product = $sourceLine instanceof Product ? $sourceLine : $sourceLine->product;
         abort_unless($product instanceof Product && (int) $product->company_id === (int) $context['company_id'], 404);
+        abort_if($product->trashed() || $product->status !== 'active', 422, __('production_execution.messages.source_product_unavailable'));
         abort_unless($product->item_classification === Product::ClassificationFinishedProduct, 422, __('production_execution.messages.production_line_product_invalid'));
         $unit = $sourceLine instanceof Product ? $product->unit : $sourceLine->unit;
         abort_unless($unit !== null, 422, __('production_execution.messages.product_unit_required'));
         $conversion = $units->snapshot($product, $unit->getKey(), '1');
-        $equivalentFactor = filled($product->equivalent_value) && bccomp((string) $product->equivalent_value, '0', 8) > 0
+        $equivalenceConfigured = filled($product->equivalent_value)
+            && bccomp((string) $product->equivalent_value, '0', 8) > 0
+            && $product->equivalentUnit !== null;
+        $equivalentFactor = $equivalenceConfigured
             ? (string) $product->equivalent_value
             : '1.00000000';
         $outputFactor = bcmul($conversion['conversion_factor'], $equivalentFactor, 8);
@@ -437,6 +452,7 @@ class ProductionOrderController extends Controller
             'base_unit' => $product->unit?->name ?? '',
             'equivalent_value' => $numbers->format($product->equivalent_value ?: 1),
             'equivalent_unit' => $equivalentUnit?->name ?? $product->unit?->name ?? '',
+            'equivalence_configured' => $equivalenceConfigured,
             'conversion_factor' => $conversion['conversion_factor'],
             'output_factor' => $outputFactor,
             'components' => $components,
@@ -477,11 +493,48 @@ class ProductionOrderController extends Controller
     private function printDocument(Request $request, ProductionOrder $productionOrder, string $documentTitle, string $filenamePrefix): Response
     {
         $this->assertInCurrentContext($request, $productionOrder);
-        $record = $productionOrder->load(['company', 'salesOrder.branch', 'salesOrder.salesEmployee', 'orderStageSnapshots.stage', 'lines.product', 'lines.unit', 'lines.stageSnapshots']);
+        $record = $productionOrder->load([
+            'company', 'salesOrder.branch', 'salesOrder.salesEmployee', 'orderStageSnapshots.stage',
+            'lines.product.unit', 'lines.product.equivalentUnit',
+            'lines.product.components.componentProduct', 'lines.product.components.unit',
+            'lines.unit', 'lines.stageSnapshots',
+        ]);
+        $formulas = [];
+
+        foreach ($record->lines as $line) {
+            $snapshot = $line->bom_snapshot;
+            $isDraftPreview = ! is_array($snapshot);
+            $factor = $isDraftPreview
+                ? (string) ($line->product?->equivalent_value ?: '1')
+                : (string) ($snapshot['basis_base_quantity'] ?? '1');
+            $factor = bccomp($factor, '0', 8) > 0 ? $factor : '1';
+            $components = $isDraftPreview
+                ? $line->product?->components->map(fn (ProductComponent $component): array => [
+                    'product_doc_num' => $component->componentProduct?->doc_num,
+                    'product_name' => $component->componentProduct?->name,
+                    'quantity_per_output' => (string) $component->quantity,
+                    'unit_name' => $component->unit?->name,
+                ])->all() ?? []
+                : collect($snapshot['components'] ?? [])->map(fn (array $component): array => [
+                    'product_doc_num' => $component['product_doc_num'] ?? null,
+                    'product_name' => $component['product_name'] ?? null,
+                    'quantity_per_output' => (string) ($component['base_quantity_per_output'] ?? '0'),
+                    'unit_name' => $component['base_unit_name'] ?? null,
+                ])->all();
+            $formulas[$line->getKey()] = [
+                'is_draft_preview' => $isDraftPreview,
+                'basis_quantity' => bcmul((string) $line->base_quantity, $factor, 8),
+                'basis_unit_name' => $isDraftPreview
+                    ? ($line->product?->equivalentUnit?->name ?? $line->product?->unit?->name)
+                    : ($snapshot['basis_unit_name'] ?? null),
+                'components' => $components,
+            ];
+        }
 
         return $this->pdf->stream('reports.production.order', [
             'title' => $documentTitle.' — '.$record->doc_num,
             'record' => $record,
+            'formulas' => $formulas,
             'companyPrintIdentity' => $record->print_identity_snapshot ?: $this->printIdentity->forCompany($record->company),
         ], str($filenamePrefix.'-'.$record->doc_num)->slug().'.pdf');
     }
@@ -539,7 +592,7 @@ class ProductionOrderController extends Controller
                 'sales_order_line_id' => $salesLine?->getKey(),
                 'customer_invoice_line_id' => $invoiceLine?->getKey(),
                 'quantity' => $line['quantity'],
-                'description' => $line['description'] ?: ($sourceLine->description ?? $product->name),
+                'description' => filled($line['description'] ?? null) ? $line['description'] : ($sourceLine->description ?? $product->name),
                 'specifications' => $salesLine?->specifications,
                 'production_notes' => $line['production_notes'] ?? null,
                 'stage_public_ids' => $line['stage_public_ids'] ?? [],
@@ -569,6 +622,7 @@ class ProductionOrderController extends Controller
             ->whereHas('product', fn ($query) => $query
                 ->where('company_id', $companyId)
                 ->where('item_classification', Product::ClassificationFinishedProduct)
+                ->whereNull('products.deleted_at')
                 ->where('status', 'active'))
             ->orderBy('line_number')
             ->get()
@@ -605,7 +659,12 @@ class ProductionOrderController extends Controller
             ? $salesCycle->backorders($companyId, (int) $invoice->order->branch_id, ['order_id' => $invoice->order->getKey()])->keyBy(fn (array $row): int => (int) $row['line']->getKey())
             : collect();
 
-        return $invoice->lines()->with(['product', 'orderLine'])->where('is_service', false)->get()
+        return $invoice->lines()->with(['product', 'orderLine'])->where('is_service', false)
+            ->whereHas('product', fn ($product) => $product
+                ->whereNull('products.deleted_at')
+                ->where('products.status', 'active')
+                ->where('products.item_classification', Product::ClassificationFinishedProduct))
+            ->get()
             ->map(function (CustomerInvoiceLine $line) use ($salesRows, $numbers): ?array {
                 $alreadyPlanned = (string) ProductionOrderLine::query()
                     ->where('customer_invoice_line_id', $line->getKey())

@@ -34,6 +34,6 @@ return [
         $screen('sales-invoices', 'Sales Invoices', 'فواتير المبيعات', 'billing', 'document', ['shell_enabled' => false, 'classification' => 'CANONICAL', 'permission_prefix' => 'customer_invoices', 'actions' => ['view', 'create', 'edit', 'delete', 'post', 'cancel', 'reopen', 'print', 'view_prices']]),
         $screen('sales-returns', 'Sales Returns', 'مرتجعات المبيعات', 'billing', 'document', ['shell_enabled' => false, 'classification' => 'CANONICAL', 'permission_prefix' => 'sales_returns', 'actions' => ['view', 'create', 'authorize', 'receive', 'inspect', 'close', 'cancel', 'print']]),
         $screen('customer-receipts', 'Customer Receipts', 'متحصلات العملاء', 'billing', 'document', ['shell_enabled' => false, 'classification' => 'CANONICAL', 'permission_prefix' => 'customer_receipts', 'actions' => ['view', 'create', 'cancel', 'reopen', 'print', 'allocate']]),
-        $screen('delivery-notes', 'Issue Orders', 'أوامر الصرف', 'delivery', 'document', ['shell_enabled' => false, 'classification' => 'CANONICAL', 'permission_prefix' => 'sales_deliveries', 'actions' => ['view', 'create', 'print']]),
+        $screen('delivery-notes', 'Issue Orders', 'أوامر الصرف', 'delivery', 'document', ['shell_enabled' => false, 'classification' => 'CANONICAL', 'permission_prefix' => 'sales_deliveries', 'actions' => ['view', 'create', 'print', 'receive']]),
     ],
 ];

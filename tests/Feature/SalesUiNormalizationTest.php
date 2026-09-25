@@ -258,6 +258,7 @@ test('sales navigation is one ordered journey with canonical statement and colle
         'sales_report_fulfillment',
         'sales_report_pricing',
         'sales_report_operational',
+        'sales_report_cost_of_sales',
     ]);
     $accounting = collect($menu)->firstWhere('label', 'accounting_costing');
     $financialAnalysisLabels = collect($accounting['children'])->firstWhere('label', 'financial_analysis_reports')['children'] ?? [];
@@ -482,11 +483,10 @@ test('delivery creation starts from a posted deliverable invoice and uses delive
         ->assertSee('data-electronic-invoice-summary', false)
         ->assertSee('card-header py-2', false)
         ->assertDontSee(__('Queue Electronic Invoice Submission'))
-        ->assertSee(route('admin.sales.sales-invoices.deliveries.store', $invoice), false);
-    preg_match('/<form id="sales-invoice-delivery".*?<\/form>/s', $invoiceResponse->getContent(), $deliveryForm);
+        ->assertSee(route('admin.sales.issue-orders.show', $invoice->issueOrder), false);
     $goodsInvoiceLine = $invoice->lines()->where('is_service', false)->sole();
-    $serviceInvoiceLine = $invoice->lines()->where('is_service', true)->sole();
-    expect($deliveryForm[0] ?? '')->toContain($goodsInvoiceLine->public_id)->not->toContain($serviceInvoiceLine->public_id);
+    expect($invoiceResponse->getContent())->not->toContain('name="lines[0][quantity]"');
+    expect($invoice->issueOrder)->not->toBeNull();
     $delivery = app(SalesFulfillmentService::class)->deliverInvoice($invoice, [[
         'customer_invoice_line_id' => $goodsInvoiceLine->getKey(),
         'quantity' => '1',

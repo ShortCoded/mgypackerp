@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Models\Company;
@@ -133,6 +134,16 @@ class CustomerInvoice extends Model
     public function deliveries(): BelongsToMany
     {
         return $this->belongsToMany(InventoryDocument::class, 'customer_invoice_deliveries')->withTimestamps();
+    }
+
+    public function issueOrder(): HasOne
+    {
+        return $this->hasOne(SalesIssueOrder::class, 'customer_invoice_id');
+    }
+
+    public function deliveryReceipts(): HasMany
+    {
+        return $this->hasMany(SalesDeliveryReceipt::class, 'customer_invoice_id');
     }
 
     public function originalInvoice(): BelongsTo

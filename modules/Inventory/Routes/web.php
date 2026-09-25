@@ -6,6 +6,7 @@ use Modules\Inventory\Http\Controllers\InventoryDocumentController;
 use Modules\Inventory\Http\Controllers\InventoryReportController;
 use Modules\Inventory\Http\Controllers\OpeningStockController;
 use Modules\Inventory\Http\Controllers\OpeningStockPricingController;
+use Modules\Inventory\Http\Controllers\SalesIssueController;
 use Modules\Inventory\Http\Controllers\StockCountController;
 use Modules\Inventory\Http\Controllers\UnpricedInventoryReceiptController;
 
@@ -17,8 +18,13 @@ Route::middleware('auth')
             Route::get('/', 'index')->middleware('can:inventory.documents.view')->name('index');
             Route::get('/data', 'data')->middleware('can:inventory.documents.view')->name('data');
             Route::get('/select2/stores', 'stores')->middleware('can:inventory.documents.view')->name('select2.stores');
+            Route::get('/select2/sales-issue-stores', 'stores')->middleware(['can:inventory.documents.create', 'can:inventory.documents.issue'])->name('select2.sales-issue-stores');
             Route::get('/select2/products', 'products')->middleware('can:inventory.documents.view')->name('select2.products');
             Route::get('/select2/production-run-batches', 'productionRunBatches')->middleware('can:inventory.documents.create')->name('select2.production-run-batches');
+            Route::get('/select2/sales-issue-orders', [SalesIssueController::class, 'orders'])->middleware(['can:inventory.documents.create', 'can:inventory.documents.issue'])->name('select2.sales-issue-orders');
+            Route::get('/sales-issue-orders/{salesIssueOrder}/details', [SalesIssueController::class, 'details'])->middleware(['can:inventory.documents.create', 'can:inventory.documents.issue'])->name('sales-issue-orders.details');
+            Route::get('/sales-issue/create', [SalesIssueController::class, 'create'])->middleware(['can:inventory.documents.create', 'can:inventory.documents.issue'])->name('sales-issue.create');
+            Route::post('/sales-issue', [SalesIssueController::class, 'store'])->middleware(['can:inventory.documents.create', 'can:inventory.documents.issue', IdempotentDocumentSubmission::class])->name('sales-issue.store');
             Route::get('/production-run-batches/{publicId}/details', 'productionRunBatchDetails')->middleware('can:inventory.documents.create')->name('production-batches.details');
             Route::get('/create', 'create')->middleware('can:inventory.documents.create')->name('create');
             Route::post('/', 'store')->middleware(['can:inventory.documents.create', IdempotentDocumentSubmission::class])->name('store');

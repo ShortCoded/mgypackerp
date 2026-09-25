@@ -9,18 +9,21 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
 use Modules\Core\Services\OperatingContextService;
-use Modules\FixedAssets\Models\FixedAsset;
 use Modules\Maintenance\Http\Requests\StoreMaintenanceMeterReadingRequest;
 use Modules\Maintenance\Http\Requests\StoreMaintenancePlanRequest;
 use Modules\Maintenance\Models\MaintenancePlan;
 use Modules\Maintenance\Models\MaintenancePlanDue;
+use Modules\Maintenance\Services\MaintenanceAssetEligibilityService;
 use Modules\Maintenance\Services\MaintenancePlanService;
 use Modules\Production\Models\ProductionMold;
 use Modules\Purchases\Models\Supplier;
 
 class MaintenancePlanController extends Controller
 {
-    public function __construct(private readonly OperatingContextService $context) {}
+    public function __construct(
+        private readonly OperatingContextService $context,
+        private readonly MaintenanceAssetEligibilityService $eligibleAssets,
+    ) {}
 
     public function index(Request $request): View
     {
@@ -39,10 +42,8 @@ class MaintenancePlanController extends Controller
         return view('modules.maintenance.plans.index', [
             'plans' => $plans,
             'dues' => $dues,
-            'assets' => FixedAsset::query()
-                ->where('company_id', $context['company_id'])
-                ->where('branch_id', $context['branch_id'])
-                ->whereNotIn('status', [FixedAsset::StatusDisposed, FixedAsset::StatusSold, FixedAsset::StatusWrittenOff])
+            'assets' => $this->eligibleAssets
+                ->queryForContext($context['company_id'], $context['branch_id'])
                 ->orderBy('asset_name')
                 ->get(),
             'molds' => ProductionMold::query()

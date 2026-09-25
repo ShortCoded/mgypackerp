@@ -180,11 +180,12 @@ class ProductionCycleService
         $source = $this->lockProductionSource($order);
 
         foreach (array_values($lines) as $index => $input) {
-            $product = Product::query()->lockForUpdate()->findOrFail($input['product_id']);
+            $product = Product::withTrashed()->lockForUpdate()->find($input['product_id']);
 
-            if ((int) $product->company_id !== (int) $order->company_id
+            if (! $product || $product->trashed() || $product->status !== 'active'
+                || (int) $product->company_id !== (int) $order->company_id
                 || $product->item_classification !== Product::ClassificationFinishedProduct) {
-                throw new DomainException(__('production_execution.messages.production_line_product_invalid'));
+                throw new DomainException(__('production_execution.messages.source_product_unavailable'));
             }
 
             $snapshot = $this->units->snapshot($product, $input['unit_id'] ?? null, $input['quantity']);
@@ -340,7 +341,7 @@ class ProductionCycleService
         if ($salesLine !== null) {
             $salesOrder = SalesOrder::query()->lockForUpdate()->findOrFail($salesLine->sales_order_id);
 
-            if (! $salesOrder->isApprovedForFulfillment() || $salesOrder->branch_store_id === null) {
+            if (! $salesOrder->isApprovedForFulfillment()) {
                 throw new DomainException(__('production_execution.messages.production_source_invalid'));
             }
 
@@ -1632,7 +1633,8 @@ class ProductionCycleService
             $salesLine = $locked->orderLine->sales_order_line_id
                 ? SalesOrderLine::query()->with('order')->lockForUpdate()->findOrFail($locked->orderLine->sales_order_line_id)
                 : null;
-            if ($salesLine && (! $salesLine->order->isApprovedForFulfillment() || (int) $salesLine->order->branch_store_id !== $branchStoreId)) {
+            if ($salesLine && (! $salesLine->order->isApprovedForFulfillment()
+                || ($salesLine->order->branch_store_id !== null && (int) $salesLine->order->branch_store_id !== $branchStoreId))) {
                 throw new DomainException(__('Receive sales production into the source order warehouse while the order is open.'));
             }
             BranchStore::query()->lockForUpdate()->findOrFail($branchStoreId);

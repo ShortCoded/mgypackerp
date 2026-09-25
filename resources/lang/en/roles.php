@@ -1,6 +1,7 @@
 <?php
 
 return [
+    'other_permissions' => 'Additional Permissions',
     'bulk_action' => 'Bulk action',
     'defaults' => [
         'clone_name' => 'Copy of :name',

@@ -38,6 +38,7 @@ use Modules\Maintenance\Models\MaintenanceMaterialRequest;
 use Modules\Maintenance\Models\MaintenancePlanDue;
 use Modules\Maintenance\Models\MaintenanceRequest;
 use Modules\Maintenance\Models\MaintenanceWorkOrder;
+use Modules\Maintenance\Services\MaintenanceAssetEligibilityService;
 use Modules\Maintenance\Services\MaintenanceMaterialRequestService;
 use Modules\Maintenance\Services\MaintenanceWorkflowService;
 use Modules\Production\Models\ProductionExpenseRequest;
@@ -52,6 +53,7 @@ class MaintenanceController extends Controller
         private readonly OperatingContextService $context,
         private readonly CompanyPrintIdentityService $printIdentity,
         private readonly ReportPdfService $pdf,
+        private readonly MaintenanceAssetEligibilityService $eligibleAssets,
     ) {}
 
     public function requests(Request $request, MaintenanceDataTable $dataTable): View|JsonResponse
@@ -492,10 +494,7 @@ class MaintenanceController extends Controller
         return match ($lookup) {
             'maintainables' => $this->maintainablesLookup($request, $search, $select2, $context, $terms),
             'assets' => response()->json($select2->paginated(
-                tap(FixedAsset::query()
-                    ->where('company_id', $context['company_id'])
-                    ->where('branch_id', $context['branch_id'])
-                    ->whereNotIn('status', [FixedAsset::StatusDisposed, FixedAsset::StatusSold, FixedAsset::StatusWrittenOff])
+                tap($this->eligibleAssets->queryForContext((int) $context['company_id'], (int) $context['branch_id'])
                     ->orderBy('asset_name'), fn ($query) => $search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'asset_name', 'serial_number']])),
                 $request,
                 fn (FixedAsset $asset): array => ['id' => (string) $asset->getKey(), 'text' => trim($asset->doc_num.' — '.$asset->asset_name)],
@@ -731,10 +730,7 @@ class MaintenanceController extends Controller
         $perPage = $select2->perPage();
         $page = max(1, $request->integer('page', 1));
         $limit = min(200, ($page * $perPage) + 1);
-        $assets = tap(FixedAsset::query()
-            ->where('company_id', $context['company_id'])
-            ->where('branch_id', $context['branch_id'])
-            ->whereNotIn('status', [FixedAsset::StatusDisposed, FixedAsset::StatusSold, FixedAsset::StatusWrittenOff])
+        $assets = tap($this->eligibleAssets->queryForContext((int) $context['company_id'], (int) $context['branch_id'])
             ->orderBy('asset_name'), fn ($query) => $search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'asset_name', 'serial_number']]))
             ->limit($limit)->get()
             ->map(fn (FixedAsset $asset): array => ['id' => 'asset:'.$asset->getKey(), 'text' => __('maintenance.maintainable_types.asset').' — '.trim($asset->doc_num.' — '.$asset->asset_name)]);
@@ -839,10 +835,14 @@ class MaintenanceController extends Controller
     {
         $context = $this->context->snapshot($request);
 
-        return FixedAsset::query()
-            ->when($context['company_id'] && $context['branch_id'], fn ($query) => $query->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id']), fn ($query) => $query->whereRaw('1 = 0'))
-            ->whereNotIn('status', [FixedAsset::StatusDisposed, FixedAsset::StatusSold, FixedAsset::StatusWrittenOff])
-            ->orderBy('asset_name')->get();
+        if (! $context['company_id'] || ! $context['branch_id']) {
+            return new Collection;
+        }
+
+        return $this->eligibleAssets
+            ->queryForContext((int) $context['company_id'], (int) $context['branch_id'])
+            ->orderBy('asset_name')
+            ->get();
     }
 
     /** @return Collection<int, ProductionMold> */

@@ -96,6 +96,17 @@
         </div>
     </div>
 
+    @if($kind === 'sales_delivery' && $record->salesIssueOrder)
+        <div class="card mb-3"><div class="card-body py-3 d-flex flex-wrap align-items-center gap-2">
+            @can('sales_deliveries.view')<a href="{{ route('admin.sales.issue-orders.show', $record->salesIssueOrder) }}">{{ __('sales_issue.issue_order') }} {{ $record->salesIssueOrder->doc_num }}</a>@endcan
+            @if($record->customerDeliveryReceipt)
+                @can('sales_deliveries.view')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.sales.delivery-receipts.show', $record->customerDeliveryReceipt) }}">{{ __('sales_issue.customer_receipt') }}</a>@endcan
+            @elseif($record->status === \Modules\Inventory\Models\InventoryDocument::StatusPosted)
+                @can('sales_deliveries.receive')<a class="btn btn-primary btn-sm" href="{{ route('admin.sales.delivery-receipts.create', $record) }}">{{ __('sales_issue.record_receipt') }}</a>@endcan
+            @endif
+        </div></div>
+    @endif
+
     @include('modules.sales.cycle.partials.workflow-actions')
 
     @if($kind === 'customer_receipt')
