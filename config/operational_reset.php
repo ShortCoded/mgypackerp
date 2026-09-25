@@ -357,4 +357,20 @@ return [
         'unpriced_inventory_receipts' => ['column' => 'goods_receipt_inspection_id', 'constraint' => 'uir_source_inspection_fk'],
     ],
 
+    /*
+     * These are the only active coding links that may be reconciled when their
+     * parent coding is soft-deleted. Required dependent rows are removed;
+     * nullable references are cleared without changing the rest of the card.
+     * Unlisted links stop the reset for review.
+     */
+    'deleted_master_links' => [
+        'cost_center_accounts_cost_center_id_foreign' => ['child' => 'cost_center_accounts', 'parent' => 'cost_centers', 'column' => 'cost_center_id', 'action' => 'delete_child'],
+        'fixed_asset_category_mappings_asset_group_account_id_foreign' => ['child' => 'fixed_asset_category_mappings', 'parent' => 'accounts', 'column' => 'asset_group_account_id', 'action' => 'delete_child'],
+        'fixed_assets_cost_center_id_foreign' => ['child' => 'fixed_assets', 'parent' => 'cost_centers', 'column' => 'cost_center_id', 'action' => 'null_reference'],
+        'hr_employees_section_id_foreign' => ['child' => 'hr_employees', 'parent' => 'hr_sections', 'column' => 'section_id', 'action' => 'null_reference'],
+        'product_components_product_id_foreign' => ['child' => 'product_components', 'parent' => 'products', 'column' => 'product_id', 'action' => 'delete_child'],
+        'product_components_component_product_id_foreign' => ['child' => 'product_components', 'parent' => 'products', 'column' => 'component_product_id', 'action' => 'delete_child'],
+        'role_has_permissions_role_id_foreign' => ['child' => 'role_has_permissions', 'parent' => 'roles', 'column' => 'role_id', 'action' => 'delete_child'],
+    ],
+
 ];

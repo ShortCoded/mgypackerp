@@ -13,7 +13,7 @@ use Throwable;
 
 class OperationalDataResetService
 {
-    private const POLICY_VERSION = '2026-09-25.2';
+    private const POLICY_VERSION = '2026-09-25.3';
 
     private const OPERATIONAL_MODULES = [
         'accounting', 'finance', 'inventory', 'sales', 'purchases',
@@ -33,6 +33,7 @@ class OperationalDataResetService
         }
         $keys = $this->foreignKeys();
         $this->assertCycleBreaks($columns, $keys);
+        $this->assertDeletedMasterLinkRules($columns, $keys);
         $this->deleteOrder($this->wiped(), $keys, true);
         $this->deleteOrder($this->softTables($columns), $keys);
         $metrics = $this->metrics($columns);
@@ -44,7 +45,7 @@ class OperationalDataResetService
         $softDeletedTables = $this->softDeletedTables($columns, $metrics);
         $selective = $this->selectiveCounts($types, $softMorphs, $softDeletedTables);
         $selectiveRetained = $this->selectiveRetainedFingerprints($types, $softMorphs, $softDeletedTables);
-        $blockedReferences = $this->activeReferencesToDeletedMasters($columns, $keys, $metrics);
+        $deletedMasterLinks = $this->deletedMasterLinkPlan($columns, $keys, $metrics);
         $unclassified = DB::table('user_notifications')
             ->whereNull(DB::raw("metadata->>'subject_type'"))
             ->whereIn('module', self::OPERATIONAL_MODULES)->count();
@@ -58,6 +59,7 @@ class OperationalDataResetService
             'delete_tables' => $this->wiped(),
             'preserve_tables' => $this->preserved(),
             'cycle_breaks' => config('operational_reset.cycle_breaks'),
+            'deleted_master_links' => config('operational_reset.deleted_master_links'),
             'selective_rules' => 'transaction-morph-and-soft-purged-master-v2',
             'source_sha256' => [
                 'service' => hash_file('sha256', __FILE__),
@@ -82,7 +84,8 @@ class OperationalDataResetService
             'soft_deleted_tables' => $softDeletedTables,
             'selective_counts' => $selective,
             'selective_retained_fingerprints' => $selectiveRetained,
-            'blocked_master_references' => $blockedReferences,
+            'planned_deleted_master_links' => $deletedMasterLinks['cleanup'],
+            'blocked_master_references' => $deletedMasterLinks['blocked'],
             'unclassified_notifications' => $unclassified,
         ];
 
@@ -102,7 +105,8 @@ class OperationalDataResetService
                 array_map(fn (string $table): int => $metrics[$table]['soft'], $this->softTables($columns)),
             )),
             'selective_rows' => $selective,
-            'blocked_master_references' => $blockedReferences,
+            'planned_deleted_master_links' => $deletedMasterLinks['cleanup'],
+            'blocked_master_references' => $deletedMasterLinks['blocked'],
             'unclassified_operational_notifications' => $unclassified,
             'metrics' => $metrics,
             'fingerprints' => $fingerprints,
@@ -159,11 +163,25 @@ class OperationalDataResetService
             $types = $this->transactionMorphTypes();
             $softMorphs = $this->softPurgedMorphTypes($columns, $review['metrics']);
             $softDeletedTables = $this->softDeletedTables($columns, $review['metrics']);
+            $expectedCleanedFingerprints = $this->expectedCleanedMasterFingerprints(
+                $columns,
+                $keys,
+                $review['planned_deleted_master_links'],
+            );
+            $cleanedLinks = $this->cleanDeletedMasterLinks($columns, $keys, $review['planned_deleted_master_links']);
+            $this->assertDeletedMasterCleanup(
+                $columns,
+                $keys,
+                $review,
+                $expectedCleanedFingerprints,
+            );
+            $postCleanupMetrics = $this->metrics($columns);
             $activeBefore = array_combine(
                 $this->preserved(),
-                array_map(fn (string $table): int => $review['metrics'][$table]['active'], $this->preserved()),
+                array_map(fn (string $table): int => $postCleanupMetrics[$table]['active'], $this->preserved()),
             );
-            $fingerprintsBefore = $review['fingerprints'];
+            $fingerprintsBefore = $this->fingerprints($columns);
+            $selectiveRetainedFingerprints = $this->selectiveRetainedFingerprints($types, $softMorphs, $softDeletedTables);
             $expectedDrops = $this->activeSelectiveCounts($types, $softMorphs, $softDeletedTables);
 
             foreach (config('operational_reset.cycle_breaks') as $table => $break) {
@@ -195,7 +213,7 @@ class OperationalDataResetService
                 }
 
                 $actual = $this->tableFingerprint($table, isset($columns[$table]['deleted_at']));
-                $expectedFingerprint = $review['selective_retained_fingerprints'][$table]
+                $expectedFingerprint = $selectiveRetainedFingerprints[$table]
                     ?? $fingerprintsBefore[$table]['active'];
                 if (! hash_equals($expectedFingerprint, $actual)) {
                     throw new RuntimeException("Protected {$table} content changed unexpectedly.");
@@ -209,6 +227,7 @@ class OperationalDataResetService
                 'deleted_operational_rows' => array_sum($review['delete_rows']),
                 'purged_soft_deleted_master_rows' => array_sum($review['purge_soft_deleted']),
                 'deleted_selective_rows' => $review['selective_rows'],
+                'cleaned_deleted_master_links' => $cleanedLinks,
                 'committed' => $commit,
             ];
 
@@ -611,59 +630,224 @@ class OperationalDataResetService
         return (string) $result->fingerprint;
     }
 
-    private function activeReferencesToDeletedMasters(array $columns, array $keys, array $metrics): array
+    private function assertDeletedMasterLinkRules(array $columns, array $keys): void
     {
+        $foreignKeys = array_column($keys, null, 'name');
+        $actionsByChild = [];
+
+        foreach (config('operational_reset.deleted_master_links', []) as $name => $rule) {
+            $key = $foreignKeys[$name] ?? null;
+            if ($key === null || $key['child'] !== $rule['child'] || $key['parent'] !== $rule['parent']
+                || ! in_array($rule['child'], $this->preserved(), true)
+                || ! in_array($rule['parent'], $this->preserved(), true)
+                || ! isset($columns[$rule['parent']]['deleted_at'])
+                || ! in_array($rule['action'], ['delete_child', 'null_reference'], true)) {
+                throw new RuntimeException("Deleted-master cleanup rule {$name} no longer matches the schema.");
+            }
+
+            [$childColumn] = $this->foreignKeyColumns($key);
+            if ($childColumn !== $rule['column']
+                || ($rule['action'] === 'null_reference' && ($columns[$rule['child']][$childColumn] ?? false) !== true)) {
+                throw new RuntimeException("Deleted-master cleanup rule {$name} has an unsafe column or action.");
+            }
+
+            $actionsByChild[$rule['child']][$rule['action']] = true;
+        }
+
+        foreach ($actionsByChild as $child => $actions) {
+            if (count($actions) > 1) {
+                throw new RuntimeException("Mixed deleted-master cleanup actions on {$child} need a separate review.");
+            }
+        }
+    }
+
+    private function deletedMasterLinkPlan(array $columns, array $keys, array $metrics): array
+    {
+        $cleanup = [];
         $blocked = [];
         $preserved = array_fill_keys($this->preserved(), true);
         $wiped = array_fill_keys($this->wiped(), true);
+        $rules = config('operational_reset.deleted_master_links', []);
+        $previousDeletes = [];
 
         foreach ($keys as $key) {
             $child = $key['child'];
             $parent = $key['parent'];
-
             if (! isset($preserved[$child]) || (! isset($preserved[$parent]) && ! isset($wiped[$parent]))) {
                 continue;
             }
-
             if (isset($preserved[$parent]) && (! isset($columns[$parent]['deleted_at']) || $metrics[$parent]['soft'] === 0)) {
                 continue;
             }
 
-            if (! preg_match('/FOREIGN KEY \\(([^)]+)\\) REFERENCES [^(]+\\(([^)]+)\\)/', $key['definition'], $matches)
-                || str_contains($matches[1], ',') || str_contains($matches[2], ',')) {
-                throw new RuntimeException("Cannot inspect foreign key {$key['name']}; reset refused.");
+            [$childColumn, $parentColumn] = $this->foreignKeyColumns($key);
+            $query = $this->deletedMasterChildren($key, $columns, isset($preserved[$parent]));
+            foreach ($previousDeletes[$child] ?? [] as $deletedRows) {
+                if (! isset($columns[$child]['id'])) {
+                    throw new RuntimeException("Overlapping cleanup on {$child} requires a primary identifier.");
+                }
+                $query->whereNotIn('id', (clone $deletedRows)->select('id'));
+            }
+            $count = $query->count();
+            if ($count === 0) {
+                continue;
             }
 
-            $childColumn = trim($matches[1], ' "');
-            $parentColumn = trim($matches[2], ' "');
+            $details = [
+                'reference' => "{$child}.{$childColumn} -> {$parent}.{$parentColumn}",
+                'active_rows' => $count,
+                'deleted_parent_ids' => isset($columns[$parent]['id'])
+                    ? DB::table($parent)->whereIn($parentColumn, (clone $query)->select($childColumn))
+                        ->orderBy('id')->limit(20)->pluck('id')->map(fn (mixed $id): string => (string) $id)->all() : [],
+                'sample_active_child_ids' => isset($columns[$child]['id'])
+                    ? (clone $query)->orderBy('id')->limit(20)->pluck('id')->map(fn (mixed $id): string => (string) $id)->all() : [],
+            ];
 
-            if (! preg_match('/\\A[a-z_][a-z0-9_]*\\z/', $childColumn)
-                || ! preg_match('/\\A[a-z_][a-z0-9_]*\\z/', $parentColumn)) {
-                throw new RuntimeException("Unexpected identifier in foreign key {$key['name']}; reset refused.");
-            }
-
-            $childScope = isset($columns[$child]['deleted_at']) ? ' AND child."deleted_at" IS NULL' : '';
-            $parentScope = isset($preserved[$parent]) ? ' AND parent."deleted_at" IS NOT NULL' : '';
-            $from = ' FROM "'.$child.'" AS child
-                JOIN "'.$parent.'" AS parent ON child."'.$childColumn.'" = parent."'.$parentColumn.'"
-                WHERE 1 = 1'.$childScope.$parentScope;
-            $count = (int) DB::selectOne('SELECT COUNT(*) AS total'.$from)->total;
-
-            if ($count > 0) {
-                $blocked[$key['name']] = [
-                    'reference' => "{$child}.{$childColumn} -> {$parent}.{$parentColumn}",
-                    'active_rows' => $count,
-                    'deleted_parent_ids' => isset($columns[$parent]['id'])
-                        ? array_map(fn (object $row): string => (string) $row->id,
-                            DB::select('SELECT DISTINCT parent."id" AS id'.$from.' ORDER BY id LIMIT 20')) : [],
-                    'sample_active_child_ids' => isset($columns[$child]['id'])
-                        ? array_map(fn (object $row): string => (string) $row->id,
-                            DB::select('SELECT child."id" AS id'.$from.' ORDER BY id LIMIT 20')) : [],
-                ];
+            if (isset($rules[$key['name']])) {
+                $cleanup[$key['name']] = ['action' => $rules[$key['name']]['action'], ...$details];
+                if ($rules[$key['name']]['action'] === 'delete_child') {
+                    $previousDeletes[$child][] = clone $query;
+                }
+            } else {
+                $blocked[$key['name']] = $details;
             }
         }
 
-        return $blocked;
+        return ['cleanup' => $cleanup, 'blocked' => $blocked];
+    }
+
+    private function deletedMasterChildren(array $key, array $columns, bool $softDeletedParent): Builder
+    {
+        [$childColumn, $parentColumn] = $this->foreignKeyColumns($key);
+        $parent = DB::table($key['parent'])->select($parentColumn);
+        if ($softDeletedParent) {
+            $parent->whereNotNull('deleted_at');
+        }
+
+        $query = DB::table($key['child'])->whereIn($childColumn, $parent);
+        if (isset($columns[$key['child']]['deleted_at'])) {
+            $query->whereNull('deleted_at');
+        }
+
+        return $query;
+    }
+
+    private function foreignKeyColumns(array $key): array
+    {
+        if (! preg_match('/FOREIGN KEY \\(([^)]+)\\) REFERENCES [^(]+\\(([^)]+)\\)/', $key['definition'], $matches)
+            || str_contains($matches[1], ',') || str_contains($matches[2], ',')) {
+            throw new RuntimeException("Cannot inspect foreign key {$key['name']}; reset refused.");
+        }
+
+        $childColumn = trim($matches[1], ' "');
+        $parentColumn = trim($matches[2], ' "');
+        if (! preg_match('/\\A[a-z_][a-z0-9_]*\\z/', $childColumn)
+            || ! preg_match('/\\A[a-z_][a-z0-9_]*\\z/', $parentColumn)) {
+            throw new RuntimeException("Unexpected identifier in foreign key {$key['name']}; reset refused.");
+        }
+
+        return [$childColumn, $parentColumn];
+    }
+
+    private function expectedCleanedMasterFingerprints(array $columns, array $keys, array $plan): array
+    {
+        $foreignKeys = array_column($keys, null, 'name');
+        $grouped = [];
+        foreach ($plan as $name => $details) {
+            $grouped[$foreignKeys[$name]['child']][$details['action']][] = $foreignKeys[$name];
+        }
+
+        $fingerprints = [];
+        foreach ($grouped as $table => $actions) {
+            $query = DB::table($table);
+            if (isset($columns[$table]['deleted_at'])) {
+                $query->whereNull('deleted_at');
+            }
+
+            if (isset($actions['delete_child'])) {
+                foreach ($actions['delete_child'] as $key) {
+                    [$childColumn, $parentColumn] = $this->foreignKeyColumns($key);
+                    $query->whereNotIn($childColumn, DB::table($key['parent'])
+                        ->whereNotNull('deleted_at')->select($parentColumn));
+                }
+            } else {
+                $clearedColumns = array_map(fn (array $key): string => $this->foreignKeyColumns($key)[0], $actions['null_reference']);
+                $query->select(array_values(array_diff(array_keys($columns[$table]), $clearedColumns)));
+            }
+
+            $fingerprints[$table] = $this->queryFingerprint($query);
+        }
+
+        return $fingerprints;
+    }
+
+    private function cleanDeletedMasterLinks(array $columns, array $keys, array $plan): array
+    {
+        $foreignKeys = array_column($keys, null, 'name');
+        $cleaned = [];
+
+        foreach ($plan as $name => $details) {
+            $key = $foreignKeys[$name];
+            $query = $this->deletedMasterChildren($key, $columns, true);
+            $affected = $details['action'] === 'delete_child'
+                ? $query->delete()
+                : $query->update([$this->foreignKeyColumns($key)[0] => null]);
+            if ($affected !== $details['active_rows']) {
+                throw new RuntimeException("Deleted-master cleanup {$name} changed {$affected} rows instead of {$details['active_rows']}.");
+            }
+
+            $cleaned[$name] = ['action' => $details['action'], 'rows' => $affected];
+        }
+
+        return $cleaned;
+    }
+
+    private function assertDeletedMasterCleanup(array $columns, array $keys, array $review, array $expectedFingerprints): void
+    {
+        $remaining = $this->deletedMasterLinkPlan($columns, $keys, $review['metrics']);
+        if ($remaining['cleanup'] !== [] || $remaining['blocked'] !== []) {
+            throw new RuntimeException('Deleted-master links remain after cleanup.');
+        }
+
+        $deleteCounts = [];
+        $actionsByTable = [];
+        $foreignKeys = array_column($keys, null, 'name');
+        foreach ($review['planned_deleted_master_links'] as $name => $details) {
+            $table = $foreignKeys[$name]['child'];
+            $actionsByTable[$table] = $details['action'];
+            if ($details['action'] === 'delete_child') {
+                $deleteCounts[$table] = ($deleteCounts[$table] ?? 0) + $details['active_rows'];
+            }
+        }
+
+        foreach ($this->preserved() as $table) {
+            $query = DB::table($table);
+            if (isset($columns[$table]['deleted_at'])) {
+                $query->whereNull('deleted_at');
+            }
+            $expectedCount = $review['metrics'][$table]['active'] - ($deleteCounts[$table] ?? 0);
+            if ($query->count() !== $expectedCount) {
+                throw new RuntimeException("Unexpected active coding count after cleaning {$table}.");
+            }
+
+            if (($actionsByTable[$table] ?? null) === 'null_reference') {
+                $clearedColumns = [];
+                foreach ($review['planned_deleted_master_links'] as $name => $details) {
+                    if ($foreignKeys[$name]['child'] === $table) {
+                        $clearedColumns[] = $this->foreignKeyColumns($foreignKeys[$name])[0];
+                    }
+                }
+                $query->select(array_values(array_diff(array_keys($columns[$table]), $clearedColumns)));
+                $actual = $this->queryFingerprint($query);
+            } else {
+                $actual = $this->tableFingerprint($table, isset($columns[$table]['deleted_at']));
+            }
+
+            $expected = $expectedFingerprints[$table] ?? $review['fingerprints'][$table]['active'];
+            if (! hash_equals($expected, $actual)) {
+                throw new RuntimeException("Unexpected active coding content after cleaning {$table}.");
+            }
+        }
     }
 
     private function columns(): array

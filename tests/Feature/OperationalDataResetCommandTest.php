@@ -37,6 +37,25 @@ test('operational reset manifest keeps all core coding and communication tables'
         );
 });
 
+test('soft-deleted coding cleanup is limited to reviewed dependent links', function (): void {
+    $rules = config('operational_reset.deleted_master_links');
+
+    expect(array_keys($rules))->toBe([
+        'cost_center_accounts_cost_center_id_foreign',
+        'fixed_asset_category_mappings_asset_group_account_id_foreign',
+        'fixed_assets_cost_center_id_foreign',
+        'hr_employees_section_id_foreign',
+        'product_components_product_id_foreign',
+        'product_components_component_product_id_foreign',
+        'role_has_permissions_role_id_foreign',
+    ]);
+    expect($rules['fixed_assets_cost_center_id_foreign']['action'])->toBe('null_reference')
+        ->and($rules['fixed_assets_cost_center_id_foreign']['column'])->toBe('cost_center_id')
+        ->and($rules['hr_employees_section_id_foreign']['action'])->toBe('null_reference')
+        ->and($rules['product_components_product_id_foreign']['action'])->toBe('delete_child')
+        ->and($rules['product_components_component_product_id_foreign']['action'])->toBe('delete_child');
+});
+
 test('operational reset refuses apply outside maintenance mode', function (): void {
     $this->artisan('erp:reset-operational-data', ['--apply' => true])
         ->expectsOutputToContain('Put Laravel in maintenance mode')
