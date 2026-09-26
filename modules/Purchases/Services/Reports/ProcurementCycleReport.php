@@ -343,7 +343,7 @@ class ProcurementCycleReport
             if ($movementSources->has($stockDocument::class.':'.$stockDocument->getKey())) {
                 $nodes->push(['label' => __('Inventory movements'), 'doc_num' => $stockDocument->doc_num,
                     'url' => route('admin.inventory.reports.index', ['source_doc_num' => $stockDocument->doc_num]),
-                    'permission' => 'inventory.reports.operational', 'status' => $stockDocument->status,
+                    'permission' => 'inventory.reports.operations.view', 'status' => $stockDocument->status,
                     'date' => $stockDocument->document_date?->format('Y-m-d') ?? $stockDocument->return_date?->format('Y-m-d'), 'user' => null]);
             }
         }

@@ -62,6 +62,7 @@ class HrSelect2Controller extends Controller
             'hr.shift_assignments.view',
             'hr.shift_assignments.manage',
             'hr.employee_attendance.view',
+            'hr.attendance_report.view',
             'hr.employee_attendance.correct',
             'hr.employee_attendance.import',
         ] as $permission) {

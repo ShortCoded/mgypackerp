@@ -1,5 +1,6 @@
 <?php
 
+use Modules\Auth\Services\PermissionRegistryService;
 use Modules\HR\Models\HrEmployee;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\SalesRequest;
@@ -15,7 +16,7 @@ test('a customer request stops on unpriced items then preserves the resolved com
     $fixture = salesCycleFixture();
     $permissions = [
         'sales_requests.view', 'sales_requests.create', 'sales_requests.edit', 'sales_requests.approve', 'sales_requests.convert',
-        'quotations.create', 'sales_orders.create', 'reports.sales.sales_orders.view',
+        'quotations.create', 'sales_orders.create', 'reports.sales.pricing.view',
     ];
     foreach ($permissions as $permission) {
         Permission::findOrCreate($permission, 'web');
@@ -192,7 +193,11 @@ test('cash collection is balanced and exposes its responsible employee and sourc
 
 test('every sales report perspective renders against the same business data including pricing gaps', function (): void {
     $fixture = salesCycleFixture();
-    foreach (['reports.sales.sales_orders.view', 'reports.sales.sales_orders.print', 'reports.sales.sales_orders.export'] as $permission) {
+    foreach (app(PermissionRegistryService::class)->reportViewPermissions('reports.sales') as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $fixture['user']->givePermissionTo($permission);
+    }
+    foreach (['reports.sales.pricing.print', 'reports.sales.pricing.export'] as $permission) {
         Permission::findOrCreate($permission, 'web');
         $fixture['user']->givePermissionTo($permission);
     }

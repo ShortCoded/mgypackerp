@@ -270,7 +270,7 @@ test('customer overview sales ledger exports and cross period statements render 
     }
     $fixture = salesCycleFixture();
     $invoice = salesPostedServiceInvoice($fixture, '100', '0', '1');
-    foreach (['customers.view', 'customer_invoices.view', 'reports.sales.sales_orders.view', 'reports.sales.sales_orders.print', 'reports.sales.sales_orders.export', 'reports.customer_statement.view'] as $permission) {
+    foreach (['customers.view', 'customer_invoices.view', 'reports.sales.operational.view', 'reports.sales.operational.print', 'reports.sales.operational.export', 'reports.customer_statement.view'] as $permission) {
         Permission::findOrCreate($permission, 'web');
         $fixture['user']->givePermissionTo($permission);
     }

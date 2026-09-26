@@ -38,6 +38,54 @@ test('ERP permission sync creates discovered permissions and assigns them to adm
         ->toBe($registryPermissions);
 });
 
+test('ERP permission sync preserves old role and direct user report access with individual screen grants', function (): void {
+    Role::query()->create(['name' => 'admin', 'guard_name' => 'web']);
+    $operator = Role::query()->create(['name' => 'report operator', 'guard_name' => 'web']);
+    $unrelated = Role::query()->create(['name' => 'unrelated operator', 'guard_name' => 'web']);
+    $user = User::factory()->create();
+
+    foreach (['inventory.reports.operational', 'inventory.reports.export', 'reports.purchases.view', 'reports.purchases.export', 'reports.sales.sales_orders.view', 'reports.account_ledger.view', 'customers.view'] as $name) {
+        Permission::findOrCreate($name, 'web');
+    }
+
+    $operator->givePermissionTo(['inventory.reports.operational', 'inventory.reports.export', 'reports.purchases.view', 'reports.purchases.export', 'reports.account_ledger.view', 'customers.view']);
+    $user->givePermissionTo('reports.sales.sales_orders.view');
+
+    $this->artisan('erp:permissions:sync', ['--prune' => true])
+        ->expectsOutputToContain('Existing role and user grants expanded to individual screens:')
+        ->assertSuccessful();
+
+    $roleGrants = $operator->refresh()->permissions()->pluck('name')->all();
+    $directGrants = $user->refresh()->permissions()->pluck('name')->all();
+
+    expect($roleGrants)->toContain(
+        'inventory.reports.operations.view',
+        'inventory.reports.sales_valuation.view',
+        'inventory.reports.stock_balances.view',
+        'inventory.reports.valuation.export',
+        'reports.purchases.purchase_requests.view',
+        'reports.purchases.purchase_requests.export',
+        'reports.purchases.purchase_requests.print',
+        'reports.general_journal.view',
+        'reports.reconciliation_center.view',
+        'customer_terms.view',
+    )
+        ->not->toContain('inventory.reports.valuation.view')
+        ->and($directGrants)->toContain('reports.sales.financial.view', 'reports.sales.operational.view')
+        ->and($unrelated->refresh()->permissions()->count())->toBe(0)
+        ->and(Permission::query()->where('name', 'inventory.reports.operational')->exists())->toBeFalse();
+
+    $operator->revokePermissionTo('customer_terms.view');
+    $operator->revokePermissionTo('inventory.reports.operations.view');
+    $user->revokePermissionTo('reports.sales.financial.view');
+    $count = $operator->permissions()->count();
+    $this->artisan('erp:permissions:sync')->assertSuccessful();
+    expect($operator->refresh()->permissions()->count())->toBe($count)
+        ->and($operator->hasPermissionTo('customer_terms.view'))->toBeFalse()
+        ->and($operator->hasPermissionTo('inventory.reports.operations.view'))->toBeFalse()
+        ->and($user->refresh()->hasPermissionTo('reports.sales.financial.view'))->toBeFalse();
+});
+
 test('ERP permission sync prunes stale permissions and clears stale direct and role grants', function (): void {
     $adminRole = Role::query()->create(['name' => 'admin', 'guard_name' => 'web']);
     $user = User::factory()->create();
@@ -206,6 +254,7 @@ test('--skip-admin-sync creates permissions but does not assign them to admin', 
 test('stale permissions are not deleted unless --prune is passed', function (): void {
     $this->mock(PermissionRegistryService::class, function ($mock): void {
         $mock->shouldReceive('all')->andReturn(['dashboard.view', 'users.view']);
+        $mock->shouldReceive('legacyPermissionMap')->andReturn([]);
     });
 
     $adminRole = Role::query()->create(['name' => 'admin', 'guard_name' => 'web']);

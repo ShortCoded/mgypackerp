@@ -117,7 +117,7 @@ Route::middleware('auth')
                     'supplier-statement' => 'supplier_statement',
                 ] as $slug => $type) {
                     foreach (['excel', 'csv', 'pdf'] as $format) {
-                        $permissionType = $type === 'general_journal' ? 'account_ledger' : $type;
+                        $permissionType = $type;
                         Route::get("/{$slug}/export/{$format}", 'export')
                             ->defaults('ledger_report_type', $type)
                             ->defaults('ledger_export_format', $format)
@@ -126,7 +126,7 @@ Route::middleware('auth')
                     }
                 }
 
-                Route::get('/general-journal', 'generalJournal')->middleware('can:reports.account_ledger.view')->name('general-journal');
+                Route::get('/general-journal', 'generalJournal')->middleware('can:reports.general_journal.view')->name('general-journal');
                 Route::get('/account-ledger', 'accountLedger')->middleware('can:reports.account_ledger.view')->name('account-ledger');
                 Route::get('/customer-statement', 'customerStatement')->middleware('can:reports.customer_statement.view')->name('customer-statement');
                 Route::get('/supplier-statement', 'supplierStatement')->middleware('can:reports.supplier_statement.view')->name('supplier-statement');
@@ -146,12 +146,12 @@ Route::middleware('auth')
         foreach (['excel', 'csv', 'pdf'] as $format) {
             Route::get("/reports/reconciliation-center/export/{$format}", [ReconciliationCenterController::class, 'export'])
                 ->defaults('reconciliation_export_format', $format)
-                ->middleware('can:reports.account_ledger.export')
+                ->middleware('can:reports.reconciliation_center.export')
                 ->name("reports.reconciliation-center.export.{$format}");
         }
 
         Route::get('/reports/reconciliation-center', [ReconciliationCenterController::class, 'index'])
-            ->middleware('can:reports.account_ledger.view')
+            ->middleware('can:reports.reconciliation_center.view')
             ->name('reports.reconciliation-center');
 
         foreach (['excel', 'csv', 'pdf'] as $format) {

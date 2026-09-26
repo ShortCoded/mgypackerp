@@ -130,9 +130,9 @@ Route::middleware('auth')
             Route::get('/employees/export', [HrWorkforceReportController::class, 'exportEmployees'])
                 ->middleware('can:hr.employee_reports.export')->name('employees.export');
             Route::get('/attendance', [HrAttendanceController::class, 'index'])
-                ->middleware('can:hr.employee_attendance.view')->name('attendance');
+                ->middleware('can:hr.attendance_report.view')->name('attendance');
             Route::get('/attendance/export/csv', [HrAttendanceController::class, 'exportCsv'])
-                ->middleware('can:hr.employee_attendance.export')->name('attendance.export.csv');
+                ->middleware('can:hr.attendance_report.export')->name('attendance.export.csv');
             Route::get('/leave-requests', [HrWorkforceReportController::class, 'leaveRequests'])
                 ->middleware('can:hr.leave_reports.view')->name('leave-requests');
             Route::get('/leave-requests/export', [HrWorkforceReportController::class, 'exportLeaveRequests'])

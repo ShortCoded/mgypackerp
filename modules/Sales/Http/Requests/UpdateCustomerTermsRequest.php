@@ -8,7 +8,7 @@ class UpdateCustomerTermsRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return (bool) $this->user()?->can('customers.edit');
+        return (bool) $this->user()?->can('customer_terms.edit');
     }
 
     /** @return array<string, list<string>> */

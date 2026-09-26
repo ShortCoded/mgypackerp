@@ -7,6 +7,7 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Auth\Models\Role;
+use Modules\Auth\Services\LegacyPermissionGrantMigrationService;
 use Modules\Auth\Services\PermissionRegistryService;
 use Modules\Core\Services\MenuConfigFileOrder;
 use Spatie\Permission\Models\Permission;
@@ -58,6 +59,7 @@ HELP;
      */
     public function handle(
         PermissionRegistryService $permissionRegistry,
+        LegacyPermissionGrantMigrationService $legacyGrants,
         MenuConfigFileOrder $menuFiles,
         PermissionRegistrar $permissionRegistrar,
     ): int {
@@ -249,9 +251,11 @@ HELP;
 
         $deletedStaleCount = 0;
         $adminAssignedPermissionsCount = 0;
+        $expandedLegacyGrants = 0;
 
         DB::transaction(function () use (
             $permissionRegistrar,
+            $legacyGrants,
             $missingPermissionNames,
             $permissionNames,
             $guardName,
@@ -261,6 +265,7 @@ HELP;
             $skipAdminSync,
             &$deletedStaleCount,
             &$adminAssignedPermissionsCount,
+            &$expandedLegacyGrants,
         ): void {
             $permissionRegistrar->forgetCachedPermissions();
 
@@ -270,6 +275,8 @@ HELP;
                     'guard_name' => $guardName,
                 ]);
             }
+
+            $expandedLegacyGrants = $legacyGrants->migrate($permissionNames, $guardName);
 
             if ($prune && $stalePermissions->isNotEmpty()) {
                 $deletedStaleCount = $this->deleteStalePermissions($stalePermissions);
@@ -319,6 +326,8 @@ HELP;
         if ($skipAdminSync) {
             $this->line('Admin sync skipped (--skip-admin-sync).');
         }
+
+        $this->line('Existing role and user grants expanded to individual screens: '.$expandedLegacyGrants);
 
         if (! $adminRole instanceof Role) {
             $this->warn('Permissions were synced, but no admin role was found. Admin role permissions were not updated.');

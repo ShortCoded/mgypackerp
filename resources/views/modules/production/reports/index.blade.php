@@ -20,12 +20,12 @@
             <div class="card-header py-2">
                 <div class="row flex-between-center g-2">
                     <div class="col"><h5 class="mb-0">{{ __('production_execution.reports.sections.'.$section) }}</h5></div>
-                    @can('production.reports.export')
+                    @if(auth()->user()?->can("production.reports.{$section}.export") || auth()->user()?->can("production.reports.{$section}.print"))
                         <div class="col-auto d-flex flex-wrap gap-2">
-                            <a class="btn btn-falcon-success btn-sm" href="{{ route('admin.production.reports.export', $exportQuery) }}"><span class="fas fa-file-excel me-1"></span>{{ __('production_execution.actions.export_excel') }}</a>
-                            <a class="btn btn-falcon-default btn-sm" target="_blank" href="{{ route('admin.production.reports.print', $exportQuery) }}"><span class="fas fa-file-pdf me-1"></span>{{ __('production_execution.actions.print_pdf') }}</a>
+                            @can("production.reports.{$section}.export")<a class="btn btn-falcon-success btn-sm" href="{{ route('admin.production.reports.export', $exportQuery) }}"><span class="fas fa-file-excel me-1"></span>{{ __('production_execution.actions.export_excel') }}</a>@endcan
+                            @can("production.reports.{$section}.print")<a class="btn btn-falcon-default btn-sm" target="_blank" href="{{ route('admin.production.reports.print', $exportQuery) }}"><span class="fas fa-file-pdf me-1"></span>{{ __('production_execution.actions.print_pdf') }}</a>@endcan
                         </div>
-                    @endcan
+                    @endif
                 </div>
             </div>
             <div class="card-body py-3">
@@ -51,7 +51,7 @@
 
         <div class="d-flex flex-wrap gap-2 mb-3" role="navigation" aria-label="{{ __('production_execution.reports.title') }}">
             @foreach($sectionRoutes as $reportSection => $routeName)
-                <a class="btn btn-sm {{ $section === $reportSection ? 'btn-primary' : 'btn-falcon-default' }}" href="{{ route($routeName, request()->only(['from', 'to', 'status'])) }}">{{ __('production_execution.reports.sections.'.$reportSection) }}</a>
+                @can("production.reports.{$reportSection}.view")<a class="btn btn-sm {{ $section === $reportSection ? 'btn-primary' : 'btn-falcon-default' }}" href="{{ route($routeName, request()->only(['from', 'to', 'status'])) }}">{{ __('production_execution.reports.sections.'.$reportSection) }}</a>@endcan
             @endforeach
         </div>
 
@@ -63,7 +63,7 @@
             </div>
             <div class="row g-3">
                 @foreach(array_diff(array_keys($sectionRoutes), ['overview']) as $reportSection)
-                    <div class="col-md-6 col-xl-4"><a class="card h-100 text-decoration-none" href="{{ route($sectionRoutes[$reportSection], request()->only(['from', 'to', 'status'])) }}"><div class="card-body d-flex justify-content-between align-items-center gap-3"><h6 class="mb-0 text-900">{{ __('production_execution.reports.sections.'.$reportSection) }}</h6><span class="fas fa-chevron-left text-primary rtl-flip"></span></div></a></div>
+                    @can("production.reports.{$reportSection}.view")<div class="col-md-6 col-xl-4"><a class="card h-100 text-decoration-none" href="{{ route($sectionRoutes[$reportSection], request()->only(['from', 'to', 'status'])) }}"><div class="card-body d-flex justify-content-between align-items-center gap-3"><h6 class="mb-0 text-900">{{ __('production_execution.reports.sections.'.$reportSection) }}</h6><span class="fas fa-chevron-left text-primary rtl-flip"></span></div></a></div>@endcan
                 @endforeach
             </div>
         @elseif($section === 'orders')

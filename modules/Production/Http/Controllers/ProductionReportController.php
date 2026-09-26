@@ -35,8 +35,9 @@ class ProductionReportController extends Controller
 
     public function index(Request $request): View
     {
-        [, $report] = $this->report($request);
         $section = $this->section($request);
+        $this->authorizeSection($request, $section, 'view');
+        [, $report] = $this->report($request);
 
         return view('modules.production.reports.index', [
             ...$report,
@@ -48,8 +49,9 @@ class ProductionReportController extends Controller
 
     public function export(Request $request): BinaryFileResponse
     {
-        [, $report] = $this->report($request);
         $section = $this->section($request);
+        $this->authorizeSection($request, $section, 'export');
+        [, $report] = $this->report($request);
 
         return Excel::download(
             new ProductionReportExport($report, $section),
@@ -59,8 +61,9 @@ class ProductionReportController extends Controller
 
     public function print(Request $request): Response
     {
-        [$context, $report] = $this->report($request);
         $section = $this->section($request);
+        $this->authorizeSection($request, $section, 'print');
+        [$context, $report] = $this->report($request);
         $company = Company::query()->findOrFail($context['company_id']);
 
         return $this->pdf->stream('reports.production.operations', [
@@ -101,5 +104,16 @@ class ProductionReportController extends Controller
         abort_unless(in_array($section, self::Sections, true), 404);
 
         return $section;
+    }
+
+    private function authorizeSection(Request $request, string $section, string $action): void
+    {
+        $permission = "production.reports.{$section}";
+
+        abort_unless($request->user()?->can("{$permission}.view"), 403);
+
+        if ($action !== 'view') {
+            abort_unless($request->user()?->can("{$permission}.{$action}"), 403);
+        }
     }
 }

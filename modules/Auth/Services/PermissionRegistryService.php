@@ -5,6 +5,7 @@ namespace Modules\Auth\Services;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Str;
+use Modules\Core\Services\ErpUi\ErpUiScreenDefinition;
 use Modules\Core\Services\ErpUi\ErpUiScreenRegistry;
 use Modules\Core\Services\MenuConfigFileOrder;
 use Modules\Core\Services\MenuService;
@@ -96,7 +97,7 @@ class PermissionRegistryService
         $screenGroups = [];
 
         foreach ($this->erpUiScreens->screens() as $screen) {
-            if ($screen->key() === 'core_user_tasks') {
+            if (! $this->isLiveScreen($screen)) {
                 continue;
             }
 
@@ -182,6 +183,9 @@ class PermissionRegistryService
             $permissions = array_filter($permissions, fn (mixed $permission): bool => is_string($permission) && trim($permission) !== '');
             $permissions = array_map(fn (string $permission): string => trim($permission), $permissions);
             $permissions = array_map(fn (string $permission): string => $this->canonicalPermission($permission), $permissions);
+            if (! config('erp_features.screen_data_visibility_rules.enabled', false)) {
+                $permissions = array_filter($permissions, fn (string $permission): bool => ! str_starts_with($permission, 'screen_data_visibility_rules.'));
+            }
             $permissions = array_values(array_unique($permissions));
 
             sort($permissions);
@@ -198,24 +202,28 @@ class PermissionRegistryService
         return $this->all();
     }
 
+    /** @return list<string> */
+    public function reportViewPermissions(string $prefix): array
+    {
+        $prefix = trim($prefix, '.').'.';
+
+        return array_values(array_filter(
+            $this->all(),
+            fn (string $permission): bool => str_starts_with($permission, $prefix)
+                && substr_count(substr($permission, strlen($prefix)), '.') === 1
+                && str_ends_with($permission, '.view'),
+        ));
+    }
+
     /**
      * @return array<int, string>
      */
     public function fromMenus(): array
     {
-        return $this->memo->remember('permissions.registry.from_menus', function (): array {
-            $permissions = [];
-
-            foreach ($this->menuConfigFiles() as $file) {
-                $items = require $file;
-
-                if (is_array($items)) {
-                    $permissions = array_merge($permissions, $this->extractFromMenuItems($items));
-                }
-            }
-
-            return $permissions;
-        });
+        return $this->memo->remember(
+            'permissions.registry.from_menus',
+            fn (): array => $this->extractFormAssignableFromMenuItems($this->menuItems()),
+        );
     }
 
     /**
@@ -249,9 +257,7 @@ class PermissionRegistryService
         $permissions = [];
 
         foreach ($this->erpUiScreens->screens() as $screen) {
-            if ($screen->key() === 'core_user_tasks'
-                || ! in_array($screen->get('classification'), ['CANONICAL', 'WORKING_REAL_SCREEN'], true)
-                || ! Route::has($screen->get('canonical_route') ?: $screen->route('index'))) {
+            if (! $this->isLiveScreen($screen)) {
                 continue;
             }
 
@@ -261,6 +267,13 @@ class PermissionRegistryService
         }
 
         return array_values(array_unique($permissions));
+    }
+
+    private function isLiveScreen(ErpUiScreenDefinition $screen): bool
+    {
+        return $screen->key() !== 'core_user_tasks'
+            && in_array($screen->get('classification'), ['CANONICAL', 'WORKING_REAL_SCREEN'], true)
+            && Route::has($screen->get('canonical_route') ?: $screen->route('index'));
     }
 
     /**
@@ -742,7 +755,7 @@ class PermissionRegistryService
 
         $route = $item['route'] ?? null;
 
-        return is_string($route) && trim($route) !== '';
+        return is_string($route) && trim($route) !== '' && Route::has($route);
     }
 
     private function nodeKey(string ...$parts): string

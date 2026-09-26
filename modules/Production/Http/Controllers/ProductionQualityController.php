@@ -247,6 +247,7 @@ class ProductionQualityController extends Controller
         DataTableSearchService $search,
         Select2ResponseService $select2,
     ): JsonResponse {
+        abort_unless($request->user()?->can('production.quality.view') || $request->user()?->can('production.quality.reports.view'), 403);
         $context = $this->requiredContext($request);
         $terms = $search->terms($request->input('q', $request->input('term')));
 

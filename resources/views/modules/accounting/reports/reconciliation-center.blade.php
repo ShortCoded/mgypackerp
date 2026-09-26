@@ -12,9 +12,9 @@
     ];
     $exportQuery = array_filter([...$filters, 'run' => 1], fn ($value) => $value !== null && $value !== '');
     $exportOptions = $report ? [
-        ['label' => __('reports.export_excel'), 'url' => route('admin.accounting.reports.reconciliation-center.export.excel', $exportQuery), 'icon' => 'file-excel', 'permission' => 'reports.account_ledger.export'],
-        ['label' => __('reports.export_csv'), 'url' => route('admin.accounting.reports.reconciliation-center.export.csv', $exportQuery), 'icon' => 'file-csv', 'permission' => 'reports.account_ledger.export'],
-        ['label' => __('reports.export_pdf'), 'url' => route('admin.accounting.reports.reconciliation-center.export.pdf', $exportQuery), 'icon' => 'file-pdf', 'permission' => 'reports.account_ledger.export', 'newTab' => true],
+        ['label' => __('reports.export_excel'), 'url' => route('admin.accounting.reports.reconciliation-center.export.excel', $exportQuery), 'icon' => 'file-excel', 'permission' => 'reports.reconciliation_center.export'],
+        ['label' => __('reports.export_csv'), 'url' => route('admin.accounting.reports.reconciliation-center.export.csv', $exportQuery), 'icon' => 'file-csv', 'permission' => 'reports.reconciliation_center.export'],
+        ['label' => __('reports.export_pdf'), 'url' => route('admin.accounting.reports.reconciliation-center.export.pdf', $exportQuery), 'icon' => 'file-pdf', 'permission' => 'reports.reconciliation_center.export', 'newTab' => true],
     ] : [];
 @endphp
 

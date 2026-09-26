@@ -136,7 +136,7 @@ test('procurement attachments reuse archive access remain company scoped and do 
 test('restricted warehouse and purchasing users cannot see prices or invoke finance and approval actions', function (): void {
     $fixture = procurementFixture();
     $this->seed(PermissionSeeder::class);
-    $fixture['user']->givePermissionTo(['purchases.purchase_requisitions.view', 'purchases.purchase_requisitions.create', 'reports.purchases.view', 'reports.purchases.export']);
+    $fixture['user']->givePermissionTo(['purchases.purchase_requisitions.view', 'purchases.purchase_requisitions.create', 'reports.purchases.open_requirements.view', 'reports.purchases.open_requirements.export']);
     $request = procurementManualRequisition($fixture);
     $this->get(route('admin.purchases.purchase-requisitions.show', $request))->assertOk();
     $this->post(route('admin.purchases.purchase-requisitions.approve', $request))->assertForbidden();

@@ -118,8 +118,8 @@ return [[
         ],
         [
             'label' => 'hr_attendance_report', 'title' => 'Attendance Report', 'icon' => 'user-clock',
-            'route' => 'admin.hr.reports.attendance', 'permission' => 'hr.employee_attendance.view', 'subgroup' => 'hr_reports',
-            'actions' => ['view' => 'hr.employee_attendance.view', 'export' => 'hr.employee_attendance.export'],
+            'route' => 'admin.hr.reports.attendance', 'permission' => 'hr.attendance_report.view', 'subgroup' => 'hr_reports',
+            'actions' => ['view' => 'hr.attendance_report.view', 'export' => 'hr.attendance_report.export'],
             'active' => ['admin.hr.reports.attendance'], 'children' => [],
         ],
         [

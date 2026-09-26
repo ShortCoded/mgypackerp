@@ -3,6 +3,7 @@
 use App\Http\Middleware\IdempotentDocumentSubmission;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use Modules\Auth\Services\PermissionRegistryService;
 use Modules\Finance\Services\FinanceSelect2Service;
 use Modules\Sales\Http\Controllers\CustomerController;
 use Modules\Sales\Http\Controllers\CustomerDataReportController;
@@ -140,7 +141,7 @@ Route::middleware('auth')
         })->name('select2.customer-groups');
         foreach (['employees', 'stores'] as $picker) {
             Route::get('/select2/'.$picker, function (Request $request, SalesSelect2Service $select2) use ($picker) {
-                abort_unless($request->user()?->canAny(['quotations.view', 'quotations.create', 'quotations.edit', 'sales_requests.view', 'sales_requests.create', 'sales_requests.edit', 'sales_orders.view', 'sales_orders.create', 'sales_orders.edit', 'customer_receipts.create', 'reports.sales.sales_orders.view']), 403);
+                abort_unless($request->user()?->canAny(['quotations.view', 'quotations.create', 'quotations.edit', 'sales_requests.view', 'sales_requests.create', 'sales_requests.edit', 'sales_orders.view', 'sales_orders.create', 'sales_orders.edit', 'customer_receipts.create', ...app(PermissionRegistryService::class)->reportViewPermissions('reports.sales')]), 403);
 
                 return response()->json($select2->{$picker}($request));
             })->name('select2.'.$picker);
@@ -170,9 +171,9 @@ Route::middleware('auth')
         });
 
         Route::prefix('customer-terms')->name('customer-terms.')->controller(CustomerTermsController::class)->group(function (): void {
-            Route::get('/', 'index')->middleware('can:customers.view')->name('index');
-            Route::get('/{customer}/edit', 'edit')->middleware('can:customers.edit')->name('edit');
-            Route::put('/{customer}', 'update')->middleware('can:customers.edit')->name('update');
+            Route::get('/', 'index')->middleware('can:customer_terms.view')->name('index');
+            Route::get('/{customer}/edit', 'edit')->middleware('can:customer_terms.edit')->name('edit');
+            Route::put('/{customer}', 'update')->middleware('can:customer_terms.edit')->name('update');
         });
 
         Route::prefix('price-lists')->name('price-lists.')->controller(PriceListController::class)->group(function (): void {
@@ -229,9 +230,9 @@ Route::middleware('auth')
     ->as('admin.reports.sales.')
     ->controller(SalesCycleReportController::class)
     ->group(function (): void {
-        Route::get('/sales-orders', 'index')->middleware('can:reports.sales.sales_orders.view')->name('sales-orders.index');
-        Route::get('/sales-orders/print', 'print')->middleware('can:reports.sales.sales_orders.print')->name('sales-orders.print');
-        Route::get('/sales-orders/export/{format?}', 'export')->whereIn('format', ['xlsx', 'csv'])->middleware('can:reports.sales.sales_orders.export')->name('sales-orders.export');
+        Route::get('/sales-orders', 'index')->name('sales-orders.index');
+        Route::get('/sales-orders/print', 'print')->name('sales-orders.print');
+        Route::get('/sales-orders/export/{format?}', 'export')->whereIn('format', ['xlsx', 'csv'])->name('sales-orders.export');
     });
 
 Route::middleware('auth')

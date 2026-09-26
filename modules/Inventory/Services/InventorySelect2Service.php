@@ -40,7 +40,7 @@ class InventorySelect2Service
         $context = $this->operatingContext->snapshot($request);
         $branchId = $context['branch_id'];
         $companyReportScope = $request->string('scope')->toString() === 'company'
-            && $request->user()?->canAny(['inventory.reports.operational', 'inventory.reports.financial']);
+            && $request->user()?->canAny(['inventory.reports.operations.view', 'inventory.reports.stock_balances.view', 'inventory.reports.valuation.view', 'inventory.reports.sales_valuation.view']);
 
         $query = BranchHall::query()
             ->when(
@@ -72,7 +72,7 @@ class InventorySelect2Service
         $context = $this->operatingContext->snapshot($request);
         $branchId = $context['branch_id'];
         $companyReportScope = $request->string('scope')->toString() === 'company'
-            && $request->user()?->canAny(['inventory.reports.operational', 'inventory.reports.financial']);
+            && $request->user()?->canAny(['inventory.reports.operations.view', 'inventory.reports.stock_balances.view', 'inventory.reports.valuation.view', 'inventory.reports.sales_valuation.view']);
         $branch = $branchId
             ? Branch::query()
                 ->whereKey($branchId)

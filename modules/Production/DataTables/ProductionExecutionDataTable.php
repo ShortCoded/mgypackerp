@@ -375,7 +375,9 @@ class ProductionExecutionDataTable
 
         return DataTables::eloquent($query)
             ->filter(fn ($query) => $this->filter($query, $request, ['quality_inspections.doc_num', 'production_runs.run_number', 'products.name', 'branch_stores.name', 'quality_inspection_reports.observations', 'quality_inspection_reports.result', 'users.name']))
-            ->editColumn('inspection_number', fn (ProductionQualityInspectionReport $row): string => '<a class="fw-semibold" data-row-primary-link href="'.e(route('admin.production.quality.show', $row->quality_inspection_id)).'">'.e($row->inspection_number).'</a>')
+            ->editColumn('inspection_number', fn (ProductionQualityInspectionReport $row): string => $request->user()?->can('production.quality.view')
+                ? '<a class="fw-semibold" data-row-primary-link href="'.e(route('admin.production.quality.show', $row->quality_inspection_id)).'">'.e($row->inspection_number).'</a>'
+                : e($row->inspection_number))
             ->editColumn('reported_at', fn (ProductionQualityInspectionReport $row): string => e($row->reported_at?->format('Y-m-d H:i') ?? ''))
             ->editColumn('result', fn (ProductionQualityInspectionReport $row): string => $this->badge(__('production_execution.quality_results.'.$row->result), $row->result === 'passed' ? 'success' : ($row->result === 'failed' ? 'danger' : 'warning')))
             ->addColumn('subject', fn (ProductionQualityInspectionReport $row): string => e($this->qualitySubject($row)))

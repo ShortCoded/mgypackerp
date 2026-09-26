@@ -25,9 +25,9 @@
             :show-filters="false"
             :show-refresh="false"
             :export-options="[
-                ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.reports.valuation.export.excel', $exportQuery), 'label' => __('reports.export_excel'), 'icon' => 'file-excel'],
-                ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.reports.valuation.export.csv', $exportQuery), 'label' => __('reports.export_csv'), 'icon' => 'file-csv'],
-                ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.reports.valuation.export.pdf', $exportQuery), 'label' => __('reports.export_pdf'), 'icon' => 'file-pdf', 'newTab' => true],
+                ['permission' => 'inventory.reports.valuation.export', 'url' => route('admin.inventory.reports.valuation.export.excel', $exportQuery), 'label' => __('reports.export_excel'), 'icon' => 'file-excel'],
+                ['permission' => 'inventory.reports.valuation.export', 'url' => route('admin.inventory.reports.valuation.export.csv', $exportQuery), 'label' => __('reports.export_csv'), 'icon' => 'file-csv'],
+                ['permission' => 'inventory.reports.valuation.export', 'url' => route('admin.inventory.reports.valuation.export.pdf', $exportQuery), 'label' => __('reports.export_pdf'), 'icon' => 'file-pdf', 'newTab' => true],
             ]"
         />
     </div>
@@ -92,9 +92,9 @@
                     :show-filters="false"
                     :show-refresh="false"
                     :export-options="[
-                        ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.reports.valuation.export.excel', $comparisonExportQuery), 'label' => __('reports.export_excel'), 'icon' => 'file-excel'],
-                        ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.reports.valuation.export.csv', $comparisonExportQuery), 'label' => __('reports.export_csv'), 'icon' => 'file-csv'],
-                        ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.reports.valuation.export.pdf', $comparisonExportQuery), 'label' => __('reports.export_pdf'), 'icon' => 'file-pdf'],
+                        ['permission' => 'inventory.reports.valuation.export', 'url' => route('admin.inventory.reports.valuation.export.excel', $comparisonExportQuery), 'label' => __('reports.export_excel'), 'icon' => 'file-excel'],
+                        ['permission' => 'inventory.reports.valuation.export', 'url' => route('admin.inventory.reports.valuation.export.csv', $comparisonExportQuery), 'label' => __('reports.export_csv'), 'icon' => 'file-csv'],
+                        ['permission' => 'inventory.reports.valuation.export', 'url' => route('admin.inventory.reports.valuation.export.pdf', $comparisonExportQuery), 'label' => __('reports.export_pdf'), 'icon' => 'file-pdf'],
                     ]"
                 />
                 <div class="table-responsive"><table class="table table-sm"><thead><tr><th>{{ __('inventory_accounting.valuation_report.method') }}</th><th>{{ __('inventory_accounting.valuation_report.ending_value') }}</th><th>{{ __('inventory_accounting.valuation_report.classification') }}</th></tr></thead><tbody>@foreach($comparison['methods'] as $method => $result)<tr><td>{{ __('inventory_accounting.valuation_methods.'.$method) }}</td><td>{{ $numbers->format($result['ending_value']) }}</td><td>{{ $result['book_method'] ? __('inventory_accounting.valuation_report.book_method') : ($result['reference_only'] ? __('inventory_accounting.valuation_report.reference_only') : __('inventory_accounting.valuation_report.simulation')) }}</td></tr>@endforeach</tbody></table></div>

@@ -373,7 +373,7 @@ final class PeriodClosePreflightService
                 __('financial_periods.closing.document_types.inventory_movements'),
                 $count,
                 'admin.inventory.reports.index',
-                'inventory.reports.operational',
+                'inventory.reports.operations.view',
             )] : [],
         ];
     }
@@ -399,7 +399,7 @@ final class PeriodClosePreflightService
                 __('financial_periods.closing.document_types.stock_positions'),
                 $count,
                 'admin.inventory.stock-balances.index',
-                'inventory.reports.operational',
+                'inventory.reports.stock_balances.view',
             )] : [],
         ];
     }
@@ -473,7 +473,7 @@ final class PeriodClosePreflightService
                 __('financial_periods.closing.document_types.grni'),
                 null,
                 'admin.purchases.procurement-cycle-report.index',
-                'reports.purchases.view',
+                'reports.purchases.goods_received_not_invoiced.view',
                 ['report_type' => ProcurementCycleReport::GoodsReceivedNotInvoiced],
             )] : [],
         ];

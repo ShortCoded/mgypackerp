@@ -5,6 +5,7 @@ namespace Modules\Core\Http\Controllers\Select2;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Modules\Auth\Services\PermissionRegistryService;
 use Modules\Core\Services\CompanyLocationSelect2Service;
 
 class CompanyLocationSelect2Controller extends Controller
@@ -55,7 +56,7 @@ class CompanyLocationSelect2Controller extends Controller
             || (bool) $user?->can('suppliers.edit')
             || (bool) $user?->can('reports.customers.view')
             || (bool) $user?->can('reports.suppliers.view')
-            || (bool) $user?->can('reports.sales.sales_orders.view')
-            || (bool) $user?->can('reports.purchases.view');
+            || (bool) $user?->canAny(app(PermissionRegistryService::class)->reportViewPermissions('reports.sales'))
+            || (bool) $user?->canAny(app(PermissionRegistryService::class)->reportViewPermissions('reports.purchases'));
     }
 }

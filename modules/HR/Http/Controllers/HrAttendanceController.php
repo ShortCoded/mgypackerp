@@ -55,7 +55,7 @@ class HrAttendanceController extends Controller
                 : $this->scope->allowedBranchQuery($request->user(), [(string) $company->doc_num])->where('branches.doc_num', $filters['branch'])->first(['branches.doc_num', 'branches.name']));
 
         return view('modules.hr.attendance.index', [
-            'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.hr.employee-attendance.index'),
+            'breadcrumbs' => $this->breadcrumbs->forMenuRoute($request->routeIs('admin.hr.reports.*') ? 'admin.hr.reports.attendance' : 'admin.hr.employee-attendance.index'),
             'sessions' => $this->reports->paginate($effectiveCompanyId, $filters, $branchIds),
             'summary' => $this->reports->summary($effectiveCompanyId, $filters, $branchIds),
             'filters' => $filters,

@@ -13,7 +13,7 @@ use Throwable;
 
 class OperationalDataResetService
 {
-    private const POLICY_VERSION = '2026-09-25.4';
+    private const POLICY_VERSION = '2026-09-25.5';
 
     private const OPERATIONAL_MODULES = [
         'accounting', 'finance', 'inventory', 'sales', 'purchases',
@@ -125,12 +125,29 @@ class OperationalDataResetService
         ?string $backupFile = null,
         ?string $proofFile = null,
     ): array {
+        return $this->performReset($reviewToken, $commit, $operator, $backupDigest, $backupFile, $proofFile, false);
+    }
+
+    public function runWithManualBackup(string $reviewToken, string $operator): array
+    {
+        return $this->performReset($reviewToken, true, $operator, null, null, null, true);
+    }
+
+    private function performReset(
+        string $reviewToken,
+        bool $commit,
+        ?string $operator,
+        ?string $backupDigest,
+        ?string $backupFile,
+        ?string $proofFile,
+        bool $manualBackup,
+    ): array {
         if ($commit && (! app()->isDownForMaintenance()
             || config('app.maintenance.driver') !== 'file'
             || trim((string) $operator) === ''
-            || preg_match('/\A[a-f0-9]{64}\z/', (string) $backupDigest) !== 1
-            || ! is_file((string) $backupFile) || ! is_file((string) $proofFile))) {
-            throw new RuntimeException('A committed reset requires maintenance mode, an operator, a backup, and its restore proof.');
+            || (! $manualBackup && (preg_match('/\A[a-f0-9]{64}\z/', (string) $backupDigest) !== 1
+                || ! is_file((string) $backupFile) || ! is_file((string) $proofFile))))) {
+            throw new RuntimeException('A committed reset requires maintenance mode, an operator, and verified backup details unless the operator manages the backup.');
         }
 
         DB::beginTransaction();
@@ -148,7 +165,11 @@ class OperationalDataResetService
             }
 
             if ($commit) {
-                $this->assertCommitAuthorization($review, $backupDigest, $backupFile, $proofFile);
+                if ($manualBackup) {
+                    $this->assertWriteGateClosed();
+                } else {
+                    $this->assertCommitAuthorization($review, $backupDigest, $backupFile, $proofFile);
+                }
             }
 
             if ($review['unclassified_operational_notifications'] > 0) {
@@ -246,6 +267,7 @@ class OperationalDataResetService
                             ? (posix_getpwuid(posix_geteuid())['name'] ?? null) : get_current_user(),
                         'executing_host' => gethostname() ?: null,
                         'backup_sha256' => $backupDigest,
+                        'backup_mode' => $manualBackup ? 'operator_managed' : 'verified_restore',
                         'review_token' => $reviewToken,
                         'result' => $result,
                         'deleted_rows_by_table' => $review['delete_rows'],
@@ -282,11 +304,7 @@ class OperationalDataResetService
 
     private function assertCommitAuthorization(array $review, string $backupDigest, string $backupFile, string $proofFile): void
     {
-        $allowsConnections = DB::selectOne('SELECT datallowconn AS allowed FROM pg_database
-            WHERE datname = current_database()')->allowed;
-        if ($allowsConnections) {
-            throw new RuntimeException('The PostgreSQL connection gate is open; committed reset refused.');
-        }
+        $this->assertWriteGateClosed();
 
         $maintenanceFile = app()->storagePath('framework/down');
         if (! is_file($maintenanceFile)
@@ -312,6 +330,15 @@ class OperationalDataResetService
             || ($proof['backup_sha256'] ?? null) !== $backupDigest
             || ($proof['snapshot_sha256'] ?? null) !== $snapshotHash) {
             throw new RuntimeException('Restored-backup proof does not authorize this exact reset.');
+        }
+    }
+
+    private function assertWriteGateClosed(): void
+    {
+        $allowsConnections = DB::selectOne('SELECT datallowconn AS allowed FROM pg_database
+            WHERE datname = current_database()')->allowed;
+        if ($allowsConnections) {
+            throw new RuntimeException('The PostgreSQL connection gate is open; committed reset refused.');
         }
     }
 
@@ -549,7 +576,7 @@ class OperationalDataResetService
                 ORDER BY c.relname
                 SQL,
             'columns' => <<<'SQL'
-                SELECT c.relname, a.attnum, a.attname, format_type(a.atttypid, a.atttypmod) AS data_type,
+                SELECT c.relname, a.attname, format_type(a.atttypid, a.atttypmod) AS data_type,
                     a.attnotnull, a.attidentity, a.attgenerated, a.attcollation::regcollation::text AS collation,
                     pg_get_expr(d.adbin, d.adrelid) AS default_expression
                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace

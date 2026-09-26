@@ -3,6 +3,7 @@
 use App\Http\Middleware\IdempotentDocumentSubmission;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use Modules\Auth\Services\PermissionRegistryService;
 use Modules\Purchases\Http\Controllers\ProcurementWorkflowController;
 use Modules\Purchases\Http\Controllers\PurchaseInvoiceController;
 use Modules\Purchases\Http\Controllers\PurchaseOrderController;
@@ -60,7 +61,7 @@ Route::middleware('auth')
                 || (bool) $request->user()?->can('supplier_payments.create')
                 || (bool) $request->user()?->can('purchases.supply_orders.create')
                 || (bool) $request->user()?->can('suppliers.view')
-                || (bool) $request->user()?->can('reports.purchases.view'),
+                || (bool) $request->user()?->canAny(app(PermissionRegistryService::class)->reportViewPermissions('reports.purchases')),
                 403
             );
 
@@ -87,7 +88,7 @@ Route::middleware('auth')
                 || (bool) $request->user()?->can('purchase_orders.create')
                 || (bool) $request->user()?->can('purchase_orders.edit')
                 || (bool) $request->user()?->can('products.view')
-                || (bool) $request->user()?->can('reports.purchases.view'),
+                || (bool) $request->user()?->canAny(app(PermissionRegistryService::class)->reportViewPermissions('reports.purchases')),
                 403
             );
 
@@ -347,9 +348,9 @@ Route::middleware('auth')
             Route::get('supplier-debit-notes', 'inquiry')->defaults('procurement_screen', 'supplier_debit_notes')->middleware('can:purchases.purchase_returns.view')->name('supplier-debit-notes.index');
 
             Route::prefix('procurement-cycle-report')->name('procurement-cycle-report.')->group(function (): void {
-                Route::get('/', 'report')->middleware('can:reports.purchases.view')->name('index');
-                Route::get('/export/excel', 'exportReportExcel')->middleware('can:reports.purchases.export')->name('export.excel');
-                Route::get('/print', 'printReport')->middleware('can:reports.purchases.export')->name('print');
+                Route::get('/', 'report')->name('index');
+                Route::get('/export/excel', 'exportReportExcel')->name('export.excel');
+                Route::get('/print', 'printReport')->name('print');
             });
             Route::get('procurement-print/{type}/{docNum}', 'printDocument')->name('procurement.print');
         });

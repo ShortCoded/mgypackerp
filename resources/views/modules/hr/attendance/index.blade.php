@@ -2,6 +2,10 @@
 
 @php
     $dates = app(\Modules\Core\Services\DateFormatService::class);
+    $isAttendanceReport = request()->routeIs('admin.hr.reports.*');
+    $attendanceIndexRoute = $isAttendanceReport ? 'admin.hr.reports.attendance' : 'admin.hr.employee-attendance.index';
+    $attendanceExportRoute = $isAttendanceReport ? 'admin.hr.reports.attendance.export.csv' : 'admin.hr.employee-attendance.export.csv';
+    $attendanceExportPermission = $isAttendanceReport ? 'hr.attendance_report.export' : 'hr.employee_attendance.export';
     $hasFilters = $filters !== [] || $errors->any();
     $summaryCards = [
         'sessions' => $summary['session_count'],
@@ -34,27 +38,27 @@
 
         <x-admin.report.page :title="__('hr_attendance.admin.title')" :description="__('hr_attendance.report.description')">
             <x-slot:actions>
-                @can('hr.employee_attendance.import')
+                @if(! $isAttendanceReport && auth()->user()?->can('hr.employee_attendance.import'))
                     <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.hr.employee-attendance.import.index') }}">
                         <span class="fas fa-file-import me-1" aria-hidden="true"></span>{{ __('hr_attendance.import.action') }}
                     </a>
-                @endcan
+                @endif
                 <x-admin.report.actions-toolbar
                     filter-target="attendance-report-filters"
                     :refresh-url="request()->fullUrl()"
                     :export-options="[[
                         'label' => __('reports.export_csv'),
-                        'url' => route('admin.hr.employee-attendance.export.csv', $filters),
+                        'url' => route($attendanceExportRoute, $filters),
                         'icon' => 'file-csv',
-                        'permission' => 'hr.employee_attendance.export',
+                        'permission' => $attendanceExportPermission,
                     ]]" />
             </x-slot:actions>
 
             <x-admin.report.filter-panel
                 id="attendance-report-filters"
-                :action="route('admin.hr.employee-attendance.index')"
+                :action="route($attendanceIndexRoute)"
                 :expanded="$hasFilters"
-                :reset-url="route('admin.hr.employee-attendance.index')">
+                :reset-url="route($attendanceIndexRoute)">
                 <div class="col-12 col-md-6 col-xl-3">
                     <x-forms.label for="attendance_employee" :label="__('hr_attendance.labels.employee')" />
                     <x-forms.select class="form-select-sm js-report-filter-control" id="attendance_employee" name="employee" variant="ajax" :url="route('admin.hr.select2.employees', ['identity' => 'doc_num'])" :placeholder="__('common.trash.all')">
@@ -100,7 +104,7 @@
                 @endforeach
             </div>
 
-            @can('hr.employee_attendance.correct')
+            @if(! $isAttendanceReport && auth()->user()?->can('hr.employee_attendance.correct'))
                 <div class="card mb-3">
                     <div class="card-header py-2"><h6 class="mb-0">{{ __('hr_attendance.admin.manual_title') }}</h6></div>
                     <div class="card-body py-3">
@@ -136,7 +140,7 @@
                         </form>
                     </div>
                 </div>
-            @endcan
+            @endif
 
             <div class="d-none d-lg-block">
                 <x-admin.report.table-card :title="__('hr_attendance.report.table_title')" table-id="employee-attendance-report-table">

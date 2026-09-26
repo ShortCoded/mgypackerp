@@ -20,9 +20,13 @@ $procurementReport = static function (string $label, string $title, string $repo
         'icon' => $icon,
         'route' => 'admin.purchases.procurement-cycle-report.index',
         'route_params' => ['report_type' => $reportType],
-        'permission' => 'reports.purchases.view',
+        'permission' => "reports.purchases.{$reportType}.view",
         'subgroup' => in_array($reportType, $financialAnalysisTypes, true) ? 'financial_analysis_reports' : 'purchase_reports',
-        'actions' => ['view' => 'reports.purchases.view', 'export' => 'reports.purchases.export'],
+        'actions' => [
+            'view' => "reports.purchases.{$reportType}.view",
+            'export' => "reports.purchases.{$reportType}.export",
+            'print' => "reports.purchases.{$reportType}.print",
+        ],
         'active' => ['admin.purchases.procurement-cycle-report.*'],
         'children' => [],
     ];

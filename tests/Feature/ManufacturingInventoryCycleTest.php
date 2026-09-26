@@ -2735,7 +2735,7 @@ test('capability permissions separate warehouse planning quality and cost access
         'inventory.documents.view',
         'inventory.documents.create',
         'inventory.documents.transfer',
-        'inventory.reports.operational',
+        'inventory.reports.operations.view',
         'inventory.stock_counts.create',
     ]);
 
@@ -2783,12 +2783,13 @@ test('capability permissions separate warehouse planning quality and cost access
         ->assertForbidden();
 
     $costUser = $userWith([
-        'inventory.reports.operational',
-        'inventory.reports.financial',
-        'inventory.reports.export',
-        'production.reports.operational',
-        'production.reports.financial',
-        'production.reports.export',
+        'inventory.reports.operations.view',
+        'inventory.reports.valuation.view',
+        'inventory.reports.operations.export',
+        'inventory.reports.operations.print',
+        'production.reports.overview.view',
+        'production.reports.overview.export',
+        'production.reports.overview.print',
     ]);
     $this->actingAs($costUser)->withSession($session)
         ->get(route('admin.inventory.reports.index'))
@@ -2834,9 +2835,10 @@ test('operational inventory reports remain usable when a required account classi
         ->update(['account_classification_id' => null]);
 
     $permissions = [
-        'inventory.reports.operational',
-        'inventory.reports.financial',
-        'inventory.reports.export',
+        'inventory.reports.operations.view',
+        'inventory.reports.valuation.view',
+        'inventory.reports.operations.export',
+        'inventory.reports.operations.print',
     ];
 
     foreach ($permissions as $permission) {
@@ -3768,7 +3770,7 @@ test('operational dashboard cards equal their scoped report counts and exclude t
     }
 
     app(PermissionRegistrar::class)->forgetCachedPermissions();
-    $permissions = ['inventory.reports.operational', 'production.reports.operational', 'maintenance.reports.view'];
+    $permissions = ['inventory.reports.operations.view', 'production.reports.orders.view', 'production.reports.materials.view', 'production.reports.quality.view', 'maintenance.reports.view'];
     foreach ($permissions as $permission) {
         Permission::findOrCreate($permission, 'web');
     }
@@ -3805,7 +3807,7 @@ test('operational dashboard cards equal their scoped report counts and exclude t
         ->and(operationalDashboardCount($dashboard, 'maintenance_overdue'))->toBe(operationalReportCount($overdueMaintenance, 'maintenance_overdue'));
 
     $limited = User::factory()->create(['locale' => 'ar']);
-    $limited->givePermissionTo('inventory.reports.operational');
+    $limited->givePermissionTo('inventory.reports.operations.view');
     $arabicDashboard = $this->actingAs($limited)->withSession([...$session, 'locale' => 'ar'])->get(route('dashboard'))
         ->assertOk()
         ->assertSee(__('dashboard.plastics.metrics.low_stock.title'))

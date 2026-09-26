@@ -10,7 +10,7 @@
 <div class="production-mobile-workflow" data-client-report-tables>
 <div class="d-flex justify-content-between align-items-center mb-3">
     <div><h4 class="mb-0">{{ __('Inventory Operational Reports') }}</h4></div>
-    @can('inventory.reports.export')<div class="d-flex gap-2"><a class="btn btn-outline-success" href="{{ route('admin.inventory.reports.export', request()->query()) }}">{{ __('Export XLSX') }}</a><a class="btn btn-outline-secondary" target="_blank" href="{{ route('admin.inventory.reports.print', request()->query()) }}">{{ __('Print PDF') }}</a></div>@endcan
+    <div class="d-flex gap-2">@can('inventory.reports.operations.export')<a class="btn btn-outline-success" href="{{ route('admin.inventory.reports.export', request()->query()) }}">{{ __('Export XLSX') }}</a>@endcan @can('inventory.reports.operations.print')<a class="btn btn-outline-secondary" target="_blank" href="{{ route('admin.inventory.reports.print', request()->query()) }}">{{ __('Print PDF') }}</a>@endcan</div>
 </div>
 
 <form class="card card-body mb-3" method="GET">

@@ -1287,8 +1287,8 @@ test('authorized users can load the concrete create edit collection reporting an
     $permissions = [
         'sales_orders.create', 'sales_orders.edit', 'sales_orders.view', 'sales_orders.print', 'sales_orders.view_prices',
         'customer_invoices.view', 'customer_invoices.edit', 'customer_invoices.print', 'customer_invoices.view_prices',
-        'customer_receipts.create', 'reports.sales.sales_orders.view', 'reports.sales.sales_orders.print',
-        'reports.sales.sales_orders.export',
+        'customer_receipts.create', 'reports.sales.operational.view', 'reports.sales.operational.print',
+        'reports.sales.operational.export',
     ];
     foreach ($permissions as $permission) {
         Permission::findOrCreate($permission, 'web');
@@ -1351,7 +1351,7 @@ test('every formal sales document streams canonical inline mPDF with operational
     $permissions = [
         'sales_orders.print', 'sales_orders.view_prices', 'sales_orders.production',
         'sales_deliveries.print', 'customer_invoices.print', 'customer_invoices.view_prices',
-        'customer_receipts.print', 'sales_returns.view', 'sales_returns.print', 'reports.sales.sales_orders.print',
+        'customer_receipts.print', 'sales_returns.view', 'sales_returns.print', 'reports.sales.operational.print',
         'production.orders.print', 'cash_receipt_vouchers.print', 'cheques.print',
     ];
     foreach ($permissions as $permission) {
@@ -1659,8 +1659,10 @@ test('25-line sales order and invoice remain complete across English and Arabic 
 
 test('sales reports separate operational fulfillment financial aging and product analysis', function () {
     $fixture = salesCycleFixture();
-    Permission::findOrCreate('reports.sales.sales_orders.view', 'web');
-    $fixture['user']->givePermissionTo('reports.sales.sales_orders.view');
+    foreach (['reports.sales.operational.view', 'reports.sales.financial.view', 'reports.sales.products.view'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $fixture['user']->givePermissionTo($permission);
+    }
     $session = salesCycleSession($fixture);
     $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
         'lines' => [[
@@ -1747,8 +1749,8 @@ test('sales reports separate operational fulfillment financial aging and product
 
 test('sales reports filter every customer based section by normalized geography', function (): void {
     $fixture = salesCycleFixture();
-    Permission::findOrCreate('reports.sales.sales_orders.view', 'web');
-    $fixture['user']->givePermissionTo('reports.sales.sales_orders.view');
+    Permission::findOrCreate('reports.sales.invoices.view', 'web');
+    $fixture['user']->givePermissionTo('reports.sales.invoices.view');
 
     $country = HrCountry::query()->create(['doc_number' => 98901, 'doc_num' => 'Country-98901', 'name' => 'Report Country']);
     $governorate = HrGovernorate::query()->create(['doc_number' => 98901, 'doc_num' => 'Governorate-98901', 'name' => 'Report Governorate', 'country_id' => $country->id]);
@@ -1777,7 +1779,7 @@ test('sales reports filter every customer based section by normalized geography'
 
 test('sales analysis keeps filtered browser drilldown and export totals consistent without contact multiplication', function (): void {
     $fixture = salesCycleFixture();
-    foreach (['reports.sales.sales_orders.view', 'reports.sales.sales_orders.export'] as $permission) {
+    foreach (['reports.sales.operational.view', 'reports.sales.operational.export', 'reports.sales.invoices.view'] as $permission) {
         Permission::findOrCreate($permission, 'web');
         $fixture['user']->givePermissionTo($permission);
     }

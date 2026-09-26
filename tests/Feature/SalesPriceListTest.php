@@ -246,7 +246,7 @@ test('general price list is created with automatic code and an optional open end
 
 test('price list screen and pricing coverage report are available in sales', function (): void {
     $fixture = salesCycleFixture();
-    foreach (['price_lists.view', 'price_lists.create', 'reports.sales.sales_orders.view'] as $permission) {
+    foreach (['price_lists.view', 'price_lists.create', 'reports.sales.pricing.view'] as $permission) {
         Permission::findOrCreate($permission, 'web');
         $fixture['user']->givePermissionTo($permission);
     }
@@ -282,12 +282,12 @@ test('price list select2 is permission guarded and company scoped for approved c
 
     $this->getJson(route('admin.sales.select2.price-lists'))->assertForbidden();
 
-    Permission::findOrCreate('inventory.reports.financial', 'web');
-    $fixture['user']->givePermissionTo('inventory.reports.financial');
+    Permission::findOrCreate('inventory.reports.valuation.view', 'web');
+    $fixture['user']->givePermissionTo('inventory.reports.valuation.view');
     $this->getJson(route('admin.sales.select2.price-lists'))->assertForbidden();
 
-    Permission::findOrCreate('inventory.reports.operational', 'web');
-    $fixture['user']->givePermissionTo('inventory.reports.operational');
+    Permission::findOrCreate('inventory.reports.sales_valuation.view', 'web');
+    $fixture['user']->givePermissionTo('inventory.reports.sales_valuation.view');
     $this->getJson(route('admin.sales.select2.price-lists'))
         ->assertOk()
         ->assertJsonPath('results.0.id', (string) $current->getKey())
@@ -296,8 +296,8 @@ test('price list select2 is permission guarded and company scoped for approved c
         ->assertJsonFragment(['doc_num' => $current->doc_num])
         ->assertJsonMissing(['doc_num' => $other->doc_num]);
 
-    $fixture['user']->revokePermissionTo('inventory.reports.financial');
-    $fixture['user']->revokePermissionTo('inventory.reports.operational');
+    $fixture['user']->revokePermissionTo('inventory.reports.valuation.view');
+    $fixture['user']->revokePermissionTo('inventory.reports.sales_valuation.view');
     Permission::findOrCreate('price_lists.view', 'web');
     $fixture['user']->givePermissionTo('price_lists.view');
     $this->getJson(route('admin.sales.select2.price-lists', ['term' => $current->doc_num]))
@@ -1392,8 +1392,8 @@ test('all source request document entry paths reject print only pricing and roll
 
 test('print only state is ignored by all pricing coverage and gap queries', function (): void {
     $fixture = salesCycleFixture();
-    Permission::findOrCreate('reports.sales.sales_orders.view', 'web');
-    $fixture['user']->givePermissionTo('reports.sales.sales_orders.view');
+    Permission::findOrCreate('reports.sales.pricing.view', 'web');
+    $fixture['user']->givePermissionTo('reports.sales.pricing.view');
     $general = createSalesPriceList($fixture, null, [['product' => $fixture['finished'], 'price' => '10']]);
     $general->update(['is_print_only' => true]);
     $dedicated = createSalesPriceList($fixture, $fixture['customer']->getKey(), [['product' => $fixture['finished'], 'price' => '20']]);

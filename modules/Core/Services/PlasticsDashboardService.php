@@ -757,7 +757,7 @@ class PlasticsDashboardService
             'as_of' => $asOf->toDateString(),
         ];
 
-        if ($this->can($user, 'inventory.reports.operational')) {
+        if ($this->can($user, 'inventory.reports.operations.view')) {
             $hasReorderSetup = Product::query()
                 ->where('company_id', $companyId)
                 ->where('status', 'active')
@@ -792,9 +792,8 @@ class PlasticsDashboardService
             }
         }
 
-        if ($this->can($user, 'production.reports.operational')) {
+        if ($this->can($user, 'production.reports.materials.view')) {
             $materialShortages = $this->productionReports->materialShortages($companyId, $contextFilters);
-            $remainingOrders = $this->productionReports->remainingOrders($companyId, $contextFilters);
             $items[] = $this->metric(
                 __('dashboard.plastics.metrics.material_shortages.title'),
                 $materialShortages->count(),
@@ -804,6 +803,10 @@ class PlasticsDashboardService
                 $this->routeUrl('admin.production.reports.materials', ['operational_focus' => 'shortage']),
                 'material_shortages',
             );
+        }
+
+        if ($this->can($user, 'production.reports.orders.view')) {
+            $remainingOrders = $this->productionReports->remainingOrders($companyId, $contextFilters);
             $items[] = $this->metric(
                 __('dashboard.plastics.metrics.production_remaining.title'),
                 $remainingOrders->count(),
@@ -813,7 +816,9 @@ class PlasticsDashboardService
                 $this->routeUrl('admin.production.reports.orders', ['operational_focus' => 'remaining']),
                 'production_remaining',
             );
+        }
 
+        if ($this->can($user, 'production.reports.quality.view')) {
             $qualityFilters = ['financial_period_id' => $periodId, 'branch_id' => $branchId];
             $pendingQuality = $this->productionReports->qualityExceptions($companyId, [...$qualityFilters, 'operational_focus' => 'pending']);
             $rejectedQuality = $this->productionReports->qualityExceptions($companyId, [...$qualityFilters, 'operational_focus' => 'rejected']);
@@ -837,7 +842,7 @@ class PlasticsDashboardService
             );
         }
 
-        if ($this->can($user, 'reports.sales.sales_orders.view')) {
+        if ($this->can($user, 'reports.sales.operational.view')) {
             $currencyId = Currency::query()
                 ->where('company_id', $companyId)
                 ->where('status', 'active')
@@ -869,7 +874,7 @@ class PlasticsDashboardService
             }
         }
 
-        if ($this->can($user, 'reports.purchases.view')) {
+        if ($this->can($user, 'reports.purchases.open_requirements.view')) {
             $purchaseFilters = ['branch_id' => $branchId];
             $pendingRequests = $this->procurementReports->rows(ProcurementCycleReport::PendingPurchaseRequests, $purchaseFilters, $companyId, $periodId);
             $pendingSourcing = $this->procurementReports->rows(ProcurementCycleReport::PendingSourcingActions, $purchaseFilters, $companyId, $periodId);

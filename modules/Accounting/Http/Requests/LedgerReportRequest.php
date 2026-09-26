@@ -21,7 +21,7 @@ class LedgerReportRequest extends FormRequest
         $permission = match ($this->reportType()) {
             'customer_statement' => "reports.customer_statement.{$action}",
             'supplier_statement' => "reports.supplier_statement.{$action}",
-            'general_journal' => "reports.account_ledger.{$action}",
+            'general_journal' => "reports.general_journal.{$action}",
             default => "reports.account_ledger.{$action}",
         };
 

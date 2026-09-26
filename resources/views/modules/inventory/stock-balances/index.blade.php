@@ -34,13 +34,13 @@
                 :refresh-url="route('admin.inventory.stock-balances.index', request()->query())"
                 :export-options="[
                     [
-                        'permission' => 'inventory.reports.export',
+                        'permission' => 'inventory.reports.stock_balances.export',
                         'url' => route('admin.inventory.stock-balances.export', request()->query()),
                         'label' => __('reports.export_excel'),
                         'icon' => 'file-excel',
                     ],
                     [
-                        'permission' => 'inventory.reports.export',
+                        'permission' => 'inventory.reports.stock_balances.print',
                         'url' => route('admin.inventory.stock-balances.print', request()->query()),
                         'label' => __('reports.export_pdf'),
                         'icon' => 'file-pdf',

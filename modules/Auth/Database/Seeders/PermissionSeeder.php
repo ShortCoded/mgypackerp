@@ -6,6 +6,7 @@ use Illuminate\Database\Seeder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Modules\Auth\Models\Role;
+use Modules\Auth\Services\LegacyPermissionGrantMigrationService;
 use Modules\Auth\Services\PermissionRegistryService;
 use Modules\Core\Services\DocumentNumberService;
 use Spatie\Permission\Models\Permission;
@@ -16,6 +17,7 @@ class PermissionSeeder extends Seeder
     public function __construct(
         private readonly PermissionRegistryService $permissionRegistry,
         private readonly DocumentNumberService $documentNumberService,
+        private readonly LegacyPermissionGrantMigrationService $legacyGrants,
     ) {}
 
     public function run(): void
@@ -43,7 +45,7 @@ class PermissionSeeder extends Seeder
                 ['updated_at'],
             ));
 
-        $compatibilityResult = $this->copyLegacyGrantsToCanonical();
+        $migratedLegacyGrants = $this->legacyGrants->migrate($permissionNames->all());
 
         $stalePermissionNames = Permission::query()
             ->where('guard_name', 'web')
@@ -89,12 +91,10 @@ class PermissionSeeder extends Seeder
             $existingPermissionCount,
         ));
 
-        if ($compatibilityResult['mapped_permissions'] !== []) {
+        if ($migratedLegacyGrants > 0) {
             $this->command?->info(sprintf(
-                'Legacy permission grants copied to canonical permissions: %s (%d role grants, %d direct user grants).',
-                implode(', ', $compatibilityResult['mapped_permissions']),
-                $compatibilityResult['role_grants'],
-                $compatibilityResult['user_grants'],
+                'Legacy role and direct user grants moved to current screens: %d.',
+                $migratedLegacyGrants,
             ));
         }
 
@@ -104,81 +104,5 @@ class PermissionSeeder extends Seeder
                 $stalePermissionNames->implode(', '),
             ));
         }
-    }
-
-    /**
-     * @return array{mapped_permissions: list<string>, role_grants: int, user_grants: int}
-     */
-    private function copyLegacyGrantsToCanonical(): array
-    {
-        $legacyMap = $this->permissionRegistry->legacyPermissionMap();
-
-        if ($legacyMap === []) {
-            return [
-                'mapped_permissions' => [],
-                'role_grants' => 0,
-                'user_grants' => 0,
-            ];
-        }
-
-        /** @var Collection<string, Permission> $legacyPermissions */
-        $legacyPermissions = Permission::query()
-            ->where('guard_name', 'web')
-            ->whereIn('name', array_keys($legacyMap))
-            ->with(['roles', 'users'])
-            ->get()
-            ->keyBy('name');
-
-        /** @var Collection<string, Permission> $canonicalPermissions */
-        $canonicalPermissions = Permission::query()
-            ->where('guard_name', 'web')
-            ->whereIn('name', array_values($legacyMap))
-            ->get()
-            ->keyBy('name');
-
-        $mappedPermissions = [];
-        $roleGrants = 0;
-        $userGrants = 0;
-
-        foreach ($legacyMap as $legacyPermissionName => $canonicalPermissionName) {
-            $legacyPermission = $legacyPermissions->get($legacyPermissionName);
-            $canonicalPermission = $canonicalPermissions->get($canonicalPermissionName);
-
-            if (! $legacyPermission instanceof Permission || ! $canonicalPermission instanceof Permission) {
-                continue;
-            }
-
-            $mapped = false;
-
-            foreach ($legacyPermission->roles as $role) {
-                if ($role->hasPermissionTo($canonicalPermission)) {
-                    continue;
-                }
-
-                $role->givePermissionTo($canonicalPermission);
-                $roleGrants++;
-                $mapped = true;
-            }
-
-            foreach ($legacyPermission->users as $user) {
-                if ($user->hasPermissionTo($canonicalPermission)) {
-                    continue;
-                }
-
-                $user->givePermissionTo($canonicalPermission);
-                $userGrants++;
-                $mapped = true;
-            }
-
-            if ($mapped) {
-                $mappedPermissions[] = "{$legacyPermissionName} => {$canonicalPermissionName}";
-            }
-        }
-
-        return [
-            'mapped_permissions' => $mappedPermissions,
-            'role_grants' => $roleGrants,
-            'user_grants' => $userGrants,
-        ];
     }
 }

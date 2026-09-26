@@ -1029,10 +1029,10 @@ class ProcurementWorkflowController extends Controller
 
     public function report(Request $request): View
     {
+        $filters = $this->reportFilters($request);
         $context = $this->context();
         $isAdministrativeBranch = $this->isAdministrativeBranch();
         $showPrices = (bool) request()->user()?->can('purchases.prices.view');
-        $filters = $this->reportFilters($request);
         $reportType = $filters['report_type'];
         $rows = $this->procurementReport->rows($reportType, $filters, $context['company_id'], $context['financial_period_id']);
         $metrics = [
@@ -1063,7 +1063,9 @@ class ProcurementWorkflowController extends Controller
             'rows' => $rows,
             'filters' => $filters,
             'reportType' => $reportType,
-            'reportTypes' => ProcurementCycleReport::types(),
+            'reportTypes' => array_values(array_filter(ProcurementCycleReport::types(), fn (string $type): bool => (bool) $request->user()?->can($this->reportPermission($type, 'view')))),
+            'reportPermissionPrefix' => $this->reportPermissionPrefix($reportType),
+            'reportPrintPermission' => $this->reportPermission($reportType, 'print'),
             'showPrices' => $showPrices,
             'grniReconciliation' => $reportType === ProcurementCycleReport::GoodsReceivedNotInvoiced
                 ? $this->procurementReport->grniReconciliation($context['company_id'], $context['financial_period_id'], $filters['branch_id'])
@@ -1086,8 +1088,8 @@ class ProcurementWorkflowController extends Controller
 
     public function exportReportExcel(Request $request): BinaryFileResponse
     {
+        $filters = $this->reportFilters($request, 'export');
         $context = $this->context();
-        $filters = $this->reportFilters($request);
         $rows = $this->procurementReport->rows($filters['report_type'], $filters, $context['company_id'], $context['financial_period_id']);
 
         return Excel::download(
@@ -1104,8 +1106,8 @@ class ProcurementWorkflowController extends Controller
 
     public function printReport(Request $request, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentities): Response
     {
+        $filters = $this->reportFilters($request, 'print');
         $context = $this->context();
-        $filters = $this->reportFilters($request);
         $rows = $this->procurementReport->rows($filters['report_type'], $filters, $context['company_id'], $context['financial_period_id']);
 
         $title = __('Procurement Report').' — '.__('procurement.reports.types.'.$filters['report_type']);
@@ -1509,7 +1511,7 @@ class ProcurementWorkflowController extends Controller
     }
 
     /** @return array<string, mixed> */
-    private function reportFilters(Request $request): array
+    private function reportFilters(Request $request, string $action = 'view'): array
     {
         $filters = $request->validate([
             'report_type' => ['nullable', Rule::in(ProcurementCycleReport::types())],
@@ -1540,6 +1542,16 @@ class ProcurementWorkflowController extends Controller
             'overdue' => ['nullable', Rule::in(['0', '1'])],
             'outstanding' => ['nullable', Rule::in(['0', '1'])],
         ]);
+        $filters['report_type'] = $filters['report_type'] ?? ProcurementCycleReport::OpenRequirements;
+        abort_unless($request->user()?->can($this->reportPermission($filters['report_type'], 'view')), 403);
+
+        if ($action !== 'view') {
+            abort_unless($request->user()?->can($this->reportPermission($filters['report_type'], $action)), 403);
+        }
+        if (in_array($filters['report_type'], [ProcurementCycleReport::SupplierStatement, ProcurementCycleReport::PurchaseLedger, ProcurementCycleReport::OutstandingSupplierInvoices, ProcurementCycleReport::SupplierAging, ProcurementCycleReport::PurchaseInvoices, ProcurementCycleReport::DueSupplierInstallments, ProcurementCycleReport::UpcomingSupplierPayments, ProcurementCycleReport::GoodsReceivedNotInvoiced], true)) {
+            abort_unless($request->user()?->can('purchases.prices.view'), 403);
+        }
+
         $context = $this->context();
         if ($this->isAdministrativeBranch()) {
             $filters['branch_id'] = $filters['branch_id'] ?? null;
@@ -1550,12 +1562,24 @@ class ProcurementWorkflowController extends Controller
             abort_if(filled($filters['branch_id'] ?? null) && (int) $filters['branch_id'] !== $context['branch_id'], 422);
             $filters['branch_id'] = $context['branch_id'];
         }
-        $filters['report_type'] = $filters['report_type'] ?? ProcurementCycleReport::OpenRequirements;
-        if (in_array($filters['report_type'], [ProcurementCycleReport::SupplierStatement, ProcurementCycleReport::PurchaseLedger, ProcurementCycleReport::OutstandingSupplierInvoices, ProcurementCycleReport::SupplierAging, ProcurementCycleReport::PurchaseInvoices, ProcurementCycleReport::DueSupplierInstallments, ProcurementCycleReport::UpcomingSupplierPayments, ProcurementCycleReport::GoodsReceivedNotInvoiced], true)) {
-            abort_unless($request->user()?->can('purchases.prices.view'), 403);
-        }
 
         return $filters;
+    }
+
+    private function reportPermissionPrefix(string $reportType): string
+    {
+        return $reportType === ProcurementCycleReport::SupplierStatement
+            ? 'reports.supplier_statement'
+            : "reports.purchases.{$reportType}";
+    }
+
+    private function reportPermission(string $reportType, string $action): string
+    {
+        if ($reportType === ProcurementCycleReport::SupplierStatement && $action === 'print') {
+            return 'reports.supplier_statement.export';
+        }
+
+        return $this->reportPermissionPrefix($reportType).".{$action}";
     }
 
     /** @return array{company_id: int, financial_period_id: int} */

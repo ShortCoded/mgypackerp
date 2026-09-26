@@ -15,7 +15,7 @@
             <div class="col-12 col-md-6 col-xl-3"><div class="text-600">{{ __('Last purchase date') }}</div><strong>{{ $dates->formatDate($metric['last_purchase_date'] ?? null, '—') }}</strong></div>
         </div>
         @endforeach
-        @can('reports.purchases.view')
+        @can('reports.purchases.open_requirements.view')
         <div class="d-flex flex-wrap gap-2 mb-3">
             @foreach(['supplier_statement', 'purchase_ledger', 'price_history', 'supplier_aging'] as $type)
                 @if(auth()->user()?->can('purchases.prices.view'))<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.procurement-cycle-report.index', ['report_type' => $type, 'supplier_doc_num' => $procurementOverview['supplier_doc_num']]) }}">{{ __('procurement.reports.types.'.$type) }}</a>@endif

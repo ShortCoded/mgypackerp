@@ -10,7 +10,7 @@ class HrAttendanceReportRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return (bool) $this->user()?->can('hr.employee_attendance.view');
+        return (bool) $this->user()?->can($this->routeIs('admin.hr.reports.*') ? 'hr.attendance_report.view' : 'hr.employee_attendance.view');
     }
 
     /** @return array<string, mixed> */

@@ -23,13 +23,13 @@ require_once dirname(__DIR__).'/SalesCycleSupport.php';
 
 function costReportPermissions(array $fixture): void
 {
-    foreach (['reports.sales.sales_orders.view', 'reports.sales.sales_orders.print', 'reports.sales.sales_orders.export'] as $permission) {
+    foreach (['reports.sales.cost_of_sales.view', 'reports.sales.cost_of_sales.print', 'reports.sales.cost_of_sales.export'] as $permission) {
         Permission::findOrCreate($permission, 'web');
     }
     $fixture['user']->givePermissionTo([
-        'reports.sales.sales_orders.view',
-        'reports.sales.sales_orders.print',
-        'reports.sales.sales_orders.export',
+        'reports.sales.cost_of_sales.view',
+        'reports.sales.cost_of_sales.print',
+        'reports.sales.cost_of_sales.export',
     ]);
 }
 

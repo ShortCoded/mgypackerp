@@ -26,11 +26,9 @@ require_once dirname(__DIR__).'/SalesCycleSupport.php';
 
 function salesReportTotalsPermissions(array $fixture): array
 {
-    $permissions = [
-        'reports.sales.sales_orders.view',
-        'reports.sales.sales_orders.print',
-        'reports.sales.sales_orders.export',
-    ];
+    $permissions = collect(['invoices', 'products', 'financial', 'period', 'receivables', 'collections', 'returns', 'customers'])
+        ->flatMap(fn (string $report): array => ["reports.sales.{$report}.view", "reports.sales.{$report}.print", "reports.sales.{$report}.export"])
+        ->all();
     foreach ($permissions as $permission) {
         Permission::findOrCreate($permission, 'web');
     }

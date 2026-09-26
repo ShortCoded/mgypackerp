@@ -413,7 +413,7 @@ class PriceListController extends Controller
 
     public function select2PriceLists(Request $request): JsonResponse
     {
-        abort_unless($request->user()?->canAny(['price_lists.view', 'inventory.reports.operational']), 403);
+        abort_unless($request->user()?->canAny(['price_lists.view', 'inventory.reports.sales_valuation.view']), 403);
 
         $term = trim((string) $request->input('q', $request->input('term', '')));
         $companyId = $this->companies->requireCompanyId($request);

@@ -40,40 +40,40 @@ Route::middleware('auth')
             Route::get('/{inventoryDocument}', 'show')->middleware('can:inventory.documents.view')->name('show');
         });
         Route::get('/reports/operations', [InventoryReportController::class, 'index'])
-            ->middleware('can:inventory.reports.operational')
+            ->middleware('can:inventory.reports.operations.view')
             ->name('reports.index');
         Route::get('/reports/operations/export.xlsx', [InventoryReportController::class, 'export'])
-            ->middleware(['can:inventory.reports.operational', 'can:inventory.reports.export'])
+            ->middleware(['can:inventory.reports.operations.view', 'can:inventory.reports.operations.export'])
             ->name('reports.export');
         Route::get('/reports/operations/print', [InventoryReportController::class, 'print'])
-            ->middleware(['can:inventory.reports.operational', 'can:inventory.reports.export'])
+            ->middleware(['can:inventory.reports.operations.view', 'can:inventory.reports.operations.print'])
             ->name('reports.print');
         Route::get('/reports/valuation', [InventoryReportController::class, 'valuation'])
-            ->middleware('can:inventory.reports.financial')
+            ->middleware('can:inventory.reports.valuation.view')
             ->name('reports.valuation');
         foreach (['excel', 'csv', 'pdf'] as $format) {
             Route::get("/reports/valuation/export/{$format}", [InventoryReportController::class, 'valuationExport'])
                 ->defaults('valuation_export_format', $format)
-                ->middleware(['can:inventory.reports.financial', 'can:inventory.reports.export'])
+                ->middleware(['can:inventory.reports.valuation.view', 'can:inventory.reports.valuation.export'])
                 ->name("reports.valuation.export.{$format}");
         }
         Route::get('/stock-balances', [InventoryReportController::class, 'stockBalances'])
-            ->middleware('can:inventory.reports.operational')
+            ->middleware('can:inventory.reports.stock_balances.view')
             ->name('stock-balances.index');
         Route::get('/stock-balances/export.xlsx', [InventoryReportController::class, 'stockBalancesExport'])
-            ->middleware(['can:inventory.reports.operational', 'can:inventory.reports.export'])
+            ->middleware(['can:inventory.reports.stock_balances.view', 'can:inventory.reports.stock_balances.export'])
             ->name('stock-balances.export');
         Route::get('/stock-balances/print', [InventoryReportController::class, 'stockBalancesPrint'])
-            ->middleware(['can:inventory.reports.operational', 'can:inventory.reports.export'])
+            ->middleware(['can:inventory.reports.stock_balances.view', 'can:inventory.reports.stock_balances.print'])
             ->name('stock-balances.print');
         Route::get('/sales-valuation', [InventoryReportController::class, 'salesValuation'])
-            ->middleware('can:inventory.reports.operational')
+            ->middleware('can:inventory.reports.sales_valuation.view')
             ->name('sales-valuation');
         Route::get('/sales-valuation/export/{format?}', [InventoryReportController::class, 'salesValuationExport'])
-            ->middleware(['can:inventory.reports.operational', 'can:inventory.reports.export'])
+            ->middleware(['can:inventory.reports.sales_valuation.view', 'can:inventory.reports.sales_valuation.export'])
             ->name('sales-valuation.export');
         Route::get('/sales-valuation/print', [InventoryReportController::class, 'salesValuationPrint'])
-            ->middleware(['can:inventory.reports.operational', 'can:inventory.reports.export'])
+            ->middleware(['can:inventory.reports.sales_valuation.view', 'can:inventory.reports.sales_valuation.print'])
             ->name('sales-valuation.print');
         Route::prefix('stock-counts')->name('stock-counts.')->controller(StockCountController::class)->group(function (): void {
             Route::get('/', 'index')->middleware('can:inventory.stock_counts.view')->name('index');

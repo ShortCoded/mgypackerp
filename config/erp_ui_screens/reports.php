@@ -77,7 +77,7 @@ return [
             'menu_title' => ['en' => 'Financial Reports Overview', 'ar' => 'نظرة عامة على التقارير المالية'],
             'actions' => ['view'],
         ],
-        [...$screen('sales', 'sales-orders', 'Sales Orders', 'أوامر البيع'), 'shell_enabled' => false],
+        [...$screen('sales', 'sales-orders', 'Sales Orders', 'أوامر البيع'), 'classification' => 'RETIRED', 'shell_enabled' => false],
         [...$screen('purchases', 'purchases-by-supplier', 'Purchases by Supplier', 'المشتريات حسب المورد'), 'menu_visible' => false, 'shell_enabled' => false],
         [...$screen('purchases', 'purchase-orders', 'Purchase Orders', 'أوامر الشراء'), 'menu_visible' => false, 'shell_enabled' => false],
         [...$screen('purchases', 'purchase-invoice-details', 'Purchase Invoice Details', 'تفاصيل فواتير المشتريات'), 'menu_visible' => false, 'shell_enabled' => false],

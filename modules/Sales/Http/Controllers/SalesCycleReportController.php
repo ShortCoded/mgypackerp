@@ -51,17 +51,19 @@ class SalesCycleReportController extends Controller
 
     public function index(Request $request): View
     {
-        $context = $this->context->snapshot($request);
-        abort_unless($context['company_id'] && $context['financial_period_id'], 422, __('sales_ui.reports.operating_context_required'));
-        $companyId = (int) $context['company_id'];
-        $periodId = (int) $context['financial_period_id'];
-        $fullReport = $request->routeIs('*.print', '*.export') || $request->filled('operational_focus');
         $validated = $request->validate([
             'report' => ['nullable', 'string', Rule::in(self::REPORT_TYPES)],
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date', 'after_or_equal:from'],
         ]);
         $reportType = $validated['report'] ?? 'operational';
+        $this->authorizeReportAction($request, $reportType, 'view');
+        $allowedReportTypes = array_values(array_filter(self::REPORT_TYPES, fn (string $type): bool => (bool) $request->user()?->can("reports.sales.{$type}.view")));
+        $context = $this->context->snapshot($request);
+        abort_unless($context['company_id'] && $context['financial_period_id'], 422, __('sales_ui.reports.operating_context_required'));
+        $companyId = (int) $context['company_id'];
+        $periodId = (int) $context['financial_period_id'];
+        $fullReport = $request->routeIs('*.print', '*.export') || $request->filled('operational_focus');
         $from = $request->date('from');
         $to = $request->date('to');
         $filters = collect([
@@ -683,11 +685,12 @@ class SalesCycleReportController extends Controller
             'area' => $areaId && $areaId > 0 ? HrArea::query()->find($areaId) : null,
         ];
 
-        return view('modules.sales.cycle.report', compact('reportType', 'currencies', 'reportCurrency', 'financialSummary', 'ledgerSummary', 'customerSummary', 'productSummary', 'customerProductSummary', 'periodSummary', 'outstandingSummary', 'installmentSummary', 'agingTotals', 'collectionSummary', 'upcomingSummary', 'returnsSummary', 'returnAnalysisSummary', 'costOfSalesSummary', 'costOfSalesRows', 'filterOptions', 'salesLedger', 'salesRequests', 'salesActionCount', 'quotations', 'openOrders', 'salesByCustomer', 'salesByItem', 'salesByCustomerItem', 'salesByPeriod', 'invoiceOutstanding', 'installments', 'upcomingCollections', 'customerReceipts', 'aging', 'returns', 'returnAnalysis', 'unpricedProducts', 'customersWithoutPriceLists', 'customerProductPricingGaps', 'pricingDate', 'from', 'to', 'filters', 'orderStatuses', 'returnReasons'));
+        return view('modules.sales.cycle.report', compact('reportType', 'allowedReportTypes', 'currencies', 'reportCurrency', 'financialSummary', 'ledgerSummary', 'customerSummary', 'productSummary', 'customerProductSummary', 'periodSummary', 'outstandingSummary', 'installmentSummary', 'agingTotals', 'collectionSummary', 'upcomingSummary', 'returnsSummary', 'returnAnalysisSummary', 'costOfSalesSummary', 'costOfSalesRows', 'filterOptions', 'salesLedger', 'salesRequests', 'salesActionCount', 'quotations', 'openOrders', 'salesByCustomer', 'salesByItem', 'salesByCustomerItem', 'salesByPeriod', 'invoiceOutstanding', 'installments', 'upcomingCollections', 'customerReceipts', 'aging', 'returns', 'returnAnalysis', 'unpricedProducts', 'customersWithoutPriceLists', 'customerProductPricingGaps', 'pricingDate', 'from', 'to', 'filters', 'orderStatuses', 'returnReasons'));
     }
 
     public function print(Request $request, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentity): Response
     {
+        $this->authorizeReportAction($request, (string) $request->query('report', 'operational'), 'print');
         $data = $this->index($request)->getData();
         $context = $this->context->snapshot($request);
         $company = Company::query()->findOrFail($context['company_id']);
@@ -705,6 +708,7 @@ class SalesCycleReportController extends Controller
     public function export(Request $request, string $format = 'xlsx'): BinaryFileResponse
     {
         abort_unless(in_array($format, ['xlsx', 'csv'], true), 404);
+        $this->authorizeReportAction($request, (string) $request->query('report', 'operational'), 'export');
         $report = $this->index($request)->getData();
         $reportType = $report['reportType'] ?? 'operational';
 
@@ -713,6 +717,16 @@ class SalesCycleReportController extends Controller
             'sales-'.$reportType.'-report-'.now()->format('Ymd-His').'.'.$format,
             $format === 'csv' ? ExcelWriter::CSV : ExcelWriter::XLSX,
         );
+    }
+
+    private function authorizeReportAction(Request $request, string $reportType, string $action): void
+    {
+        abort_unless(in_array($reportType, self::REPORT_TYPES, true), 404);
+        abort_unless($request->user()?->can("reports.sales.{$reportType}.view"), 403);
+
+        if ($action !== 'view') {
+            abort_unless($request->user()?->can("reports.sales.{$reportType}.{$action}"), 403);
+        }
     }
 
     private function contextId(Builder $query, string $docNum): ?int

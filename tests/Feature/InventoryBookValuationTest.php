@@ -713,17 +713,17 @@ test('valuation screen and exports share aggregate rows totals filters currency 
     $this->actingAs($fixture['user'])->withSession(inventoryBookSession($fixture))
         ->get(route('admin.inventory.reports.valuation', $query))->assertForbidden();
 
-    foreach (['inventory.reports.financial', 'inventory.reports.export'] as $permission) {
+    foreach (['inventory.reports.valuation.view', 'inventory.reports.valuation.export'] as $permission) {
         Permission::findOrCreate($permission, 'web');
     }
-    $fixture['user']->givePermissionTo('inventory.reports.financial');
+    $fixture['user']->givePermissionTo('inventory.reports.valuation.view');
 
     $this->actingAs($fixture['user'])->withSession(inventoryBookSession($fixture))
         ->get(route('admin.inventory.reports.valuation', $query))
         ->assertOk()
         ->assertDontSee(route('admin.inventory.reports.valuation.export.excel', $query));
 
-    $fixture['user']->givePermissionTo('inventory.reports.export');
+    $fixture['user']->givePermissionTo('inventory.reports.valuation.export');
 
     $this->actingAs($fixture['user'])->withSession(inventoryBookSession($fixture))
         ->get(route('admin.inventory.reports.valuation', $query))

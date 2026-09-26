@@ -97,7 +97,7 @@ Route::middleware('auth')
             });
 
         Route::controller(FixedAssetMovementController::class)->group(function (): void {
-            Route::get('/movements', 'index')->middleware('can:fixed_assets.view')->name('movements.index');
+            Route::get('/movements', 'index')->middleware('can:fixed_assets.movements.view')->name('movements.index');
             Route::post('/assets/{fixedAsset}/documents', 'document')->middleware(['can:fixed_assets.edit', 'can:file_manager.view'])->name('movements.document');
             Route::post('/assets/{fixedAsset}/additions', 'addition')->name('movements.addition');
             Route::post('/assets/{fixedAsset}/custody', 'custody')->name('movements.custody');

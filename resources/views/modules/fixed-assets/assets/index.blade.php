@@ -67,9 +67,9 @@
                 <p class="text-600 mb-0">{{ __('fixed_assets.product.register_help') }}</p>
             </div>
             <div class="d-flex flex-column flex-sm-row gap-2 flex-shrink-0">
-                <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.fixed-assets.movements.index') }}">
+                @can('fixed_assets.movements.view')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.fixed-assets.movements.index') }}">
                     <span class="fas fa-exchange-alt me-1" aria-hidden="true"></span>{{ __('fixed_assets.product.open_movements') }}
-                </a>
+                </a>@endcan
                 @can('fixed_assets.depreciation.preview')<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.fixed-assets.depreciation.index') }}"><span class="fas fa-calculator me-1" aria-hidden="true"></span>{{ __('fixed_assets.lifecycle.depreciation_run') }}</a>@endcan
                 @can('fixed_assets.reports')<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.fixed-assets.reports.index') }}"><span class="fas fa-chart-bar me-1" aria-hidden="true"></span>{{ __('fixed_assets.reports.title') }}</a>@endcan
             </div>

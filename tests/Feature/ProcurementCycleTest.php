@@ -195,8 +195,11 @@ test('purchasable classifications and production demand lineage are explicit', f
 test('split sourcing, receiving, quality, matching, and returns preserve line capacity', function () {
     Storage::fake('public');
     $fixture = procurementFixture();
-    Permission::findOrCreate('reports.purchases.view', 'web');
-    $fixture['user']->givePermissionTo('reports.purchases.view');
+    foreach (['open_requirements', 'pending_sourcing_actions', 'pending_purchase_requests', 'open_purchase_orders'] as $report) {
+        $permission = "reports.purchases.{$report}.view";
+        Permission::findOrCreate($permission, 'web');
+        $fixture['user']->givePermissionTo($permission);
+    }
     $attachment = procurementDocumentAttachment($fixture['company']);
     $this->seed(DefaultChartOfAccountsSeeder::class);
     $supplierAccount = procurementPostingAccount($fixture['company'], '2111', '2111001', 'Procurement Supplier Payable');
@@ -553,7 +556,7 @@ test('procurement-specific confidentiality and report permissions are discoverab
 
     expect($permissions)->toContain('purchases.prices.view')
         ->and($permissions)->toContain('purchases.direct_procurement.override')
-        ->and($permissions)->toContain('reports.purchases.view');
+        ->and($permissions)->toContain('reports.purchases.open_requirements.view');
 });
 
 test('the ten thousand kilogram split award closes supplier B and reconciles quantity value and supplier balances', function () {
@@ -1840,7 +1843,7 @@ test('purchase order stores span active company branches while remaining company
 test('procurement reports filter, print, and export without leaking confidential prices', function () {
     $fixture = procurementFixture();
     $this->seed(PermissionSeeder::class);
-    $fixture['user']->givePermissionTo('reports.purchases.view');
+    $fixture['user']->givePermissionTo('reports.purchases.outstanding_supplier_invoices.view');
     $country = HrCountry::query()->create(['doc_number' => 98911, 'doc_num' => 'Country-98911', 'name' => 'Supplier Report Country']);
     $governorate = HrGovernorate::query()->create(['doc_number' => 98911, 'doc_num' => 'Governorate-98911', 'name' => 'Supplier Report Governorate', 'country_id' => $country->id]);
     $city = HrCity::query()->create(['doc_number' => 98911, 'doc_num' => 'City-98911', 'name' => 'Supplier Report City', 'governorate_id' => $governorate->id]);
@@ -1967,7 +1970,7 @@ test('procurement reports filter, print, and export without leaking confidential
     $this->get(route('admin.purchases.procurement-cycle-report.print', $query))->assertForbidden();
     $this->get(route('admin.purchases.procurement-cycle-report.export.excel', $query))->assertForbidden();
 
-    $fixture['user']->givePermissionTo('reports.purchases.export');
+    $fixture['user']->givePermissionTo(['reports.purchases.outstanding_supplier_invoices.print', 'reports.purchases.outstanding_supplier_invoices.export']);
     $reportPdf = $this->get(route('admin.purchases.procurement-cycle-report.print', $query))
         ->assertOk()
         ->assertHeader('content-type', 'application/pdf')

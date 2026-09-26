@@ -22,6 +22,7 @@ class AccountSelect2Service
         $companyId = $this->companies->currentCompanyId($request);
         $includeHistorical = $request->boolean('include_historical')
             && ((bool) $request->user()?->can('reports.account_ledger.view')
+                || (bool) $request->user()?->can('reports.general_journal.view')
                 || (bool) $request->user()?->can('reports.trial_balance.view')
                 || (bool) $request->user()?->can('reports.financial_statements.view'));
         $query = Account::query()

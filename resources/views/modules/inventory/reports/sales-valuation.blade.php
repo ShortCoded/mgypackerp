@@ -25,9 +25,9 @@
                 :show-filters="false"
                 :show-refresh="false"
                 :export-options="[
-                    ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.sales-valuation.export', ['format' => 'xlsx', ...$exportQuery]), 'label' => __('reports.export_excel'), 'icon' => 'file-excel'],
-                    ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.sales-valuation.export', ['format' => 'csv', ...$exportQuery]), 'label' => __('reports.export_csv'), 'icon' => 'file-csv'],
-                    ['permission' => 'inventory.reports.export', 'url' => route('admin.inventory.sales-valuation.print', $exportQuery), 'label' => __('reports.export_pdf'), 'icon' => 'file-pdf', 'newTab' => true],
+                    ['permission' => 'inventory.reports.sales_valuation.export', 'url' => route('admin.inventory.sales-valuation.export', ['format' => 'xlsx', ...$exportQuery]), 'label' => __('reports.export_excel'), 'icon' => 'file-excel'],
+                    ['permission' => 'inventory.reports.sales_valuation.export', 'url' => route('admin.inventory.sales-valuation.export', ['format' => 'csv', ...$exportQuery]), 'label' => __('reports.export_csv'), 'icon' => 'file-csv'],
+                    ['permission' => 'inventory.reports.sales_valuation.print', 'url' => route('admin.inventory.sales-valuation.print', $exportQuery), 'label' => __('reports.export_pdf'), 'icon' => 'file-pdf', 'newTab' => true],
                 ]"
             />
         @endif

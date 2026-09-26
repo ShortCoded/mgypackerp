@@ -46,16 +46,16 @@ class PermissionRegistryCoverageTest extends TestCase
             // Production work orders use the canonical production.orders permission.
             ['production.orders.view'],
 
-            // Screen data visibility rules permissions (referenced in modules/Core/Services/ScreenDataVisibilityService.php
-            //   and resources/views/modules/auth/screen-data-visibility-rules/)
-            ['screen_data_visibility_rules.view'],
-            ['screen_data_visibility_rules.create'],
-            ['screen_data_visibility_rules.clone'],
-            ['screen_data_visibility_rules.edit'],
-            ['screen_data_visibility_rules.delete'],
-            ['screen_data_visibility_rules.restore'],
-            ['screen_data_visibility_rules.view_trashed'],
-            ['screen_data_visibility_rules.bypass'],
+            ...((bool) config('erp_features.screen_data_visibility_rules.enabled', false) ? [
+                ['screen_data_visibility_rules.view'],
+                ['screen_data_visibility_rules.create'],
+                ['screen_data_visibility_rules.clone'],
+                ['screen_data_visibility_rules.edit'],
+                ['screen_data_visibility_rules.delete'],
+                ['screen_data_visibility_rules.restore'],
+                ['screen_data_visibility_rules.view_trashed'],
+                ['screen_data_visibility_rules.bypass'],
+            ] : []),
         ];
     }
 
@@ -203,7 +203,7 @@ class PermissionRegistryCoverageTest extends TestCase
                 foreach ($node['permissions'] ?? [] as $row) {
                     $shown[] = $row;
 
-                    if ($row['name'] === 'inventory.reports.financial') {
+                    if ($row['name'] === 'inventory.reports.valuation.view') {
                         $valuationGroup = $node['label'];
                     }
                 }
@@ -220,6 +220,18 @@ class PermissionRegistryCoverageTest extends TestCase
         $this->assertSame($registry->all(), collect($names)->sort()->values()->all());
         $this->assertCount(count($names), array_unique($names));
         $this->assertSame('مقارنة تقييم المخزون', $valuationGroup);
+
+        $inventoryGroup = collect($groups)->firstWhere('key', 'inventory');
+        $inventoryReports = collect($inventoryGroup['children'] ?? [])->firstWhere('label', 'تقارير المخزون');
+        $this->assertNotNull($inventoryReports);
+        $this->assertSame([
+            'استعلام الأرصدة',
+            'تقارير عمليات المخزون',
+            'مقارنة تقييم المخزون',
+            'تقييم المخزون بسعر البيع',
+            'استلامات المنتج التام',
+            'تقرير بيانات المنتجات والخامات ومواد التعبئة والتغليف',
+        ], array_column($inventoryReports['children'], 'label'));
 
         $accountingGroup = collect($groups)->firstWhere('key', 'accounting_costing');
         $accountingPermissions = [];
@@ -247,6 +259,11 @@ class PermissionRegistryCoverageTest extends TestCase
         $missing = [];
 
         foreach (Route::getRoutes() as $route) {
+            if (! config('erp_features.screen_data_visibility_rules.enabled', false)
+                && str_starts_with((string) $route->getName(), 'admin.screen-data-visibility-rules.')) {
+                continue;
+            }
+
             foreach ($route->gatherMiddleware() as $middleware) {
                 if (! str_starts_with($middleware, 'can:')) {
                     continue;

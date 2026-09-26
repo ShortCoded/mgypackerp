@@ -243,7 +243,7 @@ test('sales request customer type requires customer and internal type uses separ
 
 test('sales navigation is one ordered journey with canonical statement and collection links', function () {
     $f = salesUiFixture();
-    foreach (['customers.view', 'price_lists.view', 'sales_deliveries.view', 'customer_invoices.view', 'sales_returns.view', 'customer_receipts.view', 'reports.customer_statement.view', 'reports.sales.sales_orders.view'] as $permission) {
+    foreach (['customers.view', 'customer_terms.view', 'price_lists.view', 'sales_deliveries.view', 'customer_invoices.view', 'sales_returns.view', 'customer_receipts.view', 'reports.customer_statement.view', 'reports.sales.invoices.view', 'reports.sales.quotations.view', 'reports.sales.fulfillment.view', 'reports.sales.pricing.view', 'reports.sales.operational.view', 'reports.sales.cost_of_sales.view', 'reports.sales.financial.view', 'reports.sales.period.view', 'reports.sales.customers.view', 'reports.sales.products.view', 'reports.sales.receivables.view', 'reports.sales.collections.view', 'reports.sales.returns.view'] as $permission) {
         Permission::findOrCreate($permission, 'web');
         $f['user']->givePermissionTo($permission);
     }
@@ -581,8 +581,8 @@ test('customer credit target invoices use the shared paginated ajax picker', fun
 
 test('sales report uses ajax business filters and exposes financial analysis', function () {
     $f = salesUiFixture();
-    Permission::findOrCreate('reports.sales.sales_orders.view', 'web');
-    $f['user']->givePermissionTo('reports.sales.sales_orders.view');
+    Permission::findOrCreate('reports.sales.operational.view', 'web');
+    $f['user']->givePermissionTo('reports.sales.operational.view');
     salesPostedServiceInvoice($f, '250');
 
     $response = $this->actingAs($f['user'])->withSession(salesCycleSession($f))
@@ -602,7 +602,7 @@ test('sales report uses ajax business filters and exposes financial analysis', f
 
 test('customer collection records the receiving employee and prints conditional cheque details', function () {
     $f = salesUiFixture();
-    foreach (['customer_receipts.create', 'customer_receipts.view', 'customer_receipts.print', 'file_manager.view', 'reports.sales.sales_orders.view', 'reports.sales.sales_orders.print', 'reports.sales.sales_orders.export'] as $permission) {
+    foreach (['customer_receipts.create', 'customer_receipts.view', 'customer_receipts.print', 'file_manager.view', 'reports.sales.collections.view', 'reports.sales.collections.print', 'reports.sales.collections.export'] as $permission) {
         Permission::findOrCreate($permission, 'web');
         $f['user']->givePermissionTo($permission);
     }

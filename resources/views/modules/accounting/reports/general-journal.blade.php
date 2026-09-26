@@ -9,9 +9,9 @@
     $toDate = request('to_date', $period?->to_date?->format('Y-m-d'));
     $hasFilters = request()->boolean('run') || $errors->any();
     $exportOptions = $result ? [
-        ['label' => __('reports.export_excel'), 'url' => route('admin.accounting.reports.general-journal.export.excel', request()->query()), 'icon' => 'file-excel', 'permission' => 'reports.account_ledger.export'],
-        ['label' => __('reports.export_csv'), 'url' => route('admin.accounting.reports.general-journal.export.csv', request()->query()), 'icon' => 'file-csv', 'permission' => 'reports.account_ledger.export'],
-        ['label' => __('reports.export_pdf'), 'url' => route('admin.accounting.reports.general-journal.export.pdf', request()->query()), 'icon' => 'file-pdf', 'permission' => 'reports.account_ledger.export', 'newTab' => true],
+        ['label' => __('reports.export_excel'), 'url' => route('admin.accounting.reports.general-journal.export.excel', request()->query()), 'icon' => 'file-excel', 'permission' => 'reports.general_journal.export'],
+        ['label' => __('reports.export_csv'), 'url' => route('admin.accounting.reports.general-journal.export.csv', request()->query()), 'icon' => 'file-csv', 'permission' => 'reports.general_journal.export'],
+        ['label' => __('reports.export_pdf'), 'url' => route('admin.accounting.reports.general-journal.export.pdf', request()->query()), 'icon' => 'file-pdf', 'permission' => 'reports.general_journal.export', 'newTab' => true],
     ] : [];
 @endphp
 

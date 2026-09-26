@@ -104,6 +104,47 @@ function navigationAuditActor(string $permission): User
     return $actor;
 }
 
+test('a report grant cannot open a sibling report or export it without its own permission', function (): void {
+    $permissions = [
+        'inventory.reports.operations.view',
+        'production.reports.overview.view',
+        'reports.sales.operational.view',
+        'reports.purchases.open_requirements.view',
+        'purchases.prices.view',
+        'reports.general_journal.view',
+        'hr.attendance_report.view',
+        'production.quality.view',
+        'fixed_assets.view',
+        'financial_periods.view',
+    ];
+    foreach ($permissions as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+
+    $actor = User::factory()->create();
+    $actor->givePermissionTo($permissions);
+    $this->actingAs($actor);
+
+    foreach ([
+        route('admin.inventory.stock-balances.index'),
+        route('admin.inventory.reports.valuation'),
+        route('admin.inventory.reports.export'),
+        route('admin.production.reports.orders'),
+        route('admin.production.reports.export', ['section' => 'overview']),
+        route('admin.reports.sales.sales-orders.index', ['report' => 'financial']),
+        route('admin.reports.sales.sales-orders.export', ['report' => 'operational']),
+        route('admin.purchases.procurement-cycle-report.index', ['report_type' => 'purchase_requests']),
+        route('admin.purchases.procurement-cycle-report.export.excel', ['report_type' => 'open_requirements']),
+        route('admin.accounting.reports.reconciliation-center'),
+        route('admin.hr.employee-attendance.index'),
+        route('admin.production.quality.reports.index'),
+        route('admin.fixed-assets.movements.index'),
+        route('admin.financial-periods.closing'),
+    ] as $url) {
+        $this->get($url)->assertForbidden();
+    }
+});
+
 /**
  * @param  array<string, scalar>  $query
  */
@@ -326,10 +367,10 @@ test('report-only permissions retain access, hide empty module parents, and acti
         ->and($activePath->slice(0, -1)->every(fn (array $item): bool => $item['open'] === true))->toBeTrue()
         ->and($leaf['permission'])->toBe($permission);
 })->with([
-    'sales report' => ['reports.sales.sales_orders.view', 'admin.reports.sales.sales-orders.index', 'financial_analysis_reports', 'sales_report_financial', ['dashboard', 'sales', 'accounting_costing', 'human_resources'], ['report' => 'financial']],
-    'purchase report' => ['reports.purchases.view', 'admin.purchases.procurement-cycle-report.index', 'purchase_reports', 'report_purchase_requests', ['dashboard', 'purchases', 'accounting_costing', 'human_resources'], ['report_type' => 'purchase_requests']],
-    'inventory report' => ['inventory.reports.operational', 'admin.inventory.reports.index', 'inventory_module_reports', 'inventory_operational_reports', ['dashboard', 'inventory', 'human_resources']],
-    'production report' => ['production.reports.operational', 'admin.production.reports.index', 'production_reports_operations', 'production_reports_overview', ['dashboard', 'inventory', 'production', 'human_resources']],
+    'sales report' => ['reports.sales.financial.view', 'admin.reports.sales.sales-orders.index', 'financial_analysis_reports', 'sales_report_financial', ['dashboard', 'accounting_costing', 'human_resources'], ['report' => 'financial']],
+    'purchase report' => ['reports.purchases.purchase_requests.view', 'admin.purchases.procurement-cycle-report.index', 'purchase_reports', 'report_purchase_requests', ['dashboard', 'purchases', 'human_resources'], ['report_type' => 'purchase_requests']],
+    'inventory report' => ['inventory.reports.operations.view', 'admin.inventory.reports.index', 'inventory_module_reports', 'inventory_operational_reports', ['dashboard', 'inventory', 'human_resources']],
+    'production report' => ['production.reports.overview.view', 'admin.production.reports.index', 'production_reports_operations', 'production_reports_overview', ['dashboard', 'production', 'human_resources']],
     'account ledger' => ['reports.account_ledger.view', 'admin.accounting.reports.account-ledger', 'accounting_costing_reports', 'account_ledger', ['dashboard', 'accounting_costing', 'human_resources']],
     'customer statement' => ['reports.customer_statement.view', 'admin.accounting.reports.customer-statement', 'sales_cycle_reports', 'customer_statement', ['dashboard', 'sales', 'human_resources']],
     'supplier statement' => ['reports.supplier_statement.view', 'admin.accounting.reports.supplier-statement', 'purchase_reports', 'supplier_statement', ['dashboard', 'purchases', 'human_resources']],

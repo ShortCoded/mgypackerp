@@ -168,8 +168,13 @@ test('all production create forms and operational report pages render in Arabic'
         'production.material_requests.create',
         'production.expenses.create',
         'production.quality.create',
-        'production.reports.operational',
-        'production.reports.export',
+        'production.reports.overview.view',
+        'production.reports.overview.export',
+        'production.reports.orders.view',
+        'production.reports.runs.view',
+        'production.reports.materials.view',
+        'production.reports.quality.view',
+        'production.reports.receipts.view',
     ] as $permission) {
         Permission::findOrCreate($permission, 'web');
         $user->givePermissionTo($permission);

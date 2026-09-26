@@ -11,6 +11,7 @@ use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Modules\Auth\Services\PermissionRegistryService;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
@@ -803,7 +804,7 @@ class QuotationController extends Controller
         return (bool) $user?->can('quotations.view')
             || (bool) $user?->can('quotations.create')
             || (bool) $user?->can('quotations.edit')
-            || (bool) $user?->canAny(['sales_requests.view', 'sales_requests.create', 'sales_requests.edit', 'sales_orders.view', 'sales_orders.create', 'sales_orders.edit', 'customer_receipts.create', 'customer_invoices.create', 'price_lists.view', 'price_lists.create', 'price_lists.edit', 'reports.sales.sales_orders.view']);
+            || (bool) $user?->canAny(['sales_requests.view', 'sales_requests.create', 'sales_requests.edit', 'sales_orders.view', 'sales_orders.create', 'sales_orders.edit', 'customer_receipts.create', 'customer_invoices.create', 'price_lists.view', 'price_lists.create', 'price_lists.edit', ...app(PermissionRegistryService::class)->reportViewPermissions('reports.sales')]);
     }
 
     /** @param array<string, mixed> $data @return array<string, mixed> */

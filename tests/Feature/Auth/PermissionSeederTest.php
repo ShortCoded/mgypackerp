@@ -527,6 +527,34 @@ test('permission seeder copies legacy duplicate grants to canonical permissions'
         ->and(app(PermissionRegistryService::class)->all())->not->toContain('file_manager.bulk_download');
 });
 
+test('permission seeder moves old report grants once and preserves later revocations', function () {
+    $role = Role::query()->create(['name' => 'report reader', 'guard_name' => 'web']);
+    $user = User::factory()->create();
+
+    foreach (['inventory.reports.operational', 'reports.sales.sales_orders.view', 'customers.view'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $role->givePermissionTo(['inventory.reports.operational', 'customers.view']);
+    $user->givePermissionTo('reports.sales.sales_orders.view');
+
+    $this->seed(PermissionSeeder::class);
+
+    expect($role->refresh()->hasPermissionTo('inventory.reports.operations.view'))->toBeTrue()
+        ->and($role->hasPermissionTo('customer_terms.view'))->toBeTrue()
+        ->and($user->refresh()->hasPermissionTo('reports.sales.financial.view'))->toBeTrue()
+        ->and($role->permissions()->where('name', 'inventory.reports.operational')->exists())->toBeFalse()
+        ->and($user->permissions()->where('name', 'reports.sales.sales_orders.view')->exists())->toBeFalse();
+
+    $role->revokePermissionTo('inventory.reports.operations.view');
+    $role->revokePermissionTo('customer_terms.view');
+    $user->revokePermissionTo('reports.sales.financial.view');
+    $this->seed(PermissionSeeder::class);
+
+    expect($role->refresh()->hasPermissionTo('inventory.reports.operations.view'))->toBeFalse()
+        ->and($role->hasPermissionTo('customer_terms.view'))->toBeFalse()
+        ->and($user->refresh()->hasPermissionTo('reports.sales.financial.view'))->toBeFalse();
+});
+
 test('database seeder is repeatable and assigns admin role to default admin user', function () {
     $this->seed(DatabaseSeeder::class);
     $this->seed(DatabaseSeeder::class);

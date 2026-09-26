@@ -64,12 +64,11 @@ Route::middleware('auth')
         Route::get('/quality', [ProductionQualityController::class, 'index'])->middleware('can:production.quality.view')->name('quality.index');
         Route::get('/quality/data', [ProductionQualityController::class, 'data'])->middleware('can:production.quality.view')->name('quality.data');
         Route::get('/quality/active', [ProductionQualityController::class, 'active'])->middleware('can:production.quality.view')->name('quality.active');
-        Route::get('/quality/reports', [ProductionQualityController::class, 'reportsIndex'])->middleware('can:production.quality.view')->name('quality.reports.index');
-        Route::get('/quality/reports/data', [ProductionQualityController::class, 'reportsData'])->middleware('can:production.quality.view')->name('quality.reports.data');
-        Route::get('/quality/export.xlsx', [ProductionQualityController::class, 'export'])->middleware('can:production.quality.export')->name('quality.export');
-        Route::get('/quality/print', [ProductionQualityController::class, 'print'])->middleware('can:production.quality.print')->name('quality.print');
+        Route::get('/quality/reports', [ProductionQualityController::class, 'reportsIndex'])->middleware('can:production.quality.reports.view')->name('quality.reports.index');
+        Route::get('/quality/reports/data', [ProductionQualityController::class, 'reportsData'])->middleware('can:production.quality.reports.view')->name('quality.reports.data');
+        Route::get('/quality/export.xlsx', [ProductionQualityController::class, 'export'])->middleware('can:production.quality.reports.export')->name('quality.export');
+        Route::get('/quality/print', [ProductionQualityController::class, 'print'])->middleware('can:production.quality.reports.print')->name('quality.print');
         Route::get('/quality/select2/{lookup}', [ProductionQualityController::class, 'select2'])
-            ->middleware('can:production.quality.view')
             ->whereIn('lookup', ['runs', 'products', 'stores', 'inspection-types'])
             ->name('quality.select2');
         Route::get('/quality/stock-balance', [ProductionQualityController::class, 'stockBalance'])->middleware('can:production.quality.view')->name('quality.stock-balance');
@@ -163,33 +162,31 @@ Route::middleware('auth')
             Route::get('/{productionRun}', 'show')->middleware('can:production.runs.view')->name('show');
         });
         Route::get('/reports/operations', [ProductionReportController::class, 'index'])
-            ->middleware('can:production.reports.operational')
+            ->middleware('can:production.reports.overview.view')
             ->name('reports.index');
         Route::get('/reports/operations/orders', [ProductionReportController::class, 'index'])
             ->defaults('section', 'orders')
-            ->middleware('can:production.reports.operational')
+            ->middleware('can:production.reports.orders.view')
             ->name('reports.orders');
         Route::get('/reports/operations/runs', [ProductionReportController::class, 'index'])
             ->defaults('section', 'runs')
-            ->middleware('can:production.reports.operational')
+            ->middleware('can:production.reports.runs.view')
             ->name('reports.runs');
         Route::get('/reports/operations/materials', [ProductionReportController::class, 'index'])
             ->defaults('section', 'materials')
-            ->middleware('can:production.reports.operational')
+            ->middleware('can:production.reports.materials.view')
             ->name('reports.materials');
         Route::get('/reports/operations/quality', [ProductionReportController::class, 'index'])
             ->defaults('section', 'quality')
-            ->middleware('can:production.reports.operational')
+            ->middleware('can:production.reports.quality.view')
             ->name('reports.quality');
         Route::get('/reports/operations/receipts', [ProductionReportController::class, 'index'])
             ->defaults('section', 'receipts')
-            ->middleware('can:production.reports.operational')
+            ->middleware('can:production.reports.receipts.view')
             ->name('reports.receipts');
         Route::get('/reports/operations/export.xlsx', [ProductionReportController::class, 'export'])
-            ->middleware(['can:production.reports.operational', 'can:production.reports.export'])
             ->name('reports.export');
         Route::get('/reports/operations/print', [ProductionReportController::class, 'print'])
-            ->middleware(['can:production.reports.operational', 'can:production.reports.export'])
             ->name('reports.print');
 
     });

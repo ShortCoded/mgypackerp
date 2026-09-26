@@ -14,7 +14,7 @@
                         @can('production.quality.delete')<div class="d-none align-items-center gap-2" data-bulk-actions><span class="text-primary fw-semibold" data-selected-count>0</span><button class="btn btn-falcon-danger btn-sm" type="button" data-bulk-delete disabled><span class="fas fa-trash-alt me-1"></span>{{ __('common.actions.delete') }}</button></div>@endcan
                         <a class="btn btn-sm {{ $scope === 'active' ? 'btn-primary' : 'btn-falcon-default' }}" href="{{ route('admin.production.quality.active') }}">{{ __('production_execution.quality.active_inspections') }}</a>
                         <a class="btn btn-sm {{ $scope === 'all' ? 'btn-primary' : 'btn-falcon-default' }}" href="{{ route('admin.production.quality.index') }}">{{ __('production_execution.quality.all_inspections') }}</a>
-                        <a class="btn btn-sm btn-falcon-default" href="{{ route('admin.production.quality.reports.index') }}">{{ __('production_execution.quality.reports_menu') }}</a>
+                        @can('production.quality.reports.view')<a class="btn btn-sm btn-falcon-default" href="{{ route('admin.production.quality.reports.index') }}">{{ __('production_execution.quality.reports_menu') }}</a>@endcan
                         @can('production.quality.create')<a class="btn btn-sm btn-primary" href="{{ route('admin.production.quality.create') }}"><span class="fas fa-plus me-1"></span>{{ __('production_execution.actions.create_inspection') }}</a>@endcan
                     </div>
                 </div>

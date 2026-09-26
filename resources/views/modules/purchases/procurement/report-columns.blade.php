@@ -8,7 +8,7 @@
             <td @if(is_numeric($value)) class="text-end" dir="ltr" @endif>
                 @if(in_array($key, ['status', 'payment_status', 'selection_status']) && filled($value))
                     {{ __('procurement.statuses.'.$value) }}
-                @elseif($key === 'document' && filled($row['document_url'] ?? null) && auth()->user()?->can($row['document_permission'] ?? 'reports.purchases.view'))
+                @elseif($key === 'document' && filled($row['document_url'] ?? null) && auth()->user()?->can($row['document_permission'] ?? "reports.purchases.{$reportType}.view"))
                     <a href="{{ $row['document_url'] }}">{{ $value }}</a>
                 @elseif($key === 'reference' && filled($row['reference_url'] ?? null) && auth()->user()?->can($row['reference_permission']))
                     <a href="{{ $row['reference_url'] }}">{{ $value }}</a>

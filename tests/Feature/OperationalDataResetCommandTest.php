@@ -87,6 +87,12 @@ test('service refuses a direct commit without the backup and write gate', functi
         ->toThrow(RuntimeException::class, 'requires maintenance mode');
 });
 
+test('operator-managed backup reset still requires maintenance mode', function (): void {
+    expect(fn () => app(OperationalDataResetService::class)
+        ->runWithManualBackup(str_repeat('0', 64), 'operator'))
+        ->toThrow(RuntimeException::class, 'requires maintenance mode');
+});
+
 test('restored backup proof signature changes when its contents change', function (): void {
     $proof = [
         'source_database' => 'source_db',

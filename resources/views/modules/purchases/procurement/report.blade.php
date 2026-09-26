@@ -3,6 +3,13 @@
 @php
     $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $query = collect($filters)->filter(fn ($value) => filled($value))->all();
+    $exportOptions = [];
+    if (auth()->user()?->can("{$reportPermissionPrefix}.export")) {
+        $exportOptions[] = ['url' => route('admin.purchases.procurement-cycle-report.export.excel', $query), 'label' => __('Export Excel'), 'icon' => 'file-excel'];
+    }
+    if (auth()->user()?->can($reportPrintPermission)) {
+        $exportOptions[] = ['url' => route('admin.purchases.procurement-cycle-report.print', $query), 'label' => __('Print / PDF'), 'icon' => 'print', 'newTab' => true];
+    }
 @endphp
 
 @section('title', __('Procurement Cycle Report'))
@@ -13,26 +20,14 @@
         :title="__('Procurement Cycle Report')"
         :description="__('Operational procurement, receiving, quality, supplier payable, return, and production-linked analysis.')"
     >
-        @can('reports.purchases.export')
+        @if($exportOptions !== [])
         <x-slot:actions>
             <x-admin.report.actions-toolbar
                 filter-target="procurement-cycle-report-filters"
-                :export-options="[
-                    [
-                        'url' => route('admin.purchases.procurement-cycle-report.export.excel', $query),
-                        'label' => __('Export Excel'),
-                        'icon' => 'file-excel',
-                    ],
-                    [
-                        'url' => route('admin.purchases.procurement-cycle-report.print', $query),
-                        'label' => __('Print / PDF'),
-                        'icon' => 'print',
-                        'newTab' => true,
-                    ],
-                ]"
+                :export-options="$exportOptions"
             />
         </x-slot:actions>
-        @endcan
+        @endif
 
         <x-admin.report.filter-panel
             id="procurement-cycle-report-filters"

@@ -21,11 +21,11 @@
     @endif
 
     @if ($isView && $record)
-        @if (! $isTrashed && ! $record->is_closed && auth()->user()?->can('financial_periods.close'))
+        @if (! $isTrashed && ! $record->is_closed && auth()->user()?->can('financial_periods.closing.view') && auth()->user()?->can('financial_periods.close'))
             <a href="{{ route('admin.financial-periods.closing', ['period' => $record->doc_num]) }}" class="btn btn-warning btn-sm">
                 <span class="fas fa-lock me-1"></span>{{ __('financial_periods.actions.close') }}
             </a>
-        @elseif (! $isTrashed && $record->is_closed && auth()->user()?->can('financial_periods.reopen'))
+        @elseif (! $isTrashed && $record->is_closed && auth()->user()?->can('financial_periods.closing.view') && auth()->user()?->can('financial_periods.reopen'))
             <a href="{{ route('admin.financial-periods.closing', ['period' => $record->doc_num]) }}" class="btn btn-falcon-warning btn-sm">
                 <span class="fas fa-lock-open me-1"></span>{{ __('financial_periods.actions.reopen') }}
             </a>

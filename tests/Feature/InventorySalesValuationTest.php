@@ -119,8 +119,8 @@ test('sales valuation applies meaningful as-of hall and location filters and rej
         ->and($afterFuture['totals']['position_count'])->toBe(1)
         ->and($afterFuture['totals']['sales_value'])->toBe('63.00000000');
 
-    Permission::findOrCreate('inventory.reports.operational', 'web');
-    $fixture['user']->givePermissionTo('inventory.reports.operational');
+    Permission::findOrCreate('inventory.reports.sales_valuation.view', 'web');
+    $fixture['user']->givePermissionTo('inventory.reports.sales_valuation.view');
     $otherBranch = Branch::query()->create([
         'company_id' => $fixture['company']->getKey(),
         'doc_number' => 991197,
@@ -146,8 +146,8 @@ test('sales valuation screen export and pdf use canonical routes and permissions
     $this->actingAs($fixture['user'])->withSession($session);
 
     $this->get(route('admin.inventory.sales-valuation'))->assertForbidden();
-    Permission::findOrCreate('inventory.reports.operational', 'web');
-    $fixture['user']->givePermissionTo('inventory.reports.operational');
+    Permission::findOrCreate('inventory.reports.sales_valuation.view', 'web');
+    $fixture['user']->givePermissionTo('inventory.reports.sales_valuation.view');
     $this->get(route('admin.inventory.sales-valuation'))
         ->assertOk()
         ->assertSee(__('inventory_accounting.sales_valuation.title'));
@@ -161,8 +161,10 @@ test('sales valuation screen export and pdf use canonical routes and permissions
     $query = ['price_list_id' => $priceList->getKey(), 'as_of' => now()->toDateString()];
     $this->get(route('admin.inventory.sales-valuation.export', ['format' => 'xlsx', ...$query]))->assertForbidden();
     $this->get(route('admin.inventory.sales-valuation.print', $query))->assertForbidden();
-    Permission::findOrCreate('inventory.reports.export', 'web');
-    $fixture['user']->givePermissionTo('inventory.reports.export');
+    foreach (['inventory.reports.sales_valuation.export', 'inventory.reports.sales_valuation.print'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $fixture['user']->givePermissionTo($permission);
+    }
 
     $this->get($reportUrl)
         ->assertOk()
@@ -179,7 +181,7 @@ test('sales valuation screen export and pdf use canonical routes and permissions
 
 test('sales valuation rejects deleted and cross company price lists', function (): void {
     $fixture = salesCycleFixture();
-    foreach (['inventory.reports.operational', 'inventory.reports.export'] as $permission) {
+    foreach (['inventory.reports.sales_valuation.view', 'inventory.reports.sales_valuation.export'] as $permission) {
         Permission::findOrCreate($permission, 'web');
         $fixture['user']->givePermissionTo($permission);
     }

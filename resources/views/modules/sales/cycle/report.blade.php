@@ -3,7 +3,8 @@
 @php
     $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $dates = app(\Modules\Core\Services\DateFormatService::class);
-    $reportTypes = ['financial', 'period', 'customers', 'products', 'invoices', 'receivables', 'collections', 'returns', 'quotations', 'fulfillment', 'pricing', 'operational', 'cost_of_sales'];
+    $reportTypes = $allowedReportTypes;
+    $reportPermissionPrefix = 'reports.sales.'.$reportType;
     $reportTitle = __('sales_ui.reports.types.'.$reportType);
     $reportDescription = __('sales_ui.reports.descriptions.'.$reportType);
     $hasFilters = collect(request()->except(['report', 'ledger_page', 'backorders_page']))->filter(fn ($value) => filled($value))->isNotEmpty();
@@ -27,9 +28,9 @@
                 filter-target="sales-report-filters"
                 :refresh-url="request()->fullUrl()"
                 :export-options="[
-                    ['label' => __('Excel'), 'url' => $exportQuery('xlsx'), 'icon' => 'file-excel', 'permission' => 'reports.sales.sales_orders.export'],
-                    ['label' => __('CSV'), 'url' => $exportQuery('csv'), 'icon' => 'file-csv', 'permission' => 'reports.sales.sales_orders.export'],
-                    ['label' => __('PDF / Print'), 'url' => route('admin.reports.sales.sales-orders.print', $query), 'icon' => 'file-pdf', 'permission' => 'reports.sales.sales_orders.print', 'newTab' => true],
+                    ['label' => __('Excel'), 'url' => $exportQuery('xlsx'), 'icon' => 'file-excel', 'permission' => $reportPermissionPrefix.'.export'],
+                    ['label' => __('CSV'), 'url' => $exportQuery('csv'), 'icon' => 'file-csv', 'permission' => $reportPermissionPrefix.'.export'],
+                    ['label' => __('PDF / Print'), 'url' => route('admin.reports.sales.sales-orders.print', $query), 'icon' => 'file-pdf', 'permission' => $reportPermissionPrefix.'.print', 'newTab' => true],
                 ]">
                 <x-slot:extraActions>
                     <div class="dropdown">
