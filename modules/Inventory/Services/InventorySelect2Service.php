@@ -5,6 +5,7 @@ namespace Modules\Inventory\Services;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
 use Modules\Core\Models\BranchStore;
@@ -294,15 +295,14 @@ class InventorySelect2Service
     public function pricingOpeningStocks(Request $request): array
     {
         $context = $this->operatingContext->snapshot($request);
-        $branch = $this->pricingBranch($request);
         $selectedDocNum = $request->string('selected_doc_num')->trim()->toString();
         $currentPricing = $this->currentPricing($request);
 
-        if (! $context['company_id'] || ! $context['financial_period_id'] || ! $branch instanceof Branch) {
+        if (! $context['company_id'] || ! $context['financial_period_id']) {
             return $this->empty();
         }
 
-        $query = $this->pricingOpeningStockQuery((int) $context['company_id'], (int) $context['financial_period_id'], $branch, $request, $currentPricing);
+        $query = $this->pricingOpeningStockQuery((int) $context['company_id'], (int) $context['financial_period_id'], $request, $currentPricing);
 
         if ($selectedDocNum !== '') {
             $selected = (clone $query)->where('inventory_opening_stocks.doc_num', $selectedDocNum)->first();
@@ -315,7 +315,7 @@ class InventorySelect2Service
 
         $terms = $this->search->terms($request->input('q', $request->input('term')));
         if ($terms !== []) {
-            $this->search->applyMultiTermSearch($query, $terms, ['text' => ['inventory_opening_stocks.doc_num', 'inventory_opening_stocks.notes', 'branches.name', 'branch_halls.name']]);
+            $this->search->applyMultiTermSearch($query, $terms, ['text' => ['inventory_opening_stocks.doc_num', 'inventory_opening_stocks.notes', 'branches.name', 'branch_halls.name', 'branch_stores.name']]);
         }
 
         return $this->select2->paginated($query, $request, fn (OpeningStock $openingStock): array => $this->pricingOpeningStockItem($openingStock));
@@ -358,7 +358,9 @@ class InventorySelect2Service
         $query = $this->pricingLineQuery($request);
 
         if (! $query instanceof Builder) {
-            return ['lines' => []];
+            throw ValidationException::withMessages([
+                'opening_stock_doc_num' => __('inventory.opening_stock_pricings.messages.opening_stock_unavailable'),
+            ]);
         }
 
         return [
@@ -450,44 +452,47 @@ class InventorySelect2Service
             ->first();
     }
 
-    private function pricingOpeningStockQuery(int $companyId, int $financialPeriodId, Branch $branch, Request $request, ?OpeningStockPricing $currentPricing): Builder
+    private function pricingOpeningStockQuery(int $companyId, int $financialPeriodId, Request $request, ?OpeningStockPricing $currentPricing): Builder
     {
-        $hallUuid = $request->string('branch_hall_uuid')->trim()->toString();
         $currentPricingId = $currentPricing?->getKey();
+        $allowedBranches = $this->operatingContext->allowedBranchQueryForCurrentCompany($request)
+            ->where('branches.status', 'active')
+            ->whereIn('branches.type', [Branch::TypeWarehouse, Branch::TypeFactory])
+            ->reorder()
+            ->select('branches.id');
 
         return OpeningStock::query()
             ->leftJoin('branches', 'branches.id', '=', 'inventory_opening_stocks.branch_id')
             ->leftJoin('branch_halls', 'branch_halls.id', '=', 'inventory_opening_stocks.branch_hall_id')
+            ->leftJoin('branch_stores', 'branch_stores.id', '=', 'inventory_opening_stocks.branch_store_id')
             ->where('inventory_opening_stocks.company_id', $companyId)
             ->where('inventory_opening_stocks.financial_period_id', $financialPeriodId)
-            ->where('inventory_opening_stocks.branch_id', $branch->getKey())
-            ->when($hallUuid !== '', function ($query) use ($hallUuid): void {
-                $query->whereExists(function ($subQuery) use ($hallUuid): void {
-                    $subQuery->selectRaw('1')
-                        ->from('branch_halls as selected_halls')
-                        ->whereColumn('selected_halls.id', 'inventory_opening_stocks.branch_hall_id')
-                        ->where('selected_halls.public_uuid', $hallUuid)
-                        ->whereNull('selected_halls.deleted_at');
-                });
-            })
-            ->whereNull('inventory_opening_stocks.deleted_at')
-            ->whereExists(function ($subQuery): void {
-                $subQuery->selectRaw('1')
+            ->whereIn('inventory_opening_stocks.branch_id', $allowedBranches)
+            ->where(fn (Builder $status) => $status
+                ->where('inventory_opening_stocks.is_closed', true)
+                ->orWhere('inventory_opening_stocks.approved', true)
+                ->orWhereIn('inventory_opening_stocks.status', [OpeningStock::StatusClosed, OpeningStock::StatusApproved]))
+            ->whereExists(function ($lines) use ($currentPricingId): void {
+                $lines->selectRaw('1')
                     ->from('inventory_opening_stock_lines')
                     ->whereColumn('inventory_opening_stock_lines.opening_stock_id', 'inventory_opening_stocks.id')
-                    ->whereNull('inventory_opening_stock_lines.deleted_at');
-            })
-            ->whereNotExists(function ($subQuery) use ($currentPricingId): void {
-                $subQuery->selectRaw('1')
-                    ->from('inventory_opening_stock_pricings')
-                    ->whereColumn('inventory_opening_stock_pricings.opening_stock_id', 'inventory_opening_stocks.id')
-                    ->whereNull('inventory_opening_stock_pricings.deleted_at')
-                    ->when($currentPricingId, fn ($query) => $query->where('inventory_opening_stock_pricings.id', '!=', $currentPricingId));
+                    ->whereNull('inventory_opening_stock_lines.deleted_at')
+                    ->where('inventory_opening_stock_lines.quantity', '>', 0)
+                    ->whereNotExists(function ($priced) use ($currentPricingId): void {
+                        $priced->selectRaw('1')
+                            ->from('inventory_opening_stock_pricing_lines')
+                            ->join('inventory_opening_stock_pricings', 'inventory_opening_stock_pricings.id', '=', 'inventory_opening_stock_pricing_lines.pricing_id')
+                            ->whereColumn('inventory_opening_stock_pricing_lines.opening_stock_line_id', 'inventory_opening_stock_lines.id')
+                            ->whereNull('inventory_opening_stock_pricing_lines.deleted_at')
+                            ->whereNull('inventory_opening_stock_pricings.deleted_at')
+                            ->when($currentPricingId, fn ($query) => $query->where('inventory_opening_stock_pricings.id', '!=', $currentPricingId));
+                    });
             })
             ->select([
                 'inventory_opening_stocks.*',
                 'branches.name as branch_name',
                 'branch_halls.name as hall_name',
+                'branch_stores.name as store_name',
             ])
             ->orderByDesc('inventory_opening_stocks.document_date')
             ->orderByDesc('inventory_opening_stocks.doc_number');
@@ -496,20 +501,15 @@ class InventorySelect2Service
     private function pricingLineQuery(Request $request): ?Builder
     {
         $context = $this->operatingContext->snapshot($request);
-        $branch = $this->pricingBranch($request);
         $openingStockDocNum = $request->string('opening_stock_doc_num')->trim()->toString();
         $currentPricing = $this->currentPricing($request);
 
-        if (! $context['company_id'] || ! $context['financial_period_id'] || ! $branch instanceof Branch || $openingStockDocNum === '') {
+        if (! $context['company_id'] || ! $context['financial_period_id'] || $openingStockDocNum === '') {
             return null;
         }
 
-        $openingStock = OpeningStock::query()
-            ->where('company_id', $context['company_id'])
-            ->where('financial_period_id', $context['financial_period_id'])
-            ->where('branch_id', $branch->getKey())
-            ->where('doc_num', $openingStockDocNum)
-            ->whereNull('deleted_at')
+        $openingStock = $this->pricingOpeningStockQuery((int) $context['company_id'], (int) $context['financial_period_id'], $request, $currentPricing)
+            ->where('inventory_opening_stocks.doc_num', $openingStockDocNum)
             ->first();
 
         if (! $openingStock instanceof OpeningStock) {
@@ -520,7 +520,7 @@ class InventorySelect2Service
             ->leftJoin('products', 'products.id', '=', 'inventory_opening_stock_lines.product_id')
             ->with('product.mainImageUsage.file')
             ->where('inventory_opening_stock_lines.opening_stock_id', $openingStock->getKey())
-            ->whereNull('inventory_opening_stock_lines.deleted_at')
+            ->where('inventory_opening_stock_lines.quantity', '>', 0)
             ->whereNotExists(function ($subQuery) use ($currentPricing): void {
                 $subQuery->selectRaw('1')
                     ->from('inventory_opening_stock_pricing_lines')
@@ -548,11 +548,12 @@ class InventorySelect2Service
 
         return [
             'id' => (string) $openingStock->doc_num,
-            'text' => trim(implode(' / ', array_filter([
+            'text' => trim(implode(' | ', array_filter([
                 $openingStock->doc_num,
                 $date,
                 $openingStock->branch_name,
                 $openingStock->hall_name,
+                $openingStock->store_name,
             ]))),
         ];
     }

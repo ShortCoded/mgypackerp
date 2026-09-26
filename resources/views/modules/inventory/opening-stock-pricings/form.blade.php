@@ -8,13 +8,14 @@
     $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $value = fn ($field, $default = '') => old($field, $record?->{$field} ?? $default);
     $documentNumberValue = old('doc_number', ! $isCreateLike ? $record?->doc_number : '');
-    $selectedBranchDocNum = old('branch_doc_num', $branchOption['id'] ?? '');
-    $selectedHallUuid = old('branch_hall_uuid', $hallOption['id'] ?? '');
     $selectedOpeningStockDocNum = old('opening_stock_doc_num', $openingStockOption['id'] ?? '');
     $selectedCurrencyDocNum = old('currency_doc_num', $currencyOption['id'] ?? '');
     $exchangeRate = old('exchange_rate', $exchangeRateValue ?? 1);
     $existingLines = old('lines', $lines ?? []);
-    if (! is_array($existingLines) || $existingLines === []) {
+    if (! is_array($existingLines)) {
+        $existingLines = [];
+    }
+    if (! $isCreateLike && $existingLines === []) {
         $existingLines = [['public_id' => null, 'opening_stock_line_public_id' => null, 'product_label' => null, 'imageUrl' => null, 'unit' => null, 'quantity' => null, 'unit_price' => null, 'line_total' => null, 'notes' => null, 'product_data' => []]];
     }
     $routePrefix = 'admin.inventory.opening-stock-pricings';
@@ -52,9 +53,22 @@
             padding-top: .3125rem;
         }
 
+        @media (min-width: 768px) {
+            .opening-stock-pricing-header-fields .form-control:not(textarea),
+            .opening-stock-pricing-header-fields .form-select,
+            .opening-stock-pricing-header-fields .select2-container--bootstrap-5 .select2-selection--single {
+                height: 2.375rem;
+                min-height: 2.375rem;
+            }
+        }
+
         @media (max-width: 767.98px) {
             .opening-stock-pricing-product-picker {
-                min-width: 14rem;
+                min-width: 0;
+            }
+
+            .js-opening-stock-pricing-add-remaining {
+                width: 100%;
             }
         }
     </style>
@@ -67,12 +81,10 @@
         data-mode="{{ $mode }}"
         data-current-doc-num="{{ $record?->doc_num }}"
         data-main-currency-doc-num="{{ $mainCurrencyDocNum }}"
-        data-branches-url="{{ route('admin.inventory.select2.opening-stock-pricing-branches') }}"
-        data-halls-url="{{ route('admin.inventory.select2.opening-stock-pricing-branch-halls') }}"
         data-opening-stocks-url="{{ route('admin.inventory.select2.opening-stock-pricing-documents') }}"
         data-lines-url="{{ route('admin.inventory.select2.opening-stock-pricing-lines') }}"
         data-remaining-lines-url="{{ route($routePrefix.'.remaining-lines') }}"
-        data-primary-focus="document_date"
+        data-primary-focus="opening_stock_doc_num"
         novalidate>
         @csrf
         <x-forms.line-item-cards />
@@ -111,9 +123,28 @@
                 @endif
 
                 <h6 class="text-700 mb-3">{{ __('inventory.opening_stock_pricings.sections.header') }}</h6>
-                <div class="row g-3">
+                <div class="row g-3 opening-stock-pricing-header-fields">
+                    <div class="col-12">
+                        <x-forms.label for="opening_stock_doc_num" :label="__('inventory.opening_stock_pricings.attributes.opening_stock')" required />
+                        @if($isReadonly)
+                            <x-forms.view-field for="opening_stock_doc_num" as="display" :value="$openingStockOption['text'] ?? null" />
+                        @else
+                            <x-forms.select class="form-select js-select2-ajax js-opening-stock-pricing-opening-stock" id="opening_stock_doc_num" name="opening_stock_doc_num" data-url="{{ route('admin.inventory.select2.opening-stock-pricing-documents') }}" data-placeholder="{{ __('inventory.opening_stock_pricings.placeholders.select_opening_stock') }}" data-extra-params='{"current_pricing_doc_num":"#current_pricing_doc_num"}' required>
+                                @if($selectedOpeningStockDocNum && $openingStockOption)
+                                    <option value="{{ $openingStockOption['id'] }}" selected>{{ $openingStockOption['text'] }}</option>
+                                @endif
+                            </x-forms.select>
+                            <div class="d-flex justify-content-start mt-2">
+                                <button class="btn btn-falcon-default js-opening-stock-pricing-add-remaining" type="button" title="{{ __('inventory.opening_stock_pricings.js.add_remaining_lines_title') }}" data-bs-title="{{ __('inventory.opening_stock_pricings.js.add_remaining_lines_title') }}">
+                                    <span class="fas fa-list-ul me-1"></span>{{ __('inventory.opening_stock_pricings.actions.add_remaining_lines') }}
+                                </button>
+                            </div>
+                        @endif
+                        <div class="invalid-feedback d-block" data-error-for="opening_stock_doc_num"></div>
+                    </div>
+
                     @if($canControlDocumentNumber)
-                        <div class="col-md-3">
+                        <div class="col-12 col-md-6 col-xl-3">
                             <label class="form-label" for="doc_number">{{ __('inventory.opening_stock_pricings.attributes.doc_number') }}</label>
                             @if($isReadonly)
                                 <x-forms.view-field for="doc_number" as="display" :value="$documentNumberValue" input-class="text-center" />
@@ -124,12 +155,12 @@
                             <div class="invalid-feedback d-block" data-error-for="doc_number"></div>
                         </div>
                     @elseif(! $isCreateLike)
-                        <div class="col-md-3">
+                        <div class="col-12 col-md-6 col-xl-3">
                             <x-forms.view-field for="doc_num" :label="__('inventory.opening_stock_pricings.attributes.doc_num')" :value="$record?->doc_num" input-class="text-center" />
                         </div>
                     @endif
 
-                    <div class="col-md-3">
+                    <div class="col-12 {{ $isCreateLike && ! $canControlDocumentNumber ? 'col-md-4' : 'col-md-6' }} {{ $canControlDocumentNumber || ! $isCreateLike ? 'col-xl-3' : 'col-xl-4' }}">
                         <x-forms.label for="document_date" :label="__('inventory.opening_stock_pricings.attributes.document_date')" required />
                         @if($isReadonly)
                             <x-forms.view-field for="document_date" :value="$dateValue" dir="ltr" input-class="date-value text-center" />
@@ -139,54 +170,16 @@
                         <div class="invalid-feedback d-block" data-error-for="document_date"></div>
                     </div>
 
-                    <div class="col-md-3">
-                        <x-forms.label for="branch_doc_num" :label="__('inventory.opening_stock_pricings.attributes.branch')" required />
-                        @if($isReadonly)
-                            <x-forms.view-field for="branch_doc_num" as="display" :value="$branchOption['text'] ?? null" />
-                        @else
-                            <x-forms.select class="form-select js-select2-ajax js-opening-stock-pricing-branch" id="branch_doc_num" name="branch_doc_num" data-url="{{ route('admin.inventory.select2.opening-stock-pricing-branches') }}" data-placeholder="{{ __('inventory.opening_stock_pricings.placeholders.select_branch') }}" required>
-                                @if($selectedBranchDocNum && $branchOption)
-                                    <option value="{{ $branchOption['id'] }}" data-type="{{ $branchOption['type'] ?? '' }}" selected>{{ $branchOption['text'] }}</option>
-                                @endif
-                            </x-forms.select>
-                        @endif
-                        <div class="invalid-feedback d-block" data-error-for="branch_doc_num"></div>
-                    </div>
+                    @unless($isCreateLike)
+                        <div class="col-12 col-md-6 col-xl-3">
+                            <x-forms.view-field for="branch_doc_num" as="display" :label="__('inventory.opening_stock_pricings.attributes.branch')" :value="$branchOption['text'] ?? null" />
+                        </div>
+                        <div class="col-12 col-md-6 col-xl-3">
+                            <x-forms.view-field for="branch_hall_uuid" as="display" :label="__('inventory.opening_stock_pricings.attributes.hall')" :value="$record?->branchHall?->name ?: __('common.empty_value')" />
+                        </div>
+                    @endunless
 
-                    <div class="col-md-3 js-opening-stock-pricing-hall-group">
-                        <label class="form-label" for="branch_hall_uuid">{{ __('inventory.opening_stock_pricings.attributes.hall') }}</label>
-                        @if($isReadonly)
-                            <x-forms.view-field for="branch_hall_uuid" as="display" :value="$record?->branchHall?->name ?: __('common.empty_value')" />
-                        @else
-                            <x-forms.select class="form-select js-select2-ajax js-opening-stock-pricing-hall" id="branch_hall_uuid" name="branch_hall_uuid" data-url="{{ route('admin.inventory.select2.opening-stock-pricing-branch-halls') }}" data-placeholder="{{ __('inventory.opening_stock_pricings.placeholders.select_hall') }}" data-allow-clear="true" data-extra-params='{"branch_doc_num":"#branch_doc_num"}'>
-                                @if($selectedHallUuid && $hallOption)
-                                    <option value="{{ $hallOption['id'] }}" selected>{{ $hallOption['text'] }}</option>
-                                @endif
-                            </x-forms.select>
-                        @endif
-                        <div class="invalid-feedback d-block" data-error-for="branch_hall_uuid"></div>
-                    </div>
-
-                    <div class="col-md-4">
-                        <x-forms.label for="opening_stock_doc_num" :label="__('inventory.opening_stock_pricings.attributes.opening_stock')" required />
-                        @if($isReadonly)
-                            <x-forms.view-field for="opening_stock_doc_num" as="display" :value="$openingStockOption['text'] ?? null" />
-                        @else
-                            <div class="input-group">
-                                <x-forms.select class="form-select js-select2-ajax js-opening-stock-pricing-opening-stock" id="opening_stock_doc_num" name="opening_stock_doc_num" data-url="{{ route('admin.inventory.select2.opening-stock-pricing-documents') }}" data-placeholder="{{ __('inventory.opening_stock_pricings.placeholders.select_opening_stock') }}" data-extra-params='{"branch_doc_num":"#branch_doc_num","branch_hall_uuid":"#branch_hall_uuid","current_pricing_doc_num":"#current_pricing_doc_num"}' required>
-                                    @if($selectedOpeningStockDocNum && $openingStockOption)
-                                        <option value="{{ $openingStockOption['id'] }}" selected>{{ $openingStockOption['text'] }}</option>
-                                    @endif
-                                </x-forms.select>
-                                <button class="btn btn-falcon-default js-opening-stock-pricing-add-remaining" type="button" title="{{ __('inventory.opening_stock_pricings.js.add_remaining_lines_title') }}" data-bs-title="{{ __('inventory.opening_stock_pricings.js.add_remaining_lines_title') }}">
-                                    <span class="fas fa-list-ul me-1"></span>{{ __('inventory.opening_stock_pricings.actions.add_remaining_lines') }}
-                                </button>
-                            </div>
-                        @endif
-                        <div class="invalid-feedback d-block" data-error-for="opening_stock_doc_num"></div>
-                    </div>
-
-                    <div class="col-md-4">
+                    <div class="col-12 {{ $isCreateLike && ! $canControlDocumentNumber ? 'col-md-4' : 'col-md-6' }} {{ $isCreateLike ? ($canControlDocumentNumber ? 'col-xl-3' : 'col-xl-4') : 'col-xl-6' }}">
                         <x-forms.label for="currency_doc_num" :label="__('inventory.opening_stock_pricings.attributes.currency')" required />
                         @if($isReadonly)
                             <x-forms.view-field for="currency_doc_num" as="display" :value="$currencyOption['text'] ?? null" />
@@ -200,7 +193,7 @@
                         <div class="invalid-feedback d-block" data-error-for="currency_doc_num"></div>
                     </div>
 
-                    <div class="col-md-4">
+                    <div class="col-12 {{ $isCreateLike && ! $canControlDocumentNumber ? 'col-md-4' : 'col-md-6' }} {{ $isCreateLike ? ($canControlDocumentNumber ? 'col-xl-3' : 'col-xl-4') : 'col-xl-6' }}">
                         <x-forms.label for="exchange_rate" :label="__('inventory.opening_stock_pricings.attributes.exchange_rate')" required />
                         @if($isReadonly)
                             <x-forms.view-field for="exchange_rate" :value="$numbers->format($exchangeRate)" input-class="text-center" dir="ltr" />
@@ -272,7 +265,7 @@
                                         @else
                                             <div class="d-flex align-items-start gap-1 opening-stock-pricing-product-picker">
                                                 <div class="flex-grow-1 min-w-0">
-                                                    <x-forms.select class="form-select js-select2-ajax js-opening-stock-pricing-product" name="lines[{{ $index }}][opening_stock_line_public_id]" data-url="{{ route('admin.inventory.select2.opening-stock-pricing-lines') }}" data-placeholder="{{ __('inventory.opening_stock_pricings.placeholders.select_product') }}" data-allow-clear="true" data-template="product-image" data-extra-params='{"branch_doc_num":"#branch_doc_num","opening_stock_doc_num":"#opening_stock_doc_num","current_pricing_doc_num":"#current_pricing_doc_num"}'>
+                                                    <x-forms.select class="form-select js-select2-ajax js-opening-stock-pricing-product" name="lines[{{ $index }}][opening_stock_line_public_id]" data-url="{{ route('admin.inventory.select2.opening-stock-pricing-lines') }}" data-placeholder="{{ __('inventory.opening_stock_pricings.placeholders.select_product') }}" data-allow-clear="true" data-template="product-image" data-extra-params='{"opening_stock_doc_num":"#opening_stock_doc_num","current_pricing_doc_num":"#current_pricing_doc_num"}'>
                                                         @if($linePublicId)
                                                             <option value="{{ $linePublicId }}" data-unit-label="{{ $line['unit'] ?? '' }}" data-quantity="{{ $line['quantity'] ?? '' }}" @if($imageUrl) data-image-url="{{ $imageUrl }}" @endif data-product-data="{{ e(json_encode($line['product_data'] ?? [])) }}" selected>{{ $productLabel }}</option>
                                                         @endif
@@ -319,8 +312,8 @@
                                     @endunless
                                 </tr>
                             @empty
-                                <tr>
-                                    <td colspan="{{ $isReadonly ? 6 : 7 }}" class="text-center text-600 py-3">{{ __('common.empty_value') }}</td>
+                                <tr class="js-opening-stock-pricing-empty">
+                                    <td colspan="{{ $isReadonly ? 6 : 7 }}" class="text-center text-600 py-3">{{ $isCreateLike ? __('inventory.opening_stock_pricings.messages.select_opening_stock_first') : __('common.empty_value') }}</td>
                                 </tr>
                             @endforelse
                         </tbody>
@@ -373,7 +366,7 @@
                     <x-forms.input type="hidden" name="lines[__INDEX__][_delete]" value="0" />
                     <div class="d-flex align-items-start gap-1 opening-stock-pricing-product-picker">
                         <div class="flex-grow-1 min-w-0">
-                            <x-forms.select class="form-select js-select2-ajax js-opening-stock-pricing-product" name="lines[__INDEX__][opening_stock_line_public_id]" data-url="{{ route('admin.inventory.select2.opening-stock-pricing-lines') }}" data-placeholder="{{ __('inventory.opening_stock_pricings.placeholders.select_product') }}" data-allow-clear="true" data-template="product-image" data-extra-params='{"branch_doc_num":"#branch_doc_num","opening_stock_doc_num":"#opening_stock_doc_num","current_pricing_doc_num":"#current_pricing_doc_num"}'></x-forms.select>
+                            <x-forms.select class="form-select js-select2-ajax js-opening-stock-pricing-product" name="lines[__INDEX__][opening_stock_line_public_id]" data-url="{{ route('admin.inventory.select2.opening-stock-pricing-lines') }}" data-placeholder="{{ __('inventory.opening_stock_pricings.placeholders.select_product') }}" data-allow-clear="true" data-template="product-image" data-extra-params='{"opening_stock_doc_num":"#opening_stock_doc_num","current_pricing_doc_num":"#current_pricing_doc_num"}'></x-forms.select>
                             <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.opening_stock_line_public_id"></div>
                         </div>
                         <button class="btn btn-falcon-default btn-sm opening-stock-pricing-product-action js-opening-stock-pricing-product-info" type="button" title="{{ __('inventory.opening_stock_pricings.js.product_info_title') }}" data-bs-title="{{ __('inventory.opening_stock_pricings.js.product_info_title') }}" disabled>

@@ -6,9 +6,13 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Product;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Models\InventoryDocument;
+use Modules\Inventory\Models\InventoryReceiptLayer;
 use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Inventory\Models\OpeningStock;
+use Modules\Inventory\Models\OpeningStockLine;
 use Modules\Inventory\Services\InventoryDocumentPostingService;
 use Modules\Sales\Models\SalesDeliveryReceipt;
 use Modules\Sales\Models\SalesIssueOrder;
@@ -20,6 +24,106 @@ use Modules\Sales\Services\SalesOrderService;
 use Spatie\Permission\Models\Permission;
 
 require_once __DIR__.'/../SalesCycleSupport.php';
+
+test('warehouse issues invoiced goods from a priced opening stock layer without repeating its quantity', function (): void {
+    $fixture = salesCycleFixture();
+    $fixture['branch']->forceFill(['type' => Branch::TypeWarehouse])->save();
+    Permission::findOrCreate('inventory.opening_stock_pricings.create', 'web');
+    Permission::findOrCreate('inventory.opening_stocks.approve', 'web');
+    Permission::findOrCreate('inventory.documents.create', 'web');
+    Permission::findOrCreate('inventory.documents.issue', 'web');
+    $fixture['user']->givePermissionTo(
+        'inventory.opening_stock_pricings.create',
+        'inventory.opening_stocks.approve',
+        'inventory.documents.create',
+        'inventory.documents.issue',
+    );
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+
+    $product = Product::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'doc_number' => 8901,
+        'doc_num' => 'Product-PRICED-OPENING',
+        'name' => 'Priced Opening Stock Product',
+        'item_classification' => Product::ClassificationFinishedProduct,
+        'item_unit_id' => $fixture['unit']->getKey(),
+        'status' => 'active',
+    ]);
+    $opening = OpeningStock::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'doc_number' => 8901,
+        'doc_num' => 'OS-PRICED-SALES-ISSUE',
+        'document_date' => now()->toDateString(),
+        'is_closed' => true,
+        'status' => OpeningStock::StatusClosed,
+        'approved' => false,
+    ]);
+    $line = OpeningStockLine::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'opening_stock_id' => $opening->getKey(),
+        'line_no' => 1,
+        'product_id' => $product->getKey(),
+        'product_snapshot' => ['doc_num' => $product->doc_num, 'name' => $product->name, 'unit_label' => $fixture['unit']->name],
+        'quantity' => '6.0000',
+        'stock_status' => InventoryTransaction::StatusAvailable,
+    ]);
+    $this->postJson(route('admin.inventory.opening-stocks.approve', $opening->doc_num))->assertOk();
+
+    $postingKey = "opening-stock:{$opening->getKey()}:line:{$line->getKey()}";
+    $openingMovement = InventoryTransaction::query()->where('posting_key', $postingKey)->sole();
+    expect((string) $openingMovement->quantity_in)->toBe('6.00000000')
+        ->and($openingMovement->unit_cost)->toBeNull();
+
+    $this->postJson(route('admin.inventory.opening-stock-pricings.store'), [
+        'document_date' => now()->toDateString(),
+        'opening_stock_doc_num' => $opening->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'exchange_rate' => '1',
+        'lines' => [['opening_stock_line_public_id' => $line->public_id, 'unit_price' => '4.5000']],
+    ])->assertOk();
+
+    $openingMovement->refresh();
+    expect(InventoryTransaction::query()->where('posting_key', $postingKey)->count())->toBe(1)
+        ->and((string) $openingMovement->quantity_in)->toBe('6.00000000')
+        ->and((string) $openingMovement->unit_cost)->toBe('4.50000000');
+
+    $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
+        'lines' => [[
+            'product_id' => $product->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Priced opening goods for issue',
+            'quantity' => '2',
+            'unit_price' => '10',
+        ]],
+        'payment_schedules' => [['title' => 'Due', 'amount' => '20', 'due_date' => now()->toDateString()]],
+    ])));
+    $invoices = app(CustomerInvoiceService::class);
+    $invoice = $invoices->post($invoices->createFromOrder($order, [[
+        'sales_order_line_id' => $order->lines->sole()->getKey(), 'quantity' => '2',
+    ]], [['due_date' => now()->toDateString(), 'amount' => '20']]));
+    $issueOrder = $invoice->issueOrder()->firstOrFail();
+    $this->get(route('admin.inventory.documents.sales-issue.create', ['issue_order' => $issueOrder->doc_num]))->assertOk();
+    $this->getJson(route('admin.inventory.documents.sales-issue-orders.details', [
+        'salesIssueOrder' => $issueOrder,
+        'branch_store_uuid' => $fixture['store']->public_uuid,
+    ]))->assertOk()->assertJsonPath('data.can_issue', true);
+    $this->postJson(route('admin.inventory.documents.sales-issue.store'), [
+        'sales_issue_order_doc_num' => $issueOrder->doc_num,
+        'branch_store_uuid' => $fixture['store']->public_uuid,
+        'document_date' => now()->toDateString(),
+    ])->assertCreated();
+    $issue = $issueOrder->issues()->sole();
+
+    expect($issue->status)->toBe(InventoryDocument::StatusPosted)
+        ->and($issueOrder->fresh()->status)->toBe(SalesIssueOrder::StatusIssued)
+        ->and((string) InventoryTransaction::query()->where('posting_key', $postingKey)->sole()->quantity_in)->toBe('6.00000000')
+        ->and((string) InventoryReceiptLayer::query()->where('receipt_transaction_id', $openingMovement->getKey())->sole()->remaining_quantity)->toBe('4.00000000');
+});
 
 test('posting an invoice creates an issue order and the warehouse issues its exact lines once', function (): void {
     $fixture = salesCycleFixture();

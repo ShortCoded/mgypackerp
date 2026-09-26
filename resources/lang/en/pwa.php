@@ -76,7 +76,7 @@ return [
         'default_message' => 'The ERP could not reach the server. Check your connection and try again.',
     ],
     'connectivity' => [
-        'offline' => 'You are offline. Changes will not be submitted until the connection returns.',
+        'offline' => 'The server is unreachable. Keep your work and try again when the connection returns.',
         'online' => 'Connection restored.',
         'retry' => 'Try again',
     ],

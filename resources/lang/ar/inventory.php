@@ -378,7 +378,7 @@ return [
         ],
         'actions' => [
             'add_line' => 'إضافة سطر',
-            'add_remaining_lines' => 'إضافة البنود المتبقية',
+            'add_remaining_lines' => 'تحميل البنود',
             'view_product' => 'عرض بيانات المنتج',
         ],
         'placeholders' => [
@@ -390,6 +390,10 @@ return [
         ],
         'messages' => [
             'created' => 'تم إنشاء تسعير مخزون أول المدة بنجاح.',
+            'queue_duplicate_line' => 'لا يمكن تكرار نفس بند مخزون أول المدة.',
+            'queue_line_changed' => 'أحد البنود لم يعد متاحًا للتسعير. حدّث الصفحة وراجع البنود المتبقية.',
+            'queue_amount_too_large' => 'قيمة أحد البنود أو المستند تتجاوز الحد المسموح.',
+            'queue_layer_consumed' => 'لا يمكن تغيير تكلفة هذا المخزون بعد صرف جزء منه. راجع حركات الصنف أولًا.',
             'updated' => 'تم تحديث تسعير مخزون أول المدة بنجاح.',
             'deleted' => 'تم حذف تسعير مخزون أول المدة بنجاح.',
             'restored' => 'تم استعادة تسعير مخزون أول المدة بنجاح.',
@@ -418,7 +422,7 @@ return [
             'edit_permission_denied' => 'لا تملك صلاحية تعديل هذا المستند.',
             'delete_permission_denied' => 'لا تملك صلاحية حذف هذا المستند.',
             'select_opening_stock_first' => 'اختر إذن مخزون أول المدة أولاً.',
-            'no_remaining_lines' => 'لا توجد بنود متبقية للإضافة.',
+            'no_remaining_lines' => 'لا توجد بنود غير مسعرة في الإذن المحدد.',
             'unexpected_error' => 'حدث خطأ غير متوقع.',
             'no_product_selected' => 'اختر منتجًا أولًا.',
             'no_image' => 'لا توجد صورة',
@@ -441,7 +445,7 @@ return [
             'confirm_restore_text' => 'سيصبح هذا المستند نشطًا مرة أخرى.',
             'confirm_restore_yes' => 'نعم، استعد',
             'add_line_title' => 'إضافة سطر (Alt + N)',
-            'add_remaining_lines_title' => 'إضافة البنود المتبقية',
+            'add_remaining_lines_title' => 'تحميل البنود غير المسعرة للإذن المحدد',
             'duplicate_line_title' => 'تكرار السطر الحالي (Alt + D)',
             'delete_line_title' => 'حذف السطر الحالي (Alt + Delete)',
             'product_info_title' => 'عرض بيانات المنتج (Alt + I)',

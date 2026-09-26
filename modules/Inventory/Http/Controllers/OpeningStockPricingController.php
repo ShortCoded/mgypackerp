@@ -8,7 +8,6 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
-use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
@@ -75,12 +74,15 @@ class OpeningStockPricingController extends Controller
 
     public function clone(Request $request, string $openingStockPricing): View
     {
-        return $this->form($request, 'clone', $this->findInCurrentContext($request, $openingStockPricing), (string) Str::uuid());
+        $this->findInCurrentContext($request, $openingStockPricing);
+
+        return $this->create($request);
     }
 
     public function store(StoreOpeningStockPricingRequest $request): JsonResponse
     {
-        $record = $this->guardDomain(fn (): OpeningStockPricing => $this->service->create($request->validated())['record']);
+        $result = $this->guardDomain(fn (): array => $this->service->create($request->validated(), $request));
+        $record = $result['record'];
 
         $message = $this->submitAction($request, true) === 'save'
             ? __('inventory.opening_stock_pricings.messages.saved_and_new')
@@ -90,7 +92,10 @@ class OpeningStockPricingController extends Controller
             'success' => true,
             'message' => $message,
             ...$this->saveResponse($request, $record, 'store'),
-            'data' => ['doc_num' => $record->doc_num, 'urls' => $this->urls($record)],
+            'data' => [
+                'doc_num' => $record->doc_num,
+                'urls' => $this->urls($record),
+            ],
         ]);
     }
 
@@ -334,7 +339,7 @@ class OpeningStockPricingController extends Controller
             })->values()->all() ?? [];
         }
 
-        if ($lines === [] && $mode !== 'view') {
+        if ($lines === [] && $mode === 'edit') {
             return [['public_id' => null, 'opening_stock_line_public_id' => null, 'product_label' => null, 'unit' => null, 'quantity' => null, 'unit_price' => null, 'line_total' => null, 'notes' => null, 'product_data' => []]];
         }
 

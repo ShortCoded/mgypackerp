@@ -145,7 +145,7 @@ Route::middleware('auth')
             Route::get('/', 'index')->middleware('can:inventory.opening_stock_pricings.view')->name('index');
             Route::get('/data', 'data')->middleware('can:inventory.opening_stock_pricings.view')->name('data');
             Route::get('/create', 'create')->middleware('can:inventory.opening_stock_pricings.create')->name('create');
-            Route::get('/remaining-lines', 'remainingLines')->middleware('can:inventory.opening_stock_pricings.view')->name('remaining-lines');
+            Route::get('/remaining-lines', 'remainingLines')->name('remaining-lines');
             Route::post('/', 'store')->name('store');
             Route::put('/document-number-settings', 'updateDocumentNumberSettings')->middleware('can:inventory.opening_stock_pricings.document_number_settings.update')->name('document-number-settings.update');
             Route::patch('/{openingStockPricing}/restore', 'restore')->middleware('can:inventory.opening_stock_pricings.restore')->name('restore');

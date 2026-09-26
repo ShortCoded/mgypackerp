@@ -362,6 +362,7 @@ async function testOfflineForm() {
     offlineExpected = true;
     await client.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
     await evaluate(`window.dispatchEvent(new Event('offline'))`);
+    await waitUntil(() => evaluate(`document.documentElement.dataset.connectivity === 'offline'`), 'Confirmed offline status did not appear.');
     const connectivity = await evaluate(`({ hidden: document.querySelector('[data-erp-connectivity-status]')?.hidden, text: document.querySelector('[data-erp-connectivity-status]')?.innerText || '' })`);
     assert(connectivity.hidden === false && /offline|اتصال|الإنترنت/i.test(connectivity.text), `Offline status was not visible: ${JSON.stringify(connectivity)}`);
     outcome = await evaluate(`(async () => {

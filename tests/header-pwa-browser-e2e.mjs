@@ -549,12 +549,11 @@ try {
   offlineExpected = true;
   await client.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: 0, uploadThroughput: 0 });
   await evaluate(`window.dispatchEvent(new Event('offline'))`);
-  assert(await evaluate(`document.querySelector('[data-erp-connectivity-status]')?.hidden === false`), 'Offline status did not appear.');
+  await waitUntil(() => evaluate(`document.documentElement.dataset.connectivity === 'offline'`), 'Confirmed offline status did not appear.');
   artifacts.push(await screenshot('connectivity-offline-simulated-ar-390.png'));
   await client.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
   offlineExpected = false;
-  await click('[data-erp-connectivity-retry]');
-  await waitUntil(() => evaluate(`document.documentElement.dataset.connectivity === 'online'`), 'Connectivity retry did not confirm the server.');
+  await waitUntil(() => evaluate(`document.documentElement.dataset.connectivity === 'online'`), 'Connectivity recovery did not confirm the server.');
 
   await setDisplayMode(null);
   await navigate('/lang/en');

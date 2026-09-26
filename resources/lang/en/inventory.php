@@ -378,7 +378,7 @@ return [
         ],
         'actions' => [
             'add_line' => 'Add Row',
-            'add_remaining_lines' => 'Add Remaining Lines',
+            'add_remaining_lines' => 'Load Items',
             'view_product' => 'View Product Details',
         ],
         'placeholders' => [
@@ -390,6 +390,10 @@ return [
         ],
         'messages' => [
             'created' => 'Opening Stock Pricing created successfully.',
+            'queue_duplicate_line' => 'The same opening stock line cannot be repeated.',
+            'queue_line_changed' => 'A line is no longer available for pricing. Refresh the page and review the remaining lines.',
+            'queue_amount_too_large' => 'A line or document amount exceeds the allowed limit.',
+            'queue_layer_consumed' => 'This stock cost cannot change after part of it has been issued. Review the product movements first.',
             'updated' => 'Opening Stock Pricing updated successfully.',
             'deleted' => 'Opening Stock Pricing deleted successfully.',
             'restored' => 'Opening Stock Pricing restored successfully.',
@@ -418,7 +422,7 @@ return [
             'edit_permission_denied' => 'You do not have permission to edit this document.',
             'delete_permission_denied' => 'You do not have permission to delete this document.',
             'select_opening_stock_first' => 'Please select an Opening Stock document first.',
-            'no_remaining_lines' => 'There are no remaining lines to add.',
+            'no_remaining_lines' => 'No unpriced lines remain for the selected document.',
             'unexpected_error' => 'Unexpected error occurred.',
             'no_product_selected' => 'Select a product first.',
             'no_image' => 'No image',
@@ -441,7 +445,7 @@ return [
             'confirm_restore_text' => 'This document will become active again.',
             'confirm_restore_yes' => 'Yes, restore',
             'add_line_title' => 'Add row (Alt + N)',
-            'add_remaining_lines_title' => 'Add Remaining Lines',
+            'add_remaining_lines_title' => 'Load unpriced lines for the selected document',
             'duplicate_line_title' => 'Duplicate current row (Alt + D)',
             'delete_line_title' => 'Delete current row (Alt + Delete)',
             'product_info_title' => 'View Product Details (Alt + I)',

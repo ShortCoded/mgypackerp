@@ -448,6 +448,8 @@
       return $row;
     }
 
+    $tbody.find('.js-opening-stock-pricing-empty').remove();
+
     if ($afterRow && $afterRow.length && $.contains($tbody.get(0), $afterRow.get(0))) {
       $afterRow.after($row);
     } else {
@@ -542,16 +544,12 @@
   }
 
   function resetLines($form) {
-    const $rows = $form.find('.js-opening-stock-pricing-line');
-
-    if ($rows.length === 0) {
-      addLine($form, {}, false);
-      return;
-    }
-
-    $rows.slice(1).remove();
-    clearRow($rows.first(), false);
-    renumberLines($form);
+    const $tbody = $form.find('.js-opening-stock-pricing-lines tbody');
+    $tbody.empty();
+    $('<tr class="js-opening-stock-pricing-empty"><td colspan="7" class="text-center text-600 py-3"></td></tr>')
+      .find('td').text(trans('select_opening_stock_first', 'Select an Opening Stock document first.'))
+      .end().appendTo($tbody);
+    updateTotals($form);
   }
 
   function selectedCurrencyIsMain($form) {
@@ -579,26 +577,6 @@
     }
 
     $exchangeRate.prop('readonly', false);
-  }
-
-  function branchType($form) {
-    const $branch = $form.find('.js-opening-stock-pricing-branch');
-    const selected = $branch.select2 && $branch.data('select2') ? $branch.select2('data')[0] : null;
-
-    return String((selected && selected.type) || $branch.find('option:selected').data('type') || '');
-  }
-
-  function syncHallVisibility($form) {
-    const isFactory = branchType($form) === 'factory';
-    const $group = $form.find('.js-opening-stock-pricing-hall-group');
-    const $hall = $form.find('.js-opening-stock-pricing-hall');
-
-    $group.toggleClass('d-none', !isFactory);
-    $hall.prop('disabled', !isFactory);
-
-    if (!isFactory && $hall.val()) {
-      $hall.val(null).trigger('change');
-    }
   }
 
   function modalApi($modal) {
@@ -677,13 +655,14 @@
       url: $form.data('remaining-lines-url'),
       method: 'GET',
       data: {
-        branch_doc_num: $form.find('.js-opening-stock-pricing-branch').val() || '',
-        branch_hall_uuid: $form.find('.js-opening-stock-pricing-hall').val() || '',
         opening_stock_doc_num: openingStockDocNum,
         current_pricing_doc_num: $form.find('#current_pricing_doc_num').val() || ''
       },
       headers: headers()
     }).done(function (response) {
+      if (String($form.find('.js-opening-stock-pricing-opening-stock').val() || '') !== openingStockDocNum) {
+        return;
+      }
       const lines = response && response.data && response.data.lines ? response.data.lines : [];
       const existing = {};
       let added = 0;
@@ -799,7 +778,6 @@
     }
 
     initSelect2(document);
-    syncHallVisibility($form);
     applyMainCurrencyExchangeRate($form);
     updateTotals($form);
     $form.find('.js-opening-stock-pricing-line').each(function () {
@@ -856,24 +834,6 @@
       .off('input.openingStockPricingsValidation change.openingStockPricingsValidation select2:select.openingStockPricingsValidation select2:clear.openingStockPricingsValidation', '.js-opening-stock-pricing-form input, .js-opening-stock-pricing-form select, .js-opening-stock-pricing-form textarea')
       .on('input.openingStockPricingsValidation change.openingStockPricingsValidation select2:select.openingStockPricingsValidation select2:clear.openingStockPricingsValidation', '.js-opening-stock-pricing-form input, .js-opening-stock-pricing-form select, .js-opening-stock-pricing-form textarea', function () {
         clearFieldError($(this));
-      })
-      .off('select2:select.openingStockPricingsBranch select2:clear.openingStockPricingsBranch', '.js-opening-stock-pricing-branch')
-      .on('select2:select.openingStockPricingsBranch select2:clear.openingStockPricingsBranch', '.js-opening-stock-pricing-branch', function () {
-        const $currentForm = $(this).closest('.js-opening-stock-pricing-form');
-        const $hall = $currentForm.find('.js-opening-stock-pricing-hall');
-        const $openingStock = $currentForm.find('.js-opening-stock-pricing-opening-stock');
-
-        syncHallVisibility($currentForm);
-        $hall.val(null).trigger('change');
-        $openingStock.val(null).trigger('change');
-        resetLines($currentForm);
-      })
-      .off('select2:select.openingStockPricingsHall select2:clear.openingStockPricingsHall', '.js-opening-stock-pricing-hall')
-      .on('select2:select.openingStockPricingsHall select2:clear.openingStockPricingsHall', '.js-opening-stock-pricing-hall', function () {
-        const $currentForm = $(this).closest('.js-opening-stock-pricing-form');
-
-        $currentForm.find('.js-opening-stock-pricing-opening-stock').val(null).trigger('change');
-        resetLines($currentForm);
       })
       .off('select2:select.openingStockPricingsOpeningStock select2:clear.openingStockPricingsOpeningStock', '.js-opening-stock-pricing-opening-stock')
       .on('select2:select.openingStockPricingsOpeningStock select2:clear.openingStockPricingsOpeningStock', '.js-opening-stock-pricing-opening-stock', function () {

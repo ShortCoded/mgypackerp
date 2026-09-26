@@ -34,17 +34,14 @@
 
         <div class="card mb-3">
             <div class="card-header py-2">
-                <div class="row flex-between-center g-2">
-                    <div class="col">
+                <div class="d-flex flex-column flex-lg-row align-items-lg-center justify-content-between gap-2">
+                    <div class="min-w-0">
                         <h5 class="mb-0">{{ $title }}</h5>
                         @if($isClone ?? false)
                             <span class="badge badge-subtle-info mt-1">{{ __('inventory.movements.copy_of', ['document' => $record->doc_num]) }}</span>
                         @endif
                     </div>
-                    <div class="col-auto">
-                        @if(!$record && !($isClone ?? false) && auth()->user()?->can('inventory.documents.issue'))
-                            <a class="btn btn-falcon-primary btn-sm me-2" href="{{ route('admin.inventory.documents.sales-issue.create') }}">{{ __('sales_issue.warehouse_issue') }}</a>
-                        @endif
+                    <div class="d-flex flex-wrap align-items-center justify-content-start justify-content-lg-end gap-2">
                         <div data-standard-movement-actions>
                             @include('modules.inventory.documents.partials.form-actions', compact('mode', 'record'))
                         </div>
@@ -180,7 +177,7 @@
             </div>
 
             <div class="card-footer">
-                <div class="d-flex flex-wrap justify-content-end gap-2">
+                <div class="d-flex flex-wrap align-items-center justify-content-end gap-2">
                     <div data-standard-movement-actions>
                         @include('modules.inventory.documents.partials.form-actions', compact('mode', 'record'))
                     </div>

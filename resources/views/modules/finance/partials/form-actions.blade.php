@@ -22,7 +22,7 @@
         'save_edit' => __('common.shortcuts.save_edit'),
         'save_view' => __('common.shortcuts.save_view'),
     ];
-    $showSaveDropdown = ! $isCreateLike || $canView || $canEdit || $canList || $canClone;
+    $showSaveDropdown = ! $isCreateLike || $canView || $canEdit || $canList || $canClone || isset($extraDropdownActionsView);
 @endphp
 <div class="d-flex flex-wrap justify-content-end gap-2 {{ $class ?? '' }}">
     @if ($canList)
@@ -81,6 +81,9 @@
                     @if($canClone)
                         <button class="dropdown-item js-finance-submit-action" type="submit" data-submit-action="save_clone" data-shortcut-action="form.save_clone" title="{{ $shortcutTitles['save_clone'] }}" data-bs-title="{{ $shortcutTitles['save_clone'] }}">{{ __('common.actions.save_and_clone') }}</button>
                     @endif
+                    @isset($extraDropdownActionsView)
+                        @include($extraDropdownActionsView)
+                    @endisset
                 </div>
             @endif
         </div>

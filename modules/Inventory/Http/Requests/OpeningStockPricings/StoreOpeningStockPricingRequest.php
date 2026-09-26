@@ -8,7 +8,6 @@ use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\Branch;
-use Modules\Core\Models\BranchHall;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\DateFormatService;
@@ -51,8 +50,6 @@ class StoreOpeningStockPricingRequest extends FormRequest
             'company_id' => $context['company_id'],
             'financial_period_id' => $context['financial_period_id'],
             'document_date' => $this->filled('document_date') ? trim((string) $this->input('document_date')) : null,
-            'branch_doc_num' => $this->filled('branch_doc_num') ? trim((string) $this->input('branch_doc_num')) : null,
-            'branch_hall_uuid' => $this->filled('branch_hall_uuid') ? trim((string) $this->input('branch_hall_uuid')) : null,
             'opening_stock_doc_num' => $this->filled('opening_stock_doc_num') ? trim((string) $this->input('opening_stock_doc_num')) : null,
             'currency_doc_num' => $this->filled('currency_doc_num') ? trim((string) $this->input('currency_doc_num')) : null,
             'exchange_rate' => $this->filled('exchange_rate') ? trim((string) $this->input('exchange_rate')) : null,
@@ -81,8 +78,6 @@ class StoreOpeningStockPricingRequest extends FormRequest
             }],
             'company_id' => ['required', 'integer', 'exists:companies,id'],
             'financial_period_id' => ['required', 'integer', 'exists:financial_periods,id'],
-            'branch_doc_num' => ['required', 'string'],
-            'branch_hall_uuid' => ['nullable', 'string'],
             'opening_stock_doc_num' => ['required', 'string'],
             'currency_doc_num' => ['required', 'string'],
             'exchange_rate' => ['required', 'numeric', 'decimal:0,6', 'regex:/^\d{1,12}(?:\.\d{1,6})?$/D', 'gt:0'],
@@ -102,7 +97,6 @@ class StoreOpeningStockPricingRequest extends FormRequest
     {
         return [
             'document_date.required' => __('inventory.opening_stock_pricings.messages.date_required'),
-            'branch_doc_num.required' => __('inventory.opening_stock_pricings.messages.branch_required'),
             'opening_stock_doc_num.required' => __('inventory.opening_stock_pricings.messages.opening_stock_required'),
             'lines.required' => __('inventory.opening_stock_pricings.messages.lines_required'),
             'lines.array' => __('inventory.opening_stock_pricings.messages.lines_required'),
@@ -126,21 +120,14 @@ class StoreOpeningStockPricingRequest extends FormRequest
 
         $companyId = (int) $this->input('company_id');
         $period = FinancialPeriod::query()->find($this->input('financial_period_id'));
-        $branch = $this->branch($companyId);
-        $hall = $this->branchHall($branch);
-        $openingStock = $this->openingStock($companyId, $period, $branch, $hall);
+        $openingStock = $this->openingStock($companyId, $period);
         $currency = $this->currency($companyId);
 
-        if (! $period instanceof FinancialPeriod || (int) $period->company_id !== $companyId) {
+        if (! $period instanceof FinancialPeriod || (int) $period->company_id !== $companyId || $period->is_closed || ! $period->allows_opening_entries) {
             $validator->errors()->add('financial_period_id', __('operating_context.validation.financial_period_invalid'));
         }
 
-        if (! $branch instanceof Branch) {
-            $validator->errors()->add('branch_doc_num', __('inventory.opening_stock_pricings.messages.branch_type_required'));
-        }
-
         $this->validateDateInsidePeriod($validator, $period);
-        $this->validateBranchHall($validator, $branch, $hall);
         $this->validateOpeningStock($validator, $openingStock, $current);
         $this->validateCurrency($validator, $currency);
         $this->validateLines($validator, $openingStock, $current);
@@ -167,22 +154,9 @@ class StoreOpeningStockPricingRequest extends FormRequest
         }
     }
 
-    private function validateBranchHall(Validator $validator, ?Branch $branch, ?BranchHall $hall): void
-    {
-        $uuid = trim((string) $this->input('branch_hall_uuid'));
-
-        if ($uuid === '') {
-            return;
-        }
-
-        if (! $branch instanceof Branch || $branch->type !== Branch::TypeFactory || ! $hall instanceof BranchHall) {
-            $validator->errors()->add('branch_hall_uuid', __('inventory.opening_stock_pricings.messages.hall_invalid'));
-        }
-    }
-
     private function validateOpeningStock(Validator $validator, ?OpeningStock $openingStock, ?OpeningStockPricing $current): void
     {
-        if (! $openingStock instanceof OpeningStock || $openingStock->lines()->whereNull('deleted_at')->count() === 0) {
+        if (! $openingStock instanceof OpeningStock || ! ($openingStock->isClosed() || $openingStock->isApproved()) || ! $openingStock->lines()->where('quantity', '>', 0)->exists()) {
             $validator->errors()->add('opening_stock_doc_num', __('inventory.opening_stock_pricings.messages.opening_stock_unavailable'));
 
             return;
@@ -211,13 +185,12 @@ class StoreOpeningStockPricingRequest extends FormRequest
     private function validateLines(Validator $validator, ?OpeningStock $openingStock, ?OpeningStockPricing $current): void
     {
         $activeOpeningLines = $openingStock instanceof OpeningStock
-            ? $openingStock->lines()->whereNull('deleted_at')->get()->keyBy('public_id')
+            ? $openingStock->lines()->where('quantity', '>', 0)->get()->keyBy('public_id')
             : collect();
         $requiredLineIds = $activeOpeningLines->pluck('id')->map(fn (mixed $id): int => (int) $id)->all();
         $pricedElsewhere = app(OpeningStockPricingService::class)->pricedOpeningStockLineIds($requiredLineIds, $current?->getKey())->flip();
         $validLineCount = 0;
         $seenOpeningLines = [];
-        $seenProducts = [];
 
         foreach ($this->input('lines', []) as $index => $line) {
             if (! is_array($line) || ($line['_delete'] ?? false)) {
@@ -243,11 +216,10 @@ class StoreOpeningStockPricingRequest extends FormRequest
                     $validator->errors()->add("lines.{$index}.opening_stock_line_public_id", __('inventory.opening_stock_pricings.messages.opening_stock_unavailable'));
                 } elseif ($pricedElsewhere->has((int) $openingLine->getKey())) {
                     $validator->errors()->add("lines.{$index}.opening_stock_line_public_id", __('inventory.opening_stock_pricings.messages.opening_stock_fully_priced'));
-                } elseif (isset($seenOpeningLines[$openingLine->getKey()]) || isset($seenProducts[$openingLine->product_id])) {
-                    $validator->errors()->add("lines.{$index}.opening_stock_line_public_id", __('inventory.opening_stock_pricings.messages.duplicate_product'));
+                } elseif (isset($seenOpeningLines[$openingLine->getKey()])) {
+                    $validator->errors()->add("lines.{$index}.opening_stock_line_public_id", __('inventory.opening_stock_pricings.messages.queue_duplicate_line'));
                 } else {
                     $seenOpeningLines[$openingLine->getKey()] = true;
-                    $seenProducts[$openingLine->product_id] = true;
                 }
             }
 
@@ -262,49 +234,26 @@ class StoreOpeningStockPricingRequest extends FormRequest
             $validator->errors()->add('lines', __('inventory.opening_stock_pricings.messages.lines_required'));
         }
 
-        if ($openingStock instanceof OpeningStock && count($seenOpeningLines) < count($requiredLineIds)) {
-            $validator->errors()->add('lines', __('inventory.opening_stock_pricings.messages.all_lines_required'));
-        }
     }
 
-    private function branch(int $companyId): ?Branch
+    private function openingStock(int $companyId, ?FinancialPeriod $period): ?OpeningStock
     {
-        return Branch::query()
-            ->where('company_id', $companyId)
-            ->where('doc_num', $this->input('branch_doc_num'))
-            ->where('status', 'active')
-            ->whereIn('type', [Branch::TypeWarehouse, Branch::TypeFactory])
-            ->first();
-    }
-
-    private function branchHall(?Branch $branch): ?BranchHall
-    {
-        $uuid = trim((string) $this->input('branch_hall_uuid'));
-
-        if (! $branch instanceof Branch || $uuid === '') {
+        if (! $period instanceof FinancialPeriod) {
             return null;
         }
 
-        return BranchHall::query()
-            ->where('branch_id', $branch->getKey())
-            ->where('public_uuid', $uuid)
-            ->whereNull('deleted_at')
-            ->first();
-    }
-
-    private function openingStock(int $companyId, ?FinancialPeriod $period, ?Branch $branch, ?BranchHall $hall): ?OpeningStock
-    {
-        if (! $period instanceof FinancialPeriod || ! $branch instanceof Branch) {
-            return null;
-        }
+        $allowedBranches = app(OperatingContextService::class)
+            ->allowedBranchQueryForCurrentCompany($this)
+            ->where('branches.status', 'active')
+            ->whereIn('branches.type', [Branch::TypeWarehouse, Branch::TypeFactory])
+            ->reorder()
+            ->select('branches.id');
 
         return OpeningStock::query()
             ->where('company_id', $companyId)
             ->where('financial_period_id', $period->getKey())
-            ->where('branch_id', $branch->getKey())
+            ->whereIn('branch_id', $allowedBranches)
             ->where('doc_num', $this->input('opening_stock_doc_num'))
-            ->when($hall instanceof BranchHall, fn ($query) => $query->where('branch_hall_id', $hall->getKey()))
-            ->whereNull('deleted_at')
             ->first();
     }
 
@@ -333,8 +282,6 @@ class StoreOpeningStockPricingRequest extends FormRequest
         return [
             'doc_number' => __('inventory.opening_stock_pricings.attributes.doc_number'),
             'document_date' => __('inventory.opening_stock_pricings.attributes.document_date'),
-            'branch_doc_num' => __('inventory.opening_stock_pricings.attributes.branch'),
-            'branch_hall_uuid' => __('inventory.opening_stock_pricings.attributes.hall'),
             'opening_stock_doc_num' => __('inventory.opening_stock_pricings.attributes.opening_stock'),
             'currency_doc_num' => __('inventory.opening_stock_pricings.attributes.currency'),
             'exchange_rate' => __('inventory.opening_stock_pricings.attributes.exchange_rate'),

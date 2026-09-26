@@ -3,11 +3,13 @@
 namespace Modules\Inventory\Services;
 
 use DomainException;
+use Illuminate\Database\QueryException;
+use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\Branch;
-use Modules\Core\Models\BranchHall;
 use Modules\Core\Models\Currency;
+use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
@@ -30,23 +32,50 @@ class OpeningStockPricingService
         private readonly InventoryOpeningStockPostingService $openingStockPosting,
     ) {}
 
-    public function create(array $data): array
+    public function create(array $data, Request $request): array
     {
-        return DB::transaction(function () use ($data): array {
-            $context = $this->currentContext();
-            $record = OpeningStockPricing::query()->create([
-                ...$this->values($data, $context),
-                ...$this->document($data, $context),
-                'created_by' => auth()->id(),
-            ]);
+        try {
+            return DB::transaction(function () use ($data, $request): array {
+                $context = $this->currentContext();
+                $period = FinancialPeriod::query()
+                    ->whereKey($context['financial_period_id'])
+                    ->where('company_id', $context['company_id'])
+                    ->lockForUpdate()
+                    ->first();
+                if (! $period || $period->is_closed || ! $period->allows_opening_entries) {
+                    throw new DomainException(__('operating_context.validation.financial_period_invalid'));
+                }
+                $source = $this->openingStockByDocNum($context, $data['opening_stock_doc_num'] ?? null, $request, true);
+                if (! $source instanceof OpeningStock || ! ($source->isClosed() || $source->isApproved())) {
+                    throw new DomainException(__('inventory.opening_stock_pricings.messages.opening_stock_unavailable'));
+                }
 
-            $totalAmount = $this->syncLines($record, $data['lines'] ?? [], $context);
-            $record->forceFill(['total_amount' => number_format($totalAmount, 4, '.', '')])->save();
-            $this->openingStockPosting->applyPricing($record);
-            $this->audit->clearCreationUpdateAudit($record);
+                $publicIds = array_column($data['lines'] ?? [], 'opening_stock_line_public_id');
+                $sourceLines = $source->lines()->whereIn('public_id', $publicIds)->where('quantity', '>', 0)->lockForUpdate()->get();
+                if ($publicIds === [] || count($publicIds) !== count(array_unique($publicIds)) || $sourceLines->count() !== count($publicIds)
+                    || $this->pricedOpeningStockLineIds($sourceLines->modelKeys())->isNotEmpty()) {
+                    throw new DomainException(__('inventory.opening_stock_pricings.messages.queue_line_changed'));
+                }
 
-            return ['record' => $record->refresh()->load(['branch', 'branchHall', 'openingStock', 'currency', 'lines.openingStockLine.product'])];
-        });
+                $record = OpeningStockPricing::query()->create([
+                    ...$this->values($data, $context, $source),
+                    ...$this->document($data, $context),
+                    'created_by' => auth()->id(),
+                ]);
+                $totalAmount = $this->syncLines($record, $data['lines'], $context);
+                $record->forceFill(['total_amount' => $totalAmount])->save();
+                $this->openingStockPosting->applyPricing($record);
+                $this->audit->clearCreationUpdateAudit($record);
+
+                return ['record' => $record->refresh()->load(['branch', 'branchHall', 'openingStock', 'currency', 'lines.openingStockLine.product'])];
+            });
+        } catch (QueryException $exception) {
+            if (str_contains($exception->getMessage(), 'inventory_opening_stock_pricing_lines_source_unique_active')) {
+                throw new DomainException(__('inventory.opening_stock_pricings.messages.queue_line_changed'), previous: $exception);
+            }
+
+            throw $exception;
+        }
     }
 
     public function update(OpeningStockPricing $record, array $data): array
@@ -67,7 +96,7 @@ class OpeningStockPricingService
             $this->audit->saveUpdate($record, $values);
             $totalAmount = $this->syncLines($record->refresh(), $data['lines'] ?? [], $context);
             $this->audit->saveUpdate($record, [
-                'total_amount' => number_format($totalAmount, 4, '.', ''),
+                'total_amount' => $totalAmount,
                 'is_closed' => true,
                 'status' => OpeningStockPricing::StatusClosed,
             ]);
@@ -101,14 +130,23 @@ class OpeningStockPricingService
         return DB::transaction(function () use ($record): OpeningStockPricing {
             $this->assertInCurrentContext($record, $this->currentContext());
             $deletedAt = $record->deleted_at;
-
-            $this->audit->restore($record, auth()->id());
-            $record->lines()
+            $restoringLines = $record->lines()
                 ->withTrashed()
                 ->when($deletedAt, fn ($query) => $query->where('deleted_at', '>=', $deletedAt))
-                ->get()
-                ->each
-                ->restore();
+                ->get();
+            $sourceLineIds = $restoringLines->pluck('opening_stock_line_id')->all();
+
+            $activeSourceLines = OpeningStockLine::query()->whereIn('id', $sourceLineIds)->orderBy('id')->lockForUpdate()->get();
+            if ($activeSourceLines->count() !== count(array_unique($sourceLineIds)) || ! $record->openingStock()->exists()) {
+                throw new DomainException(__('inventory.opening_stock_pricings.messages.queue_line_changed'));
+            }
+            if ($this->pricedOpeningStockLineIds($sourceLineIds, $record->getKey())->isNotEmpty()) {
+                throw new DomainException(__('inventory.opening_stock_pricings.messages.queue_line_changed'));
+            }
+
+            $this->audit->restore($record, auth()->id());
+            $restoringLines->each->restore();
+            $this->openingStockPosting->applyPricing($record);
 
             return $record->refresh();
         });
@@ -117,7 +155,7 @@ class OpeningStockPricingService
     public function isFullyPriced(OpeningStock $openingStock, ?OpeningStockPricing $current = null): bool
     {
         $lineIds = $openingStock->lines()
-            ->whereNull('deleted_at')
+            ->where('quantity', '>', 0)
             ->pluck('id')
             ->map(fn (mixed $id): int => (int) $id)
             ->all();
@@ -143,7 +181,6 @@ class OpeningStockPricingService
             ->whereIn('inventory_opening_stock_pricing_lines.opening_stock_line_id', $openingStockLineIds)
             ->whereNull('inventory_opening_stock_pricing_lines.deleted_at')
             ->whereNull('inventory_opening_stock_pricings.deleted_at')
-            ->where('inventory_opening_stock_pricing_lines.unit_price', '>', 0)
             ->when($exceptPricingId, fn ($query) => $query->where('inventory_opening_stock_pricings.id', '!=', $exceptPricingId))
             ->distinct()
             ->pluck('inventory_opening_stock_pricing_lines.opening_stock_line_id')
@@ -154,10 +191,9 @@ class OpeningStockPricingService
      * @param  array{company_id: int, financial_period_id: int}  $context
      * @return array<string, mixed>
      */
-    private function values(array $data, array $context): array
+    private function values(array $data, array $context, ?OpeningStock $source = null): array
     {
-        $branch = $this->branchByDocNum($context['company_id'], $data['branch_doc_num'] ?? null);
-        $openingStock = $this->openingStockByDocNum($context, $branch, $data['opening_stock_doc_num'] ?? null);
+        $openingStock = $source ?? $this->openingStockByDocNum($context, $data['opening_stock_doc_num'] ?? null);
         $currency = $this->currencyByDocNum($context['company_id'], $data['currency_doc_num'] ?? null);
         $exchangeRate = $currency?->is_main
             ? '1.000000'
@@ -166,8 +202,8 @@ class OpeningStockPricingService
         return [
             'company_id' => $context['company_id'],
             'financial_period_id' => $context['financial_period_id'],
-            'branch_id' => $branch?->getKey(),
-            'branch_hall_id' => $this->branchHallId($branch, $data['branch_hall_uuid'] ?? null),
+            'branch_id' => $openingStock?->branch_id,
+            'branch_hall_id' => $openingStock?->branch_hall_id,
             'opening_stock_id' => $openingStock?->getKey(),
             'currency_id' => $currency?->getKey(),
             'exchange_rate' => $exchangeRate,
@@ -182,11 +218,11 @@ class OpeningStockPricingService
      * @param  list<array<string, mixed>>  $lines
      * @param  array{company_id: int, financial_period_id: int}  $context
      */
-    private function syncLines(OpeningStockPricing $record, array $lines, array $context): float
+    private function syncLines(OpeningStockPricing $record, array $lines, array $context): string
     {
         $openingStock = $record->openingStock()->first();
         if (! $openingStock instanceof OpeningStock) {
-            return 0.0;
+            return '0.0000';
         }
 
         $openingLines = $openingStock->lines()
@@ -197,7 +233,7 @@ class OpeningStockPricingService
         $existingByPublicId = $record->lines()->get()->keyBy('public_id');
         $existingByOpeningLineId = $record->lines()->get()->keyBy('opening_stock_line_id');
         $keptLineIds = [];
-        $totalAmount = 0.0;
+        $totalAmount = '0.0000';
 
         foreach (array_values($lines) as $line) {
             $publicLineId = trim((string) ($line['opening_stock_line_public_id'] ?? ''));
@@ -209,10 +245,8 @@ class OpeningStockPricingService
 
             $unitPriceValue = $this->numbers->normalizeToScale($line['unit_price'] ?? 0, 4) ?? '0.0000';
             $quantityValue = $this->numbers->normalizeToScale($openingLine->quantity, 4) ?? '0.0000';
-            $unitPrice = (float) $unitPriceValue;
-            $quantity = (float) $quantityValue;
-            $lineTotal = round($quantity * $unitPrice, 4);
-            $totalAmount += $lineTotal;
+            $lineTotal = bcround(bcmul($quantityValue, $unitPriceValue, 8), 4);
+            $totalAmount = bcadd($totalAmount, $lineTotal, 4);
             $pricingPublicId = trim((string) ($line['public_id'] ?? ''));
             $existingLine = $pricingPublicId !== ''
                 ? $existingByPublicId->get($pricingPublicId)
@@ -227,7 +261,7 @@ class OpeningStockPricingService
                 'product_snapshot' => $snapshot,
                 'quantity' => $quantityValue,
                 'unit_price' => $unitPriceValue,
-                'line_total' => number_format($lineTotal, 4, '.', ''),
+                'line_total' => $lineTotal,
                 'notes' => $line['notes'] ?? null,
             ];
 
@@ -353,7 +387,10 @@ class OpeningStockPricingService
         return $value === '' ? null : $value;
     }
 
-    private function branchByDocNum(int $companyId, ?string $docNum): ?Branch
+    /**
+     * @param  array{company_id: int, financial_period_id: int}  $context
+     */
+    private function openingStockByDocNum(array $context, ?string $docNum, ?Request $request = null, bool $lock = false): ?OpeningStock
     {
         $docNum = trim((string) $docNum);
 
@@ -361,46 +398,18 @@ class OpeningStockPricingService
             return null;
         }
 
-        return Branch::query()
-            ->where('company_id', $companyId)
-            ->where('doc_num', $docNum)
-            ->where('status', 'active')
-            ->whereIn('type', [Branch::TypeWarehouse, Branch::TypeFactory])
-            ->first();
-    }
-
-    private function branchHallId(?Branch $branch, ?string $uuid): ?int
-    {
-        $uuid = trim((string) $uuid);
-
-        if (! $branch instanceof Branch || $uuid === '') {
-            return null;
-        }
-
-        return BranchHall::query()
-            ->where('branch_id', $branch->getKey())
-            ->where('public_uuid', $uuid)
-            ->whereNull('deleted_at')
-            ->value('id');
-    }
-
-    /**
-     * @param  array{company_id: int, financial_period_id: int}  $context
-     */
-    private function openingStockByDocNum(array $context, ?Branch $branch, ?string $docNum): ?OpeningStock
-    {
-        $docNum = trim((string) $docNum);
-
-        if (! $branch instanceof Branch || $docNum === '') {
-            return null;
-        }
+        $allowedBranches = $this->operatingContext->allowedBranchQueryForCurrentCompany($request ?? request())
+            ->where('branches.status', 'active')
+            ->whereIn('branches.type', [Branch::TypeWarehouse, Branch::TypeFactory])
+            ->reorder()
+            ->select('branches.id');
 
         return OpeningStock::query()
             ->where('company_id', $context['company_id'])
             ->where('financial_period_id', $context['financial_period_id'])
-            ->where('branch_id', $branch->getKey())
+            ->whereIn('branch_id', $allowedBranches)
             ->where('doc_num', $docNum)
-            ->whereNull('deleted_at')
+            ->when($lock, fn ($query) => $query->lockForUpdate())
             ->first();
     }
 

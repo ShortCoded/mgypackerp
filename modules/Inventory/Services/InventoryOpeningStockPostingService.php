@@ -5,6 +5,8 @@ namespace Modules\Inventory\Services;
 use DomainException;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
+use Modules\Inventory\Models\InventoryLayerAllocation;
+use Modules\Inventory\Models\InventoryReceiptLayer;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Inventory\Models\OpeningStockPricing;
@@ -112,11 +114,15 @@ class InventoryOpeningStockPostingService
 
             $unitCost = bcmul((string) $pricingLine->unit_price, (string) $lockedPricing->exchange_rate, 8);
             $totalCost = bcmul((string) $pricingLine->line_total, (string) $lockedPricing->exchange_rate, 4);
+            if (bccomp($unitCost, '999999999999.99999999', 8) > 0 || bccomp($totalCost, '999999999999.99999999', 8) > 0) {
+                throw new DomainException(__('inventory.opening_stock_pricings.messages.queue_amount_too_large'));
+            }
 
             $movement->forceFill([
                 'unit_cost' => $unitCost,
                 'total_cost' => $totalCost,
             ])->save();
+            $this->syncReceiptLayerCost($movement, $unitCost);
         }
     }
 
@@ -146,6 +152,7 @@ class InventoryOpeningStockPostingService
 
             $this->assertNoLaterMovement($movement);
             $movement->forceFill(['unit_cost' => null, 'total_cost' => null])->save();
+            $this->syncReceiptLayerCost($movement, null);
         }
     }
 
@@ -192,6 +199,31 @@ class InventoryOpeningStockPostingService
 
         if ($hasLaterMovement) {
             throw new DomainException(__('Opening stock pricing cannot change after a later Inventory movement exists for the same product and store.'));
+        }
+    }
+
+    private function syncReceiptLayerCost(InventoryTransaction $movement, ?string $unitCost): void
+    {
+        $layers = InventoryReceiptLayer::query()
+            ->where('receipt_transaction_id', $movement->getKey())
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        if ($layers->isEmpty()) {
+            return;
+        }
+
+        if (InventoryLayerAllocation::query()->whereIn('inventory_receipt_layer_id', $layers->modelKeys())->exists()) {
+            throw new DomainException(__('inventory.opening_stock_pricings.messages.queue_layer_consumed'));
+        }
+
+        foreach ($layers as $layer) {
+            if (bccomp((string) $layer->remaining_quantity, (string) $layer->original_quantity, 8) !== 0) {
+                throw new DomainException(__('inventory.opening_stock_pricings.messages.queue_layer_consumed'));
+            }
+
+            $layer->forceFill(['unit_cost' => $unitCost])->save();
         }
     }
 }
