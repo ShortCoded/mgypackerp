@@ -341,6 +341,67 @@ test('opening stock product snapshot is preserved on quantity edits and regenera
         ->and($line->product_snapshot['name'])->toBe('Snapshot Second Product');
 });
 
+test('editing an opening stock line can replace an omitted line with the same product', function (): void {
+    $context = openingStockContext($this);
+    $actor = openingStockActor(['inventory.opening_stocks.create', 'inventory.opening_stocks.edit']);
+    $firstProduct = openingStockProduct($context['company']);
+    $secondProduct = openingStockProduct($context['company']);
+
+    $this->actingAs($actor)->postJson(route('admin.inventory.opening-stocks.store'), openingStockPayload($firstProduct, [
+        'lines' => [
+            ['product_doc_num' => $firstProduct->doc_num, 'quantity' => '2'],
+            ['product_doc_num' => $secondProduct->doc_num, 'quantity' => '3'],
+        ],
+    ]))->assertOk();
+
+    $record = OpeningStock::query()->firstOrFail();
+    $firstLine = $record->lines()->where('product_id', $firstProduct->getKey())->firstOrFail();
+    $secondLine = $record->lines()->where('product_id', $secondProduct->getKey())->firstOrFail();
+    $record->forceFill(['is_closed' => false, 'status' => OpeningStock::StatusDraft])->save();
+
+    $this->actingAs($actor)->putJson(route('admin.inventory.opening-stocks.update', $record->doc_num), openingStockPayload($secondProduct, [
+        'lines' => [['public_id' => $firstLine->public_id, 'product_doc_num' => $secondProduct->doc_num, 'quantity' => '7']],
+    ]))->assertOk();
+
+    expect($record->fresh()->lines()->count())->toBe(1)
+        ->and($firstLine->fresh()->product_id)->toBe($secondProduct->getKey())
+        ->and($firstLine->fresh()->deleted_at)->toBeNull()
+        ->and((string) $firstLine->fresh()->quantity)->toBe('7.0000')
+        ->and($secondLine->fresh()->deleted_at)->not->toBeNull();
+});
+
+test('swapping products between opening stock lines preserves both line identities', function (): void {
+    $context = openingStockContext($this);
+    $actor = openingStockActor(['inventory.opening_stocks.create', 'inventory.opening_stocks.edit']);
+    $firstProduct = openingStockProduct($context['company']);
+    $secondProduct = openingStockProduct($context['company']);
+
+    $this->actingAs($actor)->postJson(route('admin.inventory.opening-stocks.store'), openingStockPayload($firstProduct, [
+        'lines' => [
+            ['product_doc_num' => $firstProduct->doc_num, 'quantity' => '2'],
+            ['product_doc_num' => $secondProduct->doc_num, 'quantity' => '3'],
+        ],
+    ]))->assertOk();
+
+    $record = OpeningStock::query()->firstOrFail();
+    $firstLine = $record->lines()->where('product_id', $firstProduct->getKey())->firstOrFail();
+    $secondLine = $record->lines()->where('product_id', $secondProduct->getKey())->firstOrFail();
+    $record->forceFill(['is_closed' => false, 'status' => OpeningStock::StatusDraft])->save();
+
+    $this->actingAs($actor)->putJson(route('admin.inventory.opening-stocks.update', $record->doc_num), openingStockPayload($firstProduct, [
+        'lines' => [
+            ['public_id' => $firstLine->public_id, 'product_doc_num' => $secondProduct->doc_num, 'quantity' => '4'],
+            ['public_id' => $secondLine->public_id, 'product_doc_num' => $firstProduct->doc_num, 'quantity' => '5'],
+        ],
+    ]))->assertOk();
+
+    expect($record->fresh()->lines()->count())->toBe(2)
+        ->and($firstLine->fresh()->product_id)->toBe($secondProduct->getKey())
+        ->and($secondLine->fresh()->product_id)->toBe($firstProduct->getKey())
+        ->and($firstLine->fresh()->deleted_at)->toBeNull()
+        ->and($secondLine->fresh()->deleted_at)->toBeNull();
+});
+
 test('document numbers are scoped by company and period', function (): void {
     $context = openingStockContext($this);
     $actor = openingStockActor(['inventory.opening_stocks.create', 'inventory.opening_stocks.document_number.control']);

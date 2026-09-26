@@ -7,6 +7,8 @@ use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Services\DataTableSearchService;
@@ -42,6 +44,10 @@ class SalesIssueController extends Controller
     public function orders(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
     {
         $context = $this->requiredContext($request);
+        if (! $request->filled('branch_store_uuid')) {
+            return response()->json(['results' => [], 'pagination' => ['more' => false]]);
+        }
+
         $store = $this->storeForContext($request, $context);
         $query = SalesIssueOrder::query()->with('invoice.customer')
             ->where('company_id', $context['company_id'])
@@ -171,9 +177,20 @@ class SalesIssueController extends Controller
     /** @param array{company_id: int, branch_id: int, financial_period_id: int} $context */
     private function storeForContext(Request $request, array $context): BranchStore
     {
-        return BranchStore::query()
+        $uuid = trim($request->string('branch_store_uuid')->toString());
+        if (! Str::isUuid($uuid)) {
+            throw ValidationException::withMessages(['branch_store_uuid' => __('inventory.movements.messages.store_invalid')]);
+        }
+
+        $store = BranchStore::query()
             ->where('branch_id', $context['branch_id'])
-            ->where('public_uuid', $request->string('branch_store_uuid')->toString())
-            ->firstOrFail();
+            ->where('public_uuid', $uuid)
+            ->first();
+
+        if (! $store instanceof BranchStore) {
+            throw ValidationException::withMessages(['branch_store_uuid' => __('inventory.movements.messages.store_invalid')]);
+        }
+
+        return $store;
     }
 }

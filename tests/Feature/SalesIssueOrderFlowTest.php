@@ -3,6 +3,7 @@
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Services\OperatingContextService;
@@ -465,6 +466,9 @@ test('a warehouse branch can issue an invoice from the sales branch and sales re
         'branch_store_uuid' => $warehouseStore->public_uuid,
     ]))->assertOk()->assertSee($issueOrder->doc_num);
     $this->getJson(route('admin.inventory.documents.sales-issue-orders.details', [
+        'salesIssueOrder' => $issueOrder,
+    ]))->assertUnprocessable()->assertJsonValidationErrors(['branch_store_uuid']);
+    $this->getJson(route('admin.inventory.documents.sales-issue-orders.details', [
         'salesIssueOrder' => $issueOrder, 'branch_store_uuid' => $warehouseStore->public_uuid,
     ]))->assertOk()->assertJsonPath('data.can_issue', true);
     $this->postJson(route('admin.inventory.documents.sales-issue.store'), [
@@ -489,4 +493,29 @@ test('a warehouse branch can issue an invoice from the sales branch and sales re
     expect($receipt->branch_id)->toBe($fixture['branch']->getKey())
         ->and($receipt->customer_invoice_id)->toBe($invoice->getKey());
     Storage::disk('local')->assertExists($receipt->signature_path);
+});
+
+test('warehouse issue order lookup waits for a valid store selection', function (): void {
+    $fixture = salesCycleFixture();
+    foreach (['inventory.documents.create', 'inventory.documents.issue'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $fixture['user']->givePermissionTo($permission);
+    }
+
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    $this->get(route('admin.inventory.documents.sales-issue.create'))
+        ->assertOk()
+        ->assertSee('data-disable-when-dependency-empty="true"', false);
+
+    $this->getJson(route('admin.inventory.documents.select2.sales-issue-orders'))
+        ->assertOk()
+        ->assertExactJson(['results' => [], 'pagination' => ['more' => false]]);
+
+    $this->getJson(route('admin.inventory.documents.select2.sales-issue-orders', ['branch_store_uuid' => 'not-a-uuid']))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['branch_store_uuid']);
+
+    $this->getJson(route('admin.inventory.documents.select2.sales-issue-orders', ['branch_store_uuid' => (string) Str::uuid()]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors(['branch_store_uuid']);
 });

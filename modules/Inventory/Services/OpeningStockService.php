@@ -48,6 +48,7 @@ class OpeningStockService
     public function update(OpeningStock $record, array $data): array
     {
         return DB::transaction(function () use ($record, $data): array {
+            $record = OpeningStock::query()->lockForUpdate()->findOrFail($record->getKey());
             $context = $this->currentContext();
             $this->assertInCurrentContext($record, $context);
             $this->assertEditable($record);
@@ -223,8 +224,11 @@ class OpeningStockService
      */
     private function syncLines(OpeningStock $record, array $lines, array $context): void
     {
-        $existingLines = $record->lines()->get()->keyBy('public_id');
+        $existingLines = $record->lines()->lockForUpdate()->get();
+        $existingByPublicId = $existingLines->keyBy('public_id');
         $keptLineIds = [];
+        $reassignedLineIds = [];
+        $plannedLines = [];
 
         foreach (array_values($lines) as $index => $line) {
             $product = $this->productByDocNum($context['company_id'], $line['product_doc_num'] ?? null);
@@ -235,8 +239,14 @@ class OpeningStockService
 
             $publicId = trim((string) ($line['public_id'] ?? ''));
             $existingLine = $publicId !== ''
-                ? $existingLines->get($publicId)
+                ? $existingByPublicId->get($publicId)
                 : $existingLines->first(fn (OpeningStockLine $candidate): bool => (int) $candidate->product_id === (int) $product->getKey() && ! in_array($candidate->getKey(), $keptLineIds, true));
+
+            if (($publicId !== '' && ! ($existingLine instanceof OpeningStockLine))
+                || ($existingLine instanceof OpeningStockLine && in_array($existingLine->getKey(), $keptLineIds, true))) {
+                throw new DomainException(__('inventory.opening_stocks.messages.line_invalid'));
+            }
+
             $snapshot = $this->lineProductSnapshot($existingLine, $product);
             $lineValues = [
                 'company_id' => $context['company_id'],
@@ -253,24 +263,43 @@ class OpeningStockService
                 'notes' => $line['notes'] ?? null,
             ];
 
-            if ($existingLine instanceof OpeningStockLine && (int) $existingLine->opening_stock_id === (int) $record->getKey()) {
-                $existingLine->forceFill([...$lineValues, 'updated_by' => auth()->id()])->save();
+            if ($existingLine instanceof OpeningStockLine) {
                 $keptLineIds[] = $existingLine->getKey();
+                if ((int) $existingLine->product_id !== (int) $product->getKey()) {
+                    $reassignedLineIds[] = $existingLine->getKey();
+                }
+            }
+
+            $plannedLines[] = ['existing' => $existingLine, 'values' => $lineValues];
+        }
+
+        foreach ($existingLines as $existingLine) {
+            if (in_array($existingLine->getKey(), $keptLineIds, true)
+                && ! in_array($existingLine->getKey(), $reassignedLineIds, true)) {
+                continue;
+            }
+
+            $existingLine->forceFill(['deleted_by' => auth()->id()])->save();
+            $existingLine->delete();
+        }
+
+        foreach ($plannedLines as $plannedLine) {
+            $existingLine = $plannedLine['existing'];
+            $lineValues = $plannedLine['values'];
+
+            if ($existingLine instanceof OpeningStockLine) {
+                $existingLine->forceFill([...$lineValues, 'updated_by' => auth()->id(), 'deleted_by' => null]);
+                if ($existingLine->trashed()) {
+                    $existingLine->restore();
+                } else {
+                    $existingLine->save();
+                }
 
                 continue;
             }
 
-            $createdLine = $record->lines()->create([...$lineValues, 'created_by' => auth()->id()]);
-            $keptLineIds[] = $createdLine->getKey();
+            $record->lines()->create([...$lineValues, 'created_by' => auth()->id()]);
         }
-
-        $record->lines()
-            ->when($keptLineIds !== [], fn ($query) => $query->whereNotIn('id', $keptLineIds))
-            ->get()
-            ->each(function (OpeningStockLine $line): void {
-                $line->forceFill(['deleted_by' => auth()->id()])->save();
-                $line->delete();
-            });
     }
 
     private function productByDocNum(int $companyId, ?string $docNum): ?Product

@@ -26,7 +26,7 @@
                 </div>
                 <div class="col-lg-5">
                     <x-forms.label for="sales-issue-order" :label="__('sales_issue.issue_order')" required />
-                    <x-forms.select id="sales-issue-order" name="sales_issue_order_doc_num" variant="ajax" :url="route('admin.inventory.documents.select2.sales-issue-orders')" :data-extra-params="json_encode(['branch_store_uuid' => '#sales-issue-store'])" :placeholder="__('sales_issue.select_order')" required data-sales-issue-order data-details-url="{{ route('admin.inventory.documents.sales-issue-orders.details', ['salesIssueOrder' => '__ORDER__']) }}">
+                    <x-forms.select id="sales-issue-order" name="sales_issue_order_doc_num" variant="ajax" :url="route('admin.inventory.documents.select2.sales-issue-orders')" :data-extra-params="json_encode(['branch_store_uuid' => '#sales-issue-store'])" data-depends-on="#sales-issue-store" data-disable-when-dependency-empty="true" :placeholder="__('sales_issue.select_order')" required data-sales-issue-order data-details-url="{{ route('admin.inventory.documents.sales-issue-orders.details', ['salesIssueOrder' => '__ORDER__']) }}">
                         @if($selectedOrder)
                             <option value="{{ $selectedOrder->doc_num }}" selected>{{ $selectedOrder->doc_num }} — {{ $selectedOrder->invoice?->doc_num }}</option>
                         @endif
