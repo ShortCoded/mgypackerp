@@ -11,6 +11,7 @@
 @section('title', __('fixed_assets.reports.title'))
 
 @section('content')
+<div class="admin-report-page">
     <div class="card mb-3">
         <div class="card-header">
             <h5 class="mb-1">{{ __('fixed_assets.reports.title') }}</h5>
@@ -35,11 +36,11 @@
                 </div>
                 <div class="col-6 col-md-3 col-xl-2">
                     <label class="form-label" for="fixed-asset-report-from">{{ __('fixed_assets.reports.from_date') }}</label>
-                    <x-forms.date-input class="form-control js-date-picker" id="fixed-asset-report-from" name="from_date" value="{{ isset($filters['from_date']) ? $dates->formatDate($filters['from_date'], '') : '' }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" />
+                    <x-forms.date-input class="form-control" id="fixed-asset-report-from" name="from_date" value="{{ isset($filters['from_date']) ? $dates->formatDate($filters['from_date'], '') : '' }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" />
                 </div>
                 <div class="col-6 col-md-3 col-xl-2">
                     <label class="form-label" for="fixed-asset-report-to">{{ __('fixed_assets.reports.to_date') }}</label>
-                    <x-forms.date-input class="form-control js-date-picker" id="fixed-asset-report-to" name="to_date" value="{{ isset($filters['to_date']) ? $dates->formatDate($filters['to_date'], '') : '' }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" />
+                    <x-forms.date-input class="form-control" id="fixed-asset-report-to" name="to_date" value="{{ isset($filters['to_date']) ? $dates->formatDate($filters['to_date'], '') : '' }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" />
                 </div>
                 <div class="col-12 col-md-6 col-xl-2">
                     <label class="form-label" for="fixed-asset-report-asset">{{ __('fixed_assets.reports.columns.asset') }}</label>
@@ -100,6 +101,7 @@
         </div>
         <div class="card-body p-0"><x-fixed-asset-report-table :report="$report" /></div>
     </div>
+</div>
 @endsection
 
 @push('styles')

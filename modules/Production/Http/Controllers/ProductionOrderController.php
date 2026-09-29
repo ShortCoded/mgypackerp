@@ -265,6 +265,7 @@ class ProductionOrderController extends Controller
             ? SalesOrder::query()->where('company_id', $context['company_id'])->whereIn('status', [SalesOrder::StatusApproved, SalesOrder::StatusPartiallyFulfilled])
                 ->whereHas('lines', fn ($lines) => $lines
                     ->where('product_classification_snapshot', Product::ClassificationFinishedProduct)
+                    ->whereRaw('coalesce(sales_order_lines.base_quantity, 0) - coalesce(sales_order_lines.delivered_base_quantity, 0) - coalesce(sales_order_lines.production_requested_base_quantity, 0) > 0')
                     ->whereHas('product', fn ($products) => $products
                         ->whereNull('products.deleted_at')
                         ->where('products.status', 'active')))

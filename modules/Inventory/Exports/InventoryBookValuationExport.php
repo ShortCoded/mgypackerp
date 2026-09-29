@@ -24,7 +24,6 @@ final class InventoryBookValuationExport implements FromArray, ShouldAutoSize, W
             $row->branch?->name,
             $row->branchStore?->name,
             $row->branchHall?->name,
-            $row->warehouseLocation ? trim($row->warehouseLocation->code.' — '.$row->warehouseLocation->name) : null,
             $row->product?->doc_num,
             $row->product?->name,
             $row->product?->unit?->name,
@@ -38,13 +37,13 @@ final class InventoryBookValuationExport implements FromArray, ShouldAutoSize, W
             $row->is_negative ? __('inventory_accounting.book_valuation.negative') : null,
         ])->all();
 
-        $total = array_fill(0, 15, null);
+        $total = array_fill(0, 14, null);
         $total[0] = __('inventory_accounting.book_valuation.total');
-        $total[7] = (float) $this->totals['quantity'];
-        $total[9] = (float) $this->totals['book_value'];
-        $total[10] = $this->currencyCode;
-        $total[11] = (float) $this->totals['unvalued_quantity'];
-        $total[12] = (int) $this->totals['unvalued_rows'];
+        $total[6] = (float) $this->totals['quantity'];
+        $total[8] = (float) $this->totals['book_value'];
+        $total[9] = $this->currencyCode;
+        $total[10] = (float) $this->totals['unvalued_quantity'];
+        $total[11] = (int) $this->totals['unvalued_rows'];
         $rows[] = $total;
 
         return $rows;
@@ -54,7 +53,7 @@ final class InventoryBookValuationExport implements FromArray, ShouldAutoSize, W
     public function headings(): array
     {
         return collect([
-            'branch', 'store', 'hall', 'location', 'item_code', 'item_name', 'unit', 'quantity',
+            'branch', 'store', 'hall', 'item_code', 'item_name', 'unit', 'quantity',
             'book_unit_cost', 'book_value', 'currency', 'unvalued_quantity', 'unvalued_rows', 'status', 'warning',
         ])->map(fn (string $key): string => __('inventory_accounting.book_valuation.columns.'.$key))->all();
     }

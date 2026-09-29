@@ -61,6 +61,7 @@
                 @endif
 
                 <h6 class="text-700 mb-3">{{ __('inventory.movements.header_data') }}</h6>
+                <div class="alert alert-info mb-3">{{ __('inventory.movements.finished_goods_receipt_notice') }}</div>
                 @if(!$record && !($isClone ?? false))
                     @if((auth()->user()->can('inventory.documents.issue') && auth()->user()->can('production.runs.issue')) || (auth()->user()->can('inventory.documents.receive') && auth()->user()->can('production.runs.receive')))
                         <div class="border rounded p-3 mb-3" data-production-run-batch-wrapper hidden>

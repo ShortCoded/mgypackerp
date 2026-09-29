@@ -7,7 +7,7 @@
 @endphp
 
 @section('content')
-<div class="production-mobile-workflow" data-client-report-tables>
+<div class="production-mobile-workflow admin-report-page" data-client-report-tables>
     <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-2 mb-3">
         <div>
             <h4 class="mb-1">{{ __('maintenance.reports.title') }}</h4>
@@ -35,15 +35,23 @@
         </div>
     </form>
 
-    <div class="row g-3 mb-3">
-        <span class="d-none" data-report-count="maintenance_breakdowns">{{ $kpis['breakdown_reports'] }}</span>
-        <span class="d-none" data-report-count="maintenance_overdue">{{ $kpis['overdue'] }}</span>
-        @foreach($kpis as $key => $value)
-            <div class="col-6 col-lg-3 col-xxl">
-                <div class="card h-100"><div class="card-body"><div class="text-600 small">{{ __('maintenance.reports.kpis.'.$key) }}</div><div class="fs-5 fw-bold mt-1">{{ $value }}</div></div></div>
-            </div>
-        @endforeach
-    </div>
+    @php
+        $numbers = app(\Modules\Core\Services\NumericFormatService::class);
+        $visibleKpis = collect($kpis)->filter(fn ($value): bool => bccomp((string) $value, '0', 8) !== 0);
+    @endphp
+    <span class="d-none" data-report-count="maintenance_breakdowns">{{ $kpis['breakdown_reports'] }}</span>
+    <span class="d-none" data-report-count="maintenance_overdue">{{ $kpis['overdue'] }}</span>
+    @if($visibleKpis->isNotEmpty())
+        <div class="row g-3 mb-3">
+            @foreach($visibleKpis as $key => $value)
+                <div class="col-12 col-sm-6 col-xl-4 col-xxl-3">
+                    <div class="card h-100"><div class="card-body py-3"><div class="text-600 small">{{ __('maintenance.reports.kpis.'.$key) }}</div><div class="fs-4 fw-bold mt-1 text-nowrap" dir="ltr">{{ $numbers->format($value) }}</div></div></div>
+                </div>
+            @endforeach
+        </div>
+    @else
+        <div class="alert alert-light border mb-3">{{ __('reports.no_data') }}</div>
+    @endif
 
     <div class="card mb-3">
         <div class="card-header"><h5 class="mb-0">{{ __('maintenance.reports.requests_table') }}</h5></div>

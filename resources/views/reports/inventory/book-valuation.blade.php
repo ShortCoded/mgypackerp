@@ -14,11 +14,11 @@
     <td><strong>{{ __('inventory_accounting.book_valuation.metrics.unvalued_quantity') }}</strong><br>{{ $numbers->format($totals['unvalued_quantity']) }}</td>
 </tr></table>
 
-<table class="report-table">
+<table class="report-table" dir="{{ $direction ?? 'ltr' }}">
     <thead><tr>@foreach(['branch','store','position','item','unit','quantity','book_unit_cost','book_value','unvalued_quantity','status'] as $column)<th>{{ __('inventory_accounting.book_valuation.columns.'.$column) }}</th>@endforeach</tr></thead>
     <tbody>
         @forelse($rows as $row)<tr>
-            <td>{{ $row->branch?->name }}</td><td>{{ $row->branchStore?->name }}</td><td>{{ collect([$row->branchHall?->name, $row->warehouseLocation?->code])->filter()->implode(' / ') }}</td>
+            <td>{{ $row->branch?->name }}</td><td>{{ $row->branchStore?->name }}</td><td>{{ $row->branchHall?->name ?: '—' }}</td>
             <td>{{ $row->product?->doc_num }} — {{ $row->product?->name }}</td><td>{{ $row->product?->unit?->name }}</td>
             <td class="number">{{ $numbers->format($row->on_hand) }}</td><td class="number">{{ $row->book_unit_cost === null ? '—' : $numbers->format($row->book_unit_cost) }}</td><td class="number">{{ $numbers->format($row->book_value) }}</td><td class="number">{{ $numbers->format($row->unvalued_quantity) }}</td>
             <td>{{ __('inventory_accounting.book_valuation.statuses.'.$row->valuation_status) }}{{ $row->is_negative ? ' / '.__('inventory_accounting.book_valuation.negative') : '' }}</td>

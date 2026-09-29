@@ -41,13 +41,13 @@
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="auth-date-from">{{ __('reports.from_date') }}</label>
                 <div class="input-group input-group-sm w-100 report-date-input-group">
-                    <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="auth-date-from" name="date_from" type="text" data-filter-label="{{ __('reports.from_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
+                    <x-forms.date-input class="form-control form-control-sm js-report-filter-control" id="auth-date-from" name="date_from" data-filter-label="{{ __('reports.from_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
                 </div>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="auth-date-to">{{ __('reports.to_date') }}</label>
                 <div class="input-group input-group-sm w-100 report-date-input-group">
-                    <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="auth-date-to" name="date_to" type="text" data-filter-label="{{ __('reports.to_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
+                    <x-forms.date-input class="form-control form-control-sm js-report-filter-control" id="auth-date-to" name="date_to" data-filter-label="{{ __('reports.to_date') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
                 </div>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">

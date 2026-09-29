@@ -9,7 +9,71 @@ class LegacyPermissionGrantMigrationService
 {
     private const MigrationKey = 'permissions.legacy_menu_grants_migrated_2026_09_26';
 
+    private const ProductionControlMigrationKey = 'permissions.production_control_report_grants_migrated_2026_09_29';
+
     public function __construct(private readonly PermissionRegistryService $registry) {}
+
+    public function migrateProductionControlGrants(string $guardName = 'web'): int
+    {
+        return DB::transaction(function () use ($guardName): int {
+            $now = now();
+            DB::table('settings')->insertOrIgnore([
+                'key' => self::ProductionControlMigrationKey,
+                'value' => null,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ]);
+
+            $marker = DB::table('settings')
+                ->where('key', self::ProductionControlMigrationKey)
+                ->lockForUpdate()
+                ->first(['value']);
+
+            if ($marker?->value === 'completed') {
+                return 0;
+            }
+
+            $permissionIds = Permission::query()
+                ->where('guard_name', $guardName)
+                ->whereIn('name', [
+                    'production.reports.runs.view', 'production.reports.runs.export', 'production.reports.runs.print',
+                    'production.reports.control.view', 'production.reports.control.export', 'production.reports.control.print',
+                ])
+                ->pluck('id', 'name');
+            $pivotKey = config('permission.column_names.permission_pivot_key') ?: 'permission_id';
+            $inserted = 0;
+
+            foreach (['view', 'export', 'print'] as $action) {
+                $sourceId = $permissionIds->get("production.reports.runs.{$action}");
+                $targetId = $permissionIds->get("production.reports.control.{$action}");
+
+                if ($sourceId === null || $targetId === null) {
+                    continue;
+                }
+
+                foreach (['role_has_permissions', 'model_has_permissions'] as $pivotName) {
+                    $table = config("permission.table_names.{$pivotName}") ?: $pivotName;
+                    $grants = DB::table($table)->where($pivotKey, $sourceId)->get();
+                    foreach ($grants->chunk(500) as $batch) {
+                        $rows = $batch->map(static function (object $grant) use ($pivotKey, $targetId): array {
+                            $row = (array) $grant;
+                            $row[$pivotKey] = $targetId;
+
+                            return $row;
+                        })->all();
+                        $inserted += DB::table($table)->insertOrIgnore($rows);
+                    }
+                }
+            }
+
+            DB::table('settings')->where('key', self::ProductionControlMigrationKey)->update([
+                'value' => 'completed',
+                'updated_at' => now(),
+            ]);
+
+            return $inserted;
+        });
+    }
 
     /**
      * Copy existing role and direct user grants to their replacement screens once.

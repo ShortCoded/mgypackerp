@@ -10,7 +10,7 @@
         <strong dir="ltr">{{ $record->doc_num }}</strong>
     </div>
 
-    <table class="report-table">
+    <table dir="{{ $direction ?? 'ltr' }}" class="report-table">
         <tbody>
             <tr><th>{{ __('Customer') }}</th><td>{{ $record->creditNote->customer?->doc_num }} — {{ $record->creditNote->customer?->name }}</td><th>{{ __('Refund date') }}</th><td dir="ltr">{{ $dates->formatDate($record->refund_date, '') }}</td></tr>
             <tr><th>{{ __('Credit source') }}</th><td dir="ltr">{{ $record->creditNote?->doc_num }}</td><th>{{ __('Method') }}</th><td>{{ __($record->payment_method === 'cash' ? 'Cash' : 'Bank') }}</td></tr>

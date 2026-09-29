@@ -203,13 +203,13 @@
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="product-data-created-from">{{ __('product_data_report.filters.created_from') }}</label>
                 <div class="input-group input-group-sm w-100 report-date-input-group">
-                    <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="product-data-created-from" name="created_from" type="text" data-filter-label="{{ __('product_data_report.filters.created_from') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
+                    <x-forms.date-input class="form-control form-control-sm js-report-filter-control" id="product-data-created-from" name="created_from" data-filter-label="{{ __('product_data_report.filters.created_from') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
                 </div>
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="product-data-created-to">{{ __('product_data_report.filters.created_to') }}</label>
                 <div class="input-group input-group-sm w-100 report-date-input-group">
-                    <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="product-data-created-to" name="created_to" type="text" data-filter-label="{{ __('product_data_report.filters.created_to') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
+                    <x-forms.date-input class="form-control form-control-sm js-report-filter-control" id="product-data-created-to" name="created_to" data-filter-label="{{ __('product_data_report.filters.created_to') }}" data-date-format="{{ $dateFormatService->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" placeholder="{{ __('common.placeholders.select_date') }}" autocomplete="off" dir="ltr" />
                 </div>
             </div>
         </x-admin.report.filter-panel>

@@ -15,7 +15,7 @@
         <div class="report-warning">{{ __('financial_statements.messages.classification_incomplete') }}: {{ implode('، ', $result['classification_warnings']) }}</div>
     @endif
 
-    <table class="report-table financial-statement-table">
+    <table dir="{{ $direction ?? 'ltr' }}" class="report-table financial-statement-table">
         <thead>
             <tr>
                 <th>{{ __('financial_statements.columns.line') }}</th>
@@ -62,7 +62,7 @@
 
     @if(in_array($result['statement_type'], ['cash_flow_direct', 'cash_flow_indirect'], true))
         <h4>{{ __('financial_statements.messages.cash_components') }}</h4>
-        <table class="report-table financial-statement-table">
+        <table dir="{{ $direction ?? 'ltr' }}" class="report-table financial-statement-table">
             <thead><tr>
                 <th>{{ __('financial_statements.columns.account') }}</th>
                 <th>{{ __('financial_statements.columns.opening') }}</th>

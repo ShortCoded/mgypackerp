@@ -40,7 +40,7 @@
         </table>
     @endforeach
 
-    <table class="report-table finance-report-table">
+    <table dir="{{ $direction ?? 'ltr' }}" class="report-table finance-report-table">
         <thead>
             <tr>
                 @foreach($report['columns'] as $key => $label)

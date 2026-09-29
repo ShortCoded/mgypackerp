@@ -1,6 +1,7 @@
 <?php
 
 return [
+    'delivery_cost_unknown' => 'لا يمكن ترحيل تسليم :document؛ تكلفة الصنف :product غير معروفة. راجع الوارد والتسعير قبل التسليم.',
     'continue_sales_cycle' => 'متابعة دورة المبيعات',
     'create_quotation' => 'إنشاء عرض سعر',
     'direct_quotation' => 'عرض سعر مباشر',

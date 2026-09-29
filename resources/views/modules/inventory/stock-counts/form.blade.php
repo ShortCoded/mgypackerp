@@ -8,7 +8,6 @@
     $dateFormatService = app(\Modules\Core\Services\DateFormatService::class);
     $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $selectedStoreId = (string) old('branch_store_id', $record?->branch_store_id ?? '');
-    $selectedLocationId = (string) old('warehouse_location_id', $record?->warehouse_location_id ?? '');
     $documentNumberValue = old('doc_number', ! $isCreateLike ? $record?->doc_number : '');
     $existingLines = $lines;
 @endphp
@@ -94,18 +93,6 @@
                             </x-forms.select>
                         @endif
                         <div class="invalid-feedback d-block" data-error-for="branch_store_id"></div>
-                    </div>
-
-                    <div class="col-md-3">
-                        <x-forms.label for="warehouse_location_id" :label="__('inventory.stock_counts.attributes.location')" />
-                        @if($isReadonly)<x-forms.view-field for="warehouse_location_id" as="display" :value="$record?->warehouseLocation ? trim($record->warehouseLocation->code.' — '.$record->warehouseLocation->name) : __('common.empty_value')" />
-                        @else
-                            <x-forms.select class="form-select js-stock-count-location" id="warehouse_location_id" name="warehouse_location_id">
-                                <option value="">{{ __('inventory.stock_counts.placeholders.all_locations') }}</option>
-                                @foreach($locations as $location)<option value="{{ $location->id }}" data-store-id="{{ $location->branch_store_id }}" @selected($selectedLocationId === (string) $location->id)>{{ trim($location->code.' — '.$location->name) }}</option>@endforeach
-                            </x-forms.select>
-                        @endif
-                        <div class="invalid-feedback d-block" data-error-for="warehouse_location_id"></div>
                     </div>
 
                     @if($mode === 'view')

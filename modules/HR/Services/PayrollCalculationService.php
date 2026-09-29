@@ -358,6 +358,19 @@ final class PayrollCalculationService
 
     private function salaryAssignment(HrEmployee $employee, string $start, string $end): object
     {
+        if ($employee->pay_basis !== 'monthly_salary') {
+            throw new DomainException(__('hr_payroll.messages.unsupported_pay_basis', [
+                'employee' => $employee->doc_num,
+                'pay_basis' => $employee->pay_basis,
+            ]));
+        }
+
+        if (($employee->hire_date?->toDateString() !== null && $employee->hire_date->toDateString() > $start)
+            || ($employee->contract_start_date?->toDateString() !== null && $employee->contract_start_date->toDateString() > $start)
+            || ($employee->contract_end_date?->toDateString() !== null && $employee->contract_end_date->toDateString() < $end)) {
+            throw new DomainException(__('hr_payroll.messages.partial_period_salary_requires_policy', ['employee' => $employee->doc_num]));
+        }
+
         $assignment = DB::table('hr_employee_salary_assignments')
             ->where('employee_id', $employee->getKey())
             ->whereDate('effective_from', '<=', $end)
@@ -368,17 +381,14 @@ final class PayrollCalculationService
             ->first();
 
         if ($assignment !== null) {
+            if ((string) $assignment->effective_from > $start) {
+                throw new DomainException(__('hr_payroll.messages.partial_period_salary_requires_policy', ['employee' => $employee->doc_num]));
+            }
+
             $assignment->source_type = 'salary_assignment';
             $assignment->source_id = (int) $assignment->id;
 
             return $assignment;
-        }
-
-        if ($employee->pay_basis !== 'monthly_salary') {
-            throw new DomainException(__('hr_payroll.messages.unsupported_pay_basis', [
-                'employee' => $employee->doc_num,
-                'pay_basis' => $employee->pay_basis,
-            ]));
         }
 
         return (object) [

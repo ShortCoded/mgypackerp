@@ -422,6 +422,7 @@ return [
             'edit_permission_denied' => 'You do not have permission to edit this document.',
             'delete_permission_denied' => 'You do not have permission to delete this document.',
             'select_opening_stock_first' => 'Please select an Opening Stock document first.',
+            'load_or_add_lines' => 'Load the items or add a row from the selected document.',
             'no_remaining_lines' => 'No unpriced lines remain for the selected document.',
             'unexpected_error' => 'Unexpected error occurred.',
             'no_product_selected' => 'Select a product first.',
@@ -470,6 +471,7 @@ return [
         'delete_line_shortcut' => 'Delete line (Alt + Delete)',
         'production_run_batch_help' => 'Choose a production run batch to review its calculated material requirements. Lines and quantities are read-only; the system issues only the available stock from the selected store.',
         'production_run_batch_receipt_help' => 'Choose a batch to receive its recorded good output. The system validates final-stage, material-accounting, and quality requirements, then receives the remaining quantities automatically.',
+        'finished_goods_receipt_notice' => 'Receive finished output by selecting its production batch after recording output, quality, and cost. A general inventory receipt cannot receive finished goods.',
         'production_run_batch_preview_title' => 'Calculated batch material requirements',
         'production_run_batch_reason' => 'Production run batch material issue',
         'production_run_batch_receipt_reason' => 'Production run batch output receipt',
@@ -580,6 +582,7 @@ return [
             'production_run_batch_load_failed' => 'Could not load batch details. Re-select the batch and try again.',
             'production_run_batch_no_materials' => 'This batch has no remaining materials to issue.',
             'production_run_batch_type_invalid' => 'Select an issue or receipt movement to use a production batch.',
+            'finished_goods_require_production_receipt' => 'Finished goods require a production receipt linked to a recorded run. Select the batch on the receipt form or open the production run.',
         ],
     ],
     'stock_counts' => [
@@ -592,7 +595,6 @@ return [
             'doc_num' => 'Document Number',
             'count_date' => 'Count Date',
             'store' => 'Store',
-            'location' => 'Warehouse Location',
             'lines_count' => 'Lines',
             'system_total' => 'System Total',
             'physical_total' => 'Physical Total',
@@ -610,7 +612,6 @@ return [
             'doc_number' => 'Document Number',
             'count_date' => 'Count Date',
             'store' => 'Store',
-            'location' => 'Warehouse Location',
             'lines' => 'Count Lines',
             'stock_status' => 'Stock Status',
             'product' => 'Item',
@@ -652,7 +653,6 @@ return [
         ],
         'placeholders' => [
             'select_store' => 'Select a store',
-            'all_locations' => 'All locations in the store',
             'select_product' => 'Search and select an item',
         ],
         'summary' => [
@@ -716,7 +716,14 @@ return [
     ],
     'reports' => [
         'day_count' => ':count day|:count days',
+        'from_date' => 'From date',
+        'to_date' => 'To date',
+        'source_document' => 'Source document number',
+        'movement_type' => 'Movement type',
+        'all_types' => 'All movement types',
         'gl_reconciliation_unavailable' => 'General Ledger reconciliation is unavailable until every required classification has exactly one active postable account in the chart of accounts.',
         'no_reorder_shortages' => 'No reorder shortages match the selected filters.',
+        'movements_limited' => 'Showing the latest :shown of :total matching movements. Totals include every movement.',
+        'movement_page_summary' => 'Movements :first–:last of :total. Totals include every matching movement.',
     ],
 ];

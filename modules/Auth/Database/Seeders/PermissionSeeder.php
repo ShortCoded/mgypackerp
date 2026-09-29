@@ -46,6 +46,7 @@ class PermissionSeeder extends Seeder
             ));
 
         $migratedLegacyGrants = $this->legacyGrants->migrate($permissionNames->all());
+        $migratedProductionControlGrants = $this->legacyGrants->migrateProductionControlGrants();
 
         $stalePermissionNames = Permission::query()
             ->where('guard_name', 'web')
@@ -95,6 +96,13 @@ class PermissionSeeder extends Seeder
             $this->command?->info(sprintf(
                 'Legacy role and direct user grants moved to current screens: %d.',
                 $migratedLegacyGrants,
+            ));
+        }
+
+        if ($migratedProductionControlGrants > 0) {
+            $this->command?->info(sprintf(
+                'Existing production run report grants copied to production monitoring: %d.',
+                $migratedProductionControlGrants,
             ));
         }
 

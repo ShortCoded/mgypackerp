@@ -9,7 +9,7 @@
     $numericColumnIndexes = ($mode ?? 'summary') === 'detailed' ? [6] : [12, 15];
 @endphp
 
-<table class="report-table products-data-report-table {{ ($mode ?? 'summary') === 'detailed' ? 'products-data-report-table-detailed' : 'products-data-report-table-summary' }}">
+<table dir="{{ $direction ?? 'ltr' }}" class="report-table products-data-report-table {{ ($mode ?? 'summary') === 'detailed' ? 'products-data-report-table-detailed' : 'products-data-report-table-summary' }}">
     <thead>
         <tr>
             @foreach ($headings as $heading)

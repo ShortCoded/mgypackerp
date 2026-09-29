@@ -482,7 +482,7 @@ test('canonical ledger normalizes posted foreign currency amounts to the main cu
 test('general journal reports only posted lines by accounting date with matching exports', function (): void {
     $context = journalEntryContext();
     [$debit, $credit] = journalEntryAccounts($context['company']);
-    $actor = journalEntryActor(['journal_entries.view', 'reports.account_ledger.view', 'reports.account_ledger.export']);
+    $actor = journalEntryActor(['journal_entries.view', 'reports.general_journal.view', 'reports.general_journal.export']);
     $posted = journalPostedMovement($context, $debit, $credit, 99120, '2026-04-10', '125.0000', '0.0000');
     journalPostedMovement($context, $debit, $credit, 99121, '2026-04-11', '999.0000', '0.0000')
         ->update(['status' => JournalEntry::StatusDraft, 'is_posted' => false]);
@@ -1265,9 +1265,26 @@ test('expense analysis and financial ratios use posted journals with filters dri
         'reports.financial_analytics.financial_ratios.view', 'reports.financial_analytics.financial_ratios.export',
         'journal_entries.view',
     ]);
+    $selectedOptions = $service->filterOptions($context['company']->getKey(), [
+        'account_doc_num' => $expense->doc_num,
+        'cost_center_doc_num' => $costCenter->doc_num,
+    ]);
+    expect($service->filterOptions($context['company']->getKey())['accounts'])->toBeEmpty()
+        ->and($selectedOptions['accounts']->pluck('doc_num')->all())->toBe([$expense->doc_num])
+        ->and($selectedOptions['cost_centers']->pluck('doc_num')->all())->toBe([$costCenter->doc_num]);
+    $this->actingAs($actor)->get(route('admin.accounting.reports.financial-analytics.expense-analysis.select2', [
+        'kind' => 'accounts', 'q' => $expense->account_code,
+    ]))->assertOk()->assertJsonStructure(['results' => [['id', 'text']], 'pagination' => ['more']])
+        ->assertJsonFragment(['id' => $expense->doc_num]);
+    $this->actingAs($actor)->get(route('admin.accounting.reports.financial-analytics.expense-analysis.select2', [
+        'kind' => 'cost-centers', 'q' => $costCenter->cost_center_code,
+    ]))->assertOk()->assertJsonFragment(['id' => $costCenter->doc_num]);
     $this->actingAs($actor)->get(route('admin.accounting.reports.financial-analytics.expense-analysis.index', [
         'from_date' => '2026-01-01', 'to_date' => '2026-12-31', 'view_mode' => 'detail',
-    ]))->assertOk()->assertSee('JE-99805')->assertSee(route('admin.accounting.journal-entries.show', 'JE-99805'), false);
+        'account_doc_num' => $expense->doc_num,
+    ]))->assertOk()->assertSee('JE-99805')->assertSee(route('admin.accounting.journal-entries.show', 'JE-99805'), false)
+        ->assertSee('js-select2-ajax', false)
+        ->assertSee('value="'.$expense->doc_num.'" selected', false);
     $this->actingAs($actor)->get(route('admin.accounting.reports.financial-analytics.financial-ratios.index', [
         'from_date' => '2026-01-01', 'to_date' => '2026-12-31',
     ]))->assertOk()->assertSee(__('financial_analytics.ratios.current_ratio'));
@@ -1283,10 +1300,20 @@ test('expense analysis and financial ratios use posted journals with filters dri
     expect(str_starts_with($pdf->getContent(), '%PDF-'))->toBeTrue();
 });
 
+test('expense analysis filter lookups require the report permission', function (): void {
+    journalEntryContext();
+    $actor = journalEntryActor([]);
+
+    $this->actingAs($actor)->get(route('admin.accounting.reports.financial-analytics.expense-analysis.select2', [
+        'kind' => 'accounts',
+    ]))->assertForbidden();
+});
+
 test('financial period close transfers the result once and controlled reopen reverses it', function (): void {
     $context = journalEntryContext();
     $actor = journalEntryActor([
         'financial_periods.view',
+        'financial_periods.closing.view',
         'financial_periods.edit',
         'financial_periods.close',
         'financial_periods.reopen',
@@ -1455,7 +1482,7 @@ test('financial period close transfers the result once and controlled reopen rev
 
 test('financial period closing workspace preserves permission and company boundaries', function (): void {
     $context = journalEntryContext();
-    $viewer = journalEntryActor(['financial_periods.view']);
+    $viewer = journalEntryActor(['financial_periods.view', 'financial_periods.closing.view']);
     $nextPeriod = FinancialPeriod::query()->create([
         'company_id' => $context['company']->getKey(),
         'doc_number' => 910000,
@@ -1497,7 +1524,7 @@ test('financial period closing workspace preserves permission and company bounda
 
 test('financial period closing workspace reports a missing overhead allocation schema without crashing', function (): void {
     $context = journalEntryContext();
-    $viewer = journalEntryActor(['financial_periods.view']);
+    $viewer = journalEntryActor(['financial_periods.view', 'financial_periods.closing.view']);
 
     Schema::dropIfExists('cost_overhead_allocation_lines');
     Schema::dropIfExists('cost_overhead_allocation_sources');
@@ -1536,7 +1563,7 @@ test('financial period closing workspace enforces the actor financial period sco
         'role_id' => $role->getKey(),
         'financial_period_id' => $allowedPeriod->getKey(),
     ]);
-    $actor = journalEntryActor(['financial_periods.view', 'financial_periods.close', 'financial_periods.reopen']);
+    $actor = journalEntryActor(['financial_periods.view', 'financial_periods.closing.view', 'financial_periods.close', 'financial_periods.reopen']);
     $actor->assignRole($role);
 
     $this->actingAs($actor)
@@ -1558,7 +1585,7 @@ test('financial period closing workspace enforces the actor financial period sco
 
 test('financial period close rechecks unresolved financial documents after preview', function (): void {
     $context = journalEntryContext();
-    $actor = journalEntryActor(['financial_periods.view', 'financial_periods.close']);
+    $actor = journalEntryActor(['financial_periods.view', 'financial_periods.closing.view', 'financial_periods.close']);
 
     $this->actingAs($actor)
         ->get(route('admin.financial-periods.closing', ['period' => $context['period']->doc_num]))
@@ -1758,7 +1785,7 @@ test('customer statement uses the shared report controls and exports pdf excel a
         ->get(route('admin.accounting.reports.customer-statement', $filters))
         ->assertOk()
         ->assertSee('admin-report-page', false)
-        ->assertSee('js-date-picker js-report-filter-control', false)
+        ->assertSee('form-control form-control-sm js-report-filter-control', false)
         ->assertSee('js-select2-ajax js-report-filter-control', false)
         ->assertSee('data-minimum-input-length="0"', false)
         ->assertSee(__('reports.export_pdf'))

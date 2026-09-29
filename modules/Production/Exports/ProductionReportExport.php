@@ -5,10 +5,15 @@ namespace Modules\Production\Exports;
 use Illuminate\Support\Collection;
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
+use Maatwebsite\Excel\Concerns\WithEvents;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithMultipleSheets;
 use Maatwebsite\Excel\Concerns\WithStrictNullComparison;
 use Maatwebsite\Excel\Concerns\WithTitle;
+use Maatwebsite\Excel\Events\AfterSheet;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
 
 class ProductionReportExport implements WithMultipleSheets
 {
@@ -21,6 +26,10 @@ class ProductionReportExport implements WithMultipleSheets
     /** @return list<ProductionReportSheet> */
     public function sheets(): array
     {
+        if ($this->section === 'control') {
+            return $this->controlSheets();
+        }
+
         $runRows = collect($this->report['runs'])->map(fn ($run): array => [$run->run_number, $run->order?->doc_num, $run->order?->salesOrder?->doc_num, $run->stageSnapshot?->stage_name, $run->fixedAsset?->asset_name, $run->product?->doc_num, $run->product?->name, $run->actual_start_at?->format('Y-m-d H:i:s'), $run->actual_end_at?->format('Y-m-d H:i:s'), $run->actualDurationHours(), $run->planned_labor_count, $run->actual_labor_count, $run->totalLaborHours(), $run->planned_base_quantity, $run->good_base_quantity, $run->rejected_base_quantity, $run->rework_base_quantity, $run->scrap_base_quantity, $run->received_base_quantity, $run->yield_percent, __('production_execution.statuses.'.$run->status)]);
         $runRows->push([__('production_execution.reports.columns.total'), null, null, null, null, null, null, null, null, null, null, null, null, $this->report['kpis']['planned_base_quantity'], $this->report['kpis']['good_base_quantity'], null, null, $this->report['kpis']['loss_base_quantity'], null, null, null]);
         $sheets = [
@@ -37,6 +46,48 @@ class ProductionReportExport implements WithMultipleSheets
         ];
 
         return [$sheets[$this->section] ?? $sheets['overview']];
+    }
+
+    /** @return list<ProductionReportSheet> */
+    private function controlSheets(): array
+    {
+        $runColumns = ['branch', 'date', 'shift', 'machine', 'stage', 'order', 'run', 'product', 'status', 'planned', 'good', 'rejected', 'rework', 'scrap', 'received', 'unreceived', 'yield', 'hours', 'material_exceptions', 'quality_holds'];
+        $materialColumns = ['branch', 'run', 'product', 'material', 'unit', 'planned', 'issued', 'returned', 'consumed', 'waste', 'variance'];
+        $runRows = collect($this->report['controlRuns'])->map(fn ($run): array => [
+            $run->order?->branch?->name,
+            ($run->actual_start_at ?? $run->planned_start_at)?->format('Y-m-d H:i:s'),
+            $run->shift?->name,
+            $run->fixedAsset?->asset_name ?? $run->machine?->name,
+            $run->stageSnapshot?->stage_name,
+            $run->order?->doc_num,
+            $run->run_number,
+            $run->product?->doc_num.' — '.$run->product?->name,
+            __('production_execution.statuses.'.$run->status),
+            $run->planned_base_quantity,
+            $run->good_base_quantity,
+            $run->rejected_base_quantity,
+            $run->rework_base_quantity,
+            $run->scrap_base_quantity,
+            $run->received_base_quantity,
+            $run->receipt_remaining_base_quantity,
+            $run->yield_percent,
+            $run->actualDurationHours(),
+            $run->material_exception_count,
+            $run->quality_hold_count,
+        ]);
+        $materialRows = collect($this->report['controlMaterials'])->map(function (array $entry): array {
+            $run = $entry['run'];
+            $line = $entry['line'];
+            $issued = bcadd((string) $line->issued_quantity, (string) $line->additional_issued_quantity, 8);
+            $variance = bcsub($issued, bcadd(bcadd((string) $line->returned_quantity, (string) $line->consumed_quantity, 8), (string) $line->waste_quantity, 8), 8);
+
+            return [$run->order?->branch?->name, $run->run_number, $run->product?->doc_num, $line->product?->doc_num.' — '.$line->product?->name, $line->unit?->name, $line->planned_quantity, $issued, $line->returned_quantity, $line->consumed_quantity, $line->waste_quantity, $variance];
+        });
+
+        return [
+            $this->sheet(__('production_execution.reports.control.run_details'), array_map(fn (string $column): string => __('production_execution.reports.control.columns.'.$column), $runColumns), $runRows),
+            $this->sheet(__('production_execution.reports.control.material_details'), array_map(fn (string $column): string => __('production_execution.reports.control.columns.'.$column), $materialColumns), $materialRows),
+        ];
     }
 
     /** @param list<string> $headings */
@@ -78,7 +129,7 @@ class ProductionReportExport implements WithMultipleSheets
     }
 }
 
-class ProductionReportSheet implements FromArray, ShouldAutoSize, WithHeadings, WithStrictNullComparison, WithTitle
+class ProductionReportSheet implements FromArray, ShouldAutoSize, WithEvents, WithHeadings, WithStrictNullComparison, WithTitle
 {
     /** @param list<string> $headings @param list<array<int, mixed>> $rows */
     public function __construct(
@@ -100,5 +151,32 @@ class ProductionReportSheet implements FromArray, ShouldAutoSize, WithHeadings, 
     public function title(): string
     {
         return $this->sheetTitle;
+    }
+
+    /** @return array<class-string, callable> */
+    public function registerEvents(): array
+    {
+        return [
+            AfterSheet::class => function (AfterSheet $event): void {
+                $sheet = $event->sheet->getDelegate();
+                $lastColumn = Coordinate::stringFromColumnIndex(count($this->headings));
+                $lastRow = count($this->rows) + 1;
+
+                $sheet->setRightToLeft(app()->isLocale('ar'));
+                $sheet->freezePane('A2');
+                $sheet->setAutoFilter("A1:{$lastColumn}{$lastRow}");
+                $sheet->getRowDimension(1)->setRowHeight(27);
+                $sheet->getStyle("A1:{$lastColumn}1")->applyFromArray([
+                    'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF']],
+                    'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF14335C']],
+                    'alignment' => ['vertical' => 'center', 'wrapText' => true],
+                ]);
+                $sheet->getPageSetup()->setOrientation(PageSetup::ORIENTATION_LANDSCAPE);
+                $sheet->getPageSetup()->setFitToPage(true);
+                $sheet->getPageSetup()->setFitToWidth(1);
+                $sheet->getPageSetup()->setFitToHeight(0);
+                $sheet->getPageSetup()->setRowsToRepeatAtTopByStartAndEnd(1, 1);
+            },
+        ];
     }
 }

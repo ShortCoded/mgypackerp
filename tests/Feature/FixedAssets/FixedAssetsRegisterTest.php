@@ -197,6 +197,7 @@ test('Fixed Assets appear under Accounting and Costing with permission control',
 
     $fullyAuthorized = fixedAssetsActor([
         'fixed_assets.view',
+        'fixed_assets.movements.view',
         'fixed_assets.accounting.configure',
         'fixed_assets.depreciation.preview',
         'fixed_assets.reports',

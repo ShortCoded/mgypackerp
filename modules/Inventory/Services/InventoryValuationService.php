@@ -67,7 +67,9 @@ class InventoryValuationService
             ->when(
                 $productionRunId !== null,
                 fn (Builder $query) => $query->where('production_run_id', $productionRunId),
-                fn (Builder $query) => $exactDimensions ? $query->whereNull('production_run_id') : $query,
+                fn (Builder $query) => $exactDimensions && $stockStatus === InventoryTransaction::StatusProductionStaging
+                    ? $query->whereNull('production_run_id')
+                    : $query,
             )
             ->when($asOfDate !== null, fn (Builder $query) => $query->whereDate('transaction_date', '<=', $asOfDate))
             ->selectRaw('coalesce(sum(quantity_in - quantity_out), 0) as quantity')
@@ -111,6 +113,7 @@ class InventoryValuationService
             ->orderBy('transaction_date')
             ->orderBy('id')
             ->get();
+        $transactions = $this->effectiveTransactions($transactions, $asOfDate);
 
         if ($transactions->isEmpty()) {
             throw new DomainException('inventory_accounting.errors.no_valuation_movements');
@@ -132,7 +135,7 @@ class InventoryValuationService
                 $transaction->stock_status,
                 $transaction->warehouse_location_id ?? 'none',
                 $transaction->batch_lot ?? 'none',
-                $transaction->production_run_id ?? 'none',
+                $this->costPositionRunId($transaction) ?? 'none',
             ]))
             ->map(function (Collection $positionTransactions, string $positionKey) use ($referenceMethod): array {
                 /** @var InventoryTransaction $first */
@@ -143,7 +146,7 @@ class InventoryValuationService
                     'stock_status' => $first->stock_status,
                     'warehouse_location_id' => $first->warehouse_location_id,
                     'batch_lot' => $first->batch_lot,
-                    'production_run_id' => $first->production_run_id,
+                    'production_run_id' => $this->costPositionRunId($first),
                     ...$this->compareMovements(
                         $positionTransactions->map(fn (InventoryTransaction $transaction): array => $this->comparisonMovement($transaction))->all(),
                         $referenceMethod,
@@ -173,6 +176,184 @@ class InventoryValuationService
                 'counts_as_consumption' => $this->countsAsConsumption($transaction),
             ])->all(),
         ];
+    }
+
+    /**
+     * Compare every visible stock position together while showing positions whose costs are still unknown.
+     *
+     * @param  Collection<int, InventoryTransaction>  $bookRows
+     * @param  array<string, mixed>  $filters
+     * @return array<string, mixed>
+     */
+    public function comparisonForStockScope(
+        int $companyId,
+        Collection $bookRows,
+        mixed $asOfDate,
+        string $referenceMethod = self::Method,
+        array $filters = [],
+    ): array {
+        $this->assertReferenceMethod($referenceMethod);
+        $bookRowsByPosition = $bookRows->keyBy(fn (InventoryTransaction $row): string => $this->stockScopePositionKey($row));
+        $positionKeys = $bookRowsByPosition->map(fn (): bool => true);
+        $transactions = $positionKeys->isEmpty() ? collect() : InventoryTransaction::query()
+            ->where('company_id', $companyId)
+            ->whereIn('branch_id', $bookRows->pluck('branch_id')->unique())
+            ->whereIn('branch_store_id', $bookRows->pluck('branch_store_id')->unique())
+            ->whereIn('product_id', $bookRows->pluck('product_id')->unique())
+            ->whereDate('transaction_date', '<=', $asOfDate)
+            ->when($filters['stock_status'] ?? null, fn (Builder $query, string $status) => $query->where('stock_status', $status))
+            ->orderBy('transaction_date')
+            ->orderBy('id')
+            ->get()
+            ->filter(fn (InventoryTransaction $transaction): bool => $positionKeys->has($this->stockScopePositionKey($transaction)));
+        $transactions = $this->effectiveTransactions($transactions, $asOfDate);
+
+        $positions = collect();
+        $excluded = collect();
+        foreach ($transactions->groupBy(fn (InventoryTransaction $transaction): string => implode(':', [
+            $transaction->branch_id,
+            $transaction->branch_store_id,
+            $transaction->branch_hall_id ?? 'none',
+            $transaction->product_id,
+            $transaction->stock_status,
+            $transaction->warehouse_location_id ?? 'none',
+            $transaction->batch_lot ?? 'none',
+            $this->costPositionRunId($transaction) ?? 'none',
+        ])) as $key => $movements) {
+            $first = $movements->first();
+            try {
+                $positions->push([
+                    'key' => $key,
+                    'branch_id' => $first->branch_id,
+                    'branch_store_id' => $first->branch_store_id,
+                    'product_id' => $first->product_id,
+                    ...$this->compareMovements($movements->map(fn (InventoryTransaction $transaction): array => $this->comparisonMovement($transaction)), $referenceMethod),
+                ]);
+            } catch (DomainException $exception) {
+                $bookRow = $bookRowsByPosition->get($this->stockScopePositionKey($first));
+                $excluded->push([
+                    'key' => $key,
+                    'branch_id' => $first->branch_id,
+                    'branch_store_id' => $first->branch_store_id,
+                    'product_id' => $first->product_id,
+                    'branch_name' => $bookRow?->branch?->name,
+                    'store_name' => $bookRow?->branchStore?->name,
+                    'product_doc_num' => $bookRow?->product?->doc_num,
+                    'product_name' => $bookRow?->product?->name,
+                    'quantity' => $movements->reduce(fn (string $total, InventoryTransaction $transaction): string => bcadd($total, bcsub((string) $transaction->quantity_in, (string) $transaction->quantity_out, 8), 8), '0.00000000'),
+                    'reason' => $exception->getMessage(),
+                    'source_doc_nums' => $movements->pluck('source_doc_num')->filter()->unique()->values()->all(),
+                ]);
+            }
+        }
+
+        return [
+            ...$this->aggregatePositionComparisons($positions, $referenceMethod),
+            'as_of' => (string) $asOfDate,
+            'source_count' => $transactions->count(),
+            'sources' => [],
+            'valued_position_count' => $positions->count(),
+            'excluded_position_count' => $excluded->count(),
+            'excluded_quantity' => $excluded->reduce(fn (string $total, array $position): string => bcadd($total, $position['quantity'], 8), '0.00000000'),
+            'excluded_positions' => $excluded->all(),
+            'valuation_complete' => $excluded->isEmpty(),
+        ];
+    }
+
+    private function costPositionRunId(InventoryTransaction $transaction): ?int
+    {
+        return $transaction->stock_status === InventoryTransaction::StatusProductionStaging
+            ? $transaction->production_run_id
+            : null;
+    }
+
+    private function stockScopePositionKey(InventoryTransaction $transaction): string
+    {
+        return implode(':', [
+            $transaction->branch_id,
+            $transaction->branch_store_id,
+            $transaction->branch_hall_id ?? 'none',
+            $transaction->warehouse_location_id ?? 'none',
+            $transaction->product_id,
+        ]);
+    }
+
+    /**
+     * A reversal only cancels its original when its ledger position, quantity, and cost agree.
+     * Invalid lineage must be visible as a report error, rather than silently dropping stock.
+     *
+     * @param  Collection<int, InventoryTransaction>  $transactions
+     * @return Collection<int, InventoryTransaction>
+     */
+    private function effectiveTransactions(Collection $transactions, mixed $asOfDate): Collection
+    {
+        if ($transactions->isEmpty()) {
+            return $transactions;
+        }
+
+        if ($transactions->contains(fn (InventoryTransaction $transaction): bool => $transaction->is_reversal && $transaction->reversal_of_id === null)) {
+            throw new DomainException('inventory_accounting.errors.invalid_valuation_reversal');
+        }
+
+        $originalIds = $transactions->filter(fn (InventoryTransaction $transaction): bool => ! $transaction->is_reversal)
+            ->pluck('id')
+            ->merge($transactions->where('is_reversal', true)->pluck('reversal_of_id'))
+            ->filter()
+            ->unique()
+            ->values();
+        $reversals = collect();
+        foreach ($originalIds->chunk(500) as $ids) {
+            $reversals = $reversals->concat(InventoryTransaction::query()
+                ->where('is_reversal', true)
+                ->whereIn('reversal_of_id', $ids)
+                ->whereDate('transaction_date', '<=', $asOfDate)
+                ->get());
+        }
+        $originals = $transactions->filter(fn (InventoryTransaction $transaction): bool => ! $transaction->is_reversal)->keyBy('id');
+        $missingIds = $originalIds->diff($originals->keys());
+        foreach ($missingIds->chunk(500) as $ids) {
+            foreach (InventoryTransaction::query()->whereIn('id', $ids)->get() as $original) {
+                $originals->put($original->getKey(), $original);
+            }
+        }
+
+        $reversedIds = collect();
+        foreach ($reversals->groupBy('reversal_of_id') as $originalId => $group) {
+            $original = $originals->get($originalId);
+            if ($group->count() !== 1
+                || ! $original instanceof InventoryTransaction
+                || $original->is_reversal
+                || $original->transaction_date?->toDateString() > (string) $asOfDate
+                || ! $this->isMatchingReversal($original, $group->first())) {
+                throw new DomainException('inventory_accounting.errors.invalid_valuation_reversal');
+            }
+            $reversedIds->push((int) $originalId);
+        }
+
+        return $transactions->filter(fn (InventoryTransaction $transaction): bool => ! $transaction->is_reversal
+            && ! $reversedIds->contains((int) $transaction->getKey()));
+    }
+
+    private function isMatchingReversal(InventoryTransaction $original, InventoryTransaction $reversal): bool
+    {
+        foreach (['company_id', 'branch_id', 'branch_store_id', 'branch_hall_id', 'warehouse_location_id',
+            'stock_status', 'batch_lot', 'production_run_id', 'product_id', 'unit_id'] as $field) {
+            if ($original->{$field} !== $reversal->{$field}) {
+                return false;
+            }
+        }
+
+        return bccomp((string) $original->quantity_in, (string) $reversal->quantity_out, 8) === 0
+            && bccomp((string) $original->quantity_out, (string) $reversal->quantity_in, 8) === 0
+            && $this->sameOptionalCost($original->unit_cost, $reversal->unit_cost)
+            && $this->sameOptionalCost($original->total_cost, $reversal->total_cost);
+    }
+
+    private function sameOptionalCost(?string $first, ?string $second): bool
+    {
+        return $first === null || $second === null
+            ? $first === $second
+            : bccomp($first, $second, 8) === 0;
     }
 
     /**
@@ -382,7 +563,7 @@ class InventoryValuationService
 
     private function assertReferenceMethod(string $referenceMethod): void
     {
-        if (! in_array($referenceMethod, [self::Method, 'periodic_weighted_average', 'fifo'], true)) {
+        if (! in_array($referenceMethod, [self::Method, 'periodic_weighted_average', 'fifo', 'last_purchase_reference'], true)) {
             throw new DomainException('inventory_accounting.errors.invalid_reference_method');
         }
     }

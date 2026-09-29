@@ -129,13 +129,13 @@
                         @if($isReadonly)
                             <x-forms.view-field for="opening_stock_doc_num" as="display" :value="$openingStockOption['text'] ?? null" />
                         @else
-                            <x-forms.select class="form-select js-select2-ajax js-opening-stock-pricing-opening-stock" id="opening_stock_doc_num" name="opening_stock_doc_num" data-url="{{ route('admin.inventory.select2.opening-stock-pricing-documents') }}" data-placeholder="{{ __('inventory.opening_stock_pricings.placeholders.select_opening_stock') }}" data-extra-params='{"current_pricing_doc_num":"#current_pricing_doc_num"}' required>
+                            <x-forms.select class="form-select js-select2-ajax js-opening-stock-pricing-opening-stock" id="opening_stock_doc_num" name="opening_stock_doc_num" data-url="{{ route('admin.inventory.select2.opening-stock-pricing-documents') }}" data-placeholder="{{ __('inventory.opening_stock_pricings.placeholders.select_opening_stock') }}" :data-extra-params="json_encode(['current_pricing_doc_num' => '#current_pricing_doc_num'])" required>
                                 @if($selectedOpeningStockDocNum && $openingStockOption)
                                     <option value="{{ $openingStockOption['id'] }}" selected>{{ $openingStockOption['text'] }}</option>
                                 @endif
                             </x-forms.select>
                             <div class="d-flex justify-content-start mt-2">
-                                <button class="btn btn-falcon-default js-opening-stock-pricing-add-remaining" type="button" title="{{ __('inventory.opening_stock_pricings.js.add_remaining_lines_title') }}" data-bs-title="{{ __('inventory.opening_stock_pricings.js.add_remaining_lines_title') }}">
+                                <button class="btn btn-falcon-default js-opening-stock-pricing-add-remaining" type="button" title="{{ __('inventory.opening_stock_pricings.js.add_remaining_lines_title') }}" data-bs-title="{{ __('inventory.opening_stock_pricings.js.add_remaining_lines_title') }}" @disabled(! $selectedOpeningStockDocNum)>
                                     <span class="fas fa-list-ul me-1"></span>{{ __('inventory.opening_stock_pricings.actions.add_remaining_lines') }}
                                 </button>
                             </div>
@@ -220,7 +220,7 @@
                     </div>
                     @unless($isReadonly)
                         <div class="col-auto">
-                            <button class="btn btn-falcon-default btn-sm js-opening-stock-pricing-add-line" type="button" title="{{ __('inventory.opening_stock_pricings.js.add_line_title') }}" data-bs-title="{{ __('inventory.opening_stock_pricings.js.add_line_title') }}">
+                            <button class="btn btn-falcon-default btn-sm js-opening-stock-pricing-add-line" type="button" title="{{ __('inventory.opening_stock_pricings.js.add_line_title') }}" data-bs-title="{{ __('inventory.opening_stock_pricings.js.add_line_title') }}" @disabled(! $selectedOpeningStockDocNum)>
                                 <span class="fas fa-plus me-1"></span>{{ __('inventory.opening_stock_pricings.actions.add_line') }}
                             </button>
                         </div>
@@ -265,7 +265,7 @@
                                         @else
                                             <div class="d-flex align-items-start gap-1 opening-stock-pricing-product-picker">
                                                 <div class="flex-grow-1 min-w-0">
-                                                    <x-forms.select class="form-select js-select2-ajax js-opening-stock-pricing-product" name="lines[{{ $index }}][opening_stock_line_public_id]" data-url="{{ route('admin.inventory.select2.opening-stock-pricing-lines') }}" data-placeholder="{{ __('inventory.opening_stock_pricings.placeholders.select_product') }}" data-allow-clear="true" data-template="product-image" data-extra-params='{"opening_stock_doc_num":"#opening_stock_doc_num","current_pricing_doc_num":"#current_pricing_doc_num"}'>
+                                                    <x-forms.select class="form-select js-select2-ajax js-opening-stock-pricing-product" name="lines[{{ $index }}][opening_stock_line_public_id]" data-url="{{ route('admin.inventory.select2.opening-stock-pricing-lines') }}" data-placeholder="{{ __('inventory.opening_stock_pricings.placeholders.select_product') }}" data-allow-clear="true" data-template="product-image" data-depends-on="#opening_stock_doc_num" data-dependent-param="opening_stock_doc_num" data-disable-when-dependency-empty="true" :data-extra-params="json_encode(['current_pricing_doc_num' => '#current_pricing_doc_num'])">
                                                         @if($linePublicId)
                                                             <option value="{{ $linePublicId }}" data-unit-label="{{ $line['unit'] ?? '' }}" data-quantity="{{ $line['quantity'] ?? '' }}" @if($imageUrl) data-image-url="{{ $imageUrl }}" @endif data-product-data="{{ e(json_encode($line['product_data'] ?? [])) }}" selected>{{ $productLabel }}</option>
                                                         @endif
@@ -300,10 +300,6 @@
                                     </td>
                                     @unless($isReadonly)
                                         <td class="text-center">
-                                            <button class="btn btn-link text-600 p-0 me-2 js-opening-stock-pricing-duplicate-line" type="button" title="{{ __('inventory.opening_stock_pricings.js.duplicate_line_title') }}" data-bs-title="{{ __('inventory.opening_stock_pricings.js.duplicate_line_title') }}">
-                                                <span class="fas fa-copy"></span>
-                                                <span class="visually-hidden">{{ __('inventory.opening_stock_pricings.js.duplicate_line_title') }}</span>
-                                            </button>
                                             <button class="btn btn-link text-danger p-0 js-opening-stock-pricing-remove-line" type="button" title="{{ __('inventory.opening_stock_pricings.js.delete_line_title') }}" data-bs-title="{{ __('inventory.opening_stock_pricings.js.delete_line_title') }}">
                                                 <span class="fas fa-trash-alt"></span>
                                                 <span class="visually-hidden">{{ __('inventory.opening_stock_pricings.js.delete_line_title') }}</span>
@@ -366,7 +362,7 @@
                     <x-forms.input type="hidden" name="lines[__INDEX__][_delete]" value="0" />
                     <div class="d-flex align-items-start gap-1 opening-stock-pricing-product-picker">
                         <div class="flex-grow-1 min-w-0">
-                            <x-forms.select class="form-select js-select2-ajax js-opening-stock-pricing-product" name="lines[__INDEX__][opening_stock_line_public_id]" data-url="{{ route('admin.inventory.select2.opening-stock-pricing-lines') }}" data-placeholder="{{ __('inventory.opening_stock_pricings.placeholders.select_product') }}" data-allow-clear="true" data-template="product-image" data-extra-params='{"opening_stock_doc_num":"#opening_stock_doc_num","current_pricing_doc_num":"#current_pricing_doc_num"}'></x-forms.select>
+                            <x-forms.select class="form-select js-select2-ajax js-opening-stock-pricing-product" name="lines[__INDEX__][opening_stock_line_public_id]" data-url="{{ route('admin.inventory.select2.opening-stock-pricing-lines') }}" data-placeholder="{{ __('inventory.opening_stock_pricings.placeholders.select_product') }}" data-allow-clear="true" data-template="product-image" data-depends-on="#opening_stock_doc_num" data-dependent-param="opening_stock_doc_num" data-disable-when-dependency-empty="true" :data-extra-params="json_encode(['current_pricing_doc_num' => '#current_pricing_doc_num'])"></x-forms.select>
                             <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.opening_stock_line_public_id"></div>
                         </div>
                         <button class="btn btn-falcon-default btn-sm opening-stock-pricing-product-action js-opening-stock-pricing-product-info" type="button" title="{{ __('inventory.opening_stock_pricings.js.product_info_title') }}" data-bs-title="{{ __('inventory.opening_stock_pricings.js.product_info_title') }}" disabled>
@@ -387,10 +383,6 @@
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.notes"></div>
                 </td>
                 <td class="text-center">
-                    <button class="btn btn-link text-600 p-0 me-2 js-opening-stock-pricing-duplicate-line" type="button" title="{{ __('inventory.opening_stock_pricings.js.duplicate_line_title') }}" data-bs-title="{{ __('inventory.opening_stock_pricings.js.duplicate_line_title') }}">
-                        <span class="fas fa-copy"></span>
-                        <span class="visually-hidden">{{ __('inventory.opening_stock_pricings.js.duplicate_line_title') }}</span>
-                    </button>
                     <button class="btn btn-link text-danger p-0 js-opening-stock-pricing-remove-line" type="button" title="{{ __('inventory.opening_stock_pricings.js.delete_line_title') }}" data-bs-title="{{ __('inventory.opening_stock_pricings.js.delete_line_title') }}">
                         <span class="fas fa-trash-alt"></span>
                         <span class="visually-hidden">{{ __('inventory.opening_stock_pricings.js.delete_line_title') }}</span>
@@ -424,6 +416,9 @@
         $pricingMessages = __('inventory.opening_stock_pricings.js');
         $pricingMessages['unexpected_error'] = __('inventory.opening_stock_pricings.messages.unexpected_error');
         $pricingMessages['select_opening_stock_first'] = __('inventory.opening_stock_pricings.messages.select_opening_stock_first');
+        $pricingMessages['load_or_add_lines'] = __('inventory.opening_stock_pricings.messages.load_or_add_lines');
+        $pricingMessages['queue_duplicate_line'] = __('inventory.opening_stock_pricings.messages.queue_duplicate_line');
+        $pricingMessages['duplicate_product'] = __('inventory.opening_stock_pricings.messages.duplicate_product');
         $pricingMessages['no_remaining_lines'] = __('inventory.opening_stock_pricings.messages.no_remaining_lines');
         $pricingMessages['no_product_selected'] = __('inventory.opening_stock_pricings.messages.no_product_selected');
         $pricingMessages['no_image'] = __('inventory.opening_stock_pricings.messages.no_image');
@@ -440,5 +435,5 @@
         window.openingStockPricingProductLabels = @json($pricingProductLabels);
     </script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
-    <script src="{{ asset('assets/js/modules/Inventory/opening-stock-pricings.js') }}"></script>
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Inventory/opening-stock-pricings.js') }}"></script>
 @endpush

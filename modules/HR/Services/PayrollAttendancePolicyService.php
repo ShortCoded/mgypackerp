@@ -12,6 +12,79 @@ use Modules\HR\Models\HrPayrollAttendancePolicy;
 
 final class PayrollAttendancePolicyService
 {
+    /** @var array<string, array{name: string, kind: string, classification: string}> */
+    private const StandardItems = [
+        'BASIC' => ['name' => 'Basic Salary', 'kind' => 'earning', 'classification' => 'salary_expense'],
+        'OVERTIME' => ['name' => 'Overtime', 'kind' => 'earning', 'classification' => 'salary_expense'],
+        'ALLOWANCE' => ['name' => 'Allowance', 'kind' => 'earning', 'classification' => 'salary_expense'],
+        'BONUS' => ['name' => 'Bonus', 'kind' => 'earning', 'classification' => 'salary_expense'],
+        'ATTENDANCE-DEDUCTION' => ['name' => 'Attendance Deduction', 'kind' => 'deduction', 'classification' => 'direct_labor_cost'],
+        'PAYROLL-TAX' => ['name' => 'Payroll Tax', 'kind' => 'deduction', 'classification' => 'payroll_tax_payable'],
+        'SOCIAL-INSURANCE' => ['name' => 'Social Insurance', 'kind' => 'deduction', 'classification' => 'social_insurance_payable'],
+        'SALARY-ADVANCE' => ['name' => 'Salary Advance', 'kind' => 'deduction', 'classification' => 'employee_advances'],
+        'OTHER-DEDUCTION' => ['name' => 'Other Deduction', 'kind' => 'deduction', 'classification' => 'direct_labor_cost'],
+    ];
+
+    /** @return list<string> */
+    public function missingStandardItems(): array
+    {
+        $present = DB::table('hr_payroll_items')
+            ->whereIn('code', array_keys(self::StandardItems))
+            ->where('status', 'active')
+            ->whereNull('deleted_at')
+            ->pluck('code')
+            ->all();
+
+        return array_values(array_diff(array_keys(self::StandardItems), $present));
+    }
+
+    /** @return list<string> */
+    public function installStandardItems(int $actorId): array
+    {
+        return DB::transaction(function () use ($actorId): array {
+            $classifications = DB::table('account_classifications')
+                ->whereIn('code', array_unique(array_column(self::StandardItems, 'classification')))
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get(['id', 'code'])
+                ->keyBy('code');
+            $created = [];
+
+            foreach (self::StandardItems as $code => $definition) {
+                $classification = $classifications->get($definition['classification']);
+                if ($classification === null) {
+                    throw new DomainException(__('hr_payroll_policies.validation.catalog_classification_missing', ['code' => $definition['classification']]));
+                }
+
+                $items = DB::table('hr_payroll_items')->where('code', $code)->lockForUpdate()->get();
+                if ($items->isNotEmpty()) {
+                    if ($items->count() !== 1 || $items->first()->deleted_at !== null
+                        || $items->first()->status !== 'active' || $items->first()->item_kind !== $definition['kind']) {
+                        throw new DomainException(__('hr_payroll_policies.validation.catalog_item_conflict', ['code' => $code]));
+                    }
+
+                    continue;
+                }
+
+                DB::table('hr_payroll_items')->insert([
+                    'code' => $code,
+                    'name' => $definition['name'],
+                    'item_kind' => $definition['kind'],
+                    'account_classification_id' => $classification->id,
+                    'is_system' => true,
+                    'status' => 'active',
+                    'created_by' => $actorId,
+                    'updated_by' => $actorId,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+                $created[] = $code;
+            }
+
+            return $created;
+        }, attempts: 3);
+    }
+
     /**
      * @param  array<string, mixed>  $data
      */

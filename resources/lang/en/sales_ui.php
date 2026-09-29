@@ -1,6 +1,7 @@
 <?php
 
 return [
+    'delivery_cost_unknown' => 'Cannot post delivery :document because product :product has no known inventory cost. Resolve the receipt and pricing before delivery.',
     'continue_sales_cycle' => 'Continue sales cycle',
     'create_quotation' => 'Create quotation',
     'direct_quotation' => 'Direct quotation',

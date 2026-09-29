@@ -14,6 +14,7 @@ use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Exports\InventoryBookValuationExport;
+use Modules\Inventory\Exports\InventoryValuationComparisonExport;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryLayerAllocation;
 use Modules\Inventory\Models\InventoryReceiptLayer;
@@ -149,6 +150,105 @@ test('book valuation uses signed posted costs with chronological snapshots and t
         ->and($historicalStoreRow->branchStore->name)->toBe('Book valuation store');
 });
 
+test('valuation comparison excludes a reversed receipt and its reversal from effective stock', function (): void {
+    $fixture = inventoryBookValuationFixture();
+    $date = $fixture['period']->from_date->copy()->addDays(1)->toDateString();
+    inventoryBookTransaction($fixture, ['transaction_date' => $date, 'transaction_type' => 'opening_stock', 'quantity_in' => '10', 'unit_cost' => '5', 'total_cost' => '50']);
+    $receipt = inventoryBookTransaction($fixture, ['transaction_date' => $date, 'quantity_in' => '4', 'unit_cost' => null, 'total_cost' => null]);
+    inventoryBookTransaction($fixture, [
+        'transaction_date' => $date,
+        'quantity_out' => '4',
+        'unit_cost' => null,
+        'total_cost' => null,
+        'is_reversal' => true,
+        'reversal_of_id' => $receipt->getKey(),
+    ]);
+
+    $comparison = app(InventoryValuationService::class)->comparisonForStockPosition(
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+        $fixture['branch']->getKey(),
+        $fixture['store']->getKey(),
+        $fixture['product']->getKey(),
+        $date,
+    );
+
+    expect($comparison['source_count'])->toBe(1)
+        ->and($comparison['ending_quantity'])->toBe('10.00000000')
+        ->and($comparison['methods']['moving_average']['ending_value'])->toBe('50.00000000')
+        ->and($comparison['consumed_quantity'])->toBe('0.00000000');
+});
+
+test('valuation comparison rejects orphan, mismatched, and duplicate reversals while honoring the report date', function (): void {
+    $fixture = inventoryBookValuationFixture();
+    $firstDate = $fixture['period']->from_date->copy()->addDays(1)->toDateString();
+    $secondDate = $fixture['period']->from_date->copy()->addDays(2)->toDateString();
+    inventoryBookTransaction($fixture, ['transaction_date' => $firstDate, 'quantity_in' => '10', 'unit_cost' => '5', 'total_cost' => '50']);
+    $receipt = inventoryBookTransaction($fixture, ['transaction_date' => $firstDate, 'quantity_in' => '4', 'unit_cost' => '10', 'total_cost' => '40']);
+    $reverse = inventoryBookTransaction($fixture, [
+        'transaction_date' => $secondDate, 'quantity_out' => '4', 'unit_cost' => '10', 'total_cost' => '40',
+        'is_reversal' => true, 'reversal_of_id' => $receipt->getKey(),
+    ]);
+    $compare = fn (string $date): array => app(InventoryValuationService::class)->comparisonForStockPosition(
+        $fixture['company']->getKey(), $fixture['period']->getKey(), $fixture['branch']->getKey(),
+        $fixture['store']->getKey(), $fixture['product']->getKey(), $date,
+    );
+
+    expect($compare($firstDate)['ending_quantity'])->toBe('14.00000000')
+        ->and($compare($secondDate)['ending_quantity'])->toBe('10.00000000');
+
+    $reverse->forceFill(['reversal_of_id' => null])->save();
+    expect(fn (): array => $compare($secondDate))->toThrow(DomainException::class, 'invalid_valuation_reversal');
+
+    $reverse->forceFill(['reversal_of_id' => $receipt->getKey(), 'quantity_out' => '3'])->save();
+    expect(fn (): array => $compare($secondDate))->toThrow(DomainException::class, 'invalid_valuation_reversal');
+
+    $reverse->forceFill(['quantity_out' => '4', 'branch_store_id' => $fixture['otherStore']->getKey()])->save();
+    expect(fn (): array => $compare($secondDate))->toThrow(DomainException::class, 'invalid_valuation_reversal');
+    $book = app(InventoryReportService::class)->bookValuation($fixture['company']->getKey(), [$fixture['branch']->getKey()], ['as_of' => $secondDate]);
+    expect(fn (): array => app(InventoryValuationService::class)->comparisonForStockScope($fixture['company']->getKey(), $book['rows'], $secondDate))
+        ->toThrow(DomainException::class, 'invalid_valuation_reversal');
+
+    $reverse->forceFill(['branch_store_id' => $fixture['store']->getKey()])->save();
+    $duplicate = inventoryBookTransaction($fixture, [
+        'transaction_date' => $secondDate, 'quantity_out' => '4', 'unit_cost' => '10', 'total_cost' => '40',
+        'is_reversal' => true, 'reversal_of_id' => $receipt->getKey(),
+    ]);
+    expect(fn (): array => $compare($secondDate))->toThrow(DomainException::class, 'invalid_valuation_reversal');
+    $duplicate->delete();
+    expect($compare($secondDate)['ending_quantity'])->toBe('10.00000000');
+});
+
+test('company stock comparison aggregates stores and marks unknown cost positions as partial', function (): void {
+    $fixture = inventoryBookValuationFixture();
+    $date = $fixture['period']->from_date->copy()->addDays(1)->toDateString();
+    inventoryBookTransaction($fixture, ['transaction_date' => $date, 'quantity_in' => '10', 'unit_cost' => '5', 'total_cost' => '50']);
+    inventoryBookTransaction($fixture, ['transaction_date' => $date, 'branch_store_id' => $fixture['otherStore']->getKey(), 'quantity_in' => '2', 'unit_cost' => '8', 'total_cost' => '16']);
+    $unknown = Product::query()->create([
+        'company_id' => $fixture['company']->getKey(), 'doc_number' => 991008, 'doc_num' => 'BOOK-UNPRICED-SCOPE',
+        'name' => 'Unknown scope cost', 'item_classification' => Product::ClassificationFinishedProduct,
+        'item_unit_id' => $fixture['unit']->getKey(), 'status' => 'active',
+    ]);
+    $unpricedReceipt = inventoryBookTransaction($fixture, ['transaction_date' => $date, 'product_id' => $unknown->getKey(), 'quantity_in' => '3']);
+
+    $book = app(InventoryReportService::class)->bookValuation($fixture['company']->getKey(), [$fixture['branch']->getKey()], ['as_of' => $date]);
+    $comparison = app(InventoryValuationService::class)->comparisonForStockScope($fixture['company']->getKey(), $book['rows'], $date);
+    $exportRows = (new InventoryValuationComparisonExport($comparison))->array();
+
+    expect($book['totals']['quantity'])->toBe('15.00000000')
+        ->and($comparison['ending_quantity'])->toBe('12.00000000')
+        ->and($comparison['methods']['moving_average']['ending_value'])->toBe('66.00000000')
+        ->and($comparison['valued_position_count'])->toBe(2)
+        ->and($comparison['excluded_position_count'])->toBe(1)
+        ->and($comparison['excluded_quantity'])->toBe('3.00000000')
+        ->and($comparison['excluded_positions'][0]['product_doc_num'])->toBe($unknown->doc_num)
+        ->and($comparison['excluded_positions'][0]['store_name'])->toBe($fixture['store']->name)
+        ->and($comparison['excluded_positions'][0]['source_doc_nums'])->toBe([$unpricedReceipt->source_doc_num])
+        ->and(collect($exportRows)->contains(fn (array $row): bool => str_contains($row[2], $unknown->doc_num)
+            && str_contains($row[5], $unpricedReceipt->source_doc_num)))->toBeTrue()
+        ->and($comparison['valuation_complete'])->toBeFalse();
+});
+
 test('book valuation distinguishes zero cost from missing cost and preserves signed negative positions', function (): void {
     $fixture = inventoryBookValuationFixture();
     $zero = Product::query()->create([
@@ -178,6 +278,11 @@ test('book valuation distinguishes zero cost from missing cost and preserves sig
     ]);
     inventoryBookTransaction($fixture, ['product_id' => $zero->getKey(), 'quantity_in' => '4', 'unit_cost' => '0', 'total_cost' => '0']);
     inventoryBookTransaction($fixture, ['product_id' => $missing->getKey(), 'quantity_in' => '3', 'unit_cost' => null, 'total_cost' => null]);
+    $reversedReceipt = inventoryBookTransaction($fixture, ['product_id' => $missing->getKey(), 'quantity_in' => '2', 'unit_cost' => null, 'total_cost' => null]);
+    inventoryBookTransaction($fixture, [
+        'product_id' => $missing->getKey(), 'quantity_out' => '2', 'unit_cost' => null, 'total_cost' => null,
+        'is_reversal' => true, 'reversal_of_id' => $reversedReceipt->getKey(),
+    ]);
     inventoryBookTransaction($fixture, ['product_id' => $negative->getKey(), 'quantity_out' => '2', 'unit_cost' => '5', 'total_cost' => '10']);
     inventoryBookTransaction($fixture, ['product_id' => $halfPopulated->getKey(), 'quantity_in' => '2', 'unit_cost' => '9', 'total_cost' => null]);
     inventoryBookTransaction($fixture, ['product_id' => $depletedMissing->getKey(), 'quantity_in' => '3', 'unit_cost' => null, 'total_cost' => null]);
@@ -195,6 +300,7 @@ test('book valuation distinguishes zero cost from missing cost and preserves sig
         ->and($rows[$missing->getKey()]->valuation_status)->toBe('unvalued')
         ->and($rows[$missing->getKey()]->book_unit_cost)->toBeNull()
         ->and($rows[$missing->getKey()]->unvalued_quantity)->toBe('3.00000000')
+        ->and($rows[$missing->getKey()]->unvalued_row_count)->toBe(1)
         ->and($rows[$negative->getKey()]->on_hand)->toBe('-2.00000000')
         ->and($rows[$negative->getKey()]->book_value)->toBe('-10.00000000')
         ->and($rows[$negative->getKey()]->is_negative)->toBeTrue()
@@ -702,11 +808,11 @@ test('valuation screen and exports share aggregate rows totals filters currency 
     ])->render();
 
     expect($export->array())->toHaveCount($report['rows']->count() + 1)
-        ->and($export->array()[0][7])->toBe(7.0)
-        ->and($export->array()[0][9])->toBe(21.0)
-        ->and($export->array()[0][10])->toBe($currency)
-        ->and($export->array()[1][7])->toBe(7.0)
-        ->and($export->array()[1][9])->toBe(21.0)
+        ->and($export->array()[0][6])->toBe(7.0)
+        ->and($export->array()[0][8])->toBe(21.0)
+        ->and($export->array()[0][9])->toBe($currency)
+        ->and($export->array()[1][6])->toBe(7.0)
+        ->and($export->array()[1][8])->toBe(21.0)
         ->and($pdfRows)->toContain('Book valuation item', (string) $currency);
 
     $query = ['as_of' => $fixture['period']->to_date->toDateString(), 'branch_store_uuid' => $fixture['store']->public_uuid];

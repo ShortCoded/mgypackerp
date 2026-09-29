@@ -109,7 +109,7 @@ test('posted purchase receipts feed the stock balance inquiry and item attribute
         ->assertSee('4,000');
 });
 
-test('hall and warehouse location filters use posted position dimensions and exports stay available', function (): void {
+test('hall filters include historical position balances while warehouse locations are absent from reports', function (): void {
     $fixture = procurementFixture();
     $this->seed(PermissionSeeder::class);
     $fixture['user']->givePermissionTo(Permission::query()->where('guard_name', 'web')->get());
@@ -186,13 +186,20 @@ test('hall and warehouse location filters use posted position dimensions and exp
         'branch_doc_num' => $fixture['branch']->doc_num,
         'branch_store_uuid' => $fixture['store']->public_uuid,
         'branch_hall_uuid' => $hall->public_uuid,
-        'warehouse_location_uuid' => $location->public_id,
         'item_model_doc_num' => $model->doc_num,
     ];
+    $this->get(route('admin.inventory.stock-balances.index', $query))
+        ->assertOk()
+        ->assertDontSee('name="warehouse_location_uuid"', false);
     $this->get(route('admin.inventory.stock-balances.export', $query))
         ->assertOk()
         ->assertHeader('content-disposition');
     $this->get(route('admin.inventory.stock-balances.print', $query))
         ->assertOk()
         ->assertHeader('content-type', 'application/pdf');
+
+    $this->getJson(route('admin.inventory.stock-balances.index', [
+        ...$query,
+        'warehouse_location_uuid' => $location->public_id,
+    ]))->assertUnprocessable()->assertJsonValidationErrors('warehouse_location_uuid');
 });

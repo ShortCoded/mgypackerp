@@ -26,6 +26,7 @@ use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
+use Modules\Core\Services\Select2ResponseService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\HR\Models\HrArea;
@@ -1032,6 +1033,7 @@ class ProcurementWorkflowController extends Controller
         $filters = $this->reportFilters($request);
         $context = $this->context();
         $isAdministrativeBranch = $this->isAdministrativeBranch();
+        $allowedBranchIds = $this->operatingContext->allowedBranchQueryForCurrentCompany($request)->pluck('branches.id');
         $showPrices = (bool) request()->user()?->can('purchases.prices.view');
         $reportType = $filters['report_type'];
         $rows = $this->procurementReport->rows($reportType, $filters, $context['company_id'], $context['financial_period_id']);
@@ -1071,12 +1073,12 @@ class ProcurementWorkflowController extends Controller
                 ? $this->procurementReport->grniReconciliation($context['company_id'], $context['financial_period_id'], $filters['branch_id'])
                 : null,
             'suppliers' => Supplier::query()->where('company_id', $context['company_id'])->where('doc_num', $filters['supplier_doc_num'] ?? '')->get(),
-            'currencies' => Currency::query()->where('company_id', $context['company_id'])->orderBy('doc_num')->get(),
+            'currencies' => Currency::query()->where('company_id', $context['company_id'])->where('doc_num', $filters['currency_doc_num'] ?? '')->get(),
             'products' => Product::query()->where('company_id', $context['company_id'])->where('doc_num', $filters['product_doc_num'] ?? '')->get(),
-            'requisitions' => PurchaseRequisition::query()->where('company_id', $context['company_id'])->when(! $isAdministrativeBranch, fn ($query) => $query->where('branch_id', $context['branch_id']))->latest('id')->limit(200)->get(),
-            'orders' => PurchaseOrder::query()->forCompany($context['company_id'])->when(! $isAdministrativeBranch, fn ($query) => $query->where('branch_id', $context['branch_id']))->latest('id')->limit(200)->get(),
-            'branches' => $this->operatingContext->allowedBranchQueryForCurrentCompany($request)->when(! $isAdministrativeBranch, fn ($query) => $query->whereKey($context['branch_id']))->orderBy('name')->get(),
-            'warehouses' => BranchStore::query()->whereHas('branch', fn ($query) => $query->where('company_id', $context['company_id'])->when(! $isAdministrativeBranch, fn ($query) => $query->whereKey($context['branch_id'])))->whereNull('deleted_at')->orderBy('name')->get(),
+            'requisitions' => PurchaseRequisition::query()->where('company_id', $context['company_id'])->whereIn('branch_id', $allowedBranchIds)->when(! $isAdministrativeBranch, fn ($query) => $query->where('branch_id', $context['branch_id']))->where('doc_num', $filters['purchase_requisition_doc_num'] ?? '')->get(),
+            'orders' => PurchaseOrder::query()->forCompany($context['company_id'])->whereIn('branch_id', $allowedBranchIds)->when(! $isAdministrativeBranch, fn ($query) => $query->where('branch_id', $context['branch_id']))->where('doc_num', $filters['purchase_order_doc_num'] ?? '')->get(),
+            'branches' => $this->operatingContext->allowedBranchQueryForCurrentCompany($request)->when(! $isAdministrativeBranch, fn ($query) => $query->whereKey($context['branch_id']))->whereKey($filters['branch_id'] ?? 0)->get(),
+            'warehouses' => BranchStore::query()->whereIn('branch_id', $allowedBranchIds)->whereHas('branch', fn ($query) => $query->where('company_id', $context['company_id'])->when(! $isAdministrativeBranch, fn ($query) => $query->whereKey($context['branch_id'])))->whereNull('deleted_at')->where('public_uuid', $filters['warehouse_uuid'] ?? '')->get(),
             'locationFilters' => [
                 'country' => HrCountry::query()->where('doc_num', $filters['country_doc_num'] ?? '')->first(),
                 'governorate' => HrGovernorate::query()->where('doc_num', $filters['governorate_doc_num'] ?? '')->first(),
@@ -1084,6 +1086,54 @@ class ProcurementWorkflowController extends Controller
                 'area' => HrArea::query()->where('doc_num', $filters['area_doc_num'] ?? '')->first(),
             ],
         ]);
+    }
+
+    public function reportSelect2(Request $request, string $kind, Select2ResponseService $select2): JsonResponse
+    {
+        abort_unless(in_array($kind, ['requisitions', 'orders', 'currencies', 'branches', 'warehouses'], true), 404);
+        $filters = $this->reportFilters($request);
+        $context = $this->context();
+        $search = trim((string) $request->input('q', ''));
+        $allowedBranchIds = $this->operatingContext->allowedBranchQueryForCurrentCompany($request)
+            ->pluck('branches.id');
+
+        $query = match ($kind) {
+            'requisitions' => PurchaseRequisition::query()
+                ->where('company_id', $context['company_id'])
+                ->whereIn('branch_id', $allowedBranchIds)
+                ->when($filters['branch_id'], fn (Builder $query, int $branchId) => $query->where('branch_id', $branchId))
+                ->when($search !== '', fn (Builder $query) => $query->where('doc_num', 'like', '%'.$search.'%'))
+                ->orderByDesc('id'),
+            'orders' => PurchaseOrder::query()
+                ->forCompany($context['company_id'])
+                ->whereIn('branch_id', $allowedBranchIds)
+                ->when($filters['branch_id'], fn (Builder $query, int $branchId) => $query->where('branch_id', $branchId))
+                ->when($search !== '', fn (Builder $query) => $query->where('doc_num', 'like', '%'.$search.'%'))
+                ->orderByDesc('id'),
+            'currencies' => Currency::query()
+                ->forCompany($context['company_id'])
+                ->when($search !== '', fn (Builder $query) => $query->where(fn (Builder $inner) => $inner->where('doc_num', 'like', '%'.$search.'%')->orWhere('name', 'like', '%'.$search.'%')))
+                ->orderBy('doc_num'),
+            'branches' => $this->operatingContext->allowedBranchQueryForCurrentCompany($request)
+                ->when($filters['branch_id'] && ! $this->isAdministrativeBranch(), fn (Builder $query) => $query->whereKey($filters['branch_id']))
+                ->when($search !== '', fn (Builder $query) => $query->where(fn (Builder $inner) => $inner->where('branches.doc_num', 'like', '%'.$search.'%')->orWhere('branches.name', 'like', '%'.$search.'%')))
+                ->orderBy('branches.name'),
+            'warehouses' => BranchStore::query()
+                ->whereIn('branch_id', $allowedBranchIds)
+                ->whereNull('deleted_at')
+                ->when($filters['branch_id'], fn (Builder $query, int $branchId) => $query->where('branch_id', $branchId))
+                ->when($search !== '', fn (Builder $query) => $query->where('name', 'like', '%'.$search.'%'))
+                ->orderBy('name'),
+        };
+
+        return response()->json($select2->paginated($query, $request, fn ($record): array => [
+            'id' => (string) match ($kind) {
+                'requisitions', 'orders', 'currencies' => $record->doc_num,
+                'branches' => $record->id,
+                'warehouses' => $record->public_uuid,
+            },
+            'text' => $kind === 'currencies' ? $record->doc_num.' / '.$record->name : ($kind === 'requisitions' || $kind === 'orders' ? $record->doc_num : $record->name),
+        ]));
     }
 
     public function exportReportExcel(Request $request): BinaryFileResponse

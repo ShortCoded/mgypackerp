@@ -147,7 +147,8 @@ test('item lookups and product masters are grouped under inventory item data', f
         ->and($basicData)->not->toBeNull()
         ->and($inventory)->not->toBeNull()
         ->and($basicDataLabels)->toBe(['organization_setup'])
-        ->and($inventoryLabels)->toBe([
+        ->and($inventoryLabels)->toBe(['item_data'])
+        ->and(collect($inventory['children'][0]['children'])->pluck('label')->all())->toBe([
             'products',
             'item_categories',
             'item_units',

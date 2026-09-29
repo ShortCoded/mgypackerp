@@ -219,8 +219,7 @@ test('real MVP menu entries remain reachable while pending generic shells stay h
         ->and(mvpFindMenuItem($menu, 'costing_overhead_allocation_rules')['route'])->toBe('admin.costing.overhead-allocation-rules.index')
         ->and(mvpFindMenuItem($menu, 'costing_overhead_allocation_run')['route'])->toBe('admin.costing.overhead-allocation-run.index')
         ->and(mvpFindMenuItem($menu, 'finance_cashbox_count')['route'])->toBe('admin.finance.cashbox-count.index')
-        ->and(mvpFindMenuItem($menu, 'reports_costing_product_cost')['route'])->toBe('admin.reports.costing.product-cost.index')
-        ->and(mvpFindMenuItem($menu, 'reports_costing_allocation_analysis')['route'])->toBe('admin.reports.costing.allocation-analysis.index')
+        ->and(mvpFindMenuItem($menu, 'costing_reports')['route'])->toBe('admin.reports.costing.product-cost.index')
         ->and(mvpFindMenuItem($menu, 'costing_work_order_estimated_cost'))->toBeNull();
 
     foreach ([
@@ -250,27 +249,9 @@ test('finance-only permission remains reachable through accounting without a gen
         ->and(mvpFindMenuItem($accounting['children'], 'chart_of_accounts'))->toBeNull();
 });
 
-test('former placeholder route aliases render their current UI shell target', function (): void {
-    $legacyPermission = 'costing.estimated_cost_sheets.view';
-    $actor = mvpMenuActor([$legacyPermission]);
-    $screen = app(ErpUiScreenRegistry::class)->find('costing_work_order_estimated_cost');
-
-    app()->setLocale('en');
-    $actor->forceFill(['locale' => 'en'])->save();
-
-    $this->actingAs($actor)
-        ->get(route('admin.costing.estimated-cost-sheets.index'))
-        ->assertOk()
-        ->assertSee($screen->title());
-
-    app()->setLocale('ar');
-    $actor->forceFill(['locale' => 'ar'])->save();
-
-    $this->withSession(['locale' => 'ar'])
-        ->actingAs($actor)
-        ->get(route('admin.costing.estimated-cost-sheets.index'))
-        ->assertOk()
-        ->assertSee($screen->title());
+test('removed estimated cost placeholder has no registered route or live screen', function (): void {
+    expect(Route::has('admin.costing.estimated-cost-sheets.index'))->toBeFalse()
+        ->and(app(ErpUiScreenRegistry::class)->find('costing_work_order_estimated_cost'))->toBeNull();
 });
 
 test('HR menu keeps detailed HR screens under its independent domain', function (): void {
@@ -283,10 +264,10 @@ test('HR menu keeps detailed HR screens under its independent domain', function 
         ->and($humanResourceLabels)->toContain(
             'hr_employees',
             'hr_departments',
-            'hr_countries',
             'hr_employee_attendance',
             'hr_payroll_preparation',
         );
+    expect($humanResourceLabels)->not->toContain('hr_countries');
 
     $registry = app(PermissionRegistryService::class);
 

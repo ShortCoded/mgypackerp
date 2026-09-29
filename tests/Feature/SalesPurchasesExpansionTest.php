@@ -188,7 +188,7 @@ test('Menu shows sales and purchases while HR exposes only employee self service
         ->and(collect($humanResources['children'])->flatMap(fn (array $item): array => [
             $item['label'],
             ...collect($item['children'] ?? [])->pluck('label')->all(),
-        ])->all())->toBe(['employee_self_service'])
+        ])->all())->toBe(['hr_self_service', 'employee_self_service'])
         ->and(app(PermissionRegistryService::class)->all())->toContain('hr.employees.view')
         ->and(app(PermissionRegistryService::class)->all())->toContain('hr.departments.view')
         ->and(app(PermissionRegistryService::class)->all())->toContain('hr.countries.view');

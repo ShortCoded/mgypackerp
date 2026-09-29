@@ -180,6 +180,21 @@ return [
                         'children' => [],
                     ],
                     [
+                        'label' => 'production_reports_control',
+                        'title' => 'Plant Production Monitoring',
+                        'icon' => 'chart-area',
+                        'route' => 'admin.production.reports.control',
+                        'permission' => 'production.reports.control.view',
+                        'keywords' => ['factory monitoring', 'injection', 'cover', 'مراقبة إنتاج المصانع', 'الحقن', 'الكوفير'],
+                        'actions' => [
+                            'view' => 'production.reports.control.view',
+                            'export' => 'production.reports.control.export',
+                            'print' => 'production.reports.control.print',
+                        ],
+                        'active' => ['admin.production.reports.control'],
+                        'children' => [],
+                    ],
+                    [
                         'label' => 'production_reports_runs',
                         'title' => 'Production Run Performance Report',
                         'icon' => 'stopwatch',

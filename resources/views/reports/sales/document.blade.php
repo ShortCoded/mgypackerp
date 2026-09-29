@@ -74,7 +74,7 @@
         </tr>
     </table>
 
-    <table class="report-table" style="margin-bottom:9px;">
+    <table dir="{{ $direction ?? 'ltr' }}" class="report-table" style="margin-bottom:9px;">
         <tbody>
             @if($record->customer ?? null)<tr><th>{{ __('Customer') }}</th><td>{{ $record->customer->doc_num }} / {{ $record->customer->name }}</td></tr>@endif
             @if($record->quotation ?? null)<tr><th>{{ __('Source Quotation') }}</th><td>{{ $quotationReference }}</td></tr>@endif
@@ -112,7 +112,7 @@
     </table>
 
     @if($lines->isNotEmpty())
-        <table class="report-table sales-document-lines" autosize="1">
+        <table dir="{{ $direction ?? 'ltr' }}" class="report-table sales-document-lines" autosize="1">
             <thead><tr><th>#</th><th>{{ __('Item / Description') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th>@if($kind === 'sales_order')<th>{{ __('Delivered') }}</th>@endif @if($showPrices)<th>{{ __('Unit price') }}</th><th>{{ __('Discount') }}</th><th>{{ __('Tax') }}</th><th>{{ __('Total') }}</th>@endif @if(in_array($kind, ['sales_return', 'quality_disposition'], true))<th>{{ __('Quality disposition') }}</th>@endif</tr></thead>
             <tbody>
                 @foreach($lines as $line)
@@ -136,16 +136,16 @@
 
     @if($kind === 'payment_schedule' || ($showPrices && $record->relationLoaded('paymentSchedules') && $record->paymentSchedules->isNotEmpty()))
         <h3>{{ __('Payment Schedule') }}</h3>
-        <table class="report-table"><thead><tr><th>#</th><th>{{ __('Due date') }}</th><th>{{ __('Amount') }}</th><th>{{ __('Collected') }}</th><th>{{ __('Credited') }}</th><th>{{ __('Outstanding') }}</th></tr></thead><tbody>@foreach($record->paymentSchedules as $schedule)<tr><td>{{ $schedule->sequence }}</td><td>{{ $dates->formatDate($schedule->due_date, '') }}</td><td>{{ $numbers->format($schedule->amount) }}</td><td>{{ $numbers->format($schedule->collected_amount) }}</td><td>{{ $numbers->format($schedule->credited_amount) }}</td><td>{{ $numbers->format($schedule->outstanding_amount) }}</td></tr>@endforeach</tbody></table>
+        <table dir="{{ $direction ?? 'ltr' }}" class="report-table"><thead><tr><th>#</th><th>{{ __('Due date') }}</th><th>{{ __('Amount') }}</th><th>{{ __('Collected') }}</th><th>{{ __('Credited') }}</th><th>{{ __('Outstanding') }}</th></tr></thead><tbody>@foreach($record->paymentSchedules as $schedule)<tr><td>{{ $schedule->sequence }}</td><td>{{ $dates->formatDate($schedule->due_date, '') }}</td><td>{{ $numbers->format($schedule->amount) }}</td><td>{{ $numbers->format($schedule->collected_amount) }}</td><td>{{ $numbers->format($schedule->credited_amount) }}</td><td>{{ $numbers->format($schedule->outstanding_amount) }}</td></tr>@endforeach</tbody></table>
     @endif
 
     @if($kind === 'customer_receipt' && $record->relationLoaded('allocations') && $record->allocations->isNotEmpty())
         <h3>{{ __('Receipt Allocations') }}</h3>
-        <table class="report-table"><thead><tr><th>{{ __('Invoice') }}</th><th>{{ __('Installment due') }}</th><th>{{ __('Allocated') }}</th></tr></thead><tbody>@foreach($record->allocations as $allocation)<tr><td>{{ $allocation->invoice?->doc_num }}</td><td>{{ $dates->formatDate($allocation->invoiceSchedule?->due_date, '—') }}</td><td dir="ltr">{{ $numbers->format($allocation->allocated_amount) }} {{ $record->currency?->code }}</td></tr>@endforeach</tbody></table>
+        <table dir="{{ $direction ?? 'ltr' }}" class="report-table"><thead><tr><th>{{ __('Invoice') }}</th><th>{{ __('Installment due') }}</th><th>{{ __('Allocated') }}</th></tr></thead><tbody>@foreach($record->allocations as $allocation)<tr><td>{{ $allocation->invoice?->doc_num }}</td><td>{{ $dates->formatDate($allocation->invoiceSchedule?->due_date, '—') }}</td><td dir="ltr">{{ $numbers->format($allocation->allocated_amount) }} {{ $record->currency?->code }}</td></tr>@endforeach</tbody></table>
     @endif
 
     @if($showPrices && isset($record->total_amount))
-        <table class="report-table" style="width:45%; margin-top:10px; margin-{{ $direction === 'rtl' ? 'right' : 'left' }}:55%; page-break-inside:avoid;"><tbody>
+        <table dir="{{ $direction ?? 'ltr' }}" class="report-table" style="width:45%; margin-top:10px; margin-{{ $direction === 'rtl' ? 'right' : 'left' }}:55%; page-break-inside:avoid;"><tbody>
             @if(isset($record->subtotal_amount))<tr><th>{{ __('Subtotal') }}</th><td>{{ $numbers->format($record->subtotal_amount) }}</td></tr>@endif
             @if(isset($record->discount_amount))<tr><th>{{ __('Discount') }}</th><td>{{ $numbers->format($record->discount_amount) }}</td></tr>@endif
             @if(isset($record->tax_amount))<tr><th>{{ __('Tax') }}</th><td>{{ $numbers->format($record->tax_amount) }}</td></tr>@endif

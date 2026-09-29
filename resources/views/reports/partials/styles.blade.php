@@ -89,16 +89,16 @@
     }
 
     .report-table th {
-        background: #edf2f9;
-        color: #344050;
+        background: #14335c;
+        color: #ffffff;
         font-weight: 700;
         white-space: nowrap;
     }
 
     .report-table th,
     .report-table td {
-        border: 1px solid #d8e2ef;
-        padding: 4.5px;
+        border: 1px solid #d2e0e9;
+        padding: 5px;
         vertical-align: top;
     }
 
@@ -106,9 +106,55 @@
         color: #1f2937;
     }
 
+    .report-table tbody tr:nth-child(even) td {
+        background: #f5f9fb;
+    }
+
+    .report-table tbody tr:last-child td {
+        border-bottom-color: #0b8f94;
+    }
+
+    .report-table .report-details-cell {
+        background: #eef7f8;
+        color: #344050;
+        font-size: 8px;
+        line-height: 1.5;
+        padding: 7px 9px;
+    }
+
+    .report-table .total td {
+        background: #dceef0;
+        color: #14335c;
+        font-weight: 700;
+    }
+
+    .report-print .document-title-row h1 {
+        color: #14335c;
+        font-size: 17px;
+        margin: 0 0 8px;
+    }
+
+    .report-print h3 {
+        color: #14335c;
+        font-size: 11px;
+        margin: 14px 0 6px;
+    }
+
+    .report-table .report-empty-cell,
+    .report-empty-state {
+        background: #f5f9fb;
+        color: #566779;
+        padding: 15px 10px;
+        text-align: center;
+    }
+
+    .report-empty-state {
+        border: 1px solid #d2e0e9;
+    }
+
     .report-filter-summary {
-        background: #f8fafc;
-        border: 1px solid #d8e2ef;
+        background: #eef7f8;
+        border: 1px solid #c8e3e4;
         border-radius: 4px;
         color: #344050;
         font-size: 8.2px;
@@ -189,6 +235,13 @@
 
     .report-table thead {
         display: table-header-group;
+    }
+
+    .report-print h1,
+    .report-print h2,
+    .report-print h3,
+    .report-print h4 {
+        color: #14335c;
     }
 
     .report-table tr,

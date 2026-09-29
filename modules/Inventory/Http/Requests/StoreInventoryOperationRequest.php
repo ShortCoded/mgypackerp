@@ -103,6 +103,8 @@ class StoreInventoryOperationRequest extends FormRequest
                         ->whereNull('deleted_at')),
                 ],
                 'document_type' => ['required', Rule::in([InventoryDocument::TypeIssue, InventoryDocument::TypeReceipt])],
+                'warehouse_location_id' => ['prohibited'],
+                'destination_warehouse_location_id' => ['prohibited'],
                 'lines' => ['array', 'max:0'],
             ];
         }
@@ -129,8 +131,8 @@ class StoreInventoryOperationRequest extends FormRequest
                         ->whereNull('deleted_at'))
                     ->whereNull('deleted_at')),
             ],
-            'warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id'],
-            'destination_warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id'],
+            'warehouse_location_id' => ['prohibited'],
+            'destination_warehouse_location_id' => ['prohibited'],
             'document_type' => ['required', Rule::in(InventoryDocument::manualMovementTypes())],
             'document_date' => ['required', 'date'],
             'movement_reason' => ['required', 'string', 'max:255'],
@@ -150,8 +152,8 @@ class StoreInventoryOperationRequest extends FormRequest
             ],
             'lines.*.quantity' => ['required', 'numeric', 'gt:0'],
             'lines.*.unit_cost' => ['nullable', 'numeric', 'min:0'],
-            'lines.*.warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id'],
-            'lines.*.destination_warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id'],
+            'lines.*.warehouse_location_id' => ['prohibited'],
+            'lines.*.destination_warehouse_location_id' => ['prohibited'],
             'lines.*.batch_lot' => ['nullable', 'string', 'max:100'],
             'lines.*.manufacture_date' => ['nullable', 'date'],
             'lines.*.expiry_date' => ['nullable', 'date', 'after_or_equal:document_date'],

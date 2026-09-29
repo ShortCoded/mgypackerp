@@ -386,7 +386,13 @@ test('permission filtering hides unauthorized children and empty business domain
 
     expect(collect($menu)->pluck('label')->all())->toBe(['dashboard', 'sales', 'human_resources'])
         ->and($sales)->not->toBeNull()
-        ->and(collect($sales['children'])->pluck('label')->all())->toBe(['customers', 'customer_terms']);
+        ->and(collect($sales['children'])->pluck('label')->all())->toBe(['customers']);
+
+    $termsActor = businessDomainActor('customer_terms.view');
+    $termsMenu = app(MenuService::class)->getMenu($termsActor);
+    $termsSales = collect($termsMenu)->firstWhere('label', 'sales');
+
+    expect(collect($termsSales['children'])->pluck('label')->all())->toBe(['customer_terms']);
 });
 
 test('permission form uses the same recursive business domain hierarchy', function (): void {

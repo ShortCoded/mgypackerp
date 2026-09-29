@@ -4,6 +4,7 @@ use App\Models\User;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
+use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
@@ -17,6 +18,7 @@ use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\MenuConfigFileOrder;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryReceiptLayer;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\OpeningStock;
@@ -24,6 +26,8 @@ use Modules\Inventory\Models\OpeningStockLine;
 use Modules\Inventory\Models\OpeningStockPricing;
 use Modules\Inventory\Models\OpeningStockPricingLine;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
+use Modules\Inventory\Services\InventoryDocumentPostingService;
+use Modules\Inventory\Services\InventoryMovementService;
 use Modules\Inventory\Services\InventoryOpeningStockPostingService;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
@@ -145,8 +149,8 @@ function openingStockPricingOpeningStock(Company $company, FinancialPeriod $peri
         'doc_num' => 'OS-'.str_pad((string) $docNumber, 5, '0', STR_PAD_LEFT),
         'document_date' => '2026-02-01',
         'is_closed' => true,
-        'status' => OpeningStock::StatusClosed,
-        'approved' => false,
+        'status' => OpeningStock::StatusApproved,
+        'approved' => true,
     ]);
 
     foreach (array_values($products) as $index => $product) {
@@ -339,6 +343,7 @@ test('pricing saves selected source lines and loads only remaining lines from th
         ->postJson(route('admin.inventory.opening-stock-pricings.store'), openingStockPricingPayload($openingStock, $currency, [
             'lines' => [
                 ['opening_stock_line_public_id' => $firstLine->public_id, 'unit_price' => '5'],
+                ['opening_stock_line_public_id' => $openingStock->lines()->whereKeyNot($firstLine->getKey())->firstOrFail()->public_id, 'unit_price' => ''],
             ],
         ]))
         ->assertOk();
@@ -577,6 +582,53 @@ test('browser pricing values the approved opening stock ledger in base currency 
         ->and(InventoryReceiptLayer::query()->where('receipt_transaction_id', $movement->getKey())->firstOrFail()->unit_cost)->toBeNull();
 });
 
+test('opening stock can be priced after a fully reversed issue without leaving stale layer costs', function (): void {
+    $context = openingStockPricingContext($this, Branch::TypeFactory);
+    $this->seed(DefaultChartOfAccountsSeeder::class);
+    $actor = openingStockPricingActor(['inventory.opening_stock_pricings.create']);
+    $currency = openingStockPricingCurrency($context['company']);
+    $product = openingStockPricingProduct($context['company']);
+    $store = BranchStore::query()->create(['branch_id' => $context['branch']->getKey(), 'name' => 'Reversed issue store']);
+    $openingStock = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [$product], 73);
+    $openingStock->forceFill(['branch_store_id' => $store->getKey()])->save();
+
+    $this->actingAs($actor);
+    app(InventoryOpeningStockPostingService::class)->post($openingStock);
+    $opening = InventoryTransaction::query()->where('source_id', $openingStock->getKey())->firstOrFail();
+    $document = app(InventoryMovementService::class)->createAndPost([
+        'company_id' => $context['company']->getKey(),
+        'financial_period_id' => $context['period']->getKey(),
+        'branch_id' => $context['branch']->getKey(),
+        'branch_store_id' => $store->getKey(),
+        'document_type' => InventoryDocument::TypeIssue,
+        'document_date' => '2026-02-02',
+        'source_stock_status' => InventoryTransaction::StatusAvailable,
+    ], [['product_id' => $product->getKey(), 'quantity' => '1']]);
+    $issue = $document->transactions->sole();
+    app(InventoryDocumentPostingService::class)->reverse($document);
+    $reversal = InventoryTransaction::query()->where('reversal_of_id', $issue->getKey())->sole();
+
+    $this->postJson(route('admin.inventory.opening-stock-pricings.store'), openingStockPricingPayload($openingStock, $currency))
+        ->assertOk()->assertJsonPath('success', true);
+
+    expect((string) $opening->fresh()->unit_cost)->toBe('10.50000000')
+        ->and((string) $issue->fresh()->total_cost)->toBe('10.50000000')
+        ->and((string) $reversal->fresh()->total_cost)->toBe('10.50000000')
+        ->and((string) $document->lines()->sole()->total_cost)->toBe('10.50000000')
+        ->and(InventoryReceiptLayer::query()->whereIn('receipt_transaction_id', [$opening->getKey(), $reversal->getKey()])->pluck('unit_cost')->unique()->all())->toBe(['10.50000000']);
+
+    $pricing = OpeningStockPricing::query()->where('opening_stock_id', $openingStock->getKey())->sole();
+    $posting = app(InventoryOpeningStockPostingService::class);
+    $posting->clearPricing($pricing);
+    expect($opening->fresh()->unit_cost)->toBeNull()
+        ->and($issue->fresh()->unit_cost)->toBeNull()
+        ->and($reversal->fresh()->unit_cost)->toBeNull()
+        ->and($document->lines()->sole()->unit_cost)->toBeNull()
+        ->and(InventoryReceiptLayer::query()->whereIn('receipt_transaction_id', [$opening->getKey(), $reversal->getKey()])->whereNotNull('unit_cost')->count())->toBe(0);
+    $posting->applyPricing($pricing);
+    expect((string) $document->lines()->sole()->total_cost)->toBe('10.50000000');
+});
+
 test('direct source selection loads one document and keeps identical products independent', function (): void {
     $context = openingStockPricingContext($this, Branch::TypeFactory);
     $actor = openingStockPricingActor(['inventory.opening_stock_pricings.create']);
@@ -602,6 +654,12 @@ test('direct source selection loads one document and keeps identical products in
         ->assertDontSee('<tr class="js-opening-stock-pricing-line" data-index="0"', false)
         ->assertDontSee($firstLine->public_id)
         ->assertDontSee($secondLine->public_id);
+
+    $createPage = $this->actingAs($actor)->get(route('admin.inventory.opening-stock-pricings.create'));
+    $createPage->assertSee('js-opening-stock-pricing-add-line', false)
+        ->assertSee('data-depends-on="#opening_stock_doc_num"', false)
+        ->assertDontSee('js-opening-stock-pricing-duplicate-line', false);
+    expect((bool) preg_match('/js-opening-stock-pricing-add-line[^>]*disabled/', $createPage->getContent()))->toBeTrue();
 
     $options = $this->actingAs($actor)->getJson(route('admin.inventory.select2.opening-stock-pricing-documents'))->assertOk()->json('results');
     $firstOption = collect($options)->firstWhere('id', $first->doc_num);
@@ -702,13 +760,20 @@ test('a reversed pricing cannot be restored after its source line was priced aga
         ->and(OpeningStockPricingLine::query()->count())->toBe(1);
 });
 
-test('document selector excludes draft and deleted sources and requires create permission', function (): void {
+test('document selector and pricing reject unapproved draft and deleted sources', function (): void {
     $context = openingStockPricingContext($this);
     $product = openingStockPricingProduct($context['company']);
+    $currency = openingStockPricingCurrency($context['company']);
     $draft = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [$product], 101);
     $deleted = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [$product], 102);
     $valid = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [$product], 103);
-    $draft->forceFill(['is_closed' => false, 'status' => OpeningStock::StatusDraft])->save();
+    $closedUnapproved = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [$product], 104);
+    $statusOnly = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [$product], 105);
+    $flagOnly = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [$product], 106);
+    $draft->forceFill(['is_closed' => false, 'approved' => false, 'status' => OpeningStock::StatusDraft])->save();
+    $closedUnapproved->forceFill(['approved' => false, 'status' => OpeningStock::StatusClosed])->save();
+    $statusOnly->forceFill(['approved' => false])->save();
+    $flagOnly->forceFill(['status' => OpeningStock::StatusClosed])->save();
     $deleted->delete();
     $viewer = openingStockPricingActor(['inventory.opening_stock_pricings.view']);
     $creator = openingStockPricingActor(['inventory.opening_stock_pricings.create']);
@@ -716,7 +781,57 @@ test('document selector excludes draft and deleted sources and requires create p
     $this->actingAs($viewer)->get(route('admin.inventory.opening-stock-pricings.create'))->assertForbidden();
     $options = $this->actingAs($creator)->getJson(route('admin.inventory.select2.opening-stock-pricing-documents'))->assertOk()->json('results');
     expect(collect($options)->pluck('id'))->toContain($valid->doc_num)
-        ->not->toContain($draft->doc_num, $deleted->doc_num);
+        ->not->toContain($draft->doc_num, $deleted->doc_num, $closedUnapproved->doc_num, $statusOnly->doc_num, $flagOnly->doc_num);
+
+    $this->actingAs($creator)->getJson(route('admin.inventory.select2.opening-stock-pricing-lines', ['opening_stock_doc_num' => $closedUnapproved->doc_num]))
+        ->assertOk()->assertJsonCount(0, 'results');
+    $this->actingAs($creator)->getJson(route('admin.inventory.opening-stock-pricings.remaining-lines', ['opening_stock_doc_num' => $closedUnapproved->doc_num]))
+        ->assertStatus(422)->assertJsonValidationErrors('opening_stock_doc_num');
+    $this->actingAs($creator)->postJson(route('admin.inventory.opening-stock-pricings.store'), openingStockPricingPayload($closedUnapproved, $currency))
+        ->assertStatus(422)->assertJsonValidationErrors('opening_stock_doc_num');
+    $this->actingAs($creator)->postJson(route('admin.inventory.opening-stock-pricings.store'), openingStockPricingPayload($statusOnly, $currency))
+        ->assertStatus(422)->assertJsonValidationErrors('opening_stock_doc_num');
+    $this->actingAs($creator)->postJson(route('admin.inventory.opening-stock-pricings.store'), openingStockPricingPayload($flagOnly, $currency))
+        ->assertStatus(422)->assertJsonValidationErrors('opening_stock_doc_num');
+});
+
+test('product selector returns only the chosen approved opening stock lines', function (): void {
+    $context = openingStockPricingContext($this);
+    $actor = openingStockPricingActor(['inventory.opening_stock_pricings.create']);
+    $first = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [
+        openingStockPricingProduct($context['company']),
+        openingStockPricingProduct($context['company']),
+    ], 111);
+    $second = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [
+        openingStockPricingProduct($context['company']),
+    ], 112);
+
+    $results = $this->actingAs($actor)->getJson(route('admin.inventory.select2.opening-stock-pricing-lines', [
+        'opening_stock_doc_num' => $first->doc_num,
+    ]))->assertOk()->json('results');
+
+    expect(collect($results)->pluck('id')->all())->toBe($first->lines()->pluck('public_id')->all())
+        ->not->toContain($second->lines()->firstOrFail()->public_id);
+    $this->actingAs($actor)->getJson(route('admin.inventory.select2.opening-stock-pricing-lines'))
+        ->assertOk()->assertJsonCount(0, 'results');
+});
+
+test('pricing rejects the same source line twice in one document', function (): void {
+    $context = openingStockPricingContext($this);
+    $actor = openingStockPricingActor(['inventory.opening_stock_pricings.create']);
+    $currency = openingStockPricingCurrency($context['company']);
+    $product = openingStockPricingProduct($context['company']);
+    $source = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [$product], 113);
+    $linePublicId = $source->lines()->firstOrFail()->public_id;
+
+    $this->actingAs($actor)->postJson(route('admin.inventory.opening-stock-pricings.store'), openingStockPricingPayload($source, $currency, [
+        'lines' => [
+            ['opening_stock_line_public_id' => $linePublicId, 'unit_price' => '5'],
+            ['opening_stock_line_public_id' => $linePublicId, 'unit_price' => '6'],
+        ],
+    ]))
+        ->assertStatus(422)->assertJsonValidationErrors('lines.1.opening_stock_line_public_id');
+    expect(OpeningStockPricing::query()->count())->toBe(0);
 });
 
 test('unpriced inventory receipt preserves maximum accepted quantity precision before persistence', function (): void {

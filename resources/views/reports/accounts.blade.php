@@ -8,7 +8,7 @@
         </div>
     @endif
 
-    <table class="report-table accounts-report-table">
+    <table dir="{{ $direction ?? 'ltr' }}" class="report-table accounts-report-table">
         <thead>
             <tr>
                 @foreach ($headings as $heading)

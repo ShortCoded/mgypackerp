@@ -16,7 +16,7 @@
         </div>
     </div>
 
-    <table class="report-table trial-balance-table">
+    <table dir="{{ $direction ?? 'ltr' }}" class="report-table trial-balance-table">
         <thead>
             <tr>
                 <th>{{ __('trial_balance.columns.account_code') }}</th>

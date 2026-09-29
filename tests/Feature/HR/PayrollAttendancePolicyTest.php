@@ -3,6 +3,7 @@
 use App\Models\User;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
+use Modules\Accounting\Services\AccountClassificationRegistry;
 use Modules\Auth\Models\Role;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
@@ -499,4 +500,42 @@ test('payroll attendance policy http workflow enforces company and branch scope'
     $this->actingAs($actor)->withSession($session)
         ->post(route('admin.hr.payroll-attendance-policies.store'), [...$payload, 'branch_doc_num' => null, 'effective_from' => '2027-01-01'])
         ->assertSessionHasErrors('branch_doc_num');
+    $this->actingAs($actor)->withSession($session)
+        ->post(route('admin.hr.payroll-attendance-policies.standard-items'))
+        ->assertForbidden();
+});
+
+test('standard payroll item setup fills missing items without changing existing payroll mappings', function (): void {
+    $fixture = payrollAttendancePolicyFixture();
+    app(AccountClassificationRegistry::class)->synchronize();
+    $actor = User::factory()->create();
+    $service = app(PayrollAttendancePolicyService::class);
+    $basicBefore = DB::table('hr_payroll_items')->where('code', 'BASIC')->first();
+
+    $created = $service->installStandardItems((int) $actor->getKey());
+
+    expect($created)->toContain('ATTENDANCE-DEDUCTION', 'PAYROLL-TAX', 'SALARY-ADVANCE')
+        ->not->toContain('BASIC', 'OVERTIME')
+        ->and($service->missingStandardItems())->toBe([])
+        ->and($service->installStandardItems((int) $actor->getKey()))->toBe([])
+        ->and(DB::table('hr_payroll_items')->where('code', 'BASIC')->value('id'))->toBe($basicBefore->id)
+        ->and(DB::table('hr_payroll_items')->where('code', 'BASIC')->value('account_classification_id'))->toBe($basicBefore->account_classification_id);
+
+    DB::table('hr_payroll_items')->where('code', 'PAYROLL-TAX')->update(['status' => 'inactive']);
+    expect(fn () => $service->installStandardItems((int) $actor->getKey()))
+        ->toThrow(DomainException::class, __('hr_payroll_policies.validation.catalog_item_conflict', ['code' => 'PAYROLL-TAX']));
+});
+
+test('a salary assignment beginning within a payroll period cannot pay a full monthly salary', function (): void {
+    $fixture = payrollAttendancePolicyFixture();
+    DB::table('hr_employee_salary_assignments')->where('employee_id', $fixture['employee']->getKey())->update([
+        'effective_from' => '2026-09-15',
+    ]);
+
+    expect(fn () => app(PayrollCalculationService::class)->calculate($fixture['company']->getKey(), [
+        'period_start' => '2026-09-01',
+        'period_end' => '2026-09-30',
+        'branch_doc_num' => $fixture['branch']->doc_num,
+    ]))->toThrow(DomainException::class, __('hr_payroll.messages.partial_period_salary_requires_policy', ['employee' => $fixture['employee']->doc_num]));
+    expect(DB::table('hr_payslips')->count())->toBe(0);
 });

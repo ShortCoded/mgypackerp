@@ -9,13 +9,16 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\Select2ResponseService;
 
 final class FinancialAnalyticsReportService
 {
@@ -112,35 +115,98 @@ final class FinancialAnalyticsReportService
     /** @return array<string, Collection<int, mixed>> */
     public function filterOptions(int $companyId, array $selected = []): array
     {
-        $accounts = Account::query()->forCompany($companyId)->active()->where('account_type', Account::TypeExpense)
-            ->orderBy('account_code')->get(['id', 'doc_num', 'account_code', 'name', 'name_en']);
-        $costCenters = CostCenter::query()->forCompany($companyId)->active()
-            ->orderBy('cost_center_code')->get(['id', 'doc_num', 'cost_center_code', 'name']);
-        $branches = $this->context->allowedBranchQueryForCurrentCompany(request())->active()
-            ->orderBy('name')->get(['id', 'doc_num', 'name']);
-        $currencies = Currency::query()->forCompany($companyId)->active()
-            ->orderBy('code')->get(['id', 'doc_num', 'code', 'name']);
-
-        if (filled($selected['account_doc_num'] ?? null)) {
-            $accounts = $accounts->concat(Account::withTrashed()->forCompany($companyId)
-                ->where('doc_num', $selected['account_doc_num'])->get(['id', 'doc_num', 'account_code', 'name', 'name_en']));
-        }
-        if (filled($selected['cost_center_doc_num'] ?? null)) {
-            $costCenters = $costCenters->concat(CostCenter::withTrashed()->forCompany($companyId)
-                ->where('doc_num', $selected['cost_center_doc_num'])->get(['id', 'doc_num', 'cost_center_code', 'name']));
-        }
-        if (filled($selected['currency_doc_num'] ?? null)) {
-            $currencies = $currencies->concat(Currency::withTrashed()->forCompany($companyId)
-                ->where('doc_num', $selected['currency_doc_num'])->get(['id', 'doc_num', 'code', 'name']));
-        }
+        $expenseClassifications = Account::query()->withTrashed()->forCompany($companyId)
+            ->where('account_type', Account::TypeExpense)
+            ->whereNotNull('account_classification_id')
+            ->select('account_classification_id');
 
         return [
-            'accounts' => $accounts->unique('id')->sortBy('account_code')->values(),
-            'classifications' => DB::table('account_classifications')->whereIn('id', Account::query()->forCompany($companyId)->active()->where('account_type', Account::TypeExpense)->whereNotNull('account_classification_id')->select('account_classification_id'))->where('status', 'active')->orderBy('code')->get(['code', 'name', 'name_en']),
-            'cost_centers' => $costCenters->unique('id')->sortBy('cost_center_code')->values(),
-            'branches' => $branches->unique('id')->sortBy('name')->values(),
-            'currencies' => $currencies->unique('id')->sortBy('code')->values(),
+            'accounts' => filled($selected['account_doc_num'] ?? null)
+                ? Account::withTrashed()->forCompany($companyId)->where('account_type', Account::TypeExpense)
+                    ->where('doc_num', $selected['account_doc_num'])->get(['id', 'doc_num', 'account_code', 'name', 'name_en'])
+                : collect(),
+            'classifications' => filled($selected['classification_code'] ?? null)
+                ? AccountClassification::withTrashed()->whereIn('id', $expenseClassifications)
+                    ->where('code', $selected['classification_code'])->get(['id', 'code', 'name', 'name_en'])
+                : collect(),
+            'cost_centers' => filled($selected['cost_center_doc_num'] ?? null)
+                ? CostCenter::withTrashed()->forCompany($companyId)
+                    ->where('doc_num', $selected['cost_center_doc_num'])->get(['id', 'doc_num', 'cost_center_code', 'name'])
+                : collect(),
+            'branches' => filled($selected['branch_doc_num'] ?? null)
+                ? $this->context->allowedBranchQueryForCurrentCompany(request())->active()
+                    ->where('doc_num', $selected['branch_doc_num'])->get(['id', 'doc_num', 'name'])
+                : collect(),
+            'currencies' => filled($selected['currency_doc_num'] ?? null)
+                ? Currency::withTrashed()->forCompany($companyId)
+                    ->where('doc_num', $selected['currency_doc_num'])->get(['id', 'doc_num', 'code', 'name'])
+                : collect(),
         ];
+    }
+
+    /** @return array{results: list<array{id: string, text: string}>, pagination: array{more: bool}} */
+    public function select2Options(Request $request, string $kind, DataTableSearchService $search, Select2ResponseService $select2): array
+    {
+        $context = $this->context->snapshot($request);
+        abort_unless($context['company_id'] && $context['financial_period_id'], 409, __('operating_context.messages.required'));
+        $companyId = (int) $context['company_id'];
+        $terms = $search->terms($request->input('q', $request->input('term')));
+
+        if ($kind === 'accounts') {
+            $query = Account::query()->forCompany($companyId)->active()
+                ->where('account_type', Account::TypeExpense)->orderBy('account_code')->orderBy('id');
+            $search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'account_code', 'name', 'name_en']]);
+
+            return $select2->paginated($query, $request, fn (Account $account): array => [
+                'id' => $account->doc_num,
+                'text' => $account->doc_num.' / '.$account->codeNameLabel(),
+            ]);
+        }
+
+        if ($kind === 'classifications') {
+            $query = AccountClassification::query()->active()
+                ->whereIn('id', Account::query()->forCompany($companyId)->active()
+                    ->where('account_type', Account::TypeExpense)->whereNotNull('account_classification_id')
+                    ->select('account_classification_id'))
+                ->orderBy('code')->orderBy('id');
+            $search->applyMultiTermSearch($query, $terms, ['text' => ['code', 'name', 'name_en']]);
+
+            return $select2->paginated($query, $request, fn (AccountClassification $classification): array => [
+                'id' => $classification->code,
+                'text' => $classification->code.' / '.$classification->displayName(),
+            ]);
+        }
+
+        if ($kind === 'cost-centers') {
+            $query = CostCenter::query()->forCompany($companyId)->active()
+                ->orderBy('cost_center_code')->orderBy('id');
+            $search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'cost_center_code', 'name']]);
+
+            return $select2->paginated($query, $request, fn (CostCenter $center): array => [
+                'id' => $center->doc_num,
+                'text' => $center->doc_num.' / '.$center->codeNameLabel(),
+            ]);
+        }
+
+        if ($kind === 'branches') {
+            $query = $this->context->allowedBranchQueryForCurrentCompany($request)->active()
+                ->orderBy('name')->orderBy('id');
+            $search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'name']]);
+
+            return $select2->paginated($query, $request, fn (Branch $branch): array => [
+                'id' => $branch->doc_num,
+                'text' => $branch->doc_num.' / '.$branch->name,
+            ]);
+        }
+
+        abort_unless($kind === 'currencies', 404);
+        $query = Currency::query()->forCompany($companyId)->active()->orderBy('code')->orderBy('id');
+        $search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'code', 'name']]);
+
+        return $select2->paginated($query, $request, fn (Currency $currency): array => [
+            'id' => $currency->doc_num,
+            'text' => $currency->code.' / '.$currency->name,
+        ]);
     }
 
     /** @param array<string, mixed> $filters

@@ -5,6 +5,7 @@ namespace Modules\Inventory\Services;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Inventory\Models\InventoryDocument;
@@ -24,6 +25,8 @@ class InventoryMovementService
     public function createAndPost(array $header, array $lines): InventoryDocument
     {
         return DB::transaction(function () use ($header, $lines): InventoryDocument {
+            FinancialPeriod::query()->lockForUpdate()->findOrFail($header['financial_period_id']);
+
             return $this->posting->post($this->createDraft($header, $lines));
         });
     }
@@ -149,6 +152,11 @@ class InventoryMovementService
 
             if ((int) $product->company_id !== (int) $header['company_id'] || bccomp($quantity, '0', 8) <= 0) {
                 throw new DomainException(__('Inventory movement lines require a company product and a positive base quantity.'));
+            }
+
+            if ($document->document_type === InventoryDocument::TypeReceipt
+                && $product->item_classification === Product::ClassificationFinishedProduct) {
+                throw new DomainException(__('inventory.movements.messages.finished_goods_require_production_receipt'));
             }
 
             $this->assertLocationBelongsToStore($sourceLocationId, (int) $sourceStore->getKey());

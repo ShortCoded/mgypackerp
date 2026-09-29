@@ -172,6 +172,10 @@ Route::middleware('auth')
             ->defaults('section', 'runs')
             ->middleware('can:production.reports.runs.view')
             ->name('reports.runs');
+        Route::get('/reports/operations/control', [ProductionReportController::class, 'index'])
+            ->defaults('section', 'control')
+            ->middleware('can:production.reports.control.view')
+            ->name('reports.control');
         Route::get('/reports/operations/materials', [ProductionReportController::class, 'index'])
             ->defaults('section', 'materials')
             ->middleware('can:production.reports.materials.view')

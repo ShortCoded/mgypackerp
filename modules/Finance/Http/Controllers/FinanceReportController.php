@@ -52,6 +52,14 @@ class FinanceReportController extends Controller
         ]);
     }
 
+    public function select2(Request $request, string $kind): JsonResponse
+    {
+        $filters = $this->reports->filters($request);
+        $this->authorizeRequest($request, $filters['type'], 'view');
+
+        return response()->json($this->reports->select2Options($request, $kind, $filters));
+    }
+
     public function excel(Request $request): BinaryFileResponse
     {
         $filters = $this->reports->filters($request);

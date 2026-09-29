@@ -18,15 +18,16 @@
     <td><strong>{{ __('inventory_accounting.sales_valuation.sales_value') }}</strong><br>{{ $numbers->format($totals['sales_value']) }} @if($currencyCode){{ $currencyCode }}@endif</td>
     <td><strong>{{ __('inventory_accounting.sales_valuation.unpriced_quantity') }}</strong><br>{{ $numbers->format($totals['unpriced_quantity']) }}</td>
     <td><strong>{{ __('inventory_accounting.sales_valuation.unpriced_product_count') }}</strong><br>{{ $totals['unpriced_product_count'] ?? 0 }}</td>
+    <td><strong>{{ __('inventory_accounting.sales_valuation.priced_outside_stock_scope_count') }}</strong><br>{{ $totals['priced_outside_stock_scope_count'] ?? 0 }}</td>
 </tr></table>
-<table class="report-table">
-    <thead><tr><th>{{ __('stock_balance_inquiry.columns.branch') }}</th><th>{{ __('stock_balance_inquiry.columns.store') }}</th><th>{{ __('stock_balance_inquiry.columns.location') }}</th><th>{{ __('stock_balance_inquiry.columns.product') }}</th><th class="text-right">{{ __('stock_balance_inquiry.columns.on_hand') }}</th><th class="text-right">{{ __('inventory_accounting.sales_valuation.unit_selling_price') }}</th><th class="text-right">{{ __('inventory_accounting.sales_valuation.sales_value') }}</th><th>{{ __('inventory_accounting.sales_valuation.price_status') }}</th></tr></thead>
+<table dir="{{ $direction ?? 'ltr' }}" class="report-table">
+    <thead><tr><th>{{ __('stock_balance_inquiry.columns.branch') }}</th><th>{{ __('stock_balance_inquiry.columns.store') }}</th><th>{{ __('stock_balance_inquiry.columns.hall') }}</th><th>{{ __('stock_balance_inquiry.columns.product') }}</th><th class="text-right">{{ __('stock_balance_inquiry.columns.on_hand') }}</th><th class="text-right">{{ __('inventory_accounting.sales_valuation.unit_selling_price') }}</th><th class="text-right">{{ __('inventory_accounting.sales_valuation.sales_value') }}</th><th>{{ __('inventory_accounting.sales_valuation.price_status') }}</th></tr></thead>
     <tbody>
         @forelse($rows as $row)
             <tr>
                 <td>{{ $row->branch?->name }}</td>
                 <td>{{ $row->branchStore?->name }}</td>
-                <td>{{ collect([$row->branchHall?->name, $row->warehouseLocation?->code])->filter()->implode(' / ') ?: '—' }}</td>
+                <td>{{ $row->branchHall?->name ?: '—' }}</td>
                 <td>{{ $row->product?->doc_num }} — {{ $row->product?->name }}</td>
                 <td class="number">{{ $numbers->format($row->on_hand) }}</td>
                 <td class="number">{{ $row->unit_selling_price !== null ? $numbers->format($row->unit_selling_price) : '—' }}</td>
@@ -39,3 +40,9 @@
     </tbody>
     <tfoot><tr class="total"><td colspan="4">{{ __('inventory_accounting.book_valuation.total') }}</td><td class="number">{{ $numbers->format($totals['quantity']) }}</td><td></td><td class="number">{{ $numbers->format($totals['sales_value']) }} @if($currencyCode){{ $currencyCode }}@endif</td><td></td></tr></tfoot>
 </table>
+@if(($valuation['pricedOutsideStockScope'] ?? collect())->isNotEmpty())
+    <h3>{{ __('inventory_accounting.sales_valuation.priced_outside_stock_scope') }}</h3>
+    <table dir="{{ $direction ?? 'ltr' }}" class="report-table"><thead><tr><th>{{ __('stock_balance_inquiry.columns.product') }}</th><th>{{ __('stock_balance_inquiry.columns.unit') }}</th><th>{{ __('inventory_accounting.sales_valuation.unit_selling_price') }}</th><th>{{ __('inventory_accounting.sales_valuation.price_status') }}</th></tr></thead><tbody>
+        @foreach($valuation['pricedOutsideStockScope'] as $line)<tr><td>{{ $line->product?->doc_num }} — {{ $line->product?->name }}</td><td>{{ $line->product?->unit?->name }}</td><td class="number">{{ $numbers->format($line->unit_price) }}</td><td>{{ __('inventory_accounting.sales_valuation.price_statuses.outside_scope') }}</td></tr>@endforeach
+    </tbody></table>
+@endif

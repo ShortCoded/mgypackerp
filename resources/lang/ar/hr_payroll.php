@@ -69,6 +69,7 @@ return [
         'branch_not_found' => 'الفرع المحدد غير متاح للشركة الحالية.',
         'period_closed' => 'فترة الرواتب المحددة مغلقة.',
         'unsupported_pay_basis' => 'أساس أجر الموظف :employee غير مدعوم في احتساب الرواتب.',
+        'partial_period_salary_requires_policy' => 'راتب الموظف :employee تغير أو بدأ/انتهى أثناء فترة المسير؛ يجب تحديد قاعدة معتمدة لتوزيع أجر الفترة قبل احتسابه.',
         'overtime_rate_required' => 'يجب تحديد سعر ساعة إضافية صريح قبل صرف الوقت الإضافي المعتمد للموظف :employee.',
         'payroll_item_mapping_invalid' => 'بند الراتب :item غير نشط أو غير معد بالاتجاه المطلوب كمستحق أو خصم.',
         'review_transition_invalid' => 'لا يمكن إرسال مسير الرواتب للمراجعة إلا بعد احتسابه.',

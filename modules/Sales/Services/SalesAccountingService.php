@@ -13,6 +13,7 @@ use Modules\Finance\Models\Cashbox;
 use Modules\FixedAssets\Models\FixedAssetCategoryMapping;
 use Modules\FixedAssets\Models\FixedAssetDisposal;
 use Modules\Inventory\Models\InventoryDocument;
+use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerReceipt;
 use Modules\Sales\Models\SalesReturn;
@@ -93,6 +94,13 @@ class SalesAccountingService
     public function postDeliveryCost(InventoryDocument $delivery): JournalEntry
     {
         $delivery->loadMissing('lines.product');
+        $unvaluedLine = $delivery->lines->first(fn (InventoryDocumentLine $line): bool => $line->unit_cost === null || $line->total_cost === null);
+        if ($unvaluedLine instanceof InventoryDocumentLine) {
+            throw new DomainException(__('sales_ui.delivery_cost_unknown', [
+                'document' => $delivery->doc_num,
+                'product' => $unvaluedLine->product?->doc_num ?? (string) $unvaluedLine->product_id,
+            ]));
+        }
         $cost = $this->amounts->sum($delivery->lines->pluck('total_cost'), 4);
         if ($this->amounts->compare($cost, '0') <= 0) {
             throw new DomainException(__('A delivery cannot post COGS without an inventory cost.'));

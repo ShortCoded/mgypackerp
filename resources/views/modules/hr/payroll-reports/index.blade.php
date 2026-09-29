@@ -29,29 +29,35 @@
                 <div class="col-6 col-lg-2"><x-forms.label for="period_to" :label="__('hr_payroll_reports.filters.period_to')" /><x-forms.date-input id="period_to" name="period_to" :value="$filters['period_to'] ?? null" /></div>
                 <div class="col-12 col-lg-3">
                     <x-forms.label for="branch_doc_num" :label="__('hr_payroll_reports.columns.branch')" />
-                    <x-forms.select id="branch_doc_num" name="branch_doc_num" class="form-select">
+                    <x-forms.select id="branch_doc_num" name="branch_doc_num" class="form-select" variant="ajax" :url="route('admin.select2.branches', ['access_scope' => 'operating_scope'])" :placeholder="__('hr_payroll.labels.all_branches')">
                         <option value="">{{ __('hr_payroll.labels.all_branches') }}</option>
-                        @foreach ($branches as $branch)<option value="{{ $branch->doc_num }}" @selected(($filters['branch_doc_num'] ?? null) === $branch->doc_num)>{{ $branch->name }}</option>@endforeach
+                        @foreach ($branches as $branch)<option value="{{ $branch->doc_num }}" selected>{{ $branch->name }} / {{ $branch->doc_num }}</option>@endforeach
                     </x-forms.select>
                 </div>
                 <div class="col-6 col-lg-2"><x-forms.label for="run_id" :label="__('hr_payroll_reports.columns.run')" /><x-forms.input id="run_id" name="run_id" type="number" min="1" :value="$filters['run_id'] ?? null" /></div>
-                <div class="col-6 col-lg-2"><x-forms.label for="status" :label="__('hr_payroll_reports.columns.status')" /><x-forms.input id="status" name="status" :value="$filters['status'] ?? null" /></div>
+                <div class="col-6 col-lg-2"><x-forms.label for="status" :label="__('hr_payroll_reports.columns.status')" /><x-forms.select id="status" name="status" variant="local"><option value="">{{ __('hr_workforce_reports.filters.all') }}</option>@foreach($isPayroll ? ['draft', 'calculated', 'under_review', 'approved', 'posted'] : ['draft', 'approved', 'cancelled'] as $status)<option value="{{ $status }}" @selected(($filters['status'] ?? null) === $status)>{{ __('hr_payroll.status.'.$status) }}</option>@endforeach</x-forms.select></div>
                 <div class="col-12 col-lg-3"><x-forms.label for="employee" :label="__('hr_payroll_reports.columns.employee')" /><x-forms.input id="employee" name="employee" :value="$filters['employee'] ?? null" /></div>
             </x-admin.report.filter-panel>
 
+            @if($report['rows']->total() > 0)
             <div class="row g-2 mb-3">
                 @if ($isPayroll)
                     @foreach ($report['totals'] as $currencyTotals)
                         @foreach (['gross', 'deductions', 'net'] as $key)
+                            @if(bccomp((string) $currencyTotals[$key], '0', 8) !== 0)
                             <div class="col-6 col-lg-3"><div class="card"><div class="card-body py-3 text-center"><div class="small text-muted">{{ __('hr_payroll_reports.totals.'.$key) }}</div><strong dir="ltr">{{ $numbers->format($currencyTotals[$key]) }} {{ $currencyTotals['currency_code'] ?: __('hr_payroll_reports.unknown_currency') }}</strong></div></div></div>
+                            @endif
                         @endforeach
                     @endforeach
                 @else
                     @foreach ($report['totals'] as $key => $value)
+                        @if(bccomp((string) $value, '0', 8) !== 0)
                         <div class="col-6 col-lg-3"><div class="card"><div class="card-body py-3 text-center"><div class="small text-muted">{{ __('hr_payroll_reports.totals.'.$key) }}</div><strong dir="ltr">{{ $numbers->format($value) }} {{ $report['currency_code'] }}</strong></div></div></div>
+                        @endif
                     @endforeach
                 @endif
             </div>
+            @endif
 
             <div class="card"><div class="table-responsive"><table class="table table-hover align-middle mb-0">
                 <thead><tr>

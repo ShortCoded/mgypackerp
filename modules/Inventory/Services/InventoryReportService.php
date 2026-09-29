@@ -18,11 +18,13 @@ use Modules\Sales\Models\PriceList;
 
 class InventoryReportService
 {
+    public const MovementPageSize = 500;
+
     /**
      * @param  array<string, mixed>  $filters
      * @return array<string, array<string, string>|Collection|SupportCollection>
      */
-    public function report(int $companyId, int $financialPeriodId, int $branchId, array $filters = []): array
+    public function report(int $companyId, int $financialPeriodId, int $branchId, array $filters = [], ?int $movementPage = 1): array
     {
         $contextFilters = [
             ...$filters,
@@ -32,7 +34,7 @@ class InventoryReportService
         $balances = $this->balances($companyId, $contextFilters);
         $reservations = $this->reservations($companyId, [...$contextFilters, 'status' => InventoryReservation::StatusActive]);
 
-        $movements = $this->movements($companyId, $contextFilters);
+        $movements = $this->movements($companyId, $contextFilters, $movementPage);
         $agingLayers = $this->agingLayers($companyId, $contextFilters);
         $expiryLayers = $this->expiryLayers($companyId, $contextFilters);
 
@@ -55,8 +57,7 @@ class InventoryReportService
                 'on_hand' => $this->decimalTotal($balances, 'on_hand'),
                 'inventory_value' => $this->decimalTotal($balances, 'inventory_value'),
                 'unvalued_receipt_quantity' => $this->decimalTotal($balances, 'unvalued_receipt_quantity'),
-                'quantity_in' => $this->decimalTotal($movements, 'quantity_in'),
-                'quantity_out' => $this->decimalTotal($movements, 'quantity_out'),
+                ...$this->movementTotals($companyId, $contextFilters),
                 'aging_quantity' => $this->decimalTotal($agingLayers, 'remaining_quantity'),
                 'aging_value' => $agingLayers->reduce(
                     fn (string $total, InventoryReceiptLayer $layer): string => bcadd($total, bcmul((string) $layer->remaining_quantity, (string) ($layer->unit_cost ?? 0), 8), 8),
@@ -271,7 +272,6 @@ class InventoryReportService
                 when unit_cost is not null and total_cost is not null then case when quantity_in > 0 then total_cost else -total_cost end
                 else 0 end) as book_value')
             ->selectRaw('sum(case when unit_cost is null or total_cost is null then quantity_in - quantity_out else 0 end) as unvalued_quantity')
-            ->selectRaw('sum(case when unit_cost is null or total_cost is null then 1 else 0 end) as unvalued_row_count')
             ->selectRaw('sum(case when unit_cost is not null and total_cost is not null and total_cost = 0 then 1 else 0 end) as zero_cost_row_count')
             ->where('company_id', $companyId)
             ->whereIn('branch_id', $allowedBranchIds)
@@ -300,7 +300,7 @@ class InventoryReportService
                 $bookValue = bcadd((string) $row->book_value, '0', 8);
                 $unvaluedQuantity = bcadd((string) $row->unvalued_quantity, '0', 8);
                 $hasUnvalued = bccomp($unvaluedQuantity, '0', 8) !== 0;
-                $unvaluedRows = $hasUnvalued ? (int) $row->unvalued_row_count : 0;
+                $unvaluedRows = $hasUnvalued ? 1 : 0;
                 $isZeroCost = ! $hasUnvalued && bccomp($bookValue, '0', 8) === 0;
 
                 $row->setAttribute('on_hand', $quantity);
@@ -470,9 +470,45 @@ class InventoryReportService
     }
 
     /** @param array<string, mixed> $filters */
-    public function movements(int $companyId, array $filters = []): Collection
+    public function movements(int $companyId, array $filters = [], ?int $page = 1): Collection
     {
-        $rows = InventoryTransaction::query()
+        $query = $this->movementQuery($companyId, $filters)
+            ->with(['product', 'branchStore', 'warehouseLocation', 'productionRun'])
+            ->latest('transaction_date')
+            ->latest('id');
+
+        if ($page !== null) {
+            $query->offset((max(1, $page) - 1) * self::MovementPageSize)
+                ->limit(self::MovementPageSize);
+        }
+
+        $rows = $query->get();
+
+        $this->hydrateMovementSources($rows);
+
+        return $rows;
+    }
+
+    /** @param array<string, mixed> $filters
+     * @return array{quantity_in: string, quantity_out: string, movement_count: int}
+     */
+    private function movementTotals(int $companyId, array $filters): array
+    {
+        $totals = $this->movementQuery($companyId, $filters)
+            ->selectRaw('coalesce(sum(quantity_in), 0) as quantity_in, coalesce(sum(quantity_out), 0) as quantity_out, count(*) as movement_count')
+            ->first();
+
+        return [
+            'quantity_in' => (string) ($totals?->quantity_in ?? '0'),
+            'quantity_out' => (string) ($totals?->quantity_out ?? '0'),
+            'movement_count' => (int) ($totals?->movement_count ?? 0),
+        ];
+    }
+
+    /** @param array<string, mixed> $filters */
+    private function movementQuery(int $companyId, array $filters): Builder
+    {
+        return InventoryTransaction::query()
             ->where('company_id', $companyId)
             ->when($filters['financial_period_id'] ?? null, fn ($query, $periodId) => $query->where('financial_period_id', $periodId))
             ->when($filters['branch_id'] ?? null, fn ($query, $branchId) => $query->whereHas('branchStore', fn ($storeQuery) => $storeQuery->where('branch_id', $branchId)))
@@ -482,16 +518,7 @@ class InventoryReportService
             ->when($filters['transaction_type'] ?? null, fn ($query, $type) => $query->where('transaction_type', $type))
             ->when($filters['transaction_types'] ?? null, fn ($query, $types) => $query->whereIn('transaction_type', $types))
             ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereDate('transaction_date', '>=', $from))
-            ->when($filters['to'] ?? null, fn ($query, $to) => $query->whereDate('transaction_date', '<=', $to))
-            ->with(['product', 'branchStore', 'warehouseLocation', 'productionRun'])
-            ->latest('transaction_date')
-            ->latest('id')
-            ->limit(500)
-            ->get();
-
-        $this->hydrateMovementSources($rows);
-
-        return $rows;
+            ->when($filters['to'] ?? $filters['as_of'] ?? null, fn ($query, $to) => $query->whereDate('transaction_date', '<=', $to));
     }
 
     /** @param array<string, mixed> $filters */
@@ -657,7 +684,6 @@ class InventoryReportService
             ->findOrFail($priceListId);
         $priceListLines = $priceList->lines()->pluck('unit_price', 'product_id')->all();
         $priceListCurrencyCode = $priceList->currency?->code;
-
         $rows = $positions->map(function (InventoryTransaction $row) use ($priceListLines, $priceList, $priceListCurrencyCode): object {
             $quantity = bcadd((string) $row->on_hand, '0', 8);
             $unitSellingPrice = isset($priceListLines[$row->product_id]) ? (string) $priceListLines[$row->product_id] : null;
@@ -686,6 +712,13 @@ class InventoryReportService
             default => $rows,
         };
 
+        $pricedOutsideStockScope = $priceList->lines()
+            ->whereNotIn('product_id', $rows->pluck('product_id')->unique()->all() ?: [0])
+            ->whereHas('product', fn (Builder $query) => $this->applyStockBalanceProductFilters($query, $companyId, $filters))
+            ->with('product.unit')
+            ->orderBy('product_id')
+            ->get();
+
         $totals = [
             'position_count' => $rows->count(),
             'product_count' => $rows->pluck('product_id')->unique()->count(),
@@ -696,6 +729,8 @@ class InventoryReportService
                 fn (string $total, object $row): string => bcadd($total, (string) $row->on_hand, 8),
                 '0.00000000',
             ),
+            'price_list_product_count' => count($priceListLines),
+            'priced_outside_stock_scope_count' => $pricedOutsideStockScope->count(),
         ];
 
         return [
@@ -703,6 +738,7 @@ class InventoryReportService
             'totals' => $totals,
             'priceList' => $priceList,
             'priceListCurrencyCode' => $priceListCurrencyCode,
+            'pricedOutsideStockScope' => $pricedOutsideStockScope,
             'asOf' => $asOf->toDateString(),
         ];
     }

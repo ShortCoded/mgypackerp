@@ -468,10 +468,8 @@ class InventorySelect2Service
             ->where('inventory_opening_stocks.company_id', $companyId)
             ->where('inventory_opening_stocks.financial_period_id', $financialPeriodId)
             ->whereIn('inventory_opening_stocks.branch_id', $allowedBranches)
-            ->where(fn (Builder $status) => $status
-                ->where('inventory_opening_stocks.is_closed', true)
-                ->orWhere('inventory_opening_stocks.approved', true)
-                ->orWhereIn('inventory_opening_stocks.status', [OpeningStock::StatusClosed, OpeningStock::StatusApproved]))
+            ->where('inventory_opening_stocks.approved', true)
+            ->where('inventory_opening_stocks.status', OpeningStock::StatusApproved)
             ->whereExists(function ($lines) use ($currentPricingId): void {
                 $lines->selectRaw('1')
                     ->from('inventory_opening_stock_lines')

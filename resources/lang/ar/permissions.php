@@ -215,6 +215,9 @@ foreach ([
 }
 
 $reportPermissionLabels = [
+    'production.reports.control.view' => 'عرض مراقبة إنتاج الحقن والكوفير',
+    'production.reports.control.export' => 'تصدير مراقبة إنتاج الحقن والكوفير',
+    'production.reports.control.print' => 'طباعة مراقبة إنتاج الحقن والكوفير',
     'reports.products_data.view' => 'عرض تقرير بيانات المنتجات والخامات',
     'reports.products_data.export' => 'تصدير تقرير بيانات المنتجات والخامات',
     'reports.products_data.pdf' => 'تصدير PDF لتقرير بيانات المنتجات والخامات',

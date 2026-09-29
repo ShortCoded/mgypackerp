@@ -83,10 +83,10 @@
                 @if(in_array('cashbox_doc_num', $applicableFilters, true))
                 <div class="col-12 col-md-6 col-xl-4">
                     <x-forms.label for="finance-report-cashbox" :label="__('finance_reports.filters.cashbox_doc_num')" />
-                    <x-forms.select class="form-select form-select-sm js-select2-local js-report-filter-control" id="finance-report-cashbox" name="cashbox_doc_num" data-allow-clear="true">
+                    <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="finance-report-cashbox" name="cashbox_doc_num" data-url="{{ route('admin.reports.finance.select2', ['kind' => 'cashboxes', 'type' => $report['type'], 'branch_id' => $filters['branch_id'] ?? null]) }}" data-allow-clear="true">
                         <option value=""></option>
                         @foreach($filterOptions['cashboxes'] as $cashbox)
-                            <option value="{{ $cashbox->doc_num }}" @selected(($filters['cashbox_doc_num'] ?? null) === $cashbox->doc_num)>{{ $cashbox->doc_num }} / {{ $cashbox->name }}</option>
+                            <option value="{{ $cashbox->doc_num }}" selected>{{ $cashbox->doc_num }} / {{ $cashbox->name }}</option>
                         @endforeach
                     </x-forms.select>
                 </div>
@@ -94,10 +94,10 @@
                 @if(in_array('bank_account_doc_num', $applicableFilters, true))
                 <div class="col-12 col-md-6 col-xl-4">
                     <x-forms.label for="finance-report-bank" :label="__('finance_reports.filters.bank_account_doc_num')" />
-                    <x-forms.select class="form-select form-select-sm js-select2-local js-report-filter-control" id="finance-report-bank" name="bank_account_doc_num" data-allow-clear="true">
+                    <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="finance-report-bank" name="bank_account_doc_num" data-url="{{ route('admin.reports.finance.select2', ['kind' => 'bank-accounts', 'type' => $report['type']]) }}" data-allow-clear="true">
                         <option value=""></option>
                         @foreach($filterOptions['bank_accounts'] as $bank)
-                            <option value="{{ $bank->doc_num }}" @selected(($filters['bank_account_doc_num'] ?? null) === $bank->doc_num)>{{ implode(' / ', array_filter([$bank->doc_num, $bank->account_name, $bank->account_number])) }}</option>
+                            <option value="{{ $bank->doc_num }}" selected>{{ implode(' / ', array_filter([$bank->doc_num, $bank->account_name, $bank->account_number])) }}</option>
                         @endforeach
                     </x-forms.select>
                 </div>
@@ -105,10 +105,10 @@
                 @if(in_array('currency_doc_num', $applicableFilters, true))
                 <div class="col-12 col-md-6 col-xl-4">
                     <x-forms.label for="finance-report-currency" :label="__('finance_reports.filters.currency_doc_num')" />
-                    <x-forms.select class="form-select form-select-sm js-select2-local js-report-filter-control" id="finance-report-currency" name="currency_doc_num" data-allow-clear="true">
+                    <x-forms.select class="form-select form-select-sm js-select2-ajax js-report-filter-control" id="finance-report-currency" name="currency_doc_num" data-url="{{ route('admin.reports.finance.select2', ['kind' => 'currencies', 'type' => $report['type']]) }}" data-allow-clear="true">
                         <option value=""></option>
                         @foreach($filterOptions['currencies'] as $currency)
-                            <option value="{{ $currency->doc_num }}" @selected(($filters['currency_doc_num'] ?? null) === $currency->doc_num)>{{ $currency->code }} / {{ $currency->name }}</option>
+                            <option value="{{ $currency->doc_num }}" selected>{{ $currency->code }} / {{ $currency->name }}</option>
                         @endforeach
                     </x-forms.select>
                 </div>

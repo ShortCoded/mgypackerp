@@ -181,6 +181,7 @@ function hrAllReviewHrViewPermissions(): array
         'hr.leave_types.view',
         'hr.payroll_attendance_policies.view',
         'hr.employee_reports.view',
+        'hr.attendance_report.view',
         'hr.leave_reports.view',
         'hr.payroll_reports.view',
         'hr.payroll_payment_reports.view',

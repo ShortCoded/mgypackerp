@@ -280,6 +280,7 @@ Route::middleware('auth')
     ->controller(FinanceReportController::class)
     ->group(function (): void {
         Route::get('/', 'index')->name('index');
+        Route::get('/select2/{kind}', 'select2')->name('select2');
         Route::get('/export/excel', 'excel')->name('export.excel');
         Route::get('/export/csv', 'csv')->name('export.csv');
         Route::get('/export/pdf', 'pdf')->name('export.pdf');

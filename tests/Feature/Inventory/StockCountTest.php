@@ -15,7 +15,6 @@ use Modules\Core\Models\Product;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\StockCount;
-use Modules\Inventory\Models\WarehouseLocation;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -27,7 +26,6 @@ function stockCountFixture(array $permissions = []): array
     $branch = Branch::query()->where('company_id', $company->getKey())->where('status', 'active')->firstOrFail();
     $period = FinancialPeriod::query()->where('company_id', $company->getKey())->where('is_closed', false)->firstOrFail();
     $store = BranchStore::query()->create(['branch_id' => $branch->getKey(), 'name' => 'Count Store', 'position' => 1]);
-    $location = WarehouseLocation::query()->create(['branch_store_id' => $store->getKey(), 'code' => 'A-01', 'name' => 'Aisle 1', 'is_active' => true]);
     $unit = ItemUnit::query()->create([
         'company_id' => $company->getKey(), 'doc_number' => 801, 'doc_num' => 'UNIT-COUNT',
         'name' => 'Piece', 'status' => 'active',
@@ -60,7 +58,7 @@ function stockCountFixture(array $permissions = []): array
         OperatingContextService::FinancialPeriodDocNumKey => $period->doc_num,
     ];
 
-    return compact('company', 'branch', 'period', 'store', 'location', 'unit', 'firstProduct', 'secondProduct', 'user', 'session');
+    return compact('company', 'branch', 'period', 'store', 'unit', 'firstProduct', 'secondProduct', 'user', 'session');
 }
 
 /** @param array<string, mixed> $fixture */
@@ -72,7 +70,6 @@ function stockCountTransaction(array $fixture, Product $product, string $quantit
         'financial_period_id' => $fixture['period']->getKey(),
         'branch_id' => $fixture['branch']->getKey(),
         'branch_store_id' => $fixture['store']->getKey(),
-        'warehouse_location_id' => $fixture['location']->getKey(),
         'stock_status' => $status,
         'batch_lot' => $batch,
         'transaction_date' => now()->toDateString(),
@@ -95,7 +92,6 @@ function stockCountPayload(array $fixture, array $lines, array $overrides = []):
 {
     return [
         'branch_store_id' => $fixture['store']->getKey(),
-        'warehouse_location_id' => $fixture['location']->getKey(),
         'count_date' => now()->toDateString(),
         'notes' => 'Full master detail stock count',
         'submit_action' => 'save_view',
@@ -136,7 +132,23 @@ test('stock count uses the standard master detail datatable and crud surface', f
         ->assertSee('data-submit-action="save_view"', false)
         ->assertSee('data-submit-action="save_edit"', false)
         ->assertSee('data-submit-action="save_back"', false)
+        ->assertDontSee('name="warehouse_location_id"', false)
         ->assertDontSee('product_ids[]', false);
+});
+
+test('stock count rejects a warehouse location submitted outside the form', function (): void {
+    $fixture = stockCountFixture(['inventory.stock_counts.create']);
+
+    $this->actingAs($fixture['user'])->withSession($fixture['session'])
+        ->postJson(route('admin.inventory.stock-counts.store'), stockCountPayload($fixture, [[
+            'product_doc_num' => $fixture['firstProduct']->doc_num,
+            'physical_quantity' => '1',
+            'stock_status' => InventoryTransaction::StatusAvailable,
+        ]], ['warehouse_location_id' => 1]))
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('warehouse_location_id');
+
+    expect(StockCount::query()->count())->toBe(0);
 });
 
 test('one stock count save calculates shortage surplus and supports report approval and locking', function (): void {
@@ -179,7 +191,6 @@ test('one stock count save calculates shortage surplus and supports report appro
     $this->actingAs($fixture['user'])->withSession($fixture['session'])
         ->getJson(route('admin.inventory.stock-counts.balance', [
             'branch_store_id' => $fixture['store']->getKey(),
-            'warehouse_location_id' => $fixture['location']->getKey(),
             'product_doc_num' => $fixture['firstProduct']->doc_num,
             'stock_status' => InventoryTransaction::StatusAvailable,
         ]))

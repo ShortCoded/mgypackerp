@@ -77,7 +77,7 @@ class OpeningStockController extends Controller
     public function print(Request $request, string $openingStock): Response
     {
         $record = $this->findInCurrentContext($request, $openingStock, true)->load([
-            'company', 'branch', 'branchHall', 'branchStore', 'lines.product', 'lines.warehouseLocation', 'approvedBy',
+            'company', 'branch', 'branchHall', 'branchStore', 'lines.product', 'approvedBy',
         ]);
 
         return $this->pdf->stream('reports.inventory.opening-stock', [

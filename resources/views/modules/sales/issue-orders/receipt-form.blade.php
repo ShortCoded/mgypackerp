@@ -20,7 +20,7 @@
             <div class="row g-3">
                 <div class="col-md-6"><x-forms.label for="delivery-recipient" :label="__('sales_issue.recipient_name')" required /><x-forms.input id="delivery-recipient" name="recipient_name" class="form-control" :value="old('recipient_name')" required /></div>
                 <div class="col-md-6"><x-forms.label for="delivery-phone" :label="__('sales_issue.recipient_phone')" /><x-forms.input id="delivery-phone" name="recipient_phone" class="form-control" :value="old('recipient_phone')" /></div>
-                <div class="col-12"><x-forms.label for="delivery-signature" :label="__('sales_issue.customer_signature')" required /><input id="delivery-signature" type="file" name="signature" class="form-control" accept=".jpg,.jpeg,.png,.pdf" required /><small class="text-600">{{ __('sales_issue.signature_help') }}</small></div>
+                <div class="col-12"><x-forms.label for="delivery-signature" :label="__('sales_issue.customer_signature')" required /><x-forms.input id="delivery-signature" type="file" name="signature" class="form-control" accept=".jpg,.jpeg,.png,.pdf" required /><small class="text-600">{{ __('sales_issue.signature_help') }}</small></div>
                 <div class="col-12"><x-forms.label for="delivery-receipt-notes" :label="__('sales_issue.notes')" /><x-forms.textarea id="delivery-receipt-notes" name="notes" class="form-control" rows="2">{{ old('notes') }}</x-forms.textarea></div>
             </div>
             <button class="btn btn-primary btn-sm mt-3" type="submit">{{ __('sales_issue.confirm_receipt') }}</button>

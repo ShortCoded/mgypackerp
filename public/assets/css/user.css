@@ -573,6 +573,114 @@ body {
   padding: 0;
 }
 
+.admin-report-page {
+  --report-ink: #14335c;
+  --report-accent: #0b8f94;
+  --report-line: #dce6ed;
+}
+
+.admin-report-page > .card,
+.admin-report-page .report-table-card,
+.admin-report-page .report-filter-panel {
+  border: 1px solid var(--report-line);
+  border-radius: 0.85rem;
+  box-shadow: 0 8px 24px rgba(20, 51, 92, 0.055);
+  overflow: hidden;
+}
+
+.admin-report-page > .card > .card-header,
+.admin-report-page .report-table-card > .card-header {
+  background: linear-gradient(110deg, #f4fafb, #f8fafc 70%);
+  border-bottom: 1px solid var(--report-line);
+  border-inline-start: 4px solid var(--report-accent);
+  color: var(--report-ink);
+}
+
+.admin-report-page > .card > .card-header h5,
+.admin-report-page > .card > .card-header h6,
+.admin-report-page .report-table-card > .card-header h5,
+.admin-report-page .report-table-card > .card-header h6 {
+  color: var(--report-ink);
+}
+
+.admin-report-page .table thead th,
+.admin-report-page table.table.dataTable > thead > tr > th {
+  background-color: #e7f1f4;
+  border-color: #cadce5;
+  color: var(--report-ink);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.admin-report-page .table tbody tr:nth-child(even) {
+  background: #f8fbfc;
+}
+
+.admin-report-page .table tbody tr:hover {
+  background: #edf8f8;
+}
+
+html[data-bs-theme="dark"] .admin-report-page table.table.dataTable > thead > tr > th,
+html[data-bs-theme="dark"] .admin-report-page .table thead th {
+  background-color: #1d4050;
+  border-color: #345569;
+  color: #eaf6f8;
+}
+
+html[data-bs-theme="dark"] .admin-report-page .table tbody tr:nth-child(even),
+html[data-bs-theme="dark"] .admin-report-page .table tbody tr:hover {
+  background: #1a2c3d;
+}
+
+html[data-bs-theme="dark"] .admin-report-page > .card > .card-header,
+html[data-bs-theme="dark"] .admin-report-page .report-table-card > .card-header {
+  background: linear-gradient(110deg, #20394b, #1a3042 70%);
+  border-color: #345569;
+  color: #eaf6f8;
+}
+
+html[data-bs-theme="dark"] .admin-report-page > .card > .card-header h5,
+html[data-bs-theme="dark"] .admin-report-page > .card > .card-header h6,
+html[data-bs-theme="dark"] .admin-report-page .report-table-card > .card-header h5,
+html[data-bs-theme="dark"] .admin-report-page .report-table-card > .card-header h6 {
+  color: #eaf6f8;
+}
+
+.admin-report-page .card .text-primary,
+.admin-report-page .table a {
+  color: #116b88 !important;
+}
+
+html[data-bs-theme="dark"] .admin-report-page .card .text-primary,
+html[data-bs-theme="dark"] .admin-report-page .table a {
+  color: #7bd6ea !important;
+}
+
+html[data-bs-theme="dark"] .admin-report-page .form-label,
+html[data-bs-theme="dark"] .admin-report-page .card .text-muted {
+  color: #c5d7e3 !important;
+}
+
+html[data-bs-theme="dark"] .admin-report-page .card .fs-5,
+html[data-bs-theme="dark"] .admin-report-page .card .fs-4 {
+  color: #f1f7fb;
+}
+
+.admin-report-page .btn-primary {
+  background: var(--report-ink);
+  border-color: var(--report-ink);
+}
+
+.admin-report-page .btn-primary:hover {
+  background: #205185;
+  border-color: #205185;
+}
+
+html[data-bs-theme="dark"] .admin-report-page .btn-primary {
+  background: #16647c;
+  border-color: #16647c;
+}
+
 .erp-datatable-card .dropdown-menu,
 .erp-datatable-card .btn-reveal-trigger .dropdown-menu {
   z-index: 1080;

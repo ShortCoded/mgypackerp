@@ -81,14 +81,7 @@ class StoreStockCountRequest extends FormRequest
                     ->where('branch_id', $this->input('branch_id'))
                     ->whereNull('deleted_at')),
             ],
-            'warehouse_location_id' => [
-                'nullable',
-                'integer',
-                Rule::exists('warehouse_locations', 'id')->where(fn ($query) => $query
-                    ->where('branch_store_id', $this->input('branch_store_id'))
-                    ->where('is_active', true)
-                    ->whereNull('deleted_at')),
-            ],
+            'warehouse_location_id' => ['prohibited'],
             'count_date' => ['required', function (string $attribute, mixed $value, Closure $fail): void {
                 if (! app(DateFormatService::class)->isValidDate(is_string($value) ? $value : null)) {
                     $fail(__('inventory.stock_counts.messages.date_invalid'));
@@ -189,7 +182,6 @@ class StoreStockCountRequest extends FormRequest
         return [
             'doc_number' => __('inventory.stock_counts.attributes.doc_number'),
             'branch_store_id' => __('inventory.stock_counts.attributes.store'),
-            'warehouse_location_id' => __('inventory.stock_counts.attributes.location'),
             'count_date' => __('inventory.stock_counts.attributes.count_date'),
             'notes' => __('inventory.stock_counts.attributes.notes'),
             'lines' => __('inventory.stock_counts.attributes.lines'),

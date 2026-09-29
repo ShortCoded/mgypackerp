@@ -169,6 +169,41 @@ test('dashboard purchase request count follows the same branch visibility as the
     );
 });
 
+test('procurement report lookups are paginated, branch scoped, and hydrate the selected document', function (): void {
+    $fixture = procurementUiFixture();
+    $requisition = procurementManualRequisition($fixture);
+    $query = [
+        'report_type' => ProcurementCycleReport::OpenRequirements,
+        'purchase_requisition_doc_num' => $requisition->doc_num,
+    ];
+
+    $this->get(route('admin.purchases.procurement-cycle-report.index', $query))
+        ->assertOk()
+        ->assertSee('id="procurement-pr"', false)
+        ->assertSee('js-select2-ajax', false)
+        ->assertSee('value="'.$requisition->doc_num.'" selected', false);
+
+    $this->getJson(route('admin.purchases.procurement-cycle-report.select2', [
+        'kind' => 'requisitions',
+        'report_type' => ProcurementCycleReport::OpenRequirements,
+        'q' => $requisition->doc_num,
+    ]))->assertOk()
+        ->assertJsonPath('results.0.id', $requisition->doc_num)
+        ->assertJsonStructure(['results', 'pagination' => ['more']]);
+
+    $this->getJson(route('admin.purchases.procurement-cycle-report.select2', [
+        'kind' => 'warehouses',
+        'report_type' => ProcurementCycleReport::OpenRequirements,
+    ]))->assertOk()
+        ->assertJsonFragment(['id' => $fixture['store']->public_uuid]);
+
+    $fixture['user']->revokePermissionTo('reports.purchases.'.ProcurementCycleReport::OpenRequirements.'.view');
+    $this->getJson(route('admin.purchases.procurement-cycle-report.select2', [
+        'kind' => 'requisitions',
+        'report_type' => ProcurementCycleReport::OpenRequirements,
+    ]))->assertForbidden();
+});
+
 test('administrative branches manage legacy purchasing documents while factory branches remain read only', function (): void {
     $fixture = procurementUiFixture();
     $administrativeBranch = procurementAdministrativeBranch($fixture);
@@ -686,8 +721,12 @@ test('all procurement lists use canonical server pagination and source create sc
     $administrativeBranch = procurementAdministrativeBranch($fixture);
     procurementUseBranch($fixture, $administrativeBranch);
     foreach (['request_for_quotations' => 'request-for-quotations', 'supplier_quotations' => 'supplier-quotation-entry', 'supply_orders' => 'supply-orders', 'goods_receipts' => 'goods-receipt-notes', 'purchase_returns' => 'purchase-returns'] as $screen => $route) {
-        $this->get(route('admin.purchases.'.$route.'.index'))->assertOk()->assertSee('procurement-documents-table');
-        $this->getJson(route('admin.purchases.procurement.data', $screen).'?draw=1&start=0&length=10')->assertOk()->assertJsonPath('recordsFiltered', 0);
+        $index = $this->get(route('admin.purchases.'.$route.'.index'));
+        $this->assertSame(200, $index->status(), $route.' index');
+        $index->assertSee('procurement-documents-table');
+        $data = $this->getJson(route('admin.purchases.procurement.data', $screen).'?draw=1&start=0&length=10');
+        $this->assertSame(200, $data->status(), $screen.' data');
+        $data->assertJsonPath('recordsFiltered', 0);
     }
     procurementUseBranch($fixture, $fixture['branch']);
     $this->get(route('admin.purchases.goods-receipt-inspection.choose-source'))->assertOk()

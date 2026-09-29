@@ -207,7 +207,7 @@ test('core as of reconciliation excludes later depreciation and additions on bot
 });
 
 test('core asset 360 renders real workflows and ledger with existing chart links', function (): void {
-    coreFixedAssetActor(['fixed_assets.view', 'fixed_assets.create', 'fixed_assets.activate', 'fixed_assets.improvement.post', 'fixed_assets.improvement.reverse', 'fixed_assets.custody.post', 'fixed_assets.dispose', 'accounts.view', 'journal_entries.view']);
+    coreFixedAssetActor(['fixed_assets.view', 'fixed_assets.movements.view', 'fixed_assets.create', 'fixed_assets.activate', 'fixed_assets.improvement.post', 'fixed_assets.improvement.reverse', 'fixed_assets.custody.post', 'fixed_assets.dispose', 'accounts.view', 'journal_entries.view']);
     $context = coreFixedAssetContext();
     $asset = coreRecognizedAsset($context);
     $this->get(route('admin.fixed-assets.lifecycle.show', $asset))->assertOk()->assertSee($asset->doc_num)->assertSee(route('admin.accounting.accounts.show', $asset->account->doc_num), false)->assertSee('js-disposal-preview', false);

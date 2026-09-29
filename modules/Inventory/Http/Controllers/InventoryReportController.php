@@ -38,7 +38,6 @@ use Modules\Inventory\Exports\InventoryValuationComparisonExport;
 use Modules\Inventory\Exports\StockBalanceInquiryExport;
 use Modules\Inventory\Http\Requests\InventoryBookValuationRequest;
 use Modules\Inventory\Http\Requests\StockBalanceInquiryRequest;
-use Modules\Inventory\Models\WarehouseLocation;
 use Modules\Inventory\Services\InventoryReportService;
 use Modules\Inventory\Services\InventoryValuationService;
 use Modules\Sales\Models\PriceList;
@@ -73,7 +72,7 @@ class InventoryReportController extends Controller
 
     public function export(Request $request): BinaryFileResponse
     {
-        [, , $report] = $this->report($request);
+        [, , $report] = $this->report($request, true);
 
         return Excel::download(
             new InventoryReportExport($report),
@@ -83,7 +82,7 @@ class InventoryReportController extends Controller
 
     public function print(Request $request): Response
     {
-        [$context, , $report] = $this->report($request);
+        [$context, , $report] = $this->report($request, true);
         $company = Company::query()->findOrFail($context['company_id']);
 
         return $this->pdf->stream('reports.inventory.operations', [
@@ -104,9 +103,10 @@ class InventoryReportController extends Controller
     {
         $data = $this->valuationData($request);
         $format = (string) $request->route('valuation_export_format');
-        $isComparisonExport = filled($request->input('product_id'))
-            && filled($request->input('branch_store_id'))
-            && is_array($data['comparison']);
+        $isComparisonExport = is_array($data['comparison']) && (
+            $request->input('export_view') === 'comparison'
+            || (filled($request->input('product_id')) && filled($request->input('branch_store_id')))
+        );
 
         if ($format === 'pdf') {
             $context = $this->context->snapshot($request);
@@ -118,6 +118,7 @@ class InventoryReportController extends Controller
                     'comparison' => $data['comparison'],
                     'product' => $data['selectedProduct'],
                     'store' => $data['selectedStore'],
+                    'filterSummary' => $data['filterSummary'],
                     'companyPrintIdentity' => $this->printIdentity->forCompany($company),
                 ], 'inventory-valuation-comparison.pdf', 'L');
             }
@@ -160,7 +161,7 @@ class InventoryReportController extends Controller
     {
         $context = $this->context->snapshot($request);
         abort_unless(
-            $context['company_id'] && $context['financial_period_id'] && $context['branch_id'],
+            $context['company_id'] && $context['financial_period_id'],
             422,
             __('inventory_accounting.errors.context_required'),
         );
@@ -195,24 +196,16 @@ class InventoryReportController extends Controller
             ->whereIn('branch_id', $branchIds !== [] ? $branchIds : [0])
             ->with('branch:id,doc_num,name,type')
             ->orderBy('position')->orderBy('name')->get();
-        $locations = WarehouseLocation::query()
-            ->whereIn('branch_store_id', $aggregateStores->modelKeys() !== [] ? $aggregateStores->modelKeys() : [0])
-            ->with('branchStore.branch:id,doc_num,name,type')
-            ->orderBy('branch_store_id')->orderBy('position')->orderBy('code')->get();
 
         $selectedBranch = $this->selectedOption($branches, 'doc_num', $filters['branch_doc_num'] ?? null, 'branch_doc_num');
         $selectedAggregateStore = $this->selectedOption($aggregateStores, 'public_uuid', $filters['branch_store_uuid'] ?? null, 'branch_store_uuid');
         $selectedHall = $this->selectedOption($halls, 'public_uuid', $filters['branch_hall_uuid'] ?? null, 'branch_hall_uuid');
-        $selectedLocation = $this->selectedOption($locations, 'public_id', $filters['warehouse_location_uuid'] ?? null, 'warehouse_location_uuid');
 
         if ($selectedBranch && $selectedAggregateStore && (int) $selectedAggregateStore->branch_id !== (int) $selectedBranch->getKey()) {
             throw ValidationException::withMessages(['branch_store_uuid' => __('stock_balance_inquiry.validation.store_branch')]);
         }
         if ($selectedBranch && $selectedHall && (int) $selectedHall->branch_id !== (int) $selectedBranch->getKey()) {
             throw ValidationException::withMessages(['branch_hall_uuid' => __('stock_balance_inquiry.validation.hall_branch')]);
-        }
-        if ($selectedAggregateStore && $selectedLocation && (int) $selectedLocation->branch_store_id !== (int) $selectedAggregateStore->getKey()) {
-            throw ValidationException::withMessages(['warehouse_location_uuid' => __('stock_balance_inquiry.validation.location_store')]);
         }
 
         $queryFilters = [
@@ -221,7 +214,6 @@ class InventoryReportController extends Controller
             'branch_id' => $selectedBranch?->getKey(),
             'branch_store_id' => $selectedAggregateStore?->getKey(),
             'branch_hall_id' => $selectedHall?->getKey(),
-            'warehouse_location_id' => $selectedLocation?->getKey(),
         ];
         $bookValuation = $this->reports->bookValuation(
             (int) $context['company_id'],
@@ -234,15 +226,15 @@ class InventoryReportController extends Controller
         $products = Product::query()
             ->where('company_id', $context['company_id'])
             ->whereIn('item_classification', Product::stockableItemClassifications())
-            ->orderBy('name')
+            ->when($filters['product_id'] ?? null, fn ($query, $id) => $query->whereKey($id))
+            ->when($filters['product_doc_num'] ?? null, fn ($query, $docNum) => $query->where('doc_num', $docNum))
+            ->when(! filled($filters['product_id'] ?? null) && ! filled($filters['product_doc_num'] ?? null), fn ($query) => $query->whereRaw('1 = 0'))
             ->get(['id', 'doc_num', 'name']);
         $stores = $aggregateStores;
-        $selectedProduct = filled($filters['product_id'] ?? null)
-            ? $products->firstWhere('id', (int) $filters['product_id'])
-            : null;
+        $selectedProduct = $products->first();
         $selectedStore = filled($filters['branch_store_id'] ?? null)
             ? $stores->firstWhere('id', (int) $filters['branch_store_id'])
-            : null;
+            : $selectedAggregateStore;
 
         if ((filled($filters['product_id'] ?? null) && ! $selectedProduct)
             || (filled($filters['branch_store_id'] ?? null) && ! $selectedStore)) {
@@ -255,16 +247,19 @@ class InventoryReportController extends Controller
         $comparisonError = null;
         $referenceMethod = (string) ($filters['reference_method'] ?? InventoryValuationService::Method);
 
-        if ($selectedProduct && $selectedStore) {
+        $comparisonRows = $bookValuation['rows']
+            ->when($selectedProduct, fn (Collection $rows) => $rows->where('product_id', $selectedProduct->getKey()))
+            ->when($selectedStore, fn (Collection $rows) => $rows->where('branch_store_id', $selectedStore->getKey()))
+            ->values();
+
+        if ($comparisonRows->isNotEmpty()) {
             try {
-                $comparison = $this->valuation->comparisonForStockPosition(
+                $comparison = $this->valuation->comparisonForStockScope(
                     (int) $context['company_id'],
-                    (int) $context['financial_period_id'],
-                    (int) $selectedStore->branch_id,
-                    (int) $selectedStore->getKey(),
-                    (int) $selectedProduct->getKey(),
+                    $comparisonRows,
                     $asOf,
                     $referenceMethod,
+                    $queryFilters,
                 );
             } catch (DomainException $exception) {
                 $comparisonError = __($exception->getMessage());
@@ -277,11 +272,9 @@ class InventoryReportController extends Controller
                 'branches' => $branches,
                 'stores' => $aggregateStores,
                 'halls' => $halls,
-                'locations' => $locations,
                 'selected_branch' => $selectedBranch,
                 'selected_store' => $selectedAggregateStore,
                 'selected_hall' => $selectedHall,
-                'selected_location' => $selectedLocation,
                 'selected_product' => $this->selectedProduct((int) $context['company_id'], $filters['product_doc_num'] ?? null),
                 'selected_lookups' => $this->selectedStockBalanceLookups((int) $context['company_id'], $filters),
             ],
@@ -293,7 +286,6 @@ class InventoryReportController extends Controller
                 __('stock_balance_inquiry.filters.branch') => (string) ($selectedBranch?->name ?? __('stock_balance_inquiry.options.all')),
                 __('stock_balance_inquiry.filters.store') => (string) ($selectedAggregateStore?->name ?? __('stock_balance_inquiry.options.all')),
                 __('stock_balance_inquiry.filters.hall') => (string) ($selectedHall?->name ?? __('stock_balance_inquiry.options.all')),
-                __('stock_balance_inquiry.filters.location') => (string) ($selectedLocation?->name ?? __('stock_balance_inquiry.options.all')),
             ],
             'asOf' => $asOf,
             'referenceMethod' => $referenceMethod,
@@ -393,6 +385,7 @@ class InventoryReportController extends Controller
                 __('inventory_accounting.sales_valuation.price_list') => $valuation['priceList']
                     ? $valuation['priceList']->doc_num
                     : __('stock_balance_inquiry.options.all'),
+                __('stock_balance_inquiry.filters.branch') => $options['selected_branch']?->name ?? __('stock_balance_inquiry.options.all'),
                 __('stock_balance_inquiry.filters.store') => $options['selected_store']?->name ?? __('stock_balance_inquiry.options.all'),
             ],
             'companyPrintIdentity' => $this->printIdentity->forCompany($company),
@@ -405,9 +398,10 @@ class InventoryReportController extends Controller
     private function salesValuationReport(Request $request, bool $priceListRequired): array
     {
         $context = $this->context->snapshot($request);
-        abort_unless($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], 422, 'Company, financial period, and branch context are required.');
+        abort_unless($context['company_id'] && $context['financial_period_id'], 422, 'Company and financial period context are required.');
         $filters = $request->validate([
             'as_of' => ['nullable', 'date'],
+            'branch_doc_num' => ['nullable', 'string', 'max:100'],
             'branch_store_uuid' => ['nullable', 'string'], 'branch_hall_uuid' => ['nullable', 'string'],
             'product_doc_num' => ['nullable', 'string'],
             'item_classification' => ['nullable', 'string'], 'item_category_doc_num' => ['nullable', 'string'],
@@ -417,21 +411,28 @@ class InventoryReportController extends Controller
         ]);
         $branches = $this->context->allowedBranchQueryForCurrentCompany($request)->whereIn('branches.type', [Branch::TypeFactory, Branch::TypeWarehouse, Branch::TypeShowroom])->get();
         $branchIds = $branches->modelKeys();
+        $selectedBranch = $this->selectedOption($branches, 'doc_num', $filters['branch_doc_num'] ?? null, 'branch_doc_num');
         $stores = BranchStore::query()->whereIn('branch_id', $branchIds ?: [0])->with('branch:id,doc_num,name,type')->orderBy('position')->orderBy('name')->get();
         $halls = BranchHall::query()->whereIn('branch_id', $branchIds ?: [0])->with('branch:id,doc_num,name,type')->orderBy('position')->orderBy('name')->get();
         $selectedStore = $this->selectedOption($stores, 'public_uuid', $filters['branch_store_uuid'] ?? null, 'branch_store_uuid');
         $selectedHall = $this->selectedOption($halls, 'public_uuid', $filters['branch_hall_uuid'] ?? null, 'branch_hall_uuid');
+        if ($selectedBranch && $selectedStore && (int) $selectedStore->branch_id !== (int) $selectedBranch->getKey()) {
+            throw ValidationException::withMessages(['branch_store_uuid' => __('stock_balance_inquiry.validation.store_branch')]);
+        }
+        if ($selectedBranch && $selectedHall && (int) $selectedHall->branch_id !== (int) $selectedBranch->getKey()) {
+            throw ValidationException::withMessages(['branch_hall_uuid' => __('stock_balance_inquiry.validation.hall_branch')]);
+        }
         if ($selectedStore && $selectedHall && (int) $selectedStore->branch_id !== (int) $selectedHall->branch_id) {
             throw ValidationException::withMessages(['branch_hall_uuid' => __('stock_balance_inquiry.validation.hall_branch')]);
         }
-        $queryFilters = [...$filters, 'branch_store_id' => $selectedStore?->getKey(), 'branch_hall_id' => $selectedHall?->getKey()];
+        $queryFilters = [...$filters, 'branch_id' => $selectedBranch?->getKey(), 'branch_store_id' => $selectedStore?->getKey(), 'branch_hall_id' => $selectedHall?->getKey()];
         $valuation = filled($filters['price_list_id'] ?? null) ? $this->reports->salesValuation((int) $context['company_id'], $branchIds, $queryFilters) : null;
         $options = [
             'branches' => $branches, 'stores' => $stores, 'halls' => $halls,
-            'selected_store' => $selectedStore, 'selected_hall' => $selectedHall,
+            'selected_branch' => $selectedBranch, 'selected_store' => $selectedStore, 'selected_hall' => $selectedHall,
             'selected_product' => $this->selectedProduct((int) $context['company_id'], $filters['product_doc_num'] ?? null),
             'selected_lookups' => $this->selectedStockBalanceLookups((int) $context['company_id'], $filters),
-            'priceLists' => PriceList::query()->forCompany((int) $context['company_id'])->whereNotNull('approved_at')->orderBy('doc_num')->get(['id', 'doc_num', 'currency_id']),
+            'priceLists' => PriceList::query()->forCompany((int) $context['company_id'])->whereNotNull('approved_at')->whereKey($filters['price_list_id'] ?? 0)->get(['id', 'doc_num', 'currency_id']),
             'selected_price_list' => $valuation['priceList'] ?? null,
             'currencies' => Currency::query()->forCompany((int) $context['company_id'])->active()->get(['id', 'doc_num', 'code', 'name']),
         ];
@@ -463,18 +464,10 @@ class InventoryReportController extends Controller
             ->orderBy('position')
             ->orderBy('name')
             ->get();
-        $locations = WarehouseLocation::query()
-            ->whereIn('branch_store_id', $stores->modelKeys() !== [] ? $stores->modelKeys() : [0])
-            ->with('branchStore.branch:id,doc_num,name,type')
-            ->orderBy('branch_store_id')
-            ->orderBy('position')
-            ->orderBy('code')
-            ->get();
 
         $selectedBranch = $this->selectedOption($branches, 'doc_num', $filters['branch_doc_num'] ?? null, 'branch_doc_num');
         $selectedStore = $this->selectedOption($stores, 'public_uuid', $filters['branch_store_uuid'] ?? null, 'branch_store_uuid');
         $selectedHall = $this->selectedOption($halls, 'public_uuid', $filters['branch_hall_uuid'] ?? null, 'branch_hall_uuid');
-        $selectedLocation = $this->selectedOption($locations, 'public_id', $filters['warehouse_location_uuid'] ?? null, 'warehouse_location_uuid');
 
         if ($selectedBranch && $selectedStore && (int) $selectedStore->branch_id !== (int) $selectedBranch->getKey()) {
             throw ValidationException::withMessages(['branch_store_uuid' => __('stock_balance_inquiry.validation.store_branch')]);
@@ -482,27 +475,21 @@ class InventoryReportController extends Controller
         if ($selectedBranch && $selectedHall && (int) $selectedHall->branch_id !== (int) $selectedBranch->getKey()) {
             throw ValidationException::withMessages(['branch_hall_uuid' => __('stock_balance_inquiry.validation.hall_branch')]);
         }
-        if ($selectedStore && $selectedLocation && (int) $selectedLocation->branch_store_id !== (int) $selectedStore->getKey()) {
-            throw ValidationException::withMessages(['warehouse_location_uuid' => __('stock_balance_inquiry.validation.location_store')]);
-        }
 
         $queryFilters = [
             ...$filters,
             'branch_id' => $selectedBranch?->getKey(),
             'branch_store_id' => $selectedStore?->getKey(),
             'branch_hall_id' => $selectedHall?->getKey(),
-            'warehouse_location_id' => $selectedLocation?->getKey(),
         ];
         $report = $this->reports->stockBalanceInquiry((int) $context['company_id'], $branchIds, $queryFilters);
         $options = [
             'branches' => $branches,
             'stores' => $stores,
             'halls' => $halls,
-            'locations' => $locations,
             'selected_branch' => $selectedBranch,
             'selected_store' => $selectedStore,
             'selected_hall' => $selectedHall,
-            'selected_location' => $selectedLocation,
             'selected_product' => $this->selectedProduct((int) $context['company_id'], $filters['product_doc_num'] ?? null),
             'selected_lookups' => $this->selectedStockBalanceLookups((int) $context['company_id'], $filters),
         ];
@@ -569,7 +556,6 @@ class InventoryReportController extends Controller
             __('stock_balance_inquiry.filters.branch') => (string) ($options['selected_branch']?->name ?? __('stock_balance_inquiry.options.all')),
             __('stock_balance_inquiry.filters.store') => (string) ($options['selected_store']?->name ?? __('stock_balance_inquiry.options.all')),
             __('stock_balance_inquiry.filters.hall') => (string) ($options['selected_hall']?->name ?? __('stock_balance_inquiry.options.all')),
-            __('stock_balance_inquiry.filters.location') => (string) ($options['selected_location']?->name ?? __('stock_balance_inquiry.options.all')),
         ];
 
         if ($options['selected_product'] instanceof Product) {
@@ -593,16 +579,25 @@ class InventoryReportController extends Controller
     }
 
     /** @return array{0: array<string, mixed>, 1: bool, 2: array<string, mixed>} */
-    private function report(Request $request): array
+    private function report(Request $request, bool $allMovements = false): array
     {
+        $request->validate(['movement_page' => ['nullable', 'integer', 'min:1', 'max:1000000']]);
+        $movementPage = max(1, $request->integer('movement_page', 1));
         $context = $this->context->snapshot($request);
         abort_unless($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], 422, 'Company, financial period, and branch context are required.');
         $report = $this->reports->report(
             $context['company_id'],
             $context['financial_period_id'],
             $context['branch_id'],
-            $request->only(['source_doc_num', 'branch_store_id', 'warehouse_location_id', 'product_id', 'classification', 'stock_status', 'batch_lot', 'transaction_type', 'from', 'to', 'as_of', 'expiry_within_days']),
+            $request->only(['source_doc_num', 'branch_store_id', 'product_id', 'classification', 'stock_status', 'batch_lot', 'transaction_type', 'from', 'to', 'as_of', 'expiry_within_days']),
+            $allMovements ? null : $movementPage,
         );
+        $report['movementPage'] = $movementPage;
+        $report['movementPageSize'] = InventoryReportService::MovementPageSize;
+        $report['movementPages'] = max(1, (int) ceil($report['reportTotals']['movement_count'] / InventoryReportService::MovementPageSize));
+        abort_if(! $allMovements && $movementPage > $report['movementPages'], 404);
+        $report['movementFirst'] = $report['movements']->isEmpty() ? 0 : (($movementPage - 1) * InventoryReportService::MovementPageSize) + 1;
+        $report['movementLast'] = $report['movementFirst'] === 0 ? 0 : $report['movementFirst'] + $report['movements']->count() - 1;
         $report['glReconciliation'] = null;
         $report['glReconciliationUnavailableReason'] = null;
 

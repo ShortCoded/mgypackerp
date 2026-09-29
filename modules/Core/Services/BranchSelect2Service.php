@@ -53,6 +53,10 @@ class BranchSelect2Service
             'companies.doc_number as company_doc_number',
         ]);
 
+        if ($request->input('branch_type') === Branch::TypeFactory) {
+            $query->where('branches.type', Branch::TypeFactory);
+        }
+
         $terms = $this->searchService->terms(is_string($search) ? $search : null);
 
         if ($terms !== []) {

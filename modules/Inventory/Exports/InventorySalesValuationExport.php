@@ -20,7 +20,7 @@ class InventorySalesValuationExport implements FromArray, ShouldAutoSize, WithHe
             return [
                 $row->branch?->name ?? '',
                 $row->branchStore?->name ?? '',
-                $row->warehouseLocation?->code ?? '',
+                $row->branchHall?->name ?? '',
                 $row->product?->doc_num ?? '',
                 $row->product?->name ?? '',
                 $row->product?->unit?->name ?? '',
@@ -45,6 +45,14 @@ class InventorySalesValuationExport implements FromArray, ShouldAutoSize, WithHe
             '', '', __('inventory_accounting.sales_valuation.unpriced_product_count').': '.$totals['unpriced_product_count'],
         ];
 
+        foreach ($this->valuation['pricedOutsideStockScope'] ?? [] as $line) {
+            $data[] = [
+                '', '', '', $line->product?->doc_num ?? '', $line->product?->name ?? '',
+                $line->product?->unit?->name ?? '', '0', $line->unit_price, '0',
+                __('inventory_accounting.sales_valuation.price_statuses.outside_scope'),
+            ];
+        }
+
         return $data;
     }
 
@@ -53,7 +61,7 @@ class InventorySalesValuationExport implements FromArray, ShouldAutoSize, WithHe
         return [
             __('stock_balance_inquiry.columns.branch'),
             __('stock_balance_inquiry.columns.store'),
-            __('stock_balance_inquiry.columns.location'),
+            __('stock_balance_inquiry.columns.hall'),
             __('inventory_accounting.book_valuation.columns.item_code'),
             __('stock_balance_inquiry.columns.product'),
             __('stock_balance_inquiry.columns.unit'),

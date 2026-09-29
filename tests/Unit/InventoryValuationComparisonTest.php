@@ -69,8 +69,25 @@ test('internal movement reduces the position but is not reported as consumption 
 });
 
 test('valuation comparison refuses an unsupported reference method', function (): void {
-    expect(fn () => (new InventoryValuationService)->compareMovements([], 'last_purchase_reference'))
+    expect(fn () => (new InventoryValuationService)->compareMovements([], 'unrecognized_method'))
         ->toThrow(DomainException::class, 'inventory_accounting.errors.invalid_reference_method');
+});
+
+test('last purchase reference can be selected without becoming an issue costing policy', function (): void {
+    $result = app(InventoryValuationService::class)->compareMovements([
+        ['quantity_in' => '100', 'quantity_out' => '0', 'unit_cost' => '10'],
+        ['quantity_in' => '100', 'quantity_out' => '0', 'unit_cost' => '14'],
+        ['quantity_in' => '0', 'quantity_out' => '50'],
+        ['quantity_in' => '50', 'quantity_out' => '0', 'unit_cost' => '20'],
+        ['quantity_in' => '0', 'quantity_out' => '100'],
+    ], 'last_purchase_reference');
+
+    expect($result['reference_method'])->toBe('last_purchase_reference')
+        ->and($result['methods']['last_purchase_reference']['reference_only'])->toBeTrue()
+        ->and($result['methods']['last_purchase_reference']['issue_cost'])->toBeNull()
+        ->and($result['methods']['last_purchase_reference']['difference_vs_reference'])->toBeNull()
+        ->and($result['methods']['moving_average']['book_method'])->toBeTrue()
+        ->and($result['methods']['moving_average']['difference_vs_reference'])->toBe('-600.00000000');
 });
 
 test('valuation comparison refuses a sequence that creates negative stock', function (): void {

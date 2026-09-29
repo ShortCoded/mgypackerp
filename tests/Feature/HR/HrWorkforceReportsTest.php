@@ -341,7 +341,15 @@ test('employee report routes enforce permissions and keep screen csv xlsx and pd
         ->assertSee($first['employee']->full_name)
         ->assertDontSee($outsideFilter['employee']->full_name)
         ->assertDontSee((string) $first['employee']->basic_salary)
-        ->assertSee('admin-report-page', false);
+        ->assertSee('admin-report-page', false)
+        ->assertSee('js-select2-ajax', false);
+    $this->withSession($session)
+        ->get(route('admin.hr.select2.foundation', 'departments'))
+        ->assertOk()
+        ->assertJsonStructure(['results', 'pagination' => ['more']]);
+    $this->withSession($session)
+        ->get(route('admin.hr.select2.foundation', 'biometric-devices'))
+        ->assertForbidden();
 
     $csv = $this->withSession($session)->get(route('admin.hr.reports.employees.export', [...$filters, 'format' => 'csv']));
     $csv->assertOk();
@@ -396,7 +404,7 @@ test('leave report routes enforce permissions and preserve scoped paid unpaid to
         ->assertSee($paidRequest->public_uuid)
         ->assertDontSee($unpaidRequest->public_uuid)
         ->assertSee('<strong dir="ltr">2</strong>', false)
-        ->assertSee('<strong dir="ltr">0</strong>', false)
+        ->assertDontSee('<strong dir="ltr">0</strong>', false)
         ->assertDontSee('<strong dir="ltr">2.000</strong>', false)
         ->assertDontSee('<strong dir="ltr">0.000</strong>', false);
     expect($screen->viewData('report')['totals'])->toBe([

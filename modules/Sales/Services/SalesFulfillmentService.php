@@ -406,7 +406,7 @@ class SalesFulfillmentService
         }
 
         if (bccomp($remaining, '0', 8) > 0) {
-            throw new DomainException(__('The requested stock cannot be allocated across available warehouse locations and batches.'));
+            throw new DomainException(__('The requested stock cannot be allocated across available stock batches.'));
         }
 
         return $allocations;

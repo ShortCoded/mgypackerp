@@ -43,6 +43,11 @@ class StoreOpeningStockPricingRequest extends FormRequest
                 'notes' => isset($line['notes']) ? trim((string) $line['notes']) : null,
                 '_delete' => filter_var($line['_delete'] ?? false, FILTER_VALIDATE_BOOLEAN),
             ])
+            ->filter(fn (array $line): bool => ! $line['_delete'] && (
+                $line['public_id'] !== null && $line['public_id'] !== ''
+                || $line['unit_price'] !== null && $line['unit_price'] !== ''
+                || $line['notes'] !== null && $line['notes'] !== ''
+            ))
             ->values()
             ->all();
 
@@ -156,7 +161,7 @@ class StoreOpeningStockPricingRequest extends FormRequest
 
     private function validateOpeningStock(Validator $validator, ?OpeningStock $openingStock, ?OpeningStockPricing $current): void
     {
-        if (! $openingStock instanceof OpeningStock || ! ($openingStock->isClosed() || $openingStock->isApproved()) || ! $openingStock->lines()->where('quantity', '>', 0)->exists()) {
+        if (! $openingStock instanceof OpeningStock || ! $openingStock->approved || $openingStock->status !== OpeningStock::StatusApproved || ! $openingStock->lines()->where('quantity', '>', 0)->exists()) {
             $validator->errors()->add('opening_stock_doc_num', __('inventory.opening_stock_pricings.messages.opening_stock_unavailable'));
 
             return;
@@ -191,6 +196,7 @@ class StoreOpeningStockPricingRequest extends FormRequest
         $pricedElsewhere = app(OpeningStockPricingService::class)->pricedOpeningStockLineIds($requiredLineIds, $current?->getKey())->flip();
         $validLineCount = 0;
         $seenOpeningLines = [];
+        $seenProducts = [];
 
         foreach ($this->input('lines', []) as $index => $line) {
             if (! is_array($line) || ($line['_delete'] ?? false)) {
@@ -218,8 +224,11 @@ class StoreOpeningStockPricingRequest extends FormRequest
                     $validator->errors()->add("lines.{$index}.opening_stock_line_public_id", __('inventory.opening_stock_pricings.messages.opening_stock_fully_priced'));
                 } elseif (isset($seenOpeningLines[$openingLine->getKey()])) {
                     $validator->errors()->add("lines.{$index}.opening_stock_line_public_id", __('inventory.opening_stock_pricings.messages.queue_duplicate_line'));
+                } elseif (isset($seenProducts[$openingLine->product_id])) {
+                    $validator->errors()->add("lines.{$index}.opening_stock_line_public_id", __('inventory.opening_stock_pricings.messages.duplicate_product'));
                 } else {
                     $seenOpeningLines[$openingLine->getKey()] = true;
+                    $seenProducts[$openingLine->product_id] = true;
                 }
             }
 

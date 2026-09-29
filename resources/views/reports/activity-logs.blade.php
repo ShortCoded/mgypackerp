@@ -1,7 +1,7 @@
 @extends('reports.layouts.pdf')
 
 @section('report')
-    <table class="report-table">
+    <table dir="{{ $direction ?? 'ltr' }}" class="report-table">
         <thead>
             <tr>
                 @foreach ($headings as $heading)

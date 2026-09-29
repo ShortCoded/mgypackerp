@@ -157,6 +157,7 @@ test('permission registry collects permissions from menu configs', function () {
     expect(config('permissions'))->toBe([
         'screen_data_visibility_rules.view_trashed',
         'screen_data_visibility_rules.bypass',
+        'purchases.request_for_quotations.restore',
     ])
         ->and($permissions)->toBe(array_values(array_unique($permissions)))
         ->and($permissions)->not->toContain('users.index')

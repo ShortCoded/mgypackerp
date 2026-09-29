@@ -1,18 +1,23 @@
 @php
     $dates = app(\Modules\Core\Services\DateFormatService::class);
+    $numbers = app(\Modules\Core\Services\NumericFormatService::class);
+    $visibleKpis = collect($kpis)->filter(fn ($value): bool => bccomp((string) $value, '0', 8) !== 0);
 @endphp
-<h1>{{ $reportTitle }}</h1>
+<div class="report-print" dir="{{ $direction ?? 'ltr' }}">
+    <div class="document-title-row"><h1>{{ $reportTitle }}</h1></div>
+    <div class="report-filter-summary">{{ __('maintenance.reports.filters.from') }}: {{ $filters['from'] ?? '—' }} · {{ __('maintenance.reports.filters.to') }}: {{ $filters['to'] ?? '—' }}</div>
 
-<table>
-    <tbody>
-        @foreach($kpis as $key => $value)
-            <tr><th>{{ __('maintenance.reports.kpis.'.$key) }}</th><td class="number">{{ $value }}</td></tr>
-        @endforeach
-    </tbody>
-</table>
+@if($visibleKpis->isNotEmpty())
+    <table class="report-table">
+        <thead><tr><th>{{ __('production_execution.reports.columns.metric') }}</th><th class="number">{{ __('production_execution.reports.columns.value') }}</th></tr></thead>
+        <tbody>@foreach($visibleKpis as $key => $value)<tr><td>{{ __('maintenance.reports.kpis.'.$key) }}</td><td class="number">{{ $numbers->format($value) }}</td></tr>@endforeach</tbody>
+    </table>
+@else
+    <p class="report-empty-state">{{ __('reports.no_data') }}</p>
+@endif
 
 <h2>{{ __('maintenance.reports.orders_table') }}</h2>
-<table>
+<table class="report-table">
     <thead><tr><th>{{ __('maintenance.fields.document') }}</th><th>{{ __('maintenance.fields.asset') }}</th><th>{{ __('maintenance.fields.maintenance_type') }}</th><th>{{ __('maintenance.fields.service_mode') }}</th><th>{{ __('maintenance.fields.provider') }}</th><th>{{ __('maintenance.fields.actual_start') }}</th><th>{{ __('maintenance.fields.actual_end') }}</th><th>{{ __('maintenance.fields.total_paused_minutes') }}</th><th>{{ __('maintenance.reports.materials') }}</th><th>{{ __('maintenance.fields.status') }}</th></tr></thead>
     <tbody>
         @forelse($orders as $order)
@@ -43,8 +48,9 @@
 
 @if($canViewFinancial)
     <h2>{{ __('maintenance.reports.expense_totals') }}</h2>
-    <table>
+    <table class="report-table">
         <thead><tr><th>{{ __('maintenance.fields.currency') }}</th><th>{{ __('maintenance.reports.requested_amount') }}</th><th>{{ __('maintenance.reports.paid_amount') }}</th><th>{{ __('maintenance.reports.request_count') }}</th></tr></thead>
         <tbody>@forelse($expenseTotals as $total)<tr><td>{{ $total['currency'] }}</td><td class="number">{{ $total['requested'] }}</td><td class="number">{{ $total['paid'] }}</td><td class="number">{{ $total['count'] }}</td></tr>@empty<tr><td colspan="4">{{ __('maintenance.reports.no_expenses') }}</td></tr>@endforelse</tbody>
     </table>
 @endif
+</div>

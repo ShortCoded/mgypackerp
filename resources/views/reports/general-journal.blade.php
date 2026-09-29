@@ -11,7 +11,7 @@
         <div>{{ data_get($result, 'currency.code') }}</div>
     </div>
 
-    <table class="report-table general-journal-table">
+    <table dir="{{ $direction ?? 'ltr' }}" class="report-table general-journal-table">
         <thead><tr>
             @foreach(['date', 'document', 'source_type', 'reference', 'account', 'description', 'cost_center', 'branch', 'debit', 'credit'] as $column)
                 <th>{{ __('ledger_reports.columns.'.$column) }}</th>

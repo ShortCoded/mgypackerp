@@ -21,11 +21,14 @@
             </div>
         </div>
 
+        @php($visibleMetrics = collect(['total', 'open', 'passed', 'failed', 'affected_quantity'])->filter(fn ($metric): bool => bccomp((string) ($summary[$metric] ?? 0), '0', 8) !== 0))
+        @if($visibleMetrics->isNotEmpty())
         <div class="row g-3 mb-3">
-            @foreach(['total', 'open', 'passed', 'failed', 'affected_quantity'] as $metric)
+            @foreach($visibleMetrics as $metric)
                 <div class="col-6 col-lg"><div class="card h-100"><div class="card-body py-3"><div class="text-600 small">{{ __('production_execution.quality.kpis.'.$metric) }}</div><div class="fs-4 fw-semibold">{{ $numbers->format($summary[$metric]) }}</div></div></div></div>
             @endforeach
         </div>
+        @endif
 
         <div class="card erp-datatable-card mb-3">
             <div class="card-header"><h6 class="mb-0">{{ __('production_execution.quality.inspection_records') }}</h6></div>

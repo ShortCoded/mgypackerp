@@ -33,7 +33,6 @@ use Modules\Inventory\Http\Requests\UpdateStockCountRequest;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\StockCount;
 use Modules\Inventory\Models\StockCountLine;
-use Modules\Inventory\Models\WarehouseLocation;
 use Modules\Inventory\Services\InventorySelect2Service;
 use Modules\Inventory\Services\StockCountService;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
@@ -212,7 +211,7 @@ class StockCountController extends Controller
         $quantity = $this->service->currentQuantity(
             $context['company_id'],
             (int) $data['branch_store_id'],
-            isset($data['warehouse_location_id']) ? (int) $data['warehouse_location_id'] : null,
+            null,
             (int) $product->getKey(),
             $product->item_unit_id === null ? null : (int) $product->item_unit_id,
             $data['stock_status'],
@@ -244,12 +243,6 @@ class StockCountController extends Controller
             ->orderBy('position')
             ->orderBy('name')
             ->get(['id', 'name']);
-        $locations = WarehouseLocation::query()
-            ->whereIn('branch_store_id', $stores->modelKeys() !== [] ? $stores->modelKeys() : [0])
-            ->where('is_active', true)
-            ->orderBy('position')
-            ->orderBy('code')
-            ->get(['id', 'branch_store_id', 'code', 'name']);
         $isCreateLike = in_array($mode, ['create', 'clone'], true);
 
         return view('modules.inventory.stock-counts.form', [
@@ -263,7 +256,6 @@ class StockCountController extends Controller
             'isLocked' => $record ? ! $record->isEditable() : false,
             'dateValue' => $this->defaultDate($context, $record, $isCreateLike),
             'stores' => $stores,
-            'locations' => $locations,
             'lines' => $this->lines($record, $mode),
             'totals' => $record ? $this->totals($record) : $this->emptyTotals(),
             'metadata' => $this->metadata($record),
@@ -511,12 +503,12 @@ class StockCountController extends Controller
     /** @return list<string> */
     private function formRelations(): array
     {
-        return ['branchStore', 'warehouseLocation', 'lines.product.unit', 'lines.product.mainImageUsage.file', 'lines.unit', 'adjustmentDocument'];
+        return ['branchStore', 'lines.product.unit', 'lines.product.mainImageUsage.file', 'lines.unit', 'adjustmentDocument'];
     }
 
     /** @return list<string> */
     private function reportRelations(): array
     {
-        return ['company', 'branch', 'branchStore', 'warehouseLocation', 'lines.product', 'lines.unit', 'adjustmentDocument', 'approvedBy'];
+        return ['company', 'branch', 'branchStore', 'lines.product', 'lines.unit', 'adjustmentDocument', 'approvedBy'];
     }
 }

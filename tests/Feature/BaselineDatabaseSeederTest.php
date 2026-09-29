@@ -178,6 +178,23 @@ test('permission seeder is idempotent and registry extracts new menu permissions
         ->and($fakePermissions)->toContain('fake.screen.view', 'fake.screen.approve');
 });
 
+test('production monitoring inherits existing run report grants once and then respects revocation', function (): void {
+    $operator = User::factory()->create();
+    foreach (['view', 'export', 'print'] as $action) {
+        $operator->givePermissionTo(Permission::findOrCreate("production.reports.runs.{$action}", 'web'));
+    }
+
+    $this->seed(PermissionSeeder::class);
+    foreach (['view', 'export', 'print'] as $action) {
+        expect($operator->fresh()->can("production.reports.control.{$action}"))->toBeTrue();
+    }
+
+    $operator->revokePermissionTo('production.reports.control.view');
+    $this->seed(PermissionSeeder::class);
+
+    expect($operator->fresh()->can('production.reports.control.view'))->toBeFalse();
+});
+
 test('permission labels are localized for custom accounting and finance actions', function (): void {
     $registry = app(PermissionRegistryService::class);
     $permissions = [

@@ -12,6 +12,9 @@ use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\HR\Http\Requests\Attendance\StoreAttendanceImportRequest;
 use Modules\HR\Models\HrBiometricDevice;
 use Modules\HR\Services\HrAttendanceImportService;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class HrAttendanceImportController extends Controller
 {
@@ -48,6 +51,46 @@ class HrAttendanceImportController extends Controller
         return redirect()
             ->route('admin.hr.employee-attendance.import.index', ['device' => $device->doc_num])
             ->with('success', __('hr_attendance.import.messages.imported', $result));
+    }
+
+    public function template(Request $request): StreamedResponse
+    {
+        abort_unless($this->companies->currentCompany($request) !== null, 409);
+
+        return response()->streamDownload(function (): void {
+            $workbook = new Spreadsheet;
+
+            try {
+                $punches = $workbook->getActiveSheet();
+                $punches->setTitle('Punches');
+                $punches->fromArray([['biometric_code', 'punched_at', 'punch_type']]);
+                $punches->getStyle('A1:C1')->getFont()->setBold(true)->getColor()->setRGB('FFFFFF');
+                $punches->getStyle('A1:C1')->getFill()->setFillType('solid')->getStartColor()->setRGB('123460');
+                $punches->getColumnDimension('A')->setWidth(24);
+                $punches->getColumnDimension('B')->setWidth(25);
+                $punches->getColumnDimension('C')->setWidth(20);
+                $punches->freezePane('A2');
+
+                $example = $workbook->createSheet();
+                $example->setTitle('Example');
+                $example->fromArray([
+                    ['biometric_code', 'punched_at', 'punch_type'],
+                    ['1001', '2026-08-03 08:00:00', 'check_in'],
+                    ['1001', '2026-08-03 16:00:00', 'check_out'],
+                ]);
+                $example->getStyle('A1:C1')->getFont()->setBold(true);
+                $example->getColumnDimension('A')->setWidth(24);
+                $example->getColumnDimension('B')->setWidth(25);
+                $example->getColumnDimension('C')->setWidth(20);
+
+                $workbook->setActiveSheetIndex(0);
+                (new Xlsx($workbook))->save('php://output');
+            } finally {
+                $workbook->disconnectWorksheets();
+            }
+        }, 'biometric-attendance-template.xlsx', [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ]);
     }
 
     private function deviceForRequest(Request $request, string $docNum): ?HrBiometricDevice

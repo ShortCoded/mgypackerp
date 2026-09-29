@@ -43,7 +43,7 @@
   function columnName(column) {
     const map = {
       doc_num: 'inventory_stock_counts.doc_number', count_date: 'inventory_stock_counts.count_date',
-      store: 'branch_stores.name', location: 'warehouse_locations.code', lines_count: 'lines_count',
+      store: 'branch_stores.name', lines_count: 'lines_count',
       system_total: 'system_total', physical_total: 'physical_total', variance_total: 'variance_total',
       status_label: 'inventory_stock_counts.status', approved_by: 'approved_users.name',
       approved_at: 'inventory_stock_counts.approved_at', created_by: 'created_users.name',
@@ -245,7 +245,7 @@
     $row.addClass('opacity-75');
     $.ajax({
       url: $form.data('balance-url'), method: 'GET', headers: headers(), data: {
-        branch_store_id: storeId, warehouse_location_id: $form.find('[name="warehouse_location_id"]').val() || '',
+        branch_store_id: storeId,
         product_doc_num: productDocNum, stock_status: $row.find('.js-stock-count-status').val(), batch_lot: $row.find('.js-stock-count-batch').val() || ''
       }
     }).done(function (response) {
@@ -255,13 +255,6 @@
 
   function refreshAllBalances($form) {
     $form.find('.js-stock-count-line').each(function () { refreshBalance($(this)); });
-  }
-
-  function filterLocations($form) {
-    const storeId = String($form.find('.js-stock-count-store').val() || '');
-    const $location = $form.find('.js-stock-count-location');
-    $location.find('option[data-store-id]').each(function () { $(this).prop('disabled', storeId !== '' && String($(this).data('store-id')) !== storeId); });
-    if ($location.find('option:selected').prop('disabled')) $location.val('').trigger('change');
   }
 
   function renderProductDetails(product) {
@@ -313,7 +306,7 @@
   function initForm() {
     const $form = $('.js-stock-count-form').first();
     if (!$form.length) return;
-    initSelect2(document); filterLocations($form); calculateTotals($form);
+    initSelect2(document); calculateTotals($form);
     $(document)
       .off('click.stockCountSubmit', '.js-stock-count-form .js-finance-submit-action')
       .on('click.stockCountSubmit', '.js-stock-count-form .js-finance-submit-action', function () { $(this).closest('form').find('[name="submit_action"]').val($(this).data('submit-action') || 'save'); $(this).closest('form').data('submit-button', $(this)); })
@@ -324,8 +317,8 @@
       .off('click.stockCountRemove', '.js-stock-count-remove-line').on('click.stockCountRemove', '.js-stock-count-remove-line', function () { removeLine($(this).closest('tr')); })
       .off('select2:select.stockCountProduct', '.js-stock-count-product').on('select2:select.stockCountProduct', '.js-stock-count-product', function (event) { const data = event.params ? event.params.data : {}; const $row = $(this).closest('tr'); $row.find('.js-stock-count-unit').text(data.unitLabel || data.unit_text || ''); $row.find('.js-stock-count-product-info').prop('disabled', false); refreshBalance($row); })
       .off('select2:clear.stockCountProduct change.stockCountProduct', '.js-stock-count-product').on('select2:clear.stockCountProduct change.stockCountProduct', '.js-stock-count-product', function () { const $row = $(this).closest('tr'); if (!$(this).val()) { $row.find('.js-stock-count-unit').text(''); $row.find('.js-stock-count-product-info').prop('disabled', true); } refreshBalance($row); })
-      .off('change.stockCountDimensions', '.js-stock-count-status, .js-stock-count-location').on('change.stockCountDimensions', '.js-stock-count-status, .js-stock-count-location', function () { if ($(this).hasClass('js-stock-count-location')) refreshAllBalances($form); else refreshBalance($(this).closest('tr')); })
-      .off('change.stockCountStore', '.js-stock-count-store').on('change.stockCountStore', '.js-stock-count-store', function () { filterLocations($form); refreshAllBalances($form); })
+      .off('change.stockCountDimensions', '.js-stock-count-status').on('change.stockCountDimensions', '.js-stock-count-status', function () { refreshBalance($(this).closest('tr')); })
+      .off('change.stockCountStore', '.js-stock-count-store').on('change.stockCountStore', '.js-stock-count-store', function () { refreshAllBalances($form); })
       .off('change.stockCountBatch blur.stockCountBatch', '.js-stock-count-batch').on('change.stockCountBatch blur.stockCountBatch', '.js-stock-count-batch', function () { refreshBalance($(this).closest('tr')); })
       .off('input.stockCountPhysical change.stockCountPhysical', '.js-stock-count-physical').on('input.stockCountPhysical change.stockCountPhysical', '.js-stock-count-physical', function () { updateVariance($(this).closest('tr')); })
       .off('click.stockCountProductInfo', '.js-stock-count-product-info').on('click.stockCountProductInfo', '.js-stock-count-product-info', function () { openProductInfo($(this)); })

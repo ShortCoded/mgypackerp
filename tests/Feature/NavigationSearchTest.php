@@ -58,10 +58,8 @@ test('navigation search excludes pending generic shells and retains proven workf
         $registry->find('costing_overhead_allocation_rules')->permission('view'),
         $registry->find('costing_overhead_allocation_run')->permission('view'),
         $registry->find('finance_cashbox_count')->permission('view'),
-        $registry->find('reports_costing_product_cost')->permission('view'),
-        $registry->find('costing_work_order_estimated_cost')->permission('view'),
+        'reports.costing.view',
         $registry->find('finance_bank_reconciliation')->permission('view'),
-        $registry->find('core_tax_definitions')->permission('view'),
     ];
     $user = navigationSearchActor($permissions);
 
@@ -70,9 +68,9 @@ test('navigation search excludes pending generic shells and retains proven workf
             ->assertOk()->assertJsonPath('data.results', []);
     }
 
-    foreach (['Cost Centers', 'Overhead Allocation Rules', 'Overhead Allocation Run', 'Cashbox Count', 'Product Cost'] as $query) {
-        $this->actingAs($user)->getJson(route('admin.navigation-search', ['q' => $query]))
-            ->assertOk()->assertJsonCount(1, 'data.results');
+    foreach (['Cost Centers', 'Overhead Allocation Rules', 'Overhead Allocation Run', 'Cashbox Count', 'Costing Reports', 'Product Cost'] as $query) {
+        $response = $this->actingAs($user)->getJson(route('admin.navigation-search', ['q' => $query]))->assertOk();
+        $this->assertCount(1, $response->json('data.results'), $query);
     }
 });
 

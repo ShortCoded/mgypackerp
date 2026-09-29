@@ -15,6 +15,17 @@
         @if ($errors->any())<div class="alert alert-danger"><ul class="mb-0">@foreach ($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
         <div class="card mb-3"><div class="card-body py-3 d-flex flex-wrap justify-content-between align-items-center gap-2"><div><h4 class="mb-1">{{ __('hr_payroll_policies.title') }}</h4><div class="small text-muted">{{ __('hr_payroll_policies.help') }}</div></div><div class="d-flex gap-2"><a class="btn btn-sm btn-falcon-default" href="{{ route('admin.hr.employee-attendance.import.index') }}">{{ __('hr_payroll_policies.workspace.import') }}</a><a class="btn btn-sm btn-falcon-default" href="{{ route('admin.hr.payroll-preparation.index') }}">{{ __('hr_payroll_policies.workspace.payroll') }}</a></div></div></div>
 
+        @if ($missingStandardItems !== [])
+            <div class="alert alert-warning d-flex flex-wrap align-items-center justify-content-between gap-3" role="alert">
+                <div><strong>{{ __('hr_payroll_policies.workspace.catalog_missing') }}</strong><div class="small" dir="ltr">{{ implode(', ', $missingStandardItems) }}</div><div class="small">{{ __('hr_payroll_policies.workspace.catalog_help') }}</div></div>
+                @can('hr.payroll_attendance_policies.manage')
+                    @if ($canCreateCompanyPolicy)
+                        <form method="POST" action="{{ route('admin.hr.payroll-attendance-policies.standard-items') }}">@csrf<button class="btn btn-warning" type="submit">{{ __('hr_payroll_policies.workspace.install_catalog') }}</button></form>
+                    @endif
+                @endcan
+            </div>
+        @endif
+
         @can('hr.payroll_attendance_policies.manage')
             <div class="card mb-3"><div class="card-header py-3"><h5 class="mb-0">{{ __('hr_payroll_policies.create') }}</h5></div><div class="card-body">
                 <form method="POST" action="{{ route('admin.hr.payroll-attendance-policies.store') }}" class="row g-3">

@@ -422,6 +422,7 @@ return [
             'edit_permission_denied' => 'لا تملك صلاحية تعديل هذا المستند.',
             'delete_permission_denied' => 'لا تملك صلاحية حذف هذا المستند.',
             'select_opening_stock_first' => 'اختر إذن مخزون أول المدة أولاً.',
+            'load_or_add_lines' => 'اضغط تحميل البنود أو أضف سطرًا من الإذن المحدد.',
             'no_remaining_lines' => 'لا توجد بنود غير مسعرة في الإذن المحدد.',
             'unexpected_error' => 'حدث خطأ غير متوقع.',
             'no_product_selected' => 'اختر منتجًا أولًا.',
@@ -470,6 +471,7 @@ return [
         'delete_line_shortcut' => 'حذف البند (Alt + Delete)',
         'production_run_batch_help' => 'اختر تشغيلة إنتاج لعرض احتياجات خاماتها المحسوبة. لا يمكن تعديل البنود أو الكميات يدويًا، ويصرف النظام المتاح فقط من المخزن المحدد.',
         'production_run_batch_receipt_help' => 'اختر التشغيلة لاستلام الناتج السليم المسجل لبنودها. يتحقق النظام من المرحلة النهائية واحتساب الخامات والجودة ويستلم الكميات المتبقية تلقائيًا.',
+        'finished_goods_receipt_notice' => 'استلام المنتج التام الناتج من التشغيل يتم باختيار تشغيلة الإنتاج، بعد تسجيل الناتج والجودة والتكلفة. الإذن المخزني العام لا يقبل المنتج التام.',
         'production_run_batch_preview_title' => 'احتياجات التشغيلة المحسوبة',
         'production_run_batch_reason' => 'صرف خامات التشغيلة الإنتاجية',
         'production_run_batch_receipt_reason' => 'استلام ناتج التشغيلة الإنتاجية',
@@ -580,6 +582,7 @@ return [
             'production_run_batch_load_failed' => 'تعذر تحميل تفاصيل التشغيلة. حدّث الاختيار وحاول مرة أخرى.',
             'production_run_batch_no_materials' => 'لا توجد خامات متبقية للصرف لهذه التشغيلة.',
             'production_run_batch_type_invalid' => 'اختر إذن صرف أو استلام لاستخدام رقم التشغيلة.',
+            'finished_goods_require_production_receipt' => 'استلام المنتج التام يتطلب إذن استلام إنتاج مرتبطًا بتشغيلة موثقة. اختر التشغيلة من نموذج الاستلام أو افتح تشغيل الإنتاج.',
         ],
     ],
     'stock_counts' => [
@@ -592,7 +595,6 @@ return [
             'doc_num' => 'رقم المستند',
             'count_date' => 'تاريخ الجرد',
             'store' => 'المخزن',
-            'location' => 'الموقع التخزيني',
             'lines_count' => 'عدد البنود',
             'system_total' => 'إجمالي النظام',
             'physical_total' => 'إجمالي الفعلي',
@@ -610,7 +612,6 @@ return [
             'doc_number' => 'رقم المستند',
             'count_date' => 'تاريخ الجرد',
             'store' => 'المخزن',
-            'location' => 'الموقع التخزيني',
             'lines' => 'بنود الجرد',
             'stock_status' => 'حالة المخزون',
             'product' => 'الصنف',
@@ -652,7 +653,6 @@ return [
         ],
         'placeholders' => [
             'select_store' => 'اختر المخزن',
-            'all_locations' => 'كل المواقع داخل المخزن',
             'select_product' => 'ابحث واختر الصنف',
         ],
         'summary' => [
@@ -716,7 +716,14 @@ return [
     ],
     'reports' => [
         'day_count' => ':count يوم|:count يوم',
+        'from_date' => 'من تاريخ',
+        'to_date' => 'إلى تاريخ',
+        'source_document' => 'رقم المستند المصدر',
+        'movement_type' => 'نوع الحركة',
+        'all_types' => 'كل أنواع الحركات',
         'gl_reconciliation_unavailable' => 'لا تتوفر المطابقة مع الأستاذ العام حتى يكون لكل تصنيف مطلوب حساب ترحيل واحد نشط في شجرة الحسابات.',
         'no_reorder_shortages' => 'لا يوجد عجز عن حد إعادة الطلب مطابق للفلاتر المحددة.',
+        'movements_limited' => 'معروض أحدث :shown حركة من أصل :total حركة مطابقة. الإجماليات محسوبة من كل الحركات.',
+        'movement_page_summary' => 'الحركات :first–:last من أصل :total. الإجماليات محسوبة من كل الحركات المطابقة.',
     ],
 ];

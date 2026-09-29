@@ -65,11 +65,11 @@
             </div>
             <div class="col-sm-6 col-xl-3">
                 <x-forms.label for="report_from" :label="__('From')" />
-                <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="report_from" name="from" value="{{ $dateValue($from) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" />
+                <x-forms.date-input class="form-control form-control-sm js-report-filter-control" id="report_from" name="from" value="{{ $dateValue($from) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" />
             </div>
             <div class="col-sm-6 col-xl-3">
                 <x-forms.label for="report_to" :label="__('To')" />
-                <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="report_to" name="to" value="{{ $dateValue($to) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" />
+                <x-forms.date-input class="form-control form-control-sm js-report-filter-control" id="report_to" name="to" value="{{ $dateValue($to) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" />
             </div>
             <div class="col-sm-6 col-xl-3">
                 <x-forms.label for="report_customer" :label="__('Customer')" />

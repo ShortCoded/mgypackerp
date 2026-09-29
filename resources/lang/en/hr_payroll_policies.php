@@ -29,6 +29,9 @@ return [
         'divisor_help' => 'Example: 30 means daily pay equals monthly salary divided by 30.',
         'minutes_help' => 'Example: 480 minutes equals 8 hours and determines the per-minute value.',
         'save_version' => 'Save policy', 'history' => 'Previous policies', 'versions' => 'Saved policies',
+        'catalog_missing' => 'Standard payroll items are missing',
+        'catalog_help' => 'Setup adds missing items only and keeps existing settings. Review account mappings before posting payroll.',
+        'install_catalog' => 'Set up standard items',
         'enabled_rules' => 'Enabled rules', 'current' => 'Current', 'no_deductions' => 'No deductions',
     ],
     'descriptions' => [
@@ -38,12 +41,14 @@ return [
         'deduct_unpaid_leave' => 'Deducts approved unpaid-leave days only.',
     ],
     'short' => ['deduct_absence' => 'Absence', 'deduct_late' => 'Late', 'deduct_early_leave' => 'Early leave', 'deduct_unpaid_leave' => 'Unpaid leave'],
-    'messages' => ['created' => 'Payroll attendance policy version created.', 'empty' => 'No policy versions exist. Payroll deductions remain disabled.'],
+    'messages' => ['created' => 'Payroll attendance policy version created.', 'empty' => 'No policy versions exist. Payroll deductions remain disabled.', 'catalog_installed' => ':count standard payroll items added. Review policies and account mappings.'],
     'validation' => [
         'deduction_item_required' => 'Select a deduction payroll item when any deduction is enabled.',
         'company_policy_forbidden' => 'Only a user with unrestricted branch access may create a company-wide policy.',
         'branch_forbidden' => 'The selected branch is outside your allowed operating scope.',
         'effective_from_unique' => 'A policy version already starts on this date for the selected scope.',
         'effective_period_overlap' => 'Existing policy versions overlap for the selected scope. Resolve them before adding another version.',
+        'catalog_classification_missing' => 'Account classification :code is missing; payroll items cannot be set up safely.',
+        'catalog_item_conflict' => 'Item :code has a conflicting status or kind; review it before setup.',
     ],
 ];

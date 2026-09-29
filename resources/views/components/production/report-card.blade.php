@@ -3,12 +3,13 @@
     'emptyMessage',
     'hasRows' => false,
     'columns' => 1,
+    'wide' => false,
 ])
 
 <div class="card">
     <div class="card-header py-2"><h6 class="mb-0">{{ $title }}</h6></div>
     <div class="table-responsive">
-        <table class="table table-sm table-hover align-middle mb-0">
+        <table class="table table-sm table-hover align-middle mb-0" @if($wide) data-report-wide @endif>
             <thead><tr>{{ $head }}</tr></thead>
             <tbody>
                 @if($hasRows)

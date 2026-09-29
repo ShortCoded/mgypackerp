@@ -1,13 +1,12 @@
 @php
     $numbers = app(\Modules\Core\Services\NumericFormatService::class);
     $showHall = $rows->contains(fn ($row) => $row->branchHall !== null);
-    $showLocation = $rows->contains(fn ($row) => $row->warehouseLocation !== null);
     $showAttributes = $rows->contains(function ($row): bool {
         $product = $row->product;
 
         return collect([$product?->category, $product?->group, $product?->itemModel, $product?->size, $product?->color, $product?->decal, $product?->originCountry])->filter()->isNotEmpty();
     });
-    $descriptionColumns = 6 + (int) $showHall + (int) $showLocation + (int) $showAttributes;
+    $descriptionColumns = 6 + (int) $showHall + (int) $showAttributes;
 @endphp
 
 <div class="report-filter-summary">
@@ -31,13 +30,12 @@
     <p class="report-warning">{{ __('stock_balance_inquiry.reservations_hall_note') }}</p>
 @endunless
 
-<table class="report-table">
+<table dir="{{ $direction ?? 'ltr' }}" class="report-table">
     <thead>
         <tr>
             <th>{{ __('stock_balance_inquiry.columns.branch') }}</th>
             <th>{{ __('stock_balance_inquiry.columns.store') }}</th>
             @if ($showHall)<th>{{ __('stock_balance_inquiry.columns.hall') }}</th>@endif
-            @if ($showLocation)<th>{{ __('stock_balance_inquiry.columns.location') }}</th>@endif
             <th>{{ __('stock_balance_inquiry.columns.item_code') }}</th>
             <th>{{ __('stock_balance_inquiry.columns.item_name') }}</th>
             <th>{{ __('stock_balance_inquiry.columns.classification') }}</th>
@@ -68,7 +66,6 @@
                 <td>{{ $row->branch?->name }}</td>
                 <td>{{ $row->branchStore?->name }}</td>
                 @if ($showHall)<td>{{ $row->branchHall?->name }}</td>@endif
-                @if ($showLocation)<td>{{ $row->warehouseLocation ? $row->warehouseLocation->code.' / '.$row->warehouseLocation->name : '' }}</td>@endif
                 <td dir="ltr">{{ $product?->doc_num }}</td>
                 <td>{{ $product?->name }}</td>
                 <td>{{ $product?->item_classification ? __('products.classifications.'.$product->item_classification) : '' }}</td>

@@ -111,5 +111,5 @@
         window.dataTableTranslations = @json(__('datatables'));
     </script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
-    <script src="{{ asset('assets/js/modules/Inventory/opening-stock-pricings.js') }}"></script>
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Inventory/opening-stock-pricings.js') }}"></script>
 @endpush

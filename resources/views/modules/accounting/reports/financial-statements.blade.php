@@ -68,22 +68,22 @@
             </div>
             <div class="col-sm-6 col-xl-3">
                 <x-forms.label for="from_date" :label="__('financial_statements.filters.from_date')" :required="true" />
-                <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="from_date" name="from_date" value="{{ $dates->formatDate($fromDate, $fromDate) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required />
+                <x-forms.date-input class="form-control form-control-sm js-report-filter-control" id="from_date" name="from_date" value="{{ $dates->formatDate($fromDate, $fromDate) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required />
                 @error('from_date')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
             </div>
             <div class="col-sm-6 col-xl-3">
                 <x-forms.label for="to_date" :label="__('financial_statements.filters.to_date')" :required="true" />
-                <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="to_date" name="to_date" value="{{ $dates->formatDate($toDate, $toDate) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required />
+                <x-forms.date-input class="form-control form-control-sm js-report-filter-control" id="to_date" name="to_date" value="{{ $dates->formatDate($toDate, $toDate) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" required />
                 @error('to_date')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
             </div>
             <div class="col-sm-6 col-xl-3">
                 <x-forms.label for="comparison_from_date" :label="__('financial_statements.filters.comparison_from_date')" />
-                <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="comparison_from_date" name="comparison_from_date" value="{{ $dates->formatDate(request('comparison_from_date'), request('comparison_from_date', '')) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" />
+                <x-forms.date-input class="form-control form-control-sm js-report-filter-control" id="comparison_from_date" name="comparison_from_date" value="{{ $dates->formatDate(request('comparison_from_date'), request('comparison_from_date', '')) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" />
                 @error('comparison_from_date')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
             </div>
             <div class="col-sm-6 col-xl-3">
                 <x-forms.label for="comparison_to_date" :label="__('financial_statements.filters.comparison_to_date')" />
-                <x-forms.date-input class="form-control form-control-sm js-date-picker js-report-filter-control" id="comparison_to_date" name="comparison_to_date" value="{{ $dates->formatDate(request('comparison_to_date'), request('comparison_to_date', '')) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" />
+                <x-forms.date-input class="form-control form-control-sm js-report-filter-control" id="comparison_to_date" name="comparison_to_date" value="{{ $dates->formatDate(request('comparison_to_date'), request('comparison_to_date', '')) }}" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" autocomplete="off" dir="ltr" />
                 @error('comparison_to_date')<div class="invalid-feedback d-block">{{ $message }}</div>@enderror
             </div>
             <div class="col-sm-6 col-xl-3">

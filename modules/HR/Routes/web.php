@@ -91,6 +91,7 @@ Route::middleware('auth')
         });
         Route::prefix('employee-attendance/import')->name('employee-attendance.import.')->controller(HrAttendanceImportController::class)->group(function (): void {
             Route::get('/', 'index')->middleware('can:hr.employee_attendance.import')->name('index');
+            Route::get('/template', 'template')->middleware('can:hr.employee_attendance.import')->name('template');
             Route::post('/', 'store')->middleware('can:hr.employee_attendance.import')->name('store');
         });
 
@@ -114,6 +115,9 @@ Route::middleware('auth')
         Route::post('/payroll-attendance-policies', [PayrollAttendancePolicyController::class, 'store'])
             ->middleware('can:hr.payroll_attendance_policies.manage')
             ->name('payroll-attendance-policies.store');
+        Route::post('/payroll-attendance-policies/standard-items', [PayrollAttendancePolicyController::class, 'installStandardItems'])
+            ->middleware('can:hr.payroll_attendance_policies.manage')
+            ->name('payroll-attendance-policies.standard-items');
 
         Route::get('/payroll-preparation', [PayrollController::class, 'index'])
             ->middleware('can:hr.payroll_preparation.view')

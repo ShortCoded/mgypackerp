@@ -127,7 +127,7 @@ test('quotation dispatch records audit while cancellation preserves history and 
 
 test('customer quotation terms are tenant scoped sanitized and applied by default', function (): void {
     $fixture = salesUiFixture();
-    foreach (['customers.view', 'customers.edit'] as $permission) {
+    foreach (['customers.view', 'customers.edit', 'customer_terms.edit'] as $permission) {
         Permission::findOrCreate($permission, 'web');
         $fixture['user']->givePermissionTo($permission);
     }

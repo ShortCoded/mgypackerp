@@ -16,7 +16,7 @@ uses(RefreshDatabase::class);
 require_once dirname(__DIR__).'/FixedAssetCycleSupport.php';
 
 beforeEach(function (): void {
-    coreFixedAssetActor(['fixed_assets.view', 'fixed_assets.view_trashed', 'fixed_assets.create', 'fixed_assets.edit', 'fixed_assets.delete', 'fixed_assets.restore', 'fixed_assets.activate', 'fixed_assets.custody.post', 'fixed_assets.dispose', 'fixed_assets.depreciation.preview', 'fixed_assets.depreciation.post', 'fixed_assets.reports', 'fixed_assets.print', 'fixed_assets.export', 'file_manager.view', 'file_manager.upload', 'file_manager.download']);
+    coreFixedAssetActor(['fixed_assets.view', 'fixed_assets.movements.view', 'fixed_assets.view_trashed', 'fixed_assets.create', 'fixed_assets.edit', 'fixed_assets.delete', 'fixed_assets.restore', 'fixed_assets.activate', 'fixed_assets.custody.post', 'fixed_assets.dispose', 'fixed_assets.depreciation.preview', 'fixed_assets.depreciation.post', 'fixed_assets.reports', 'fixed_assets.print', 'fixed_assets.export', 'file_manager.view', 'file_manager.upload', 'file_manager.download']);
 });
 
 test('custody uses scoped paginated employees and supports assign transfer return without no ops', function (): void {

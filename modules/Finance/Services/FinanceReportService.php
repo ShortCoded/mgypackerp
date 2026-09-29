@@ -11,9 +11,11 @@ use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\JournalSourceLabelService;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Currency;
+use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\Select2ResponseService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
@@ -68,6 +70,8 @@ class FinanceReportService
         private readonly DateFormatService $dates,
         private readonly JournalSourceLabelService $sourceLabels,
         private readonly OperatingContextService $operatingContext,
+        private readonly DataTableSearchService $search,
+        private readonly Select2ResponseService $select2,
     ) {}
 
     /** @return list<string> */
@@ -205,40 +209,71 @@ class FinanceReportService
     public function filterOptions(array $selected = []): array
     {
         $companyId = $this->companyId();
-        $branchId = filled($selected['branch_id'] ?? null)
-            ? (int) $selected['branch_id']
-            : (int) ($this->operatingContext->snapshot(request())['branch_id'] ?? 0);
         $allowedBranchIds = $this->operatingContext->allowedBranchQueryForCurrentCompany(request())->pluck('branches.id');
-        $cashboxes = Cashbox::query()->where('company_id', $companyId)->active()
-            ->whereIn('branch_id', $allowedBranchIds)
-            ->when($branchId > 0, fn ($query) => $query->where('branch_id', $branchId))
-            ->orderBy('name')->get(['id', 'doc_num', 'name']);
-        $bankAccounts = BankAccount::query()->where('company_id', $companyId)->active()
-            ->orderBy('account_name')->get(['id', 'doc_num', 'account_name', 'account_number']);
-        $currencies = Currency::query()->where('company_id', $companyId)->active()
-            ->orderBy('code')->get(['id', 'doc_num', 'code', 'name']);
-
-        if (filled($selected['cashbox_doc_num'] ?? null)) {
-            $cashboxes = $cashboxes->concat(Cashbox::withTrashed()->where('company_id', $companyId)
+        $cashboxes = filled($selected['cashbox_doc_num'] ?? null)
+            ? Cashbox::withTrashed()->where('company_id', $companyId)
                 ->whereIn('branch_id', $allowedBranchIds)->where('doc_num', $selected['cashbox_doc_num'])
-                ->get(['id', 'doc_num', 'name']));
-        }
-        if (filled($selected['bank_account_doc_num'] ?? null)) {
-            $bankAccounts = $bankAccounts->concat(BankAccount::withTrashed()->where('company_id', $companyId)
+                ->get(['id', 'doc_num', 'name'])
+            : collect();
+        $bankAccounts = filled($selected['bank_account_doc_num'] ?? null)
+            ? BankAccount::withTrashed()->where('company_id', $companyId)
                 ->where('doc_num', $selected['bank_account_doc_num'])
-                ->get(['id', 'doc_num', 'account_name', 'account_number']));
-        }
-        if (filled($selected['currency_doc_num'] ?? null)) {
-            $currencies = $currencies->concat(Currency::withTrashed()->where('company_id', $companyId)
+                ->get(['id', 'doc_num', 'account_name', 'account_number'])
+            : collect();
+        $currencies = filled($selected['currency_doc_num'] ?? null)
+            ? Currency::withTrashed()->where('company_id', $companyId)
                 ->where('doc_num', $selected['currency_doc_num'])
-                ->get(['id', 'doc_num', 'code', 'name']));
-        }
+                ->get(['id', 'doc_num', 'code', 'name'])
+            : collect();
 
         return [
-            'cashboxes' => $cashboxes->unique('id')->sortBy('name')->values(),
-            'bank_accounts' => $bankAccounts->unique('id')->sortBy('account_name')->values(),
-            'currencies' => $currencies->unique('id')->sortBy('code')->values(),
+            'cashboxes' => $cashboxes,
+            'bank_accounts' => $bankAccounts,
+            'currencies' => $currencies,
         ];
+    }
+
+    /** @param array<string, mixed> $filters
+     * @return array{results: list<array{id: string, text: string}>, pagination: array{more: bool}}
+     */
+    public function select2Options(Request $request, string $kind, array $filters): array
+    {
+        $companyId = $this->companyId();
+        $terms = $this->search->terms($request->input('q', $request->input('term')));
+
+        if ($kind === 'cashboxes') {
+            $allowedBranchIds = $this->operatingContext->allowedBranchQueryForCurrentCompany($request)->pluck('branches.id');
+            $query = Cashbox::query()->where('company_id', $companyId)->active()
+                ->whereIn('branch_id', $allowedBranchIds)
+                ->when(filled($filters['branch_id'] ?? null), fn ($query) => $query->where('branch_id', $filters['branch_id']))
+                ->orderBy('name')->orderBy('id');
+            $this->search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'name']]);
+
+            return $this->select2->paginated($query, $request, fn (Cashbox $cashbox): array => [
+                'id' => $cashbox->doc_num,
+                'text' => $cashbox->doc_num.' / '.$cashbox->name,
+            ]);
+        }
+
+        if ($kind === 'bank-accounts') {
+            $query = BankAccount::query()->where('company_id', $companyId)->active()
+                ->orderBy('account_name')->orderBy('id');
+            $this->search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'account_name', 'account_number']]);
+
+            return $this->select2->paginated($query, $request, fn (BankAccount $bank): array => [
+                'id' => $bank->doc_num,
+                'text' => $bank->doc_num.' / '.$bank->account_name,
+            ]);
+        }
+
+        abort_unless($kind === 'currencies', 404);
+        $query = Currency::query()->where('company_id', $companyId)->active()->orderBy('code')->orderBy('id');
+        $this->search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'code', 'name']]);
+
+        return $this->select2->paginated($query, $request, fn (Currency $currency): array => [
+            'id' => $currency->doc_num,
+            'text' => $currency->code.' / '.$currency->name,
+        ]);
     }
 
     /** @return array{0: array<string, string>, 1: Collection<int, array<string, mixed>>, 2: list<string>} */

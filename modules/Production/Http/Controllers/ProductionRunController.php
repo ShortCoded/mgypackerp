@@ -443,12 +443,12 @@ class ProductionRunController extends Controller
         );
         $validated = $request->validate([
             'branch_store_id' => ['required', 'integer', Rule::exists(BranchStore::class, 'id')->where('branch_id', $context['branch_id'])],
-            'warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id'],
+            'warehouse_location_id' => ['prohibited'],
         ]);
         $document = $this->guard(fn (): InventoryDocument => $this->cycle->issueRunBatchMaterials(
             $productionRunBatch,
             (int) $validated['branch_store_id'],
-            isset($validated['warehouse_location_id']) ? (int) $validated['warehouse_location_id'] : null,
+            null,
         ));
 
         return $this->respond($request, ['doc_num' => $document->doc_num], route('admin.production.runs.batches.show', $productionRunBatch));
@@ -500,8 +500,8 @@ class ProductionRunController extends Controller
     public function reserve(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
         $this->assertRunInCurrentContext($request, $productionRun);
-        $validated = $request->validate(['branch_store_id' => ['required', 'integer', 'exists:branch_stores,id'], 'warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id']]);
-        $record = $this->guard(fn (): ProductionRun => $this->cycle->reserveRun($productionRun, $validated['branch_store_id'], $validated['warehouse_location_id'] ?? null));
+        $validated = $request->validate(['branch_store_id' => ['required', 'integer', 'exists:branch_stores,id'], 'warehouse_location_id' => ['prohibited']]);
+        $record = $this->guard(fn (): ProductionRun => $this->cycle->reserveRun($productionRun, $validated['branch_store_id'], null));
 
         return $this->respond($request, ['run_number' => $record->run_number], route('admin.production.runs.show', $record));
     }
@@ -515,7 +515,7 @@ class ProductionRunController extends Controller
             $validated['branch_store_id'],
             $this->quantitiesByRequirement($validated['lines'] ?? []),
             $request->boolean('additional'),
-            $validated['warehouse_location_id'] ?? null,
+            null,
         ));
 
         return $this->respond($request, ['doc_num' => $document->doc_num], route('admin.production.runs.show', $productionRun));
@@ -529,7 +529,7 @@ class ProductionRunController extends Controller
             $productionRun,
             $validated['branch_store_id'],
             $this->quantitiesByRequirement($validated['lines']),
-            $validated['warehouse_location_id'] ?? null,
+            null,
         ));
 
         return $this->respond($request, ['doc_num' => $document->doc_num], route('admin.production.runs.show', $productionRun));
@@ -603,7 +603,7 @@ class ProductionRunController extends Controller
         $this->assertRunInCurrentContext($request, $productionRun);
         $validated = $request->validate([
             'branch_store_id' => ['required', 'integer', 'exists:branch_stores,id'],
-            'warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id'],
+            'warehouse_location_id' => ['prohibited'],
             'lines' => ['required', 'array', 'min:1'],
             'lines.*.requirement_id' => ['required', 'integer', 'exists:production_material_requirements,id'],
             'lines.*.consumed_quantity' => ['required', 'numeric', 'min:0'],
@@ -619,7 +619,7 @@ class ProductionRunController extends Controller
             $productionRun,
             $validated['branch_store_id'],
             $accounting,
-            $validated['warehouse_location_id'] ?? null,
+            null,
         ));
 
         return $this->respond($request, collect($documents)->map->doc_num->all(), route('admin.production.runs.show', $productionRun));
@@ -630,14 +630,14 @@ class ProductionRunController extends Controller
         $this->assertRunInCurrentContext($request, $productionRun);
         $validated = $request->validate([
             'branch_store_id' => ['required', 'integer', 'exists:branch_stores,id'],
-            'warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id'],
+            'warehouse_location_id' => ['prohibited'],
             'base_quantity' => ['required', 'numeric', 'gt:0'],
         ]);
         $document = $this->guard(fn () => $this->cycle->receiveFinishedGoods(
             $productionRun,
             $validated['branch_store_id'],
             (string) $validated['base_quantity'],
-            $validated['warehouse_location_id'] ?? null,
+            null,
         ));
 
         return $this->respond($request, ['doc_num' => $document->doc_num], route('admin.production.runs.show', $productionRun));
@@ -763,7 +763,7 @@ class ProductionRunController extends Controller
     {
         return [
             'branch_store_id' => ['required', 'integer', 'exists:branch_stores,id'],
-            'warehouse_location_id' => ['nullable', 'integer', 'exists:warehouse_locations,id'],
+            'warehouse_location_id' => ['prohibited'],
             'additional' => ['nullable', 'boolean'],
             'lines' => ['nullable', 'array'],
             'lines.*.requirement_id' => ['required', 'integer', 'exists:production_material_requirements,id'],

@@ -15,7 +15,7 @@ final class InventoryValuationComparisonExport implements FromArray, ShouldAutoS
     /** @return list<list<string>> */
     public function array(): array
     {
-        return collect($this->comparison['methods'])->map(
+        $rows = collect($this->comparison['methods'])->map(
             fn (array $result, string $method): array => [
                 __('inventory_accounting.valuation_methods.'.$method),
                 $result['issue_cost'] ?? '',
@@ -25,6 +25,39 @@ final class InventoryValuationComparisonExport implements FromArray, ShouldAutoS
                 $result['book_method'] ? __('inventory_accounting.valuation_report.book_method') : ($result['reference_only'] ? __('inventory_accounting.valuation_report.reference_only') : __('inventory_accounting.valuation_report.simulation')),
             ],
         )->values()->all();
+
+        if (($this->comparison['valuation_complete'] ?? true) === false) {
+            $rows[] = [
+                __('inventory_accounting.valuation_report.partial_warning'),
+                '',
+                '',
+                '',
+                (string) $this->comparison['excluded_position_count'],
+                (string) $this->comparison['excluded_quantity'],
+            ];
+            $rows[] = ['', '', '', '', '', ''];
+            $rows[] = [
+                __('inventory_accounting.valuation_report.excluded_title'),
+                __('inventory_accounting.book_valuation.columns.branch').' / '.__('inventory_accounting.book_valuation.columns.store'),
+                __('inventory_accounting.book_valuation.columns.item'),
+                __('inventory_accounting.book_valuation.columns.quantity'),
+                __('inventory_accounting.valuation_report.excluded_reason'),
+                __('inventory_accounting.valuation_report.excluded_documents'),
+            ];
+
+            foreach ($this->comparison['excluded_positions'] as $position) {
+                $rows[] = [
+                    '',
+                    ($position['branch_name'] ?? $position['branch_id']).' / '.($position['store_name'] ?? $position['branch_store_id']),
+                    ($position['product_doc_num'] ?? $position['product_id']).' / '.($position['product_name'] ?? ''),
+                    $position['quantity'],
+                    __($position['reason']),
+                    implode('، ', $position['source_doc_nums']),
+                ];
+            }
+        }
+
+        return $rows;
     }
 
     /** @return list<string> */

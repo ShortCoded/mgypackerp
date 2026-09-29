@@ -114,7 +114,7 @@
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="procurement-pr">{{ __('Purchase requisition') }}</label>
-                <x-forms.select class="{{ $selectClass }}" id="procurement-pr" name="purchase_requisition_doc_num">
+                <x-forms.select class="{{ $selectClass }} js-select2-ajax" id="procurement-pr" name="purchase_requisition_doc_num" data-url="{{ route('admin.purchases.procurement-cycle-report.select2', ['kind' => 'requisitions']) }}" data-extra-params='{"report_type":"#procurement-report-type","branch_id":"#procurement-branch"}' data-allow-clear="true" data-placeholder="{{ __('All') }}">
                     <option value="">{{ __('All') }}</option>
                     @foreach($requisitions as $requisition)
                         <option value="{{ $requisition->doc_num }}" @selected(($filters['purchase_requisition_doc_num'] ?? '') === $requisition->doc_num)>{{ $requisition->doc_num }}</option>
@@ -123,7 +123,7 @@
             </div>
             <div class="col-12 col-md-6 col-xl-3 report-filter-field">
                 <label class="form-label mb-1" for="procurement-po">{{ __('Purchase order') }}</label>
-                <x-forms.select class="{{ $selectClass }}" id="procurement-po" name="purchase_order_doc_num">
+                <x-forms.select class="{{ $selectClass }} js-select2-ajax" id="procurement-po" name="purchase_order_doc_num" data-url="{{ route('admin.purchases.procurement-cycle-report.select2', ['kind' => 'orders']) }}" data-extra-params='{"report_type":"#procurement-report-type","branch_id":"#procurement-branch"}' data-allow-clear="true" data-placeholder="{{ __('All') }}">
                     <option value="">{{ __('All') }}</option>
                     @foreach($orders as $order)
                         <option value="{{ $order->doc_num }}" @selected(($filters['purchase_order_doc_num'] ?? '') === $order->doc_num)>{{ $order->doc_num }}</option>
@@ -136,7 +136,7 @@
             </div>
             <div class="col-6 col-md-4 col-xl-2 report-filter-field">
                 <label class="form-label" for="procurement-currency">{{ __('Currency') }}</label>
-                <x-forms.select class="{{ $selectClass }}" id="procurement-currency" name="currency_doc_num"><option value="">{{ __('All') }}</option>@foreach($currencies as $currency)<option value="{{ $currency->doc_num }}" @selected(($filters['currency_doc_num'] ?? '') === $currency->doc_num)>{{ $currency->doc_num }} / {{ $currency->name }}</option>@endforeach</x-forms.select>
+                <x-forms.select class="{{ $selectClass }} js-select2-ajax" id="procurement-currency" name="currency_doc_num" data-url="{{ route('admin.purchases.procurement-cycle-report.select2', ['kind' => 'currencies']) }}" data-extra-params='{"report_type":"#procurement-report-type"}' data-allow-clear="true" data-placeholder="{{ __('All') }}"><option value="">{{ __('All') }}</option>@foreach($currencies as $currency)<option value="{{ $currency->doc_num }}" selected>{{ $currency->doc_num }} / {{ $currency->name }}</option>@endforeach</x-forms.select>
             </div>
             @if($reportType === \Modules\Purchases\Services\Reports\ProcurementCycleReport::SupplierStatement)
             <div class="col-12 col-md-4 report-filter-field">
@@ -152,7 +152,7 @@
             </div>
             <div class="col-6 col-md-4 col-xl-2 report-filter-field">
                 <label class="form-label mb-1" for="procurement-branch">{{ __('Branch') }}</label>
-                <x-forms.select class="{{ $selectClass }}" id="procurement-branch" name="branch_id">
+                <x-forms.select class="{{ $selectClass }} js-select2-ajax" id="procurement-branch" name="branch_id" data-url="{{ route('admin.purchases.procurement-cycle-report.select2', ['kind' => 'branches']) }}" data-extra-params='{"report_type":"#procurement-report-type"}' data-allow-clear="true" data-placeholder="{{ __('All') }}">
                     <option value="">{{ __('All') }}</option>
                     @foreach($branches as $branch)
                         <option value="{{ $branch->id }}" @selected((string) ($filters['branch_id'] ?? '') === (string) $branch->id)>{{ $branch->name }}</option>
@@ -161,7 +161,7 @@
             </div>
             <div class="col-6 col-md-4 col-xl-2 report-filter-field">
                 <label class="form-label mb-1" for="procurement-warehouse">{{ __('Warehouse') }}</label>
-                <x-forms.select class="{{ $selectClass }}" id="procurement-warehouse" name="warehouse_uuid">
+                <x-forms.select class="{{ $selectClass }} js-select2-ajax" id="procurement-warehouse" name="warehouse_uuid" data-url="{{ route('admin.purchases.procurement-cycle-report.select2', ['kind' => 'warehouses']) }}" data-extra-params='{"report_type":"#procurement-report-type","branch_id":"#procurement-branch"}' data-depends-on="#procurement-branch" data-dependent-param="branch_id" data-allow-clear="true" data-placeholder="{{ __('All') }}">
                     <option value="">{{ __('All') }}</option>
                     @foreach($warehouses as $warehouse)
                         <option value="{{ $warehouse->public_uuid }}" @selected(($filters['warehouse_uuid'] ?? '') === $warehouse->public_uuid)>{{ $warehouse->name }}</option>

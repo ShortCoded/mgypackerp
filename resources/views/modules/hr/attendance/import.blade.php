@@ -40,6 +40,7 @@
                             </div>
                             <div class="col-12 d-flex flex-wrap gap-2">
                                 <button class="btn btn-primary" type="submit"><span class="fas fa-file-import me-1" aria-hidden="true"></span>{{ __('hr_attendance.import.action') }}</button>
+                                <a class="btn btn-outline-primary" href="{{ route('admin.hr.employee-attendance.import.template') }}"><span class="fas fa-file-excel me-1" aria-hidden="true"></span>{{ __('hr_attendance.import.download_template') }}</a>
                                 <a class="btn btn-falcon-default" href="{{ route('admin.hr.employee-attendance.index') }}">{{ __('common.actions.back') }}</a>
                             </div>
                         </form>

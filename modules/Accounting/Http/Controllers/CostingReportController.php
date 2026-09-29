@@ -3,6 +3,7 @@
 namespace Modules\Accounting\Http\Controllers;
 
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Maatwebsite\Excel\Excel as ExcelWriter;
@@ -12,8 +13,10 @@ use Modules\Accounting\Services\CostingReportService;
 use Modules\Core\Models\Company;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\CompanyPrintIdentityService;
+use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
+use Modules\Core\Services\Select2ResponseService;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -36,6 +39,21 @@ final class CostingReportController extends Controller
             'filterOptions' => $this->reports->filterOptions($filters),
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute($request->route()?->getName() ?? 'admin.reports.costing.product-cost.index'),
         ]);
+    }
+
+    public function select2Options(Request $request, string $kind, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
+    {
+        $request->validate([
+            'type' => ['nullable', 'string'],
+            'q' => ['nullable', 'string', 'max:255'],
+            'term' => ['nullable', 'string', 'max:255'],
+            'page' => ['nullable', 'integer', 'min:1'],
+        ]);
+        $type = (string) $request->query('type', CostingReportService::ProductCost);
+        abort_unless(in_array($type, CostingReportService::types(), true), 422);
+        $this->authorizeRequest($request, $type, 'view');
+
+        return response()->json($this->reports->select2Options($request, $kind, $search, $select2));
     }
 
     public function excel(Request $request): BinaryFileResponse

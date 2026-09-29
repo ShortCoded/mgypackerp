@@ -48,6 +48,9 @@ Route::middleware(['auth', 'erp.expanded'])
     ->as('admin.reports.costing.')
     ->controller(CostingReportController::class)
     ->group(function (): void {
+        Route::get('select2/{kind}', 'select2Options')
+            ->whereIn('kind', ['products', 'orders', 'cost-centers'])
+            ->name('select2');
         foreach ([
             'product-cost' => 'product_cost',
             'work-order-cost' => 'work_order_cost',
@@ -164,6 +167,11 @@ Route::middleware('auth')
         Route::get('/reports/financial-statements', [FinancialStatementReportController::class, 'index'])
             ->middleware('can:reports.financial_statements.view')
             ->name('reports.financial-statements');
+
+        Route::get('/reports/financial-analytics/expense-analysis/select2/{kind}', [FinancialAnalyticsReportController::class, 'select2Options'])
+            ->whereIn('kind', ['accounts', 'classifications', 'cost-centers', 'branches', 'currencies'])
+            ->middleware('can:reports.financial_analytics.expense_analysis.view')
+            ->name('reports.financial-analytics.expense-analysis.select2');
 
         foreach ([
             'expense-analysis' => 'expense_analysis',

@@ -1697,7 +1697,7 @@ class ProductionCycleService
             }
 
             $receiptCost = $this->costs->receiptCost($locked, $baseQuantity);
-            $unitCost = bccomp($receiptCost, '0', 8) > 0 ? bcdiv($receiptCost, $baseQuantity, 8) : null;
+            $unitCost = bcdiv($receiptCost, $baseQuantity, 8);
             $manufactureDate = ($locked->actual_end_at ?? now())->toDateString();
             $expiryDate = null;
             if ($locked->product?->tracks_expiry) {

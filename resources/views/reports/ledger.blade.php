@@ -18,7 +18,7 @@
     @if($isPartnerStatement)
         @if($result['opening_movements'] !== [])
             <h3>{{ __('ledger_reports.summary.prior_details') }}</h3>
-            <table class="report-table partner-statement-table {{ $partnerTableClass }}" style="margin-bottom:8px;">
+            <table dir="{{ $direction ?? 'ltr' }}" class="report-table partner-statement-table {{ $partnerTableClass }}" style="margin-bottom:8px;">
                 <colgroup>@foreach($partnerColumnWidths as $width)<col style="width: {{ $width }};">@endforeach</colgroup>
                 <thead><tr>@foreach($partnerColumns as $column)<th>{{ __('ledger_reports.columns.'.$column) }}</th>@endforeach</tr></thead>
                 <tbody>
@@ -37,7 +37,7 @@
                 </tbody>
             </table>
         @endif
-        <table class="report-table partner-statement-table {{ $partnerTableClass }}">
+        <table dir="{{ $direction ?? 'ltr' }}" class="report-table partner-statement-table {{ $partnerTableClass }}">
             <colgroup>@foreach($partnerColumnWidths as $width)<col style="width: {{ $width }};">@endforeach</colgroup>
             <thead>
                 <tr>
@@ -81,7 +81,7 @@
             </tfoot>
         </table>
     @else
-    <table class="report-table ledger-report-table">
+    <table dir="{{ $direction ?? 'ltr' }}" class="report-table ledger-report-table">
         <thead>
             <tr>
                 @foreach(['date', 'source_type', 'document', 'reference', 'description', 'cost_center', 'branch', 'debit', 'credit', 'running_debit', 'running_credit'] as $column)

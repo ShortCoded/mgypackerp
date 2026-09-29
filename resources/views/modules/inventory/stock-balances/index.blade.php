@@ -238,9 +238,9 @@
                         </td>
                         <td>
                             <div>{{ $row->branchStore?->name }}</div>
-                            @if ($row->branchHall || $row->warehouseLocation)
+                            @if ($row->branchHall)
                                 <small class="text-600">
-                                    {{ collect([$row->branchHall?->name, $row->warehouseLocation ? $row->warehouseLocation->code.' / '.$row->warehouseLocation->name : null])->filter()->implode(' — ') }}
+                                    {{ $row->branchHall?->name }}
                                 </small>
                             @endif
                         </td>

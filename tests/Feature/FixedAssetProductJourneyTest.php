@@ -12,7 +12,7 @@ use Modules\FixedAssets\Services\FixedAssetReportService;
 require_once __DIR__.'/../FixedAssetCycleSupport.php';
 
 test('asset navigation exposes four real destinations and retains deployed workflow permissions', function (): void {
-    $actor = coreFixedAssetActor(['fixed_assets.view', 'fixed_assets.reports', 'fixed_assets.depreciation.preview', 'fixed_assets.accounting.configure']);
+    $actor = coreFixedAssetActor(['fixed_assets.view', 'fixed_assets.movements.view', 'fixed_assets.reports', 'fixed_assets.depreciation.preview', 'fixed_assets.accounting.configure']);
     coreFixedAssetContext();
     $menu = collect(app(MenuService::class)->getMenu($actor))->firstWhere('label', 'accounting_costing');
     $assets = collect($menu['children'])->firstWhere('label', 'fixed_assets');
@@ -121,7 +121,7 @@ test('configured full asset crud exposes the standard actions menu and permits c
 });
 
 test('movement history filters original and reversed documents without losing their journal links', function (): void {
-    $actor = coreFixedAssetActor(['fixed_assets.view', 'fixed_assets.create', 'fixed_assets.activate', 'journal_entries.view']);
+    $actor = coreFixedAssetActor(['fixed_assets.view', 'fixed_assets.movements.view', 'fixed_assets.create', 'fixed_assets.activate', 'journal_entries.view']);
     $context = coreFixedAssetContext();
     $asset = coreRecognizedAsset($context);
     $service = app(FixedAssetCostMovementService::class);

@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Maatwebsite\Excel\Facades\Excel;
 use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\AccountClassification;
@@ -27,6 +28,7 @@ use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashboxCurrency;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\HR\Models\HrEmployee;
+use Modules\Inventory\Exports\InventoryReportExport;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryLayerAllocation;
 use Modules\Inventory\Models\InventoryReceiptLayer;
@@ -39,6 +41,7 @@ use Modules\Inventory\Services\InventoryGlReconciliationService;
 use Modules\Inventory\Services\InventoryLayerService;
 use Modules\Inventory\Services\InventoryMovementService;
 use Modules\Inventory\Services\InventoryReportService;
+use Modules\Inventory\Services\InventoryValuationService;
 use Modules\Inventory\Services\StockCountService;
 use Modules\Maintenance\Models\MaintenanceMaterialRequest;
 use Modules\Maintenance\Models\MaintenanceMeterReading;
@@ -178,6 +181,119 @@ function manufacturingIntegritySession(array $fixture): array
         OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
     ];
 }
+
+test('finished goods receipt cost rejects an unvalued material issue', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $run = manufacturingIntegrityRun($fixture)['run'];
+    $run->forceFill(['good_base_quantity' => '1'])->save();
+    $document = InventoryDocument::query()->create([
+        'doc_number' => 99301,
+        'doc_num' => 'INV-MFG-99301',
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'production_run_id' => $run->getKey(),
+        'document_type' => InventoryDocument::TypeMaterialIssue,
+        'document_date' => now()->toDateString(),
+        'status' => InventoryDocument::StatusPosted,
+    ]);
+    $document->lines()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'line_number' => 1,
+        'production_run_id' => $run->getKey(),
+        'product_id' => $fixture['raw']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'quantity' => '2',
+        'unit_cost' => null,
+        'total_cost' => null,
+    ]);
+
+    expect(fn () => app(ProductionCostService::class)->receiptCost($run, '1'))
+        ->toThrow(DomainException::class, __('production_execution.messages.unvalued_material_cost'));
+});
+
+test('finished stock valuation includes production receipts tied to their run', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $run = manufacturingIntegrityRun($fixture)['run'];
+    $receipt = InventoryTransaction::query()->create([
+        'posting_key' => 'manufacturing-finished-receipt-cost',
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'stock_status' => InventoryTransaction::StatusAvailable,
+        'transaction_date' => now()->toDateString(),
+        'transaction_type' => InventoryDocument::TypeProductionReceipt,
+        'production_run_id' => $run->getKey(),
+        'product_id' => $fixture['finished']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'batch_lot' => $run->batch_lot,
+        'quantity_in' => '4',
+        'quantity_out' => '0',
+        'unit_cost' => '12',
+        'total_cost' => '48',
+        'source_type' => ProductionRun::class,
+        'source_id' => $run->getKey(),
+        'source_doc_num' => $run->run_number,
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+
+    expect(app(InventoryValuationService::class)->bookUnitCostForPosition(
+        $fixture['company']->getKey(),
+        $fixture['store']->getKey(),
+        $fixture['finished']->getKey(),
+        InventoryTransaction::StatusAvailable,
+        null,
+        $run->batch_lot,
+        null,
+        now()->toDateString(),
+        true,
+    ))->toBe('12.00000000');
+
+    InventoryTransaction::query()->create([
+        'posting_key' => 'manufacturing-finished-delivery-cost',
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'stock_status' => InventoryTransaction::StatusAvailable,
+        'transaction_date' => now()->toDateString(),
+        'transaction_type' => InventoryDocument::TypeSalesDelivery,
+        'product_id' => $fixture['finished']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'batch_lot' => $run->batch_lot,
+        'quantity_in' => '0',
+        'quantity_out' => '1',
+        'unit_cost' => '12',
+        'total_cost' => '12',
+        'source_type' => ProductionRun::class,
+        'source_id' => $run->getKey(),
+        'source_doc_num' => 'FINISHED-DELIVERY',
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+
+    $position = app(InventoryValuationService::class)->comparisonForStockPosition(
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+        $fixture['branch']->getKey(),
+        $fixture['store']->getKey(),
+        $fixture['finished']->getKey(),
+        now()->toDateString(),
+    );
+    $scope = app(InventoryValuationService::class)->comparisonForStockScope(
+        $fixture['company']->getKey(),
+        collect([$receipt]),
+        now()->toDateString(),
+    );
+
+    expect($position['ending_quantity'])->toBe('3.00000000')
+        ->and($position['methods']['moving_average']['ending_value'])->toBe('36.00000000')
+        ->and($scope['excluded_position_count'])->toBe(0)
+        ->and($scope['ending_quantity'])->toBe('3.00000000')
+        ->and($scope['methods']['moving_average']['ending_value'])->toBe('36.00000000');
+});
 
 /** @param array<string, mixed> $payload @return array<string, mixed> */
 function productionSubmission(array $payload = []): array
@@ -1052,7 +1168,7 @@ test('production quality runs the controlled request receive inspect review clos
 
 test('general quality can inspect warehouse stock across multiple days and be reinspected without a production run', function () {
     $fixture = manufacturingInventoryFixture();
-    $permissions = ['production.quality.view', 'production.quality.create', 'production.quality.receive', 'production.quality.start', 'production.quality.report', 'production.quality.submit', 'production.quality.review', 'production.quality.close', 'production.quality.reinspect', 'production.quality.export', 'production.quality.print'];
+    $permissions = ['production.quality.view', 'production.quality.create', 'production.quality.receive', 'production.quality.start', 'production.quality.report', 'production.quality.submit', 'production.quality.review', 'production.quality.close', 'production.quality.reinspect', 'production.quality.export', 'production.quality.print', 'production.quality.reports.view', 'production.quality.reports.export', 'production.quality.reports.print'];
     foreach ($permissions as $permission) {
         Permission::findOrCreate($permission, 'web');
     }
@@ -2118,6 +2234,25 @@ test('manual inventory receipt issue return and transfer use the full posted mov
         ->toContain('إذن استلام مخزني', 'تحويل مخزني');
 });
 
+test('generic inventory receipt cannot accept finished output without production lineage', function (): void {
+    $fixture = manufacturingInventoryFixture();
+
+    expect(fn () => app(InventoryMovementService::class)->createDraft([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'document_type' => InventoryDocument::TypeReceipt,
+        'document_date' => now()->toDateString(),
+        'movement_reason' => 'Finished output',
+    ], [[
+        'product_id' => $fixture['finished']->getKey(),
+        'quantity' => '2',
+    ]]))->toThrow(DomainException::class, __('inventory.movements.messages.finished_goods_require_production_receipt'));
+
+    expect(InventoryDocument::query()->where('document_type', InventoryDocument::TypeReceipt)->count())->toBe(0);
+});
+
 test('manual inventory movement supports draft edit datatable navigation and controlled posting', function () {
     $fixture = manufacturingInventoryFixture();
     $permissions = [
@@ -2826,6 +2961,41 @@ test('capability permissions separate warehouse planning quality and cost access
         ->assertForbidden();
 });
 
+test('factory monitoring uses one screen for company and branch scopes with matching exports', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $fixture['branch']->update(['type' => Branch::TypeFactory]);
+    $runData = manufacturingIntegrityRun($fixture);
+    foreach (['production.reports.control.view', 'production.reports.control.export', 'production.reports.control.print'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $fixture['user']->givePermissionTo($permission);
+    }
+    $session = manufacturingIntegritySession($fixture);
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.reports.control'))
+        ->assertOk()
+        ->assertSee($runData['run']->run_number)
+        ->assertSee($fixture['branch']->name)
+        ->assertSee('name="branch_doc_num"', false)
+        ->assertSee('js-select2-ajax')
+        ->assertSee(route('admin.production.reports.export', ['section' => 'control']), false)
+        ->assertSee(route('admin.production.reports.print', ['section' => 'control']), false);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.reports.control', ['branch_id' => $fixture['branch']->getKey(), 'product' => 'FG-MFG']))
+        ->assertOk()
+        ->assertSee($runData['run']->run_number);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.reports.control', ['branch_doc_num' => $fixture['branch']->doc_num]))
+        ->assertOk()
+        ->assertSee($runData['run']->run_number);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.reports.export', ['section' => 'control', 'branch_id' => $fixture['branch']->getKey()]))
+        ->assertOk()->assertDownload();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.reports.print', ['section' => 'control', 'branch_id' => $fixture['branch']->getKey()]))
+        ->assertOk()->assertHeader('content-type', 'application/pdf');
+});
+
 test('operational inventory reports remain usable when a required account classification is missing', function () {
     $fixture = manufacturingInventoryFixture();
     $rawInventoryClassification = AccountClassification::query()->where('code', 'raw_material_inventory')->firstOrFail();
@@ -2881,6 +3051,94 @@ test('operational inventory reports remain usable when a required account classi
         ->assertHeader('content-disposition', 'inline; filename="inventory-operations-report.pdf"');
 
     expect(str_starts_with($pdf->getContent(), '%PDF-'))->toBeTrue();
+});
+
+test('inventory movement totals include every matching row when the screen limits visible history', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $date = now()->toDateString();
+    $baseline = app(InventoryReportService::class)->report(
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+        $fixture['branch']->getKey(),
+        ['as_of' => $date],
+    )['reportTotals'];
+    $rows = [];
+
+    for ($sequence = 1; $sequence <= 501; $sequence++) {
+        $rows[] = [
+            'posting_key' => 'movement-report-complete-'.$sequence,
+            'company_id' => $fixture['company']->getKey(),
+            'financial_period_id' => $fixture['period']->getKey(),
+            'branch_id' => $fixture['branch']->getKey(),
+            'branch_store_id' => $fixture['store']->getKey(),
+            'transaction_date' => $date,
+            'transaction_type' => 'purchase_receipt',
+            'product_id' => $fixture['raw']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'quantity_in' => '1.00000000',
+            'quantity_out' => '0.00000000',
+            'source_type' => 'movement_report_test',
+            'source_id' => $sequence,
+            'source_doc_num' => 'MOVEMENT-REPORT-'.$sequence,
+            'stock_status' => InventoryTransaction::StatusAvailable,
+        ];
+    }
+
+    InventoryTransaction::query()->insert($rows);
+    InventoryTransaction::query()->insert([
+        ...$rows[0],
+        'posting_key' => 'movement-report-future',
+        'transaction_date' => now()->addDay()->toDateString(),
+        'source_id' => 999,
+        'source_doc_num' => 'MOVEMENT-REPORT-FUTURE',
+    ]);
+    $report = app(InventoryReportService::class)->report(
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+        $fixture['branch']->getKey(),
+        ['as_of' => $date],
+    );
+    $secondPage = app(InventoryReportService::class)->report(
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+        $fixture['branch']->getKey(),
+        ['as_of' => $date],
+        2,
+    );
+    $completeReport = app(InventoryReportService::class)->report(
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+        $fixture['branch']->getKey(),
+        ['as_of' => $date],
+        null,
+    );
+
+    expect($report['movements'])->toHaveCount(500)
+        ->and($secondPage['movements'])->toHaveCount($baseline['movement_count'] + 1)
+        ->and($completeReport['movements'])->toHaveCount($baseline['movement_count'] + 501)
+        ->and($report['reportTotals']['movement_count'])->toBe($baseline['movement_count'] + 501)
+        ->and(bccomp($report['reportTotals']['quantity_in'], bcadd($baseline['quantity_in'], '501', 8), 8))->toBe(0)
+        ->and(bccomp($report['reportTotals']['quantity_out'], $baseline['quantity_out'], 8))->toBe(0);
+
+    foreach (['inventory.reports.operations.view', 'inventory.reports.operations.export'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $fixture['user']->givePermissionTo($permission);
+    }
+    $session = manufacturingIntegritySession($fixture);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.inventory.reports.index', ['as_of' => $date, 'movement_page' => 2]))
+        ->assertOk()
+        ->assertSee('MOVEMENT-REPORT-1')
+        ->assertSee('2 / 2');
+
+    Excel::fake();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.inventory.reports.export', ['as_of' => $date]))
+        ->assertOk();
+    Excel::matchByRegex();
+    Excel::assertDownloaded('/inventory-operations-.*\\.xlsx/', function (InventoryReportExport $export) use ($baseline): bool {
+        return count($export->sheets()[2]->array()) === $baseline['movement_count'] + 502;
+    });
 });
 
 test('receipt layers preserve aging and enforce FEFO without consuming expired stock on failure', function () {

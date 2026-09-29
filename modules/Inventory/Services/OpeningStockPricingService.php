@@ -46,13 +46,14 @@ class OpeningStockPricingService
                     throw new DomainException(__('operating_context.validation.financial_period_invalid'));
                 }
                 $source = $this->openingStockByDocNum($context, $data['opening_stock_doc_num'] ?? null, $request, true);
-                if (! $source instanceof OpeningStock || ! ($source->isClosed() || $source->isApproved())) {
+                if (! $source instanceof OpeningStock || ! $source->approved || $source->status !== OpeningStock::StatusApproved) {
                     throw new DomainException(__('inventory.opening_stock_pricings.messages.opening_stock_unavailable'));
                 }
 
                 $publicIds = array_column($data['lines'] ?? [], 'opening_stock_line_public_id');
                 $sourceLines = $source->lines()->whereIn('public_id', $publicIds)->where('quantity', '>', 0)->lockForUpdate()->get();
                 if ($publicIds === [] || count($publicIds) !== count(array_unique($publicIds)) || $sourceLines->count() !== count($publicIds)
+                    || $sourceLines->pluck('product_id')->unique()->count() !== $sourceLines->count()
                     || $this->pricedOpeningStockLineIds($sourceLines->modelKeys())->isNotEmpty()) {
                     throw new DomainException(__('inventory.opening_stock_pricings.messages.queue_line_changed'));
                 }

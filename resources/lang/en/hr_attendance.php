@@ -26,6 +26,7 @@ return [
         'choose_file' => 'Select the Excel workbook',
         'no_file' => 'No file selected yet — accepted format: XLSX',
         'action' => 'Import Biometric Workbook',
+        'download_template' => 'Download matching Excel template',
         'format_title' => 'Workbook requirements',
         'steps' => [
             'The workbook needs an employee/biometric code column and a date-time column, or separate date and time columns.',

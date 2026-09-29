@@ -178,7 +178,7 @@ function quickTasksFindMenuNode(array $nodes, string $label): ?array
     return null;
 }
 
-test('legacy quick task permissions and menu entries are replaced by the unified team board', function (): void {
+test('legacy quick task permissions remain for redirects while the unified team board owns the menu', function (): void {
     $permissions = app(PermissionRegistryService::class)->all();
     $toolsMenu = require base_path('config/menu/tools.php');
     $quickTasksNode = quickTasksFindMenuNode($toolsMenu, 'quick_tasks');
@@ -187,12 +187,12 @@ test('legacy quick task permissions and menu entries are replaced by the unified
     $teamBoardNode = quickTasksFindMenuNode($toolsMenu, 'team_board');
 
     expect($permissions)
-        ->not->toContain('quick_tasks.view')
-        ->not->toContain('quick_tasks.create')
-        ->not->toContain('quick_tasks.update')
-        ->not->toContain('quick_tasks.delete')
-        ->not->toContain('quick_tasks.restore')
-        ->not->toContain('quick_tasks.change_status')
+        ->toContain('quick_tasks.view')
+        ->toContain('quick_tasks.create')
+        ->toContain('quick_tasks.update')
+        ->toContain('quick_tasks.delete')
+        ->toContain('quick_tasks.restore')
+        ->toContain('quick_tasks.change_status')
         ->toContain('quick_tasks.start')
         ->toContain('quick_tasks.mark_ready')
         ->toContain('quick_tasks.mark_done')

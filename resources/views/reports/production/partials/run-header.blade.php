@@ -1,5 +1,5 @@
 @include('reports.partials.company-identity')
-<table class="report-table" style="margin-bottom:9px"><tbody>
+<table dir="{{ $direction ?? 'ltr' }}" class="report-table" style="margin-bottom:9px"><tbody>
     <tr><th>{{ __('production_execution.fields.run') }}</th><td dir="ltr">{{ $record->run_number }}</td><th>{{ __('production_execution.fields.production_order') }}</th><td dir="ltr">{{ $record->order?->doc_num ?: '—' }}</td></tr>
     <tr><th>{{ __('production_execution.fields.stage') }}</th><td>{{ $record->stageSnapshot?->stage_name ?: '—' }}</td><th>{{ __('production_execution.fields.product') }}</th><td>{{ $record->product?->doc_num }} — {{ $record->product?->name }}</td></tr>
     <tr><th>{{ __('production_execution.fields.fixed_asset') }}</th><td>{{ $record->fixedAsset?->doc_num }} — {{ $record->fixedAsset?->asset_name }}</td><th>{{ __('production_execution.fields.shift') }}</th><td>{{ $record->shift?->name ?: '—' }}</td></tr>

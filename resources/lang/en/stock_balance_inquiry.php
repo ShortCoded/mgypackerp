@@ -2,16 +2,16 @@
 
 return [
     'title' => 'Stock Balance Inquiry',
-    'description' => 'Inspect actual posted stock by branch, factory hall, warehouse, location, and item attributes.',
+    'description' => 'Inspect actual posted stock by branch, factory hall, warehouse, and item attributes.',
     'table_title' => 'Stock positions',
     'filters_hint' => 'Balances include every posted movement up to the selected date, including prior financial periods.',
     'total' => 'Total',
     'empty' => 'No stock balances match the selected filters.',
-    'position_count' => ':count stock positions',
+    'position_count' => ':count item balances',
     'product_count' => ':count items',
     'open_item' => 'Open item',
     'open_stock_card' => 'Open stock card',
-    'reservations_hall_note' => 'Hall balances are physical quantities. Reservations are tracked by warehouse and location, so they are not deducted while a hall filter is active.',
+    'reservations_hall_note' => 'Hall balances are physical quantities. Reservations are tracked by warehouse, so they are not deducted while a hall filter is active.',
     'metrics' => [
         'on_hand' => 'Physical on hand',
         'available_stock' => 'Available-status stock',
@@ -25,7 +25,6 @@ return [
         'branch' => 'Branch / factory',
         'store' => 'Warehouse / store',
         'hall' => 'Factory hall',
-        'location' => 'Warehouse location',
         'product' => 'Item',
         'search' => 'Item code, name, or barcode',
         'item_classification' => 'Item type',
@@ -41,7 +40,7 @@ return [
         'item_origin_country_doc_num' => 'Country of origin',
     ],
     'filter_groups' => [
-        'position' => 'Stock position',
+        'position' => 'Stock scope',
         'item' => 'Item identification',
         'attributes' => 'Item attributes',
     ],
@@ -70,12 +69,11 @@ return [
         'in_transit' => 'In transit',
     ],
     'columns' => [
-        'positions' => 'Stock positions',
+        'positions' => 'Item balances',
         'products' => 'Items',
         'branch' => 'Branch',
         'store' => 'Warehouse / store',
         'hall' => 'Hall',
-        'location' => 'Location',
         'item' => 'Item',
         'product' => 'Item',
         'item_code' => 'Item code',
@@ -101,6 +99,5 @@ return [
         'invalid_scope' => 'The selected stock scope is unavailable or outside your access.',
         'store_branch' => 'The selected warehouse does not belong to the selected branch.',
         'hall_branch' => 'The selected hall does not belong to the selected branch.',
-        'location_store' => 'The selected location does not belong to the selected warehouse.',
     ],
 ];

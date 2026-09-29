@@ -47,6 +47,22 @@ use Spatie\Permission\Models\Permission;
 
 require_once dirname(__DIR__).'/SalesCycleSupport.php';
 
+test('sales delivery rolls back when its inventory cost is unknown', function (): void {
+    $fixture = salesCycleFixture();
+    InventoryTransaction::query()->where('posting_key', 'sales-cycle-opening-stock')
+        ->update(['unit_cost' => null, 'total_cost' => null]);
+    $order = app(SalesOrderService::class)->approve(
+        app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture)),
+    );
+    $line = $order->lines->firstWhere('product_id', $fixture['finished']->getKey());
+
+    expect(fn () => app(SalesFulfillmentService::class)->deliver($order, [[
+        'sales_order_line_id' => $line->getKey(),
+        'quantity' => '1',
+    ]]))->toThrow(DomainException::class);
+    expect(InventoryDocument::query()->where('document_type', InventoryDocument::TypeSalesDelivery)->count())->toBe(0);
+});
+
 function salesOperationalCount(string $html, string $attribute, string $key): int
 {
     $pattern = $attribute === 'data-operational-card'
@@ -1270,6 +1286,17 @@ test('production orders from mixed sales lines skip archived products and print 
     $production = ProductionOrder::query()->where('doc_num', $created->json('doc_num'))->firstOrFail();
     expect($production->lines)->toHaveCount(1);
 
+    $exhaustedSources = $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.production.work-orders.select2.sources', ['source_type' => 'sales_order', 'q' => $order->doc_num]))
+        ->assertOk()->json('results');
+    expect(collect($exhaustedSources)->pluck('id'))->not->toContain($order->doc_num);
+
+    $activeLine->forceFill(['quantity' => '3', 'base_quantity' => '3'])->save();
+    $expandedSources = $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.production.work-orders.select2.sources', ['source_type' => 'sales_order', 'q' => $order->doc_num]))
+        ->assertOk()->json('results');
+    expect(collect($expandedSources)->pluck('id'))->toContain($order->doc_num);
+
     $draftText = salesPdfText($this->actingAs($fixture['user'])->withSession($session)
         ->get(route('admin.production.work-orders.print', $production))
         ->assertOk()->getContent());
@@ -1351,7 +1378,7 @@ test('every formal sales document streams canonical inline mPDF with operational
     $permissions = [
         'sales_orders.print', 'sales_orders.view_prices', 'sales_orders.production',
         'sales_deliveries.print', 'customer_invoices.print', 'customer_invoices.view_prices',
-        'customer_receipts.print', 'sales_returns.view', 'sales_returns.print', 'reports.sales.operational.print',
+        'customer_receipts.print', 'sales_returns.view', 'sales_returns.print', 'reports.sales.operational.view', 'reports.sales.operational.print',
         'production.orders.print', 'cash_receipt_vouchers.print', 'cheques.print',
     ];
     foreach ($permissions as $permission) {
@@ -1505,7 +1532,8 @@ test('every formal sales document streams canonical inline mPDF with operational
     $responses = [];
     foreach ($routes as $name => $url) {
         $response = $this->actingAs($printer)->withSession($session)->get($url);
-        $response->assertOk()->assertHeader('content-type', 'application/pdf');
+        expect($response->status())->toBe(200, "Printing {$name} failed");
+        $response->assertHeader('content-type', 'application/pdf');
         expect($response->headers->get('content-disposition'))->toStartWith('inline; filename=')
             ->and($response->getContent())->toStartWith('%PDF-');
         $responses[$name] = $response;

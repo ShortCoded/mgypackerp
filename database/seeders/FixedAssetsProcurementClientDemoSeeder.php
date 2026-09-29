@@ -337,7 +337,7 @@ class FixedAssetsProcurementClientDemoSeeder extends Seeder
                     'notes' => $this->note('Approved opening unit cost.'),
                 ];
             })->all(),
-        ]);
+        ], request());
     }
 
     /** @param array<string, mixed> $resources */

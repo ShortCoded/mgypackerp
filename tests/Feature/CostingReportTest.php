@@ -16,6 +16,55 @@ use Spatie\Permission\Models\Permission;
 
 require_once dirname(__DIR__).'/SalesCycleSupport.php';
 
+test('costing report lookups paginate in their operating scope and enforce report permission', function (): void {
+    config()->set('erp.phase_mode', 'expanded');
+    $fixture = salesCycleFixture();
+    Permission::findOrCreate('reports.costing.product_cost.view', 'web');
+    $fixture['user']->givePermissionTo('reports.costing.product_cost.view');
+
+    $order = ProductionOrder::query()->create([
+        'doc_number' => 99201,
+        'doc_num' => 'PO-COST-99201',
+        'company_id' => $fixture['company']->id,
+        'financial_period_id' => $fixture['period']->id,
+        'branch_id' => $fixture['branch']->id,
+        'production_order_date' => now()->toDateString(),
+        'source_type' => 'make_to_stock',
+        'status' => ProductionOrder::StatusPlanned,
+    ]);
+    $center = CostCenter::query()->create([
+        'company_id' => $fixture['company']->id,
+        'doc_number' => 99201,
+        'doc_num' => 'CC-COST-99201',
+        'cost_center_code' => 'COST-99201',
+        'name' => 'Costing lookup target',
+        'is_group' => false,
+        'status' => 'active',
+    ]);
+    $session = salesCycleSession($fixture);
+
+    foreach ([
+        ['products', $fixture['finished']->doc_num],
+        ['orders', $order->doc_num],
+        ['cost-centers', $center->doc_num],
+    ] as [$kind, $documentNumber]) {
+        $this->actingAs($fixture['user'])->withSession($session)
+            ->getJson(route('admin.reports.costing.select2', ['kind' => $kind, 'type' => 'product_cost', 'q' => $documentNumber]))
+            ->assertOk()
+            ->assertJsonPath('results.0.id', $documentNumber)
+            ->assertJsonPath('pagination.more', false);
+    }
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.reports.costing.product-cost.index', ['product_doc_num' => $fixture['finished']->doc_num]))
+        ->assertOk()
+        ->assertSee('value="'.$fixture['finished']->doc_num.'" selected', false);
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.reports.costing.select2', ['kind' => 'products', 'type' => 'profitability']))
+        ->assertForbidden();
+});
+
 test('costing report shells render posted production costs and export the same source', function (): void {
     config()->set('erp.phase_mode', 'expanded');
     $fixture = salesCycleFixture();

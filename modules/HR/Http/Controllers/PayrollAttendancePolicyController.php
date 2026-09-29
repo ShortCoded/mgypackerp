@@ -58,6 +58,7 @@ class PayrollAttendancePolicyController extends Controller
                 ->paginate(30),
             'branches' => $this->scope->allowedBranchQuery($request->user(), [(string) $company->doc_num])->get(['branches.doc_num', 'branches.name']),
             'payrollItems' => $payrollItems,
+            'missingStandardItems' => $this->policies->missingStandardItems(),
             'payrollItemNames' => $payrollItems->pluck('display_name', 'code'),
             'canCreateCompanyPolicy' => $unrestricted,
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.hr.payroll-attendance-policies.index'),
@@ -88,5 +89,25 @@ class PayrollAttendancePolicyController extends Controller
         ]);
 
         return back()->with('success', __('hr_payroll_policies.messages.created'));
+    }
+
+    public function installStandardItems(Request $request): RedirectResponse
+    {
+        abort_unless((bool) $request->user()?->can('hr.payroll_attendance_policies.manage'), 403);
+        abort_unless($this->scope->hasUnrestrictedBranchAccess($request->user()), 403);
+        abort_unless($this->companies->currentCompany($request) !== null, 409);
+
+        try {
+            $created = $this->policies->installStandardItems((int) $request->user()->getKey());
+        } catch (DomainException $exception) {
+            return back()->withErrors(['payroll_items' => $exception->getMessage()]);
+        }
+
+        $this->activityLogger->log($request, 'hr', 'payroll_items.standard_install', 'success', [
+            'properties_only' => true,
+            'properties' => ['created_codes' => $created],
+        ]);
+
+        return back()->with('success', __('hr_payroll_policies.messages.catalog_installed', ['count' => count($created)]));
     }
 }

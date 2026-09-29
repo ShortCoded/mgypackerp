@@ -697,7 +697,7 @@ class IntegratedPlasticFactorySeeder extends Seeder
                     'notes' => $this->note('Opening valuation approved by finance.'),
                 ];
             })->all(),
-        ]);
+        ], request());
     }
 
     /** @param array<string, mixed> $resources @param array<string, mixed> $partners */

@@ -417,7 +417,7 @@ class InventoryDocumentController extends Controller
     {
         $this->assertInCurrentContext($request, $inventoryDocument);
         $record = $inventoryDocument->load([
-            'company', 'lines.product', 'lines.unit', 'lines.warehouseLocation', 'branchStore', 'destinationBranchStore',
+            'company', 'lines.product', 'lines.unit', 'branchStore', 'destinationBranchStore',
             'productionOrder', 'productionRun',
         ]);
 

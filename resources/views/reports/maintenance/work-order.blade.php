@@ -3,7 +3,7 @@
 @endphp
 <h1>{{ $reportTitle }}</h1>
 
-<table>
+<table class="report-table">
     <tbody>
         <tr><th>{{ __('maintenance.fields.document') }}</th><td>{{ $order->doc_num }}</td><th>{{ __('maintenance.fields.status') }}</th><td>{{ __('maintenance.statuses.'.$order->status) }}</td></tr>
         <tr><th>{{ __('maintenance.fields.asset') }}</th><td>{{ $order->asset ? $order->asset->doc_num.' — '.$order->asset->asset_name : ($order->mold ? $order->mold->code.' — '.$order->mold->name : '—') }}</td><th>{{ __('maintenance.fields.priority') }}</th><td>{{ __('maintenance.priorities.'.$order->priority) }}</td></tr>
@@ -18,7 +18,7 @@
 
 @if($order->events->isNotEmpty())
     <h2>{{ __('maintenance.fields.execution_events') }}</h2>
-    <table>
+    <table class="report-table">
         <thead><tr><th>{{ __('maintenance.fields.occurred_at') }}</th><th>{{ __('maintenance.fields.event_type') }}</th><th>{{ __('maintenance.fields.reason') }}</th><th>{{ __('maintenance.fields.notes') }}</th><th>{{ __('maintenance.fields.participant_name') }}</th></tr></thead>
         <tbody>@foreach($order->events as $event)<tr><td>{{ $dates->formatDateTime($event->occurred_at, '') }}</td><td>{{ __('maintenance.event_types.'.$event->event_type) }}</td><td>{{ $event->reason ?: '—' }}</td><td>{{ collect($event->details ?? [])->filter()->implode(' — ') ?: '—' }}</td><td>{{ $event->recordedBy?->name ?? '—' }}</td></tr>@endforeach</tbody>
     </table>
@@ -32,7 +32,7 @@
     <p>{{ $order->request->symptoms }}</p>
 @endif
 
-<table>
+<table class="report-table">
     <tbody>
         <tr><th>{{ __('maintenance.fields.diagnosis') }}</th><td>{{ $order->diagnosis ?: '—' }}</td></tr>
         <tr><th>{{ __('maintenance.fields.root_cause') }}</th><td>{{ $order->root_cause ?: '—' }}</td></tr>

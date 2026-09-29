@@ -5,6 +5,8 @@ namespace Modules\Inventory\Services;
 use DomainException;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
+use Modules\Inventory\Models\InventoryDocument;
+use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Inventory\Models\InventoryLayerAllocation;
 use Modules\Inventory\Models\InventoryReceiptLayer;
 use Modules\Inventory\Models\InventoryTransaction;
@@ -101,6 +103,7 @@ class InventoryOpeningStockPostingService
                 continue;
             }
 
+            Product::query()->lockForUpdate()->findOrFail($openingLine->product_id);
             $movement = InventoryTransaction::query()
                 ->where('posting_key', "opening-stock:{$lockedPricing->opening_stock_id}:line:{$openingLine->getKey()}")
                 ->lockForUpdate()
@@ -141,6 +144,7 @@ class InventoryOpeningStockPostingService
                 continue;
             }
 
+            Product::query()->lockForUpdate()->findOrFail($openingLine->product_id);
             $movement = InventoryTransaction::query()
                 ->where('posting_key', "opening-stock:{$lockedPricing->opening_stock_id}:line:{$openingLine->getKey()}")
                 ->lockForUpdate()
@@ -183,7 +187,7 @@ class InventoryOpeningStockPostingService
 
     private function assertNoLaterMovement(InventoryTransaction $openingMovement): void
     {
-        $hasLaterMovement = InventoryTransaction::query()
+        $laterMovements = InventoryTransaction::query()
             ->where('company_id', $openingMovement->company_id)
             ->where('branch_store_id', $openingMovement->branch_store_id)
             ->where('product_id', $openingMovement->product_id)
@@ -195,9 +199,33 @@ class InventoryOpeningStockPostingService
                             ->where('id', '>', $openingMovement->getKey());
                     });
             })
-            ->exists();
+            ->lockForUpdate()
+            ->get();
 
-        if ($hasLaterMovement) {
+        $reversedIds = $laterMovements->where('is_reversal', true)->pluck('reversal_of_id')->filter()->map(fn ($id): int => (int) $id)->all();
+        if (count($reversedIds) !== count(array_unique($reversedIds))) {
+            throw new DomainException(__('inventory.opening_stock_pricings.messages.queue_layer_consumed'));
+        }
+        $laterById = $laterMovements->keyBy('id');
+        foreach ($laterMovements->where('is_reversal', true) as $reversal) {
+            $original = $laterById->get($reversal->reversal_of_id);
+            if (! $original instanceof InventoryTransaction
+                || $original->is_reversal
+                || $original->company_id !== $reversal->company_id
+                || $original->branch_store_id !== $reversal->branch_store_id
+                || $original->product_id !== $reversal->product_id
+                || $original->stock_status !== $reversal->stock_status
+                || $original->warehouse_location_id !== $reversal->warehouse_location_id
+                || $original->batch_lot !== $reversal->batch_lot
+                || bccomp((string) $original->quantity_in, (string) $reversal->quantity_out, 8) !== 0
+                || bccomp((string) $original->quantity_out, (string) $reversal->quantity_in, 8) !== 0) {
+                throw new DomainException(__('inventory.opening_stock_pricings.messages.queue_layer_consumed'));
+            }
+        }
+        $hasActiveLaterMovement = $laterMovements->contains(fn (InventoryTransaction $transaction): bool => ! $transaction->is_reversal
+            && ! in_array((int) $transaction->getKey(), $reversedIds, true));
+
+        if ($hasActiveLaterMovement || $laterMovements->where('is_reversal', true)->count() !== count($reversedIds)) {
             throw new DomainException(__('Opening stock pricing cannot change after a later Inventory movement exists for the same product and store.'));
         }
     }
@@ -214,15 +242,70 @@ class InventoryOpeningStockPostingService
             return;
         }
 
-        if (InventoryLayerAllocation::query()->whereIn('inventory_receipt_layer_id', $layers->modelKeys())->exists()) {
-            throw new DomainException(__('inventory.opening_stock_pricings.messages.queue_layer_consumed'));
-        }
+        $allocations = InventoryLayerAllocation::query()
+            ->whereIn('inventory_receipt_layer_id', $layers->modelKeys())
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+        $reversedIssues = collect();
 
-        foreach ($layers as $layer) {
-            if (bccomp((string) $layer->remaining_quantity, (string) $layer->original_quantity, 8) !== 0) {
+        foreach ($allocations as $allocation) {
+            $issue = InventoryTransaction::query()->lockForUpdate()->findOrFail($allocation->issue_transaction_id);
+            $reversal = InventoryTransaction::query()
+                ->where('reversal_of_id', $issue->getKey())
+                ->where('is_reversal', true)
+                ->lockForUpdate()
+                ->first();
+            $document = $issue->source_type === InventoryDocument::class
+                ? InventoryDocument::query()->withTrashed()->find($issue->source_id)
+                : null;
+            $restoredLayers = $reversal
+                ? InventoryReceiptLayer::query()->where('receipt_transaction_id', $reversal->getKey())->lockForUpdate()->get()
+                : collect();
+            $restoredQuantity = $restoredLayers->reduce(
+                fn (string $total, InventoryReceiptLayer $layer): string => bcadd($total, (string) $layer->original_quantity, 8),
+                '0.00000000',
+            );
+
+            if ($document?->status !== InventoryDocument::StatusReversed
+                || $document->journal_entry_id !== null
+                || $document->reversal_journal_entry_id !== null
+                || InventoryLayerAllocation::query()->where('issue_transaction_id', $issue->getKey())->count() !== 1
+                || bccomp((string) $allocation->quantity, (string) $issue->quantity_out, 8) !== 0
+                || ! $reversal
+                || InventoryTransaction::query()->where('reversal_of_id', $issue->getKey())->where('is_reversal', true)->count() !== 1
+                || bccomp((string) $reversal->quantity_in, (string) $issue->quantity_out, 8) !== 0
+                || bccomp($restoredQuantity, (string) $issue->quantity_out, 8) !== 0
+                || InventoryLayerAllocation::query()->whereIn('inventory_receipt_layer_id', $restoredLayers->modelKeys())->exists()) {
                 throw new DomainException(__('inventory.opening_stock_pricings.messages.queue_layer_consumed'));
             }
 
+            if (! preg_match('/^inventory-document:'.preg_quote((string) $document->getKey(), '/').':line:(\d+):out$/', (string) $issue->posting_key, $matches)) {
+                throw new DomainException(__('inventory.opening_stock_pricings.messages.queue_layer_consumed'));
+            }
+            $documentLine = InventoryDocumentLine::withTrashed()
+                ->where('inventory_document_id', $document->getKey())
+                ->whereKey((int) $matches[1])
+                ->lockForUpdate()
+                ->first();
+            if (! $documentLine
+                || (int) $documentLine->product_id !== (int) $issue->product_id
+                || bccomp((string) $documentLine->quantity, (string) $issue->quantity_out, 8) !== 0) {
+                throw new DomainException(__('inventory.opening_stock_pricings.messages.queue_layer_consumed'));
+            }
+
+            $reversedIssues->push([$issue, $reversal, $restoredLayers, $documentLine]);
+        }
+
+        foreach ($reversedIssues as [$issue, $reversal, $restoredLayers, $documentLine]) {
+            $totalCost = $unitCost === null ? null : bcmul((string) $issue->quantity_out, $unitCost, 8);
+            $issue->forceFill(['unit_cost' => $unitCost, 'total_cost' => $totalCost])->save();
+            $reversal->forceFill(['unit_cost' => $unitCost, 'total_cost' => $totalCost])->save();
+            $documentLine->forceFill(['unit_cost' => $unitCost, 'total_cost' => $totalCost])->save();
+            $restoredLayers->each(fn (InventoryReceiptLayer $layer) => $layer->forceFill(['unit_cost' => $unitCost])->save());
+        }
+
+        foreach ($layers as $layer) {
             $layer->forceFill(['unit_cost' => $unitCost])->save();
         }
     }

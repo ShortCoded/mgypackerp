@@ -389,24 +389,6 @@
     updateLineTotal($row);
   }
 
-  function lineValues($row) {
-    const $select = $row.find('.js-opening-stock-pricing-product').first();
-    const option = selectedOption($select);
-
-    return {
-      public_id: $row.find('input[type="hidden"][name$="[public_id]"]').val() || '',
-      opening_stock_line_public_id: $select.val() || '',
-      product_label: option.text() || '',
-      imageUrl: option.attr('data-image-url') || '',
-      unit: option.attr('data-unit-label') || '',
-      quantity: $row.find('.js-opening-stock-pricing-quantity').val() || '',
-      unit_price: $row.find('.js-opening-stock-pricing-unit-price').val() || '',
-      line_total: $row.find('.js-opening-stock-pricing-line-total').val() || '',
-      notes: $row.find('.js-opening-stock-pricing-line-notes').val() || '',
-      productData: selectedOptionData($select)
-    };
-  }
-
   function emptyRowTemplate(index) {
     return String($('#opening-stock-pricing-line-template').html() || '').replace(/__INDEX__/g, String(index));
   }
@@ -440,6 +422,11 @@
   }
 
   function addLine($form, values, shouldFocus, $afterRow) {
+    if (!String($form.find('.js-opening-stock-pricing-opening-stock').val() || '').trim()) {
+      showToast('warning', trans('select_opening_stock_first', 'Select an Opening Stock document first.'));
+      return $();
+    }
+
     const $tbody = $form.find('.js-opening-stock-pricing-lines tbody');
     const index = $form.find('.js-opening-stock-pricing-line').length;
     const $row = $(emptyRowTemplate(index));
@@ -491,37 +478,16 @@
     return $row;
   }
 
-  function clearRow($row, shouldFocus) {
-    $row.find('.js-opening-stock-pricing-product').val(null).trigger('change');
-    $row.find('input[type="hidden"][name$="[public_id]"]').val('');
-    $row.find('input[type="hidden"][name$="[_delete]"]').val('0');
-    $row.find('.js-opening-stock-pricing-unit, [data-unit-display]').text('');
-    $row.find('.js-opening-stock-pricing-quantity, .js-opening-stock-pricing-unit-price, .js-opening-stock-pricing-line-total, .js-opening-stock-pricing-line-notes').val('');
-    $row.find('.js-opening-stock-pricing-product-info').attr('data-product', '{}');
-    syncProductInfoButton($row);
-    updateTotals($row.closest('.js-opening-stock-pricing-form'));
-    if (shouldFocus !== false) {
-      focusProduct($row);
-    }
-  }
-
   function removeRow($row) {
     const $form = $row.closest('.js-opening-stock-pricing-form');
-    const $rows = $form.find('.js-opening-stock-pricing-line');
-    const $focusTarget = $row.next('.js-opening-stock-pricing-line').length ? $row.next('.js-opening-stock-pricing-line') : $row.prev('.js-opening-stock-pricing-line');
-
-    if ($rows.length <= 1) {
-      clearRow($row);
+    $row.remove();
+    if ($form.find('.js-opening-stock-pricing-line').length === 0) {
+      resetLines($form);
       return;
     }
 
-    $row.remove();
     renumberLines($form);
     updateTotals($form);
-
-    if ($focusTarget.length > 0) {
-      focusProduct($focusTarget);
-    }
   }
 
   function updateLineTotal($row) {
@@ -545,11 +511,39 @@
 
   function resetLines($form) {
     const $tbody = $form.find('.js-opening-stock-pricing-lines tbody');
+    const hasSource = Boolean(String($form.find('.js-opening-stock-pricing-opening-stock').val() || '').trim());
     $tbody.empty();
     $('<tr class="js-opening-stock-pricing-empty"><td colspan="7" class="text-center text-600 py-3"></td></tr>')
-      .find('td').text(trans('select_opening_stock_first', 'Select an Opening Stock document first.'))
+      .find('td').text(hasSource
+        ? trans('load_or_add_lines', 'Load items or add a row from the selected document.')
+        : trans('select_opening_stock_first', 'Select an Opening Stock document first.'))
       .end().appendTo($tbody);
     updateTotals($form);
+  }
+
+  function syncSourceActions($form) {
+    const hasSource = Boolean(String($form.find('.js-opening-stock-pricing-opening-stock').val() || '').trim());
+    $form.find('.js-opening-stock-pricing-add-line, .js-opening-stock-pricing-add-remaining').prop('disabled', !hasSource);
+  }
+
+  function duplicateSelectionMessage($select, data) {
+    const selectedLine = String(data && data.id ? data.id : $select.val() || '').trim();
+    const selectedProduct = String(data && data.productData && data.productData.doc_num ? data.productData.doc_num : '').trim();
+    let message = '';
+
+    $select.closest('.js-opening-stock-pricing-form').find('.js-opening-stock-pricing-product').not($select).each(function () {
+      const $other = $(this);
+      if (selectedLine && String($other.val() || '').trim() === selectedLine) {
+        message = trans('queue_duplicate_line', 'The same Opening Stock line cannot be repeated.');
+        return false;
+      }
+      if (selectedProduct && String(selectedOptionData($other).doc_num || '').trim() === selectedProduct) {
+        message = trans('duplicate_product', 'The same product cannot be repeated.');
+        return false;
+      }
+    });
+
+    return message;
   }
 
   function selectedCurrencyIsMain($form) {
@@ -780,6 +774,8 @@
     initSelect2(document);
     applyMainCurrencyExchangeRate($form);
     updateTotals($form);
+    $form.data('selected-opening-stock-doc-num', String($form.find('.js-opening-stock-pricing-opening-stock').val() || ''));
+    syncSourceActions($form);
     $form.find('.js-opening-stock-pricing-line').each(function () {
       syncProductInfoButton($(this));
     });
@@ -835,9 +831,15 @@
       .on('input.openingStockPricingsValidation change.openingStockPricingsValidation select2:select.openingStockPricingsValidation select2:clear.openingStockPricingsValidation', '.js-opening-stock-pricing-form input, .js-opening-stock-pricing-form select, .js-opening-stock-pricing-form textarea', function () {
         clearFieldError($(this));
       })
-      .off('select2:select.openingStockPricingsOpeningStock select2:clear.openingStockPricingsOpeningStock', '.js-opening-stock-pricing-opening-stock')
-      .on('select2:select.openingStockPricingsOpeningStock select2:clear.openingStockPricingsOpeningStock', '.js-opening-stock-pricing-opening-stock', function () {
-        resetLines($(this).closest('.js-opening-stock-pricing-form'));
+      .off('change.openingStockPricingsOpeningStock', '.js-opening-stock-pricing-opening-stock')
+      .on('change.openingStockPricingsOpeningStock', '.js-opening-stock-pricing-opening-stock', function () {
+        const $currentForm = $(this).closest('.js-opening-stock-pricing-form');
+        const selectedDocNum = String($(this).val() || '');
+        if ($currentForm.data('selected-opening-stock-doc-num') !== selectedDocNum) {
+          $currentForm.data('selected-opening-stock-doc-num', selectedDocNum);
+          resetLines($currentForm);
+        }
+        syncSourceActions($currentForm);
       })
       .off('select2:select.openingStockPricingsCurrency select2:clear.openingStockPricingsCurrency', '.js-opening-stock-pricing-currency')
       .on('select2:select.openingStockPricingsCurrency select2:clear.openingStockPricingsCurrency', '.js-opening-stock-pricing-currency', function () {
@@ -848,6 +850,13 @@
         const data = event.params ? event.params.data : null;
         const $select = $(this);
         const $row = $select.closest('.js-opening-stock-pricing-line');
+        const duplicateMessage = duplicateSelectionMessage($select, data);
+
+        if (duplicateMessage) {
+          $select.val(null).trigger('change');
+          showToast('warning', duplicateMessage);
+          return;
+        }
 
         storeSelectedLineData($select, data);
         setLineMetadata($row, data);
@@ -880,11 +889,6 @@
       .on('click.openingStockPricingsAddRemaining', '.js-opening-stock-pricing-add-remaining', function () {
         addRemainingLines($(this));
       })
-      .off('click.openingStockPricingsDuplicateLine', '.js-opening-stock-pricing-duplicate-line')
-      .on('click.openingStockPricingsDuplicateLine', '.js-opening-stock-pricing-duplicate-line', function () {
-        const $row = $(this).closest('.js-opening-stock-pricing-line');
-        addLine($row.closest('.js-opening-stock-pricing-form'), lineValues($row), true, $row);
-      })
       .off('click.openingStockPricingsRemoveLine', '.js-opening-stock-pricing-remove-line')
       .on('click.openingStockPricingsRemoveLine', '.js-opening-stock-pricing-remove-line', function () {
         removeRow($(this).closest('.js-opening-stock-pricing-line'));
@@ -903,13 +907,6 @@
         event.preventDefault();
         event.stopPropagation();
         addLine($form, {}, true, $row.length ? $row : null);
-        return;
-      }
-
-      if (isAltShortcut(event, ['KeyD'], [68], ['d']) && $row.length > 0 && !isSelect2Blocked) {
-        event.preventDefault();
-        event.stopPropagation();
-        addLine($form, lineValues($row), true, $row);
         return;
       }
 

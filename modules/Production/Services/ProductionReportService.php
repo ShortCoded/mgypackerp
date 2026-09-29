@@ -6,9 +6,9 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Collection as SupportCollection;
 use Illuminate\Support\Facades\DB;
 use Modules\Inventory\Models\InventoryDocument;
-use Modules\Production\Models\ProductionMaterialRequirement;
 use Modules\Production\Models\ProductionMaterialRequest;
 use Modules\Production\Models\ProductionMaterialRequestLine;
+use Modules\Production\Models\ProductionMaterialRequirement;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionQualityInspection;
 use Modules\Production\Models\ProductionRun;
@@ -67,6 +67,78 @@ class ProductionReportService
             'finishedGoodsReceipts' => $this->finishedGoodsReceipts($companyId, $contextFilters),
             'kpis' => $this->keyPerformanceIndicators($companyId, $contextFilters),
             'runCosts' => $includeFinancial ? $this->runCosts($runs) : collect(),
+        ];
+    }
+
+    /**
+     * One monitoring dataset for every factory branch and production process.
+     * Quantities remain on their own product or material lines because summing different units is misleading.
+     *
+     * @param  list<int>  $allowedBranchIds
+     * @param  array<string, mixed>  $filters
+     * @return array<string, mixed>
+     */
+    public function controlReport(int $companyId, int $financialPeriodId, array $allowedBranchIds, array $filters = []): array
+    {
+        $runs = ProductionRun::query()
+            ->where('company_id', $companyId)
+            ->where('financial_period_id', $financialPeriodId)
+            ->whereIn('branch_id', $allowedBranchIds !== [] ? $allowedBranchIds : [0])
+            ->when($filters['branch_id'] ?? null, fn ($query, $branchId) => $query->where('branch_id', $branchId))
+            ->when($filters['status'] ?? null, fn ($query, $status) => $query->where('status', $status))
+            ->when($filters['production_shift_id'] ?? null, fn ($query, $shiftId) => $query->where('production_shift_id', $shiftId))
+            ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereRaw('date(coalesce(actual_start_at, planned_start_at)) >= ?', [$from]))
+            ->when($filters['to'] ?? null, fn ($query, $to) => $query->whereRaw('date(coalesce(actual_start_at, planned_start_at)) <= ?', [$to]))
+            ->when($filters['product'] ?? null, fn ($query, $term) => $query->whereHas('product', fn ($productQuery) => $productQuery->where(function ($searchQuery) use ($term): void {
+                $search = '%'.addcslashes($term, '%_\\').'%';
+                $searchQuery->where('doc_num', 'like', $search)->orWhere('name', 'like', $search);
+            })))
+            ->when($filters['machine'] ?? null, fn ($query, $term) => $query->where(function ($machineQuery) use ($term): void {
+                $search = '%'.addcslashes($term, '%_\\').'%';
+                $machineQuery->whereHas('fixedAsset', fn ($assetQuery) => $assetQuery->where('asset_name', 'like', $search))
+                    ->orWhereHas('machine', fn ($runMachineQuery) => $runMachineQuery->where('name', 'like', $search)->orWhere('code', 'like', $search));
+            }))
+            ->when($filters['shift'] ?? null, fn ($query, $term) => $query->whereHas('shift', fn ($shiftQuery) => $shiftQuery->where('name', 'like', '%'.addcslashes($term, '%_\\').'%')))
+            ->when($filters['stage'] ?? null, fn ($query, $term) => $query->whereHas('stageSnapshot', fn ($stageQuery) => $stageQuery->where('stage_name', 'like', '%'.addcslashes($term, '%_\\').'%')))
+            ->when($filters['order'] ?? null, fn ($query, $term) => $query->whereHas('order', fn ($orderQuery) => $orderQuery->where('doc_num', 'like', '%'.addcslashes($term, '%_\\').'%')))
+            ->with([
+                'order.branch', 'order.salesOrder', 'orderLine', 'product.unit', 'fixedAsset', 'machine', 'shift',
+                'stageSnapshot', 'mold', 'requirements.product.unit', 'inventoryDocuments.lines',
+                'inspections',
+            ])
+            ->orderByDesc('planned_start_at')
+            ->orderByDesc('id')
+            ->get();
+
+        $runs->each(function (ProductionRun $run): void {
+            $recorded = bcadd(bcadd((string) $run->good_base_quantity, (string) $run->rejected_base_quantity, 8), bcadd((string) $run->rework_base_quantity, (string) $run->scrap_base_quantity, 8), 8);
+            $unreceived = bcsub((string) $run->good_base_quantity, (string) $run->received_base_quantity, 8);
+            $run->setAttribute('recorded_base_quantity', $recorded);
+            $run->setAttribute('receipt_remaining_base_quantity', bccomp($unreceived, '0', 8) > 0 ? $unreceived : '0.00000000');
+            $run->setAttribute('yield_percent', bccomp($recorded, '0', 8) > 0
+                ? bcmul(bcdiv((string) $run->good_base_quantity, $recorded, 8), '100', 4)
+                : null);
+            $run->setAttribute('material_exception_count', $run->requirements->filter(function (ProductionMaterialRequirement $line): bool {
+                $issued = bcadd((string) $line->issued_quantity, (string) $line->additional_issued_quantity, 8);
+                $accounted = bcadd(bcadd((string) $line->returned_quantity, (string) $line->consumed_quantity, 8), (string) $line->waste_quantity, 8);
+
+                return bccomp($issued, $accounted, 8) !== 0;
+            })->count());
+            $run->setAttribute('quality_hold_count', $run->inspections->filter(fn (ProductionQualityInspection $inspection): bool => $inspection->disposition === 'hold' || $inspection->result === 'failed')->count());
+            $run->setAttribute('receipt_document_count', $run->inventoryDocuments->filter(fn (InventoryDocument $document): bool => $document->document_type === InventoryDocument::TypeProductionReceipt && $document->status === InventoryDocument::StatusPosted)->count());
+        });
+
+        return [
+            'controlRuns' => $runs,
+            'controlMaterials' => $runs->flatMap(fn (ProductionRun $run) => $run->requirements->map(fn (ProductionMaterialRequirement $line): array => ['run' => $run, 'line' => $line]))->values(),
+            'controlKpis' => [
+                'runs' => $runs->count(),
+                'products' => $runs->pluck('product_id')->unique()->count(),
+                'unreceived_runs' => $runs->filter(fn (ProductionRun $run): bool => bccomp((string) $run->receipt_remaining_base_quantity, '0', 8) > 0)->count(),
+                'material_exception_runs' => $runs->filter(fn (ProductionRun $run): bool => $run->material_exception_count > 0)->count(),
+                'quality_hold_runs' => $runs->filter(fn (ProductionRun $run): bool => $run->quality_hold_count > 0)->count(),
+                'receipt_documents' => $runs->sum('receipt_document_count'),
+            ],
         ];
     }
 

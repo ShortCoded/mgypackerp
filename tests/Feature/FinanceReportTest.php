@@ -903,3 +903,54 @@ test('cashbox count persists historical snapshots supports equal variance reopen
     ]);
     $this->actingAs($actor)->get('/admin/finance/cashbox-count/'.$otherCount->doc_num)->assertNotFound();
 });
+
+test('finance report relational filters use scoped paginated lookups and preserve selected values', function (): void {
+    $fixture = financeReportFixture($this);
+    $actor = financeReportActor();
+    $bankGroup = financeReportAccount($fixture['company'], 9790, '111290', 'Report Bank Group');
+    $bankGroup->forceFill(['is_group' => true, 'is_postable' => false])->save();
+    $bankAccount = financeReportAccount($fixture['company'], 9791, '111291', 'Report Bank Ledger');
+    $bank = BankAccount::query()->create([
+        'doc_number' => 9791, 'doc_num' => 'BANK-9791', 'company_id' => $fixture['company']->getKey(),
+        'bank_id' => $bankGroup->getKey(), 'account_id' => $bankAccount->getKey(),
+        'currency_id' => $fixture['currency']->getKey(), 'account_name' => 'Report Bank',
+        'account_number' => '9791', 'status' => 'active',
+    ]);
+
+    expect(app(FinanceReportService::class)->filterOptions()['cashboxes'])->toBeEmpty();
+    $this->actingAs($actor)->get(route('admin.reports.finance.index', [
+        'type' => FinanceReportService::BankAccountBalances,
+        'bank_account_doc_num' => $bank->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+    ]))->assertOk()->assertSee('js-select2-ajax', false)
+        ->assertSee('value="'.$bank->doc_num.'" selected', false)
+        ->assertSee('value="'.$fixture['currency']->doc_num.'" selected', false);
+
+    foreach ([
+        ['cashboxes', FinanceReportService::CashboxBalances, $fixture['cashboxOne']->doc_num],
+        ['bank-accounts', FinanceReportService::BankAccountBalances, $bank->doc_num],
+        ['currencies', FinanceReportService::BankAccountBalances, $fixture['currency']->doc_num],
+    ] as [$kind, $type, $expectedDocNum]) {
+        $this->actingAs($actor)->get(route('admin.reports.finance.select2', [
+            'kind' => $kind, 'type' => $type, 'q' => $expectedDocNum,
+        ]))->assertOk()->assertJsonStructure(['results' => [['id', 'text']], 'pagination' => ['more']])
+            ->assertJsonFragment(['id' => $expectedDocNum]);
+    }
+
+    $otherCompany = Company::query()->create([
+        'doc_number' => 9798, 'doc_num' => 'COMP-9798', 'name' => 'Other Report Company',
+        'status' => 'active', 'is_main' => false,
+    ]);
+    Currency::query()->create([
+        'doc_number' => 9798, 'doc_num' => 'CUR-9798', 'company_id' => $otherCompany->getKey(),
+        'name' => 'Other Currency', 'name_en' => 'Other Currency', 'code' => 'OTH',
+        'minor_unit_name' => 'Unit', 'minor_unit_factor' => 100, 'is_main' => true, 'status' => 'active',
+    ]);
+    $this->actingAs($actor)->get(route('admin.reports.finance.select2', [
+        'kind' => 'currencies', 'type' => FinanceReportService::BankAccountBalances, 'q' => 'CUR-9798',
+    ]))->assertOk()->assertJsonPath('results', []);
+
+    $this->actingAs(User::factory()->create())->get(route('admin.reports.finance.select2', [
+        'kind' => 'cashboxes', 'type' => FinanceReportService::CashboxBalances,
+    ]))->assertForbidden();
+});

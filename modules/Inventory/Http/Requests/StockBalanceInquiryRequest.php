@@ -22,7 +22,7 @@ class StockBalanceInquiryRequest extends FormRequest
             'branch_doc_num' => ['nullable', 'string', 'max:100'],
             'branch_store_uuid' => ['nullable', 'uuid'],
             'branch_hall_uuid' => ['nullable', 'uuid'],
-            'warehouse_location_uuid' => ['nullable', 'uuid'],
+            'warehouse_location_uuid' => ['prohibited'],
             'product_doc_num' => ['nullable', 'string', 'max:100'],
             'search' => ['nullable', 'string', 'max:255'],
             'item_classification' => ['nullable', Rule::in(Product::stockableItemClassifications())],

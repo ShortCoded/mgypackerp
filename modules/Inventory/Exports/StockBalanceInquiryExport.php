@@ -25,7 +25,6 @@ class StockBalanceInquiryExport implements FromArray, ShouldAutoSize, WithHeadin
                 $row->branch?->name,
                 $row->branchStore?->name,
                 $row->branchHall?->name,
-                $row->warehouseLocation ? trim($row->warehouseLocation->code.' — '.$row->warehouseLocation->name) : null,
                 $product?->doc_num,
                 $product?->name,
                 $product?->item_classification ? __('products.classifications.'.$product->item_classification) : null,
@@ -46,7 +45,7 @@ class StockBalanceInquiryExport implements FromArray, ShouldAutoSize, WithHeadin
 
             return $data;
         })->all();
-        $total = array_fill(0, 15, null);
+        $total = array_fill(0, 14, null);
         $total[0] = __('stock_balance_inquiry.total');
         array_push(
             $total,
@@ -69,7 +68,6 @@ class StockBalanceInquiryExport implements FromArray, ShouldAutoSize, WithHeadin
             __('stock_balance_inquiry.columns.branch'),
             __('stock_balance_inquiry.columns.store'),
             __('stock_balance_inquiry.columns.hall'),
-            __('stock_balance_inquiry.columns.location'),
             __('stock_balance_inquiry.columns.item_code'),
             __('stock_balance_inquiry.columns.item_name'),
             __('stock_balance_inquiry.columns.classification'),

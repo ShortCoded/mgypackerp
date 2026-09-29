@@ -59,7 +59,10 @@ class PayrollReportController extends Controller
             'type' => $type,
             'report' => $report,
             'filters' => $filters,
-            'branches' => $this->scope->allowedBranchQuery($request->user(), [(string) $company->doc_num])->get(['branches.doc_num', 'branches.name']),
+            'branches' => $this->scope->allowedBranchQuery($request->user(), [(string) $company->doc_num])
+                ->when(! isset($filters['branch_doc_num']), fn ($query) => $query->whereRaw('1 = 0'))
+                ->when(isset($filters['branch_doc_num']), fn ($query) => $query->where('branches.doc_num', $filters['branch_doc_num']))
+                ->get(['branches.doc_num', 'branches.name']),
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.hr.reports.'.($type === 'payroll' ? 'payroll' : 'payments')),
         ]);
     }

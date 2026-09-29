@@ -19,6 +19,7 @@ use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrEmployeeBiometricMapping;
 use Modules\HR\Models\HrEmployeeShiftAssignment;
 use Modules\HR\Models\HrShift;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Spatie\Activitylog\Models\Activity;
@@ -300,6 +301,34 @@ test('attendance settings resolve current and Google Maps locations without manu
     $this->postJson(route('admin.hr.attendance-settings.resolve-map-url'), [
         'map_url' => 'https://example.com/maps?q=30,31',
     ])->assertUnprocessable()->assertJsonValidationErrors('map_url');
+});
+
+test('biometric import template downloads a blank import sheet and separate examples', function (): void {
+    $fixture = attendanceSelfServiceFixture(['attendance_location_policy' => 'warn']);
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    Permission::findOrCreate('hr.employee_attendance.import', 'web');
+    $manager = User::factory()->create();
+    $manager->givePermissionTo('hr.employee_attendance.import');
+    $session = [OperatingContextService::CompanyIdKey => $fixture['company']->getKey(), OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num];
+
+    $response = $this->actingAs($manager)->withSession($session)
+        ->get(route('admin.hr.employee-attendance.import.template'));
+    $response->assertOk()->assertDownload('biometric-attendance-template.xlsx');
+
+    $path = tempnam(sys_get_temp_dir(), 'attendance-template-');
+    expect($path)->toBeString();
+    file_put_contents($path, $response->streamedContent());
+
+    try {
+        $workbook = IOFactory::load($path);
+        expect($workbook->getSheetNames())->toBe(['Punches', 'Example'])
+            ->and($workbook->getSheet(0)->rangeToArray('A1:C1')[0])->toBe(['biometric_code', 'punched_at', 'punch_type'])
+            ->and($workbook->getSheet(0)->getHighestDataRow())->toBe(1)
+            ->and($workbook->getSheet(1)->rangeToArray('A2:C2')[0])->toBe(['1001', '2026-08-03 08:00:00', 'check_in']);
+        $workbook->disconnectWorksheets();
+    } finally {
+        unlink($path);
+    }
 });
 
 test('biometric Excel import matches device codes and is idempotent', function (): void {

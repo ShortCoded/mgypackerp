@@ -39,7 +39,7 @@ class HrWorkforceReportController extends Controller
         return view('modules.hr.workforce-reports.employees', [
             'report' => $this->reports->employees((int) $company->getKey(), $request->user(), $filters),
             'filters' => $filters,
-            ...$this->filterOptions($request->user(), (string) $company->doc_num),
+            ...$this->filterOptions($request->user(), (string) $company->doc_num, $filters),
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.hr.reports.employees'),
         ]);
     }
@@ -53,8 +53,11 @@ class HrWorkforceReportController extends Controller
         return view('modules.hr.workforce-reports.leave-requests', [
             'report' => $this->reports->leaveRequests((int) $company->getKey(), $request->user(), $filters),
             'filters' => $filters,
-            'branches' => $this->scope->allowedBranchQuery($request->user(), [(string) $company->doc_num])->get(['branches.doc_num', 'branches.name']),
-            'departments' => $this->activeFoundation('hr_departments'),
+            'branches' => $this->scope->allowedBranchQuery($request->user(), [(string) $company->doc_num])
+                ->when(! isset($filters['branch_doc_num']), fn ($query) => $query->whereRaw('1 = 0'))
+                ->when(isset($filters['branch_doc_num']), fn ($query) => $query->where('branches.doc_num', $filters['branch_doc_num']))
+                ->get(['branches.doc_num', 'branches.name']),
+            'departments' => $this->activeFoundation('hr_departments', $filters['department_doc_num'] ?? null),
             'leaveTypes' => DB::table('hr_leave_types')->whereNull('deleted_at')->orderBy('name')->get(['code', 'name']),
             'approvers' => $this->reports->approvers((int) $company->getKey(), $request->user()),
             'requestTypes' => HrEmployeeServiceRequest::types(),
@@ -88,25 +91,29 @@ class HrWorkforceReportController extends Controller
         return $this->export($request->validated('format'), $pdf, 'leave_requests', $headings, $exportRows, $filters);
     }
 
-    /** @return array<string, Collection<int, object>> */
-    private function filterOptions(User $user, string $companyDocNum): array
+    /** @param array<string, mixed> $filters @return array<string, Collection<int, object>> */
+    private function filterOptions(User $user, string $companyDocNum, array $filters): array
     {
         return [
-            'branches' => $this->scope->allowedBranchQuery($user, [$companyDocNum])->get(['branches.doc_num', 'branches.name']),
-            'departments' => $this->activeFoundation('hr_departments'),
-            'sections' => $this->activeFoundation('hr_sections'),
-            'jobs' => $this->activeFoundation('hr_jobs'),
-            'employmentTypes' => $this->activeFoundation('hr_employment_types'),
+            'branches' => $this->scope->allowedBranchQuery($user, [$companyDocNum])
+                ->when(! isset($filters['branch_doc_num']), fn ($query) => $query->whereRaw('1 = 0'))
+                ->when(isset($filters['branch_doc_num']), fn ($query) => $query->where('branches.doc_num', $filters['branch_doc_num']))
+                ->get(['branches.doc_num', 'branches.name']),
+            'departments' => $this->activeFoundation('hr_departments', $filters['department_doc_num'] ?? null),
+            'sections' => $this->activeFoundation('hr_sections', $filters['section_doc_num'] ?? null),
+            'jobs' => $this->activeFoundation('hr_jobs', $filters['job_doc_num'] ?? null),
+            'employmentTypes' => $this->activeFoundation('hr_employment_types', $filters['employment_type_doc_num'] ?? null),
         ];
     }
 
     /** @return Collection<int, object> */
-    private function activeFoundation(string $table): Collection
+    private function activeFoundation(string $table, ?string $selectedDocNum): Collection
     {
         return DB::table($table)
             ->whereNull('deleted_at')
             ->where('status', 'active')
-            ->orderBy('name')
+            ->where('doc_num', $selectedDocNum ?? '')
+            ->limit(1)
             ->get(['doc_num', 'name']);
     }
 

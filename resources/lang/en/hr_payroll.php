@@ -69,6 +69,7 @@ return [
         'branch_not_found' => 'The selected branch is not available for the operating company.',
         'period_closed' => 'The selected payroll period is closed.',
         'unsupported_pay_basis' => 'The pay basis for :employee is not supported by this payroll calculation.',
+        'partial_period_salary_requires_policy' => 'Salary for :employee changed or started/ended during this payroll period. An approved partial-period rule is required before calculation.',
         'overtime_rate_required' => 'An explicit overtime hourly rate is required before approved overtime can be paid for :employee.',
         'payroll_item_mapping_invalid' => 'Payroll item :item is not active or is not configured for the required earning/deduction direction.',
         'review_transition_invalid' => 'Only a calculated payroll run can be submitted for review.',

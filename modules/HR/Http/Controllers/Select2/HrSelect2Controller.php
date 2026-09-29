@@ -26,7 +26,9 @@ class HrSelect2Controller extends Controller
 
     public function foundation(Request $request, string $resource): JsonResponse
     {
-        if (! $this->canUseHrSelect2($request)) {
+        if (! $this->canUseHrSelect2($request)
+            && ! ($this->canUseHrReportSelect2($request)
+                && in_array($resource, ['departments', 'sections', 'jobs', 'employment-types'], true))) {
             return $this->forbiddenSelect2Response();
         }
 
@@ -35,7 +37,7 @@ class HrSelect2Controller extends Controller
 
     public function employees(Request $request): JsonResponse
     {
-        if (! $this->canUseHrSelect2($request)) {
+        if (! $this->canUseHrSelect2($request) && ! $this->canUseHrReportSelect2($request)) {
             return $this->forbiddenSelect2Response();
         }
 
@@ -76,6 +78,17 @@ class HrSelect2Controller extends Controller
                 if ($user?->can($definition->permission($suffix))) {
                     return true;
                 }
+            }
+        }
+
+        return false;
+    }
+
+    private function canUseHrReportSelect2(Request $request): bool
+    {
+        foreach (['hr.employee_reports.view', 'hr.leave_reports.view', 'hr.payroll_reports.view', 'hr.payroll_payment_reports.view'] as $permission) {
+            if ($request->user()?->can($permission)) {
+                return true;
             }
         }
 

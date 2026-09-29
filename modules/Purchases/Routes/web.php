@@ -349,6 +349,7 @@ Route::middleware('auth')
 
             Route::prefix('procurement-cycle-report')->name('procurement-cycle-report.')->group(function (): void {
                 Route::get('/', 'report')->name('index');
+                Route::get('/select2/{kind}', 'reportSelect2')->name('select2');
                 Route::get('/export/excel', 'exportReportExcel')->name('export.excel');
                 Route::get('/print', 'printReport')->name('print');
             });

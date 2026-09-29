@@ -8,8 +8,10 @@ use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Models\OverheadAllocationRun;
 use Modules\Core\Models\Product;
+use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\Select2ResponseService;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Services\ProductionReportService;
 use Modules\Sales\Models\CustomerInvoice;
@@ -215,28 +217,70 @@ final class CostingReportService
         $periodId = (int) $context['financial_period_id'];
         $branchId = (int) $context['branch_id'];
 
-        $products = Product::query()->where('company_id', $companyId)->active()
-            ->whereIn('item_classification', Product::salesItemClassifications())->orderBy('name')->get(['id', 'doc_num', 'name']);
-        $orders = ProductionOrder::query()->where('company_id', $companyId)->where('financial_period_id', $periodId)
-            ->where('branch_id', $branchId)->latest('production_order_date')->get(['id', 'doc_num']);
-        $costCenters = CostCenter::query()->forCompany($companyId)->active()
-            ->orderBy('cost_center_code')->get(['id', 'doc_num', 'cost_center_code', 'name']);
-
-        if (filled($selected['product_doc_num'] ?? null)) {
-            $products = $products->concat(Product::withTrashed()->where('company_id', $companyId)
+        $products = filled($selected['product_doc_num'] ?? null)
+            ? Product::withTrashed()->where('company_id', $companyId)
                 ->whereIn('item_classification', Product::salesItemClassifications())
-                ->where('doc_num', $selected['product_doc_num'])->get(['id', 'doc_num', 'name']));
-        }
-        if (filled($selected['cost_center_doc_num'] ?? null)) {
-            $costCenters = $costCenters->concat(CostCenter::withTrashed()->forCompany($companyId)
-                ->where('doc_num', $selected['cost_center_doc_num'])->get(['id', 'doc_num', 'cost_center_code', 'name']));
-        }
+                ->where('doc_num', $selected['product_doc_num'])->get(['id', 'doc_num', 'name'])
+            : collect();
+        $orders = filled($selected['production_order_doc_num'] ?? null)
+            ? ProductionOrder::withTrashed()->where('company_id', $companyId)
+                ->where('financial_period_id', $periodId)->where('branch_id', $branchId)
+                ->where('doc_num', $selected['production_order_doc_num'])->get(['id', 'doc_num'])
+            : collect();
+        $costCenters = filled($selected['cost_center_doc_num'] ?? null)
+            ? CostCenter::withTrashed()->forCompany($companyId)
+                ->where('doc_num', $selected['cost_center_doc_num'])->get(['id', 'doc_num', 'cost_center_code', 'name'])
+            : collect();
 
         return [
-            'products' => $products->unique('id')->sortBy('name')->values(),
+            'products' => $products,
             'orders' => $orders,
-            'cost_centers' => $costCenters->unique('id')->sortBy('cost_center_code')->values(),
+            'cost_centers' => $costCenters,
         ];
+    }
+
+    /** @return array{results: list<array{id: string, text: string}>, pagination: array{more: bool}} */
+    public function select2Options(Request $request, string $kind, DataTableSearchService $search, Select2ResponseService $select2): array
+    {
+        $context = $this->context->snapshot($request);
+        abort_unless($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], 422);
+        $companyId = (int) $context['company_id'];
+        $terms = $search->terms($request->input('q', $request->input('term')));
+
+        if ($kind === 'products') {
+            $query = Product::query()->where('company_id', $companyId)->active()
+                ->whereIn('item_classification', Product::salesItemClassifications())
+                ->orderBy('name')->orderBy('id');
+            $search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'name']]);
+
+            return $select2->paginated($query, $request, fn (Product $product): array => [
+                'id' => $product->doc_num,
+                'text' => $product->doc_num.' / '.$product->name,
+            ]);
+        }
+
+        if ($kind === 'orders') {
+            $query = ProductionOrder::query()->where('company_id', $companyId)
+                ->where('financial_period_id', $context['financial_period_id'])
+                ->where('branch_id', $context['branch_id'])
+                ->orderByDesc('production_order_date')->orderByDesc('id');
+            $search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num']]);
+
+            return $select2->paginated($query, $request, fn (ProductionOrder $order): array => [
+                'id' => $order->doc_num,
+                'text' => $order->doc_num,
+            ]);
+        }
+
+        abort_unless($kind === 'cost-centers', 404);
+        $query = CostCenter::query()->forCompany($companyId)->active()
+            ->orderBy('cost_center_code')->orderBy('id');
+        $search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'cost_center_code', 'name']]);
+
+        return $select2->paginated($query, $request, fn (CostCenter $center): array => [
+            'id' => $center->doc_num,
+            'text' => $center->cost_center_code.' / '.$center->name,
+        ]);
     }
 
     /** @param Collection<int, array<string, mixed>> $rows

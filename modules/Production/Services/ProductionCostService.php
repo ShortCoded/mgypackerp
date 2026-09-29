@@ -2,6 +2,7 @@
 
 namespace Modules\Production\Services;
 
+use DomainException;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -112,16 +113,25 @@ class ProductionCostService
     public function receiptCost(ProductionRun $run, string $receiptBaseQuantity): string
     {
         $position = $this->runPosition($run);
+        if (! $position['material_valuation_complete']) {
+            throw new DomainException(__('production_execution.messages.unvalued_material_cost'));
+        }
         $remainingGood = bcsub((string) $run->good_base_quantity, (string) $run->received_base_quantity, 8);
 
         if (bccomp($receiptBaseQuantity, $remainingGood, 8) === 0) {
-            return $position['wip'];
+            $receiptCost = $position['wip'];
+        } else {
+            $receiptCost = bcdiv(
+                bcmul($position['capitalizable'], $receiptBaseQuantity, 8),
+                (string) $run->good_base_quantity,
+                8,
+            );
         }
 
-        return bcdiv(
-            bcmul($position['capitalizable'], $receiptBaseQuantity, 8),
-            (string) $run->good_base_quantity,
-            8,
-        );
+        if (bccomp($receiptCost, '0', 8) < 0) {
+            throw new DomainException(__('production_execution.messages.invalid_receipt_cost'));
+        }
+
+        return $receiptCost;
     }
 }

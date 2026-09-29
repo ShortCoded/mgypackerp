@@ -3,7 +3,7 @@
 @php
     $routePrefix = 'admin.inventory.stock-counts';
     $title = __('inventory.stock_counts.title');
-    $columns = ['doc_num', 'count_date', 'store', 'location', 'lines_count', 'system_total', 'physical_total', 'variance_total', 'status_label', 'approved_by', 'approved_at', 'created_by', 'created_at', 'updated_by', 'updated_at'];
+    $columns = ['doc_num', 'count_date', 'store', 'lines_count', 'system_total', 'physical_total', 'variance_total', 'status_label', 'approved_by', 'approved_at', 'created_by', 'created_at', 'updated_by', 'updated_at'];
 @endphp
 
 @section('title', $title)

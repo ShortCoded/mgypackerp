@@ -12,7 +12,7 @@
     @foreach($report['results'] as $result)
         <h4>{{ $result['title'] }} — {{ __('reconciliation_center.statuses.'.$result['status']) }}</h4>
         @foreach($result['notes'] as $note)<p>{{ $note }}</p>@endforeach
-        <table class="report-table reconciliation-table">
+        <table dir="{{ $direction ?? 'ltr' }}" class="report-table reconciliation-table">
             <thead><tr>
                 <th>{{ __('reconciliation_center.columns.item') }}</th>
                 <th>{{ __('reconciliation_center.columns.status') }}</th>

@@ -16,7 +16,7 @@ use Modules\Finance\Services\FinanceReportService;
 use Modules\Inventory\Services\InventoryReportService;
 use Modules\Production\Services\ProductionReportService;
 use Modules\Purchases\Services\Reports\ProcurementCycleReport;
-use Modules\Sales\Services\Reports\SalesCycleReadService;
+use Modules\Sales\Services\SalesCycleReadService;
 
 test('authenticated layout uses one directional theme and one user stylesheet', function () {
     $response = $this->withSession(['locale' => 'en'])

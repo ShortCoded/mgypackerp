@@ -215,7 +215,8 @@
         lengthMenu: [10, 25, 50, 75, 100],
         stateSave: false,
         autoWidth: false,
-        responsive: { details: { type: 'inline', target: 0 } },
+        responsive: element.hasAttribute('data-report-wide') ? false : { details: { type: 'inline', target: 0 } },
+        scrollX: element.hasAttribute('data-report-wide'),
         order: [],
         drawCallback: function () {
           if (window.AppDataTables && typeof window.AppDataTables.applyFalconEnhancements === 'function') {

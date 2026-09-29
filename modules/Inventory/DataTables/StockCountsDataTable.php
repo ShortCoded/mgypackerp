@@ -42,15 +42,12 @@ class StockCountsDataTable
                 fn ($query) => $query->whereRaw('1 = 0'),
             )
             ->leftJoin('branch_stores', 'branch_stores.id', '=', 'inventory_stock_counts.branch_store_id')
-            ->leftJoin('warehouse_locations', 'warehouse_locations.id', '=', 'inventory_stock_counts.warehouse_location_id')
             ->leftJoin('users as approved_users', 'approved_users.id', '=', 'inventory_stock_counts.approved_by')
             ->leftJoin('users as created_users', 'created_users.id', '=', 'inventory_stock_counts.created_by')
             ->leftJoin('users as updated_users', 'updated_users.id', '=', 'inventory_stock_counts.updated_by')
             ->select([
                 'inventory_stock_counts.*',
                 'branch_stores.name as store_name',
-                'warehouse_locations.code as location_code',
-                'warehouse_locations.name as location_name',
                 'approved_users.name as approved_by_name',
                 'created_users.name as created_by_name',
                 'updated_users.name as updated_by_name',
@@ -69,8 +66,6 @@ class StockCountsDataTable
                             'inventory_stock_counts.doc_num',
                             'inventory_stock_counts.notes',
                             'branch_stores.name',
-                            'warehouse_locations.code',
-                            'warehouse_locations.name',
                         ],
                     ]);
                 }
@@ -79,7 +74,6 @@ class StockCountsDataTable
             ->editColumn('doc_num', fn (StockCount $record): string => '<a class="fw-semibold dt-code-value" href="'.e(route('admin.inventory.stock-counts.show', $record)).'">'.e($record->doc_num).'</a>')
             ->editColumn('count_date', fn (StockCount $record): string => $this->plainText($record->count_date?->format($dateFormat) ?? ''))
             ->addColumn('store', fn (StockCount $record): string => $this->ellipsisText($record->store_name))
-            ->addColumn('location', fn (StockCount $record): string => $this->ellipsisText(trim(implode(' — ', array_filter([$record->location_code, $record->location_name]))) ?: __('common.empty_value')))
             ->addColumn('lines_count', fn (StockCount $record): string => $this->plainText($this->numbers->format($record->lines_count)))
             ->addColumn('system_total', fn (StockCount $record): string => $this->plainText($this->numbers->format($record->system_total)))
             ->addColumn('physical_total', fn (StockCount $record): string => $this->plainText($this->numbers->format($record->physical_total)))
@@ -98,7 +92,6 @@ class StockCountsDataTable
             ->orderColumn('doc_num', 'inventory_stock_counts.doc_number $1')
             ->orderColumn('count_date', 'inventory_stock_counts.count_date $1')
             ->orderColumn('store', 'branch_stores.name $1')
-            ->orderColumn('location', 'warehouse_locations.code $1')
             ->orderColumn('lines_count', 'lines_count $1')
             ->orderColumn('system_total', 'system_total $1')
             ->orderColumn('physical_total', 'physical_total $1')
@@ -119,7 +112,7 @@ class StockCountsDataTable
             ->removeColumn('adjustment_document_id')
             ->removeColumn('deleted_by')
             ->removeColumn('restored_by')
-            ->rawColumns(['checkbox', 'doc_num', 'store', 'location', 'status_label', 'approved_by', 'created_by', 'updated_by', 'actions'])
+            ->rawColumns(['checkbox', 'doc_num', 'store', 'status_label', 'approved_by', 'created_by', 'updated_by', 'actions'])
             ->toJson();
     }
 

@@ -215,6 +215,9 @@ foreach ([
 }
 
 $reportPermissionLabels = [
+    'production.reports.control.view' => 'View Injection and Cover Production Monitoring',
+    'production.reports.control.export' => 'Export Injection and Cover Production Monitoring',
+    'production.reports.control.print' => 'Print Injection and Cover Production Monitoring',
     'reports.products_data.view' => 'View Products and Raw Materials Data Report',
     'reports.products_data.export' => 'Export Products and Raw Materials Data Report',
     'reports.products_data.pdf' => 'Export Products and Raw Materials Data Report PDF',
@@ -329,6 +332,25 @@ $inventoryPermissionLabels['inventory.unpriced_inventory_receipts.document_numbe
 $inventoryPermissionLabels['inventory.unpriced_inventory_receipts.document_number_settings.update'] = 'Update Unpriced Inventory Receipt Document Number Settings';
 
 return [
+    'customer_credits.allocate' => 'Allocate Customer Credit',
+    'customer_credits.refund' => 'Refund Customer Credit',
+    'customer_invoices.electronic_invoice.submit' => 'Submit Electronic Invoice',
+    'purchases.direct_procurement.override' => 'Override Direct Procurement Controls',
+    'production.quality.release_normal' => 'Release Production after Quality Inspection',
+    'maintenance.plans.readings' => 'Record Maintenance Plan Readings',
+    'fixed_assets.accounting.configure' => 'Configure Fixed Asset Accounts',
+    'fixed_assets.improvement.post' => 'Post Asset Improvement',
+    'fixed_assets.improvement.reverse' => 'Reverse Asset Improvement',
+    'fixed_assets.recognition.reverse' => 'Reverse Asset Recognition',
+    'fixed_assets.custody.post' => 'Post Asset Custody',
+    'fixed_assets.disposal.reverse' => 'Reverse Asset Disposal',
+    'fixed_assets.reports' => 'View Fixed Asset Reports',
+    'file_manager.folders.restore' => 'Restore File Folders',
+    'quick_tasks.bulk_delete' => 'Bulk Delete Quick Tasks',
+    'reports.costing.product_cost.view' => 'View Product Cost Report',
+    'reports.costing.product_cost.print' => 'Print Product Cost Report',
+    'reports.costing.product_cost.export' => 'Export Product Cost Report',
+    'purchases.supplier_payment_allocations.create' => 'Allocate Supplier Payments',
     'activity.logs.details' => 'View Activity Log Details',
     'activity.logs.export' => 'Export Activity Logs',
     'activity.logs.pdf' => 'Export Activity Logs PDF',

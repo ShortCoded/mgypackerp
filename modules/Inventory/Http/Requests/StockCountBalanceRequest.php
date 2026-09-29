@@ -32,14 +32,7 @@ class StockCountBalanceRequest extends FormRequest
                     ->where('branch_id', $context['branch_id'])
                     ->whereNull('deleted_at')),
             ],
-            'warehouse_location_id' => [
-                'nullable',
-                'integer',
-                Rule::exists('warehouse_locations', 'id')->where(fn ($query) => $query
-                    ->where('branch_store_id', $this->input('branch_store_id'))
-                    ->where('is_active', true)
-                    ->whereNull('deleted_at')),
-            ],
+            'warehouse_location_id' => ['prohibited'],
             'product_doc_num' => [
                 'required',
                 'string',
