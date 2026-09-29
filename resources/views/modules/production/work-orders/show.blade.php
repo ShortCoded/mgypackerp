@@ -126,7 +126,7 @@
                                             <tr>
                                                 <td>{{ $component['product_doc_num'] ?? '' }} — {{ $component['product_name'] ?? '' }}</td>
                                                 <td dir="ltr">{{ $numbers->format($component['base_quantity_per_output'] ?? '0') }} {{ $component['base_unit_name'] ?? '' }}</td>
-                                                <td dir="ltr" class="fw-semibold">{{ $numbers->format($requiredComponentQuantity) }} {{ $component['base_unit_name'] ?? '' }}</td>
+                                                <td dir="ltr" class="fw-semibold">{{ $numbers->format($requiredComponentQuantity) }} {{ $component['base_unit_name'] ?? '' }}<div class="small text-muted">{{ $numbers->format($equivalentQuantity) }} × {{ $numbers->format($component['base_quantity_per_output'] ?? '0') }} = {{ $numbers->format($requiredComponentQuantity) }}</div></td>
                                             </tr>
                                         @endforeach
                                     </tbody>

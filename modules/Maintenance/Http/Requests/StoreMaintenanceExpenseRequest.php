@@ -32,7 +32,7 @@ class StoreMaintenanceExpenseRequest extends FormRequest
             'payment_channel' => ['required', Rule::in(['cashbox', 'bank'])],
             'cashbox_id' => ['nullable', 'integer', 'required_if:payment_channel,cashbox', Rule::exists('cashboxes', 'id')->where(fn ($query) => $query->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('status', 'active')->whereNull('deleted_at'))],
             'bank_account_id' => ['nullable', 'integer', 'required_if:payment_channel,bank', Rule::exists('bank_accounts', 'id')->where(fn ($query) => $query->where('company_id', $context['company_id'])->where('status', 'active')->whereNull('deleted_at'))],
-            'expense_account_id' => ['nullable', 'integer', 'required_if:payment_channel,cashbox', Rule::exists('accounts', 'id')->where(fn ($query) => $query->where('company_id', $context['company_id'])->where('account_type', 'expense')->where('is_postable', true)->where('status', 'active')->whereNull('deleted_at'))],
+            'expense_account_id' => ['required', 'integer', Rule::exists('accounts', 'id')->where(fn ($query) => $query->where('company_id', $context['company_id'])->where('account_type', 'expense')->where('is_postable', true)->where('status', 'active')->whereNull('deleted_at'))],
             'reason' => ['required', 'string', 'max:2000'],
             'notes' => ['nullable', 'string', 'max:5000'],
         ];

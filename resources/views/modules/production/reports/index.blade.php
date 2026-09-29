@@ -12,6 +12,15 @@
     ];
     $exportQuery = [...request()->query(), 'section' => $section];
     $sectionPermission = $section;
+    $exportOptions = [
+        ['permission' => "production.reports.{$sectionPermission}.export", 'url' => route('admin.production.reports.export', $exportQuery), 'label' => __('reports.export_excel'), 'icon' => 'file-excel'],
+        ['permission' => "production.reports.{$sectionPermission}.print", 'url' => route('admin.production.reports.print', $exportQuery), 'label' => __('reports.export_pdf'), 'icon' => 'file-pdf', 'newTab' => true],
+    ];
+    if ($section === 'control') {
+        foreach (['products', 'daily', 'daily_materials', 'machines', 'material_summary', 'runs', 'materials'] as $dataset) {
+            $exportOptions[] = ['permission' => 'production.reports.control.export', 'url' => route('admin.production.reports.export.csv', [...$exportQuery, 'dataset' => $dataset]), 'label' => __('production_execution.reports.control.csv_'.$dataset), 'icon' => 'file-csv'];
+        }
+    }
 @endphp
 
 @section('title', __('production_execution.reports.sections.'.$section))
@@ -22,12 +31,7 @@
             <div class="card-header py-2">
                 <div class="row flex-between-center g-2">
                     <div class="col"><h5 class="mb-0">{{ __('production_execution.reports.sections.'.$section) }}</h5></div>
-                    @if(auth()->user()?->can("production.reports.{$sectionPermission}.export") || auth()->user()?->can("production.reports.{$sectionPermission}.print"))
-                        <div class="col-auto d-flex flex-wrap gap-2">
-                            @can("production.reports.{$sectionPermission}.export")<a class="btn btn-falcon-success btn-sm" href="{{ route('admin.production.reports.export', $exportQuery) }}"><span class="fas fa-file-excel me-1"></span>{{ __('production_execution.actions.export_excel') }}</a>@endcan
-                            @can("production.reports.{$sectionPermission}.print")<a class="btn btn-falcon-default btn-sm" target="_blank" href="{{ route('admin.production.reports.print', $exportQuery) }}"><span class="fas fa-file-pdf me-1"></span>{{ __('production_execution.actions.print_pdf') }}</a>@endcan
-                        </div>
-                    @endif
+                    <div class="col-auto"><x-admin.report.actions-toolbar :show-filters="false" :show-refresh="false" :export-options="$exportOptions" /></div>
                 </div>
             </div>
             <div class="card-body py-3">
@@ -89,7 +93,6 @@
                 @foreach($orders as $order)<tr><td><a href="{{ route('admin.production.work-orders.show', $order) }}">{{ $order->doc_num }}</a></td><td>{{ $dates->formatDate($order->production_order_date) }}</td><td>{{ __('production_execution.source_types.'.$order->source_type) }}</td><td>{{ $order->salesOrder?->doc_num ?: '—' }}</td><td class="text-end" dir="ltr">{{ $numbers->format($order->planned_base_quantity) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($order->received_base_quantity) }}</td><td class="text-end fw-bold" dir="ltr">{{ $numbers->format($order->remaining_base_quantity) }}</td><td>{{ __('production_execution.statuses.'.$order->status) }}</td></tr>@endforeach
             </x-production.report-card>
         @elseif($section === 'control')
-            <div class="alert alert-info mb-3">{{ __('production_execution.reports.control.measurement_note') }}</div>
             @php($visibleControlKpis = collect($controlKpis)->filter(fn ($value): bool => bccomp((string) $value, '0', 8) !== 0))
             @if($visibleControlKpis->isNotEmpty())
                 <div class="row g-3 mb-3">
@@ -100,26 +103,81 @@
             @else
                 <div class="alert alert-light border mb-3">{{ __('reports.no_data') }}</div>
             @endif
-            <x-production.report-card :title="__('production_execution.reports.control.run_details')" :empty-message="__('production_execution.reports.control.no_runs')" :has-rows="$controlRuns->isNotEmpty()" :columns="19" :wide="true">
-                <x-slot:head>@foreach(['branch','date','shift','machine','stage','order','run','product','planned','good','rejected','rework','scrap','received','unreceived','yield','hours','material_exceptions','quality_holds'] as $column)<th class="{{ in_array($column, ['planned','good','rejected','rework','scrap','received','unreceived','yield','hours','material_exceptions','quality_holds'], true) ? 'text-end' : '' }}">{{ __('production_execution.reports.control.columns.'.$column) }}</th>@endforeach</x-slot:head>
+            @if($controlRuns->isNotEmpty() && $controlRuns->every(fn ($run): bool => bccomp((string) $run->report_recorded_base_quantity, '0', 8) === 0))
+                <div class="alert alert-info mb-3">{{ __('production_execution.reports.control.no_output') }}</div>
+            @endif
+            @if(filled($controlFilters['from'] ?? null) || filled($controlFilters['to'] ?? null))
+                <div class="alert alert-light border mb-3">{{ __('production_execution.reports.control.date_scope_note') }}</div>
+            @endif
+            <div class="small text-muted mb-2">{{ __('production_execution.reports.control.final_stage_note') }}</div>
+            <x-production.report-card :title="__('production_execution.reports.control.product_summary')" :empty-message="__('production_execution.reports.control.no_runs')" :has-rows="$controlProducts->isNotEmpty()" :columns="21" :wide="true">
+                <x-slot:head>@foreach(['branch','product','color','customer','stage','components','unit','pack_size','planned','good','equivalent_good','good_weight_kg','unit_weight_kg','production_scrap_weight_kg','production_scrap_percent','rejected','rework','scrap','received','yield','runs_count'] as $column)<th>{{ __('production_execution.reports.control.columns.'.$column) }}</th>@endforeach</x-slot:head>
+                @foreach($controlProducts as $row)
+                    <tr>
+                        <td>{{ $row['branch'] ?: '—' }}</td><td>{{ $row['product']?->doc_num }} — {{ $row['product']?->name }}</td><td>{{ $row['color'] ?: '—' }}</td><td>{{ $row['customer'] ?: '—' }}</td><td>{{ $row['stage'] ?: '—' }}</td><td>{{ $row['components'] ?: '—' }}</td><td>{{ $row['unit'] ?: '—' }}</td>
+                        @foreach(['pack_size','planned','good','equivalent_good','good_weight_kg','unit_weight_kg','production_scrap_weight_kg','production_scrap_percent','rejected','rework','scrap','received','yield','runs'] as $field)<td class="text-end" dir="ltr">{{ $row[$field] === null ? '—' : $numbers->format($row[$field]) }}</td>@endforeach
+                    </tr>
+                @endforeach
+            </x-production.report-card>
+            <x-production.report-card :title="__('production_execution.reports.control.daily_output')" :empty-message="__('production_execution.reports.control.no_daily')" :has-rows="$controlDaily->isNotEmpty()" :columns="16" :wide="true">
+                <x-slot:head>@foreach(['date','branch','machine','shift','run','product','color','customer','unit','good','equivalent_good','good_weight_kg','production_scrap_weight_kg','rejected','rework','scrap'] as $column)<th>{{ __('production_execution.reports.control.columns.'.$column) }}</th>@endforeach</x-slot:head>
+                @foreach($controlDaily as $row)
+                    @php($run = $row['run'])
+                    <tr><td>{{ $dates->formatDate($row['date']) }}</td><td>{{ $run->order?->branch?->name }}</td><td>{{ $run->fixedAsset?->asset_name ?? $run->machine?->name ?? '—' }}</td><td>{{ $run->shift?->name ?: '—' }}</td><td>{{ $run->run_number }}</td><td>{{ $run->product?->doc_num }} — {{ $run->product?->name }}</td><td>{{ $run->output_color_name ?: '—' }}</td><td>{{ $run->order?->salesOrder?->customer?->name ?: '—' }}</td><td>{{ $run->product?->unit?->name ?: '—' }}</td>
+                        @foreach(['good','equivalent_good','good_weight_kg','production_scrap_weight_kg','rejected','rework','scrap'] as $field)<td class="text-end" dir="ltr">{{ $row[$field] === null ? '—' : $numbers->format($row[$field]) }}</td>@endforeach
+                    </tr>
+                @endforeach
+            </x-production.report-card>
+            <x-production.report-card :title="__('production_execution.reports.control.daily_materials')" :empty-message="__('production_execution.reports.control.no_daily_materials')" :has-rows="$controlDailyMaterials->isNotEmpty()" :columns="11" :wide="true">
+                <x-slot:head>@foreach(['date','branch','run','product','material','unit','consumed','waste','total_used','waste_percent','document'] as $column)<th>{{ __('production_execution.reports.control.columns.'.$column) }}</th>@endforeach</x-slot:head>
+                @foreach($controlDailyMaterials as $row)
+                    <tr><td>{{ $dates->formatDate($row['date']) }}</td><td>{{ $row['run']->order?->branch?->name }}</td><td>{{ $row['run']->run_number }}</td><td>{{ $row['run']->product?->doc_num }} — {{ $row['run']->product?->name }}</td><td>{{ $row['material']?->doc_num }} — {{ $row['material']?->name }}</td><td>{{ $row['unit'] ?: '—' }}</td>
+                        @foreach(['consumed','waste','total_used','waste_percent'] as $field)<td class="text-end" dir="ltr">{{ $row[$field] === null ? '—' : $numbers->format($row[$field]) }}</td>@endforeach
+                        <td>{{ $row['documents'] }}</td>
+                    </tr>
+                @endforeach
+            </x-production.report-card>
+            <x-production.report-card :title="__('production_execution.reports.control.machine_summary')" :empty-message="__('production_execution.reports.control.no_runs')" :has-rows="$controlMachines->isNotEmpty()" :columns="13" :wide="true">
+                <x-slot:head>@foreach(['branch','machine','stage','product','color','unit','runs_count','planned','good','good_weight_kg','production_scrap_weight_kg','scrap','yield'] as $column)<th>{{ __('production_execution.reports.control.columns.'.$column) }}</th>@endforeach</x-slot:head>
+                @foreach($controlMachines as $row)
+                    <tr><td>{{ $row['branch'] ?: '—' }}</td><td>{{ $row['machine'] ?: '—' }}</td><td>{{ $row['stage'] ?: '—' }}</td><td>{{ $row['product']?->doc_num }} — {{ $row['product']?->name }}</td><td>{{ $row['color'] ?: '—' }}</td><td>{{ $row['unit'] ?: '—' }}</td>
+                        @foreach(['runs','planned','good','good_weight_kg','production_scrap_weight_kg','scrap','yield'] as $field)<td class="text-end" dir="ltr">{{ $row[$field] === null ? '—' : $numbers->format($row[$field]) }}</td>@endforeach
+                    </tr>
+                @endforeach
+            </x-production.report-card>
+            <div class="small text-muted mb-2 mt-3">{{ __('production_execution.reports.control.material_unit_note') }}</div>
+            @if($controlMaterialSummary->isNotEmpty() && $controlMaterialSummary->every(fn (array $row): bool => $row['consumed'] === null))
+                <div class="alert alert-info mb-3">{{ __('production_execution.reports.control.no_material_movements') }}</div>
+            @endif
+            <x-production.report-card :title="__('production_execution.reports.control.material_summary')" :empty-message="__('production_execution.reports.control.no_materials')" :has-rows="$controlMaterialSummary->isNotEmpty()" :columns="17" :wide="true">
+                <x-slot:head>@foreach(['branch','product','color','customer','stage','material','unit','planned','issued','returned','consumed','waste','total_used','consumed_per_equivalent','consumption_unit','waste_percent','variance'] as $column)<th>{{ __('production_execution.reports.control.columns.'.$column) }}</th>@endforeach</x-slot:head>
+                @foreach($controlMaterialSummary as $row)
+                    <tr><td>{{ $row['branch'] ?: '—' }}</td><td>{{ $row['product']?->doc_num }} — {{ $row['product']?->name }}</td><td>{{ $row['color'] ?: '—' }}</td><td>{{ $row['customer'] ?: '—' }}</td><td>{{ $row['stage'] ?: '—' }}</td><td>{{ $row['material']?->doc_num }} — {{ $row['material']?->name }}</td><td>{{ $row['unit'] ?: '—' }}</td>
+                        @foreach(['planned','issued','returned','consumed','waste','total_used','consumed_per_equivalent'] as $field)<td class="text-end" dir="ltr">{{ $row[$field] === null ? '—' : $numbers->format($row[$field]) }}</td>@endforeach
+                        <td>{{ $row['consumption_unit'] ?: '—' }}</td>
+                        @foreach(['waste_percent','variance'] as $field)<td class="text-end" dir="ltr">{{ $row[$field] === null ? '—' : $numbers->format($row[$field]) }}</td>@endforeach
+                    </tr>
+                @endforeach
+            </x-production.report-card>
+            <x-production.report-card :title="__('production_execution.reports.control.run_details')" :empty-message="__('production_execution.reports.control.no_runs')" :has-rows="$controlRuns->isNotEmpty()" :columns="21" :wide="true">
+                <x-slot:head>@foreach(['branch','date','shift','machine','stage','order','run','product','planned','good','rejected','rework','scrap','received','unreceived','yield','good_weight_kg','production_scrap_weight_kg','hours','material_exceptions','quality_holds'] as $column)<th class="{{ in_array($column, ['planned','good','rejected','rework','scrap','received','unreceived','yield','good_weight_kg','production_scrap_weight_kg','hours','material_exceptions','quality_holds'], true) ? 'text-end' : '' }}">{{ __('production_execution.reports.control.columns.'.$column) }}</th>@endforeach</x-slot:head>
                 @foreach($controlRuns as $run)
                     <tr>
                         <td>{{ $run->order?->branch?->name }}</td><td>{{ $dates->formatDate($run->actual_start_at ?? $run->planned_start_at) }}</td><td>{{ $run->shift?->name ?: '—' }}</td><td>{{ $run->fixedAsset?->asset_name ?? $run->machine?->name ?? '—' }}</td><td>{{ $run->stageSnapshot?->stage_name ?: '—' }}</td>
-                        <td>{{ $run->order?->doc_num }}</td><td><a href="{{ route('admin.production.runs.show', $run) }}">{{ $run->run_number }}</a></td><td>{{ $run->product?->doc_num }} — {{ $run->product?->name }} ({{ $run->product?->unit?->name }})</td>
-                        @foreach(['planned_base_quantity','good_base_quantity','rejected_base_quantity','rework_base_quantity','scrap_base_quantity','received_base_quantity','receipt_remaining_base_quantity','yield_percent'] as $value)<td class="text-end" dir="ltr">{{ $run->{$value} === null ? '—' : $numbers->format($run->{$value}) }}</td>@endforeach
+                        <td>{{ $run->order?->doc_num }}</td><td>@can('production.runs.view')<a href="{{ route('admin.production.reports.control.runs.show', ['productionRun' => $run->getRouteKey(), ...request()->query()]) }}">{{ $run->run_number }}</a>@else{{ $run->run_number }}@endcan</td><td>{{ $run->product?->doc_num }} — {{ $run->product?->name }} ({{ $run->product?->unit?->name }})</td>
+                        @foreach(['planned_base_quantity','report_good_base_quantity','report_rejected_base_quantity','report_rework_base_quantity','report_scrap_base_quantity','report_received_base_quantity','report_receipt_remaining_base_quantity','report_yield_percent'] as $value)<td class="text-end" dir="ltr">{{ $run->{$value} === null || ($value !== 'planned_base_quantity' && $value !== 'report_received_base_quantity' && bccomp((string) $run->report_recorded_base_quantity, '0', 8) === 0) || ($value === 'report_received_base_quantity' && bccomp((string) $run->report_received_base_quantity, '0', 8) === 0) ? '—' : $numbers->format($run->{$value}) }}</td>@endforeach
+                        @foreach(['report_good_weight_kg', 'report_production_scrap_weight_kg'] as $value)<td class="text-end" dir="ltr">{{ $run->{$value} === null ? '—' : $numbers->format($run->{$value}) }}</td>@endforeach
                         <td class="text-end" dir="ltr">{{ $run->actualDurationHours() ?? '—' }}</td><td class="text-end" dir="ltr">{{ $run->material_exception_count }}</td><td class="text-end" dir="ltr">{{ $run->quality_hold_count }}</td>
                     </tr>
                 @endforeach
             </x-production.report-card>
-            <x-production.report-card :title="__('production_execution.reports.control.material_details')" :empty-message="__('production_execution.reports.control.no_materials')" :has-rows="$controlMaterials->isNotEmpty()" :columns="12" :wide="true">
-                <x-slot:head>@foreach(['branch','run','product','material','unit','planned','issued','returned','consumed','waste','variance','status'] as $column)<th>{{ __('production_execution.reports.control.columns.'.$column) }}</th>@endforeach</x-slot:head>
+            <x-production.report-card :title="__('production_execution.reports.control.material_details')" :empty-message="__('production_execution.reports.control.no_materials')" :has-rows="$controlMaterials->isNotEmpty()" :columns="14" :wide="true">
+                <x-slot:head>@foreach(['branch','run','product','material','unit','basis','per_equivalent_unit','planned','issued','returned','consumed','waste','variance','status'] as $column)<th>{{ __('production_execution.reports.control.columns.'.$column) }}</th>@endforeach</x-slot:head>
                 @foreach($controlMaterials as $entry)
                     @php($run = $entry['run']) @php($line = $entry['line'])
-                    @php($issued = bcadd((string) $line->issued_quantity, (string) $line->additional_issued_quantity, 8))
-                    @php($variance = bcsub($issued, bcadd(bcadd((string) $line->returned_quantity, (string) $line->consumed_quantity, 8), (string) $line->waste_quantity, 8), 8))
-                    <tr><td>{{ $run->order?->branch?->name }}</td><td>{{ $run->run_number }}</td><td>{{ $run->product?->name }}</td><td>{{ $line->product?->doc_num }} — {{ $line->product?->name }}</td><td>{{ $line->unit?->name }}</td>
-                        @foreach([$line->planned_quantity, $issued, $line->returned_quantity, $line->consumed_quantity, $line->waste_quantity, $variance] as $value)<td class="text-end" dir="ltr">{{ $numbers->format($value) }}</td>@endforeach
-                        <td>{{ bccomp($variance, '0', 8) === 0 ? '✓' : '!' }}</td></tr>
+                    <tr><td>{{ $run->order?->branch?->name }}</td><td>{{ $run->run_number }}</td><td>{{ $run->product?->name }}</td><td>{{ $line->product?->doc_num }} — {{ $line->product?->name }}</td><td>{{ $line->unit?->name }}</td><td class="text-end" dir="ltr">{{ $entry['basis_quantity'] === null ? '—' : $numbers->format($entry['basis_quantity']) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->component_quantity_snapshot) }}</td>
+                        @foreach([$line->planned_quantity, $entry['issued'], $line->returned_quantity, $line->consumed_quantity, $line->waste_quantity, $entry['variance']] as $index => $value)<td class="text-end" dir="ltr">{{ $index > 0 && $entry['status'] === 'pending' ? '—' : $numbers->format($value) }}</td>@endforeach
+                        <td>{{ __('production_execution.reports.control.material_statuses.'.$entry['status']) }}</td></tr>
                 @endforeach
             </x-production.report-card>
         @elseif($section === 'runs')

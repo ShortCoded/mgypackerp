@@ -24,6 +24,7 @@ use Modules\Finance\Models\ChequeClearingEvent;
 use Modules\Finance\Models\FundTransfer;
 use Modules\Finance\Models\OpeningBalance;
 use Modules\Finance\Models\OpeningBalanceLine;
+use Modules\Production\Models\ProductionExpenseRequest;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\SupplierPaymentContext;
 use Modules\Sales\Models\CustomerInvoice;
@@ -896,6 +897,51 @@ class FinanceReportService
                     (string) $line->debit_amount,
                     (string) $line->credit_amount,
                     filled($paymentRouteKey) ? route('admin.purchases.supplier-payments.show', $paymentRouteKey) : '',
+                ));
+            });
+        });
+
+        $expenseEntries = JournalEntry::query()
+            ->where('company_id', $companyId)
+            ->where('status', JournalEntry::StatusPosted)
+            ->where('is_posted', true)
+            ->whereIn('source_type', ['production_expense_payment', 'production_expense_reversal'])
+            ->whereDate('entry_date', '<=', $through)
+            ->whereHas('lines', fn ($query) => $query->whereIn('bank_account_id', $bankAccounts->keys()))
+            ->with([
+                'currency' => fn ($query) => $query->withTrashed(),
+                'lines' => fn ($query) => $query->whereIn('bank_account_id', $bankAccounts->keys()),
+            ])
+            ->orderBy('entry_date')
+            ->orderBy('id')
+            ->get();
+        $expenses = ProductionExpenseRequest::query()
+            ->where('company_id', $companyId)
+            ->whereKey($expenseEntries->pluck('source_id')->filter()->unique())
+            ->get()
+            ->keyBy('id');
+
+        $expenseEntries->each(function (JournalEntry $entry) use ($bankAccounts, $bankDocNum, $currencyDocNum, $rows, $expenses): void {
+            $expense = $expenses->get($entry->source_id);
+            $entry->lines->each(function ($line) use ($entry, $expense, $bankAccounts, $bankDocNum, $currencyDocNum, $rows): void {
+                $bank = $bankAccounts->get($line->bank_account_id);
+                if (! $bank || ($bankDocNum && $bank->doc_num !== $bankDocNum) || ($currencyDocNum && $entry->currency?->doc_num !== $currencyDocNum)) {
+                    return;
+                }
+
+                $isReversal = $entry->source_type === 'production_expense_reversal';
+                $rows->push($this->bankMovementRow(
+                    $bank,
+                    $entry->currency_id,
+                    $entry->currency?->code,
+                    $entry->entry_date,
+                    $expense?->doc_num ?? $entry->source_doc_num ?? $entry->doc_num,
+                    $this->sourceLabels->label($entry->source_type),
+                    $expense?->reason ?? '',
+                    $isReversal ? 'reversed' : ($entry->reversed_entry_id !== null ? 'cancelled' : 'approved'),
+                    (string) $line->debit_amount,
+                    (string) $line->credit_amount,
+                    $expense ? route($expense->maintenance_work_order_id ? 'admin.maintenance.expenses.show' : 'admin.production.expenses.show', $expense) : '',
                 ));
             });
         });

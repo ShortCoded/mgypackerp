@@ -176,6 +176,12 @@ Route::middleware('auth')
             ->defaults('section', 'control')
             ->middleware('can:production.reports.control.view')
             ->name('reports.control');
+        Route::get('/reports/operations/control/runs/{productionRun}', [ProductionReportController::class, 'showControlRun'])
+            ->middleware(['can:production.reports.control.view', 'can:production.runs.view'])
+            ->name('reports.control.runs.show');
+        Route::get('/reports/operations/control/runs/{productionRun}/print', [ProductionReportController::class, 'printControlRun'])
+            ->middleware(['can:production.reports.control.print', 'can:production.runs.view'])
+            ->name('reports.control.runs.print');
         Route::get('/reports/operations/materials', [ProductionReportController::class, 'index'])
             ->defaults('section', 'materials')
             ->middleware('can:production.reports.materials.view')
@@ -190,6 +196,8 @@ Route::middleware('auth')
             ->name('reports.receipts');
         Route::get('/reports/operations/export.xlsx', [ProductionReportController::class, 'export'])
             ->name('reports.export');
+        Route::get('/reports/operations/export.csv', [ProductionReportController::class, 'exportCsv'])
+            ->name('reports.export.csv');
         Route::get('/reports/operations/print', [ProductionReportController::class, 'print'])
             ->name('reports.print');
 

@@ -7,9 +7,13 @@
     @php
         $dates = app(\Modules\Core\Services\DateFormatService::class);
         $numbers = app(\Modules\Core\Services\NumericFormatService::class);
+        $readOnlyReport = $readOnlyReport ?? false;
         $laborRows = collect($record->labor_details ?? []);
         $requiredStages = $record->orderLine?->stageSnapshots?->where('is_required', true)->sortBy('sequence') ?? collect();
         $isFinalStage = $requiredStages->isEmpty() || (int) $record->stageSnapshot?->sequence === (int) $requiredStages->max('sequence');
+        $runFormulaBasis = is_array($record->orderLine?->bom_snapshot)
+            ? bcmul((string) $record->planned_base_quantity, (string) ($record->orderLine->bom_snapshot['basis_base_quantity'] ?? '1'), 8)
+            : null;
         $relatedDocuments = collect([
             ['label' => __('Production Order'), 'number' => $record->order?->doc_num, 'url' => $record->order ? route('admin.production.work-orders.show', $record->order) : null, 'permission' => 'production.orders.view'],
             ['label' => __('Sales Requirement / Order'), 'number' => $record->order?->salesOrder?->doc_num, 'url' => $record->order?->salesOrder ? route('admin.sales.sales-orders.show', $record->order->salesOrder) : null, 'permission' => 'sales_orders.view'],
@@ -17,18 +21,27 @@
             ...$record->inspections->map(fn ($inspection) => ['label' => __('QC Sample'), 'number' => $inspection->doc_num, 'url' => route('admin.production.quality.show', $inspection->getKey()), 'permission' => 'production.quality.view', 'meta' => __('production_execution.quality_results.'.$inspection->result)])->all(),
             ...$record->materialRequests->map(fn ($materialRequest) => ['label' => __('production_execution.material_requests.title'), 'number' => $materialRequest->doc_num, 'url' => route('admin.production.material-requests.show', $materialRequest), 'permission' => 'production.material_requests.view', 'meta' => __('production_execution.statuses.'.$materialRequest->status)])->all(),
             ...$record->expenseRequests->map(fn ($expenseRequest) => ['label' => __('production_execution.expenses.title'), 'number' => $expenseRequest->doc_num, 'url' => route('admin.production.expenses.show', $expenseRequest), 'permission' => 'production.expenses.view', 'meta' => __('production_execution.statuses.'.$expenseRequest->status)])->all(),
-        ]);
+        ])->map(fn (array $document): array => $readOnlyReport ? [...$document, 'url' => null] : $document);
     @endphp
     @if ($errors->any())
         <div class="alert alert-danger"><ul class="mb-0">@foreach ($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>
     @endif
 
+    @if($readOnlyReport)
+        <a class="btn btn-falcon-default btn-sm mb-3" href="{{ route('admin.production.reports.control', request()->query()) }}">{{ __('production_execution.reports.control.back_to_control') }}</a>
+    @endif
+
     <div class="card mb-3">
         <div class="card-header d-flex justify-content-between">
             <div><h5 class="mb-1">{{ $record->run_number }}</h5><span class="badge bg-secondary">{{ __('production_execution.statuses.'.$record->status) }}</span></div>
-            @can('production.runs.print')<div class="btn-group"><a class="btn btn-falcon-default btn-sm" href="{{ route('admin.production.runs.print', $record) }}">{{ __('Print traveler') }}</a><button class="btn btn-falcon-default btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown"></button><div class="dropdown-menu"><a class="dropdown-item" href="{{ route('admin.production.runs.materials.print', $record) }}">{{ __('Material Requirement') }}</a><a class="dropdown-item" href="{{ route('admin.production.runs.quality.print', $record) }}">{{ __('In-Process QC') }}</a><a class="dropdown-item" href="{{ route('admin.production.runs.completion.print', $record) }}">{{ __('Completion Summary') }}</a></div></div>@endcan
+            @if($readOnlyReport)
+                @can('production.reports.control.print')<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.production.reports.control.runs.print', $record) }}">{{ __('Print traveler') }}</a>@endcan
+            @else
+                @can('production.runs.print')<div class="btn-group"><a class="btn btn-falcon-default btn-sm" href="{{ route('admin.production.runs.print', $record) }}">{{ __('Print traveler') }}</a><button class="btn btn-falcon-default btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown"></button><div class="dropdown-menu"><a class="dropdown-item" href="{{ route('admin.production.runs.materials.print', $record) }}">{{ __('Material Requirement') }}</a><a class="dropdown-item" href="{{ route('admin.production.runs.quality.print', $record) }}">{{ __('In-Process QC') }}</a><a class="dropdown-item" href="{{ route('admin.production.runs.completion.print', $record) }}">{{ __('Completion Summary') }}</a></div></div>@endcan
+            @endif
         </div>
         <div class="card-body"><div class="row g-2">
+            @if($readOnlyReport)<div class="col-md-3"><strong>{{ __('production_execution.reports.control.columns.branch') }}:</strong> {{ $record->order?->branch?->name }}</div>@endif
             <div class="col-md-3"><strong>{{ __('Order') }}:</strong> {{ $record->order?->doc_num }}</div>
             <div class="col-md-3"><strong>{{ __('Product') }}:</strong> {{ $record->product?->name }}</div>
             <div class="col-md-3"><strong>{{ __('production_execution.fields.stage') }}:</strong> {{ $record->stageSnapshot?->sequence }} — {{ $record->stageSnapshot?->stage_name ?? '—' }}</div>
@@ -49,19 +62,37 @@
 
     <x-related-documents :documents="$relatedDocuments" />
 
+    @if($record->progressEntries->isNotEmpty())
+    <div class="card mb-3">
+        <div class="card-header"><h5 class="mb-0">{{ __('Production Progress') }}</h5></div>
+        <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+            <thead><tr>@foreach(['date', 'good', 'good_weight_kg', 'rejected', 'rework', 'scrap', 'production_scrap_weight_kg'] as $column)<th>{{ __('production_execution.reports.control.columns.'.$column) }}</th>@endforeach<th>{{ __('production_execution.fields.notes') }}</th></tr></thead>
+            <tbody>@foreach($record->progressEntries->sortBy('recorded_at') as $entry)<tr>
+                <td>{{ $dates->formatDateTime($entry->recorded_at) }}</td>
+                @foreach(['good_base_quantity', 'good_weight_kg', 'rejected_base_quantity', 'rework_base_quantity', 'scrap_base_quantity', 'production_scrap_weight_kg'] as $field)<td class="text-end" dir="ltr">{{ $entry->{$field} === null ? '—' : $numbers->format($entry->{$field}) }}</td>@endforeach
+                <td>{{ $entry->notes ?: '—' }}</td>
+            </tr>@endforeach</tbody>
+        </table></div>
+    </div>
+    @endif
+
     <div class="card mb-3">
         <div class="card-header"><h5 class="mb-0">{{ __('Material Reconciliation') }}</h5></div>
+        @if($runFormulaBasis !== null && $record->requirements->isNotEmpty())
+            <div class="card-body py-2 text-muted">{{ __('production_execution.orders.bom_basis', ['quantity' => $numbers->format($runFormulaBasis), 'unit' => $record->orderLine->bom_snapshot['basis_unit_name'] ?? '']) }}</div>
+        @endif
         <div class="table-responsive"><table class="table table-sm mb-0">
-            <thead><tr><th>{{ __('Material') }}</th><th>{{ __('Planned') }}</th><th>{{ __('Reserved') }}</th><th>{{ __('Issued') }}</th><th>{{ __('Additional') }}</th><th>{{ __('Returned') }}</th><th>{{ __('Consumed') }}</th><th>{{ __('Waste') }}</th></tr></thead>
+            <thead><tr><th>{{ __('Material') }}</th><th>{{ __('production_execution.orders.per_equivalent_unit') }}</th><th>{{ __('Planned') }}</th><th>{{ __('Reserved') }}</th><th>{{ __('Issued') }}</th><th>{{ __('Additional') }}</th><th>{{ __('Returned') }}</th><th>{{ __('Consumed') }}</th><th>{{ __('Waste') }}</th></tr></thead>
             <tbody>@foreach ($record->requirements as $line)<tr>
                 <td>{{ $line->product?->doc_num }} — {{ $line->product?->name }}</td>
-                <td>{{ $numbers->format($line->planned_quantity) }}</td><td>{{ $numbers->format($line->reserved_quantity) }}</td><td>{{ $numbers->format($line->issued_quantity) }}</td>
+                <td>{{ $numbers->format($line->component_quantity_snapshot) }} {{ $line->unit?->name }}</td>
+                <td>{{ $numbers->format($line->planned_quantity) }} {{ $line->unit?->name }}@if($runFormulaBasis !== null)<div class="small text-muted" dir="ltr">{{ $numbers->format($runFormulaBasis) }} × {{ $numbers->format($line->component_quantity_snapshot) }} = {{ $numbers->format($line->planned_quantity) }}</div>@endif</td><td>{{ $numbers->format($line->reserved_quantity) }}</td><td>{{ $numbers->format($line->issued_quantity) }}</td>
                 <td>{{ $numbers->format($line->additional_issued_quantity) }}</td><td>{{ $numbers->format($line->returned_quantity) }}</td><td>{{ $numbers->format($line->consumed_quantity) }}</td><td>{{ $numbers->format($line->waste_quantity) }}</td>
             </tr>@endforeach</tbody>
         </table></div>
     </div>
 
-    @php($hasControlledAction = ($record->status === 'planned' && auth()->user()?->can('production.runs.setup')) || ($record->status === 'setup' && auth()->user()?->can('production.runs.setup')) || ($record->status === 'ready' && auth()->user()?->can('production.runs.setup')) || ($record->status === 'held' && auth()->user()?->can('production.runs.qc')) || (in_array($record->status, ['running', 'held'], true) && auth()->user()?->can('production.runs.complete')) || (!in_array($record->status, ['completed', 'cancelled'], true) && auth()->user()?->can('production.runs.cancel')))
+    @php($hasControlledAction = ! $readOnlyReport && (($record->status === 'planned' && auth()->user()?->can('production.runs.setup')) || ($record->status === 'setup' && auth()->user()?->can('production.runs.setup')) || ($record->status === 'ready' && auth()->user()?->can('production.runs.setup')) || ($record->status === 'held' && auth()->user()?->can('production.runs.qc')) || (in_array($record->status, ['running', 'held'], true) && auth()->user()?->can('production.runs.complete')) || (!in_array($record->status, ['completed', 'cancelled'], true) && auth()->user()?->can('production.runs.cancel'))))
     @if($hasControlledAction)
     <div class="card mb-3">
         <div class="card-header"><h5 class="mb-0">{{ __('Controlled Actions') }}</h5></div>
@@ -76,15 +107,15 @@
     </div>
     @endif
 
-    @if($laborRows->isNotEmpty() || (in_array($record->status, ['running', 'held'], true) && auth()->user()?->can('production.runs.labor')))
+    @if($laborRows->isNotEmpty() || (! $readOnlyReport && in_array($record->status, ['running', 'held'], true) && auth()->user()?->can('production.runs.labor')))
     <div class="card mb-3" data-production-labor-planning>
         <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
             <h5 class="mb-0">{{ __('production_execution.labor.actual_details') }}</h5>
-            @if(in_array($record->status, ['running', 'held'], true))
+            @if(! $readOnlyReport && in_array($record->status, ['running', 'held'], true))
                 @can('production.runs.labor')<button class="btn btn-falcon-primary btn-sm" type="button" data-add-labor-row><span class="fas fa-plus me-1"></span>{{ __('production_execution.actions.add_worker') }}</button>@endcan
             @endif
         </div>
-        @if(in_array($record->status, ['running', 'held'], true) && auth()->user()?->can('production.runs.labor'))
+        @if(! $readOnlyReport && in_array($record->status, ['running', 'held'], true) && auth()->user()?->can('production.runs.labor'))
             <form method="POST" action="{{ route('admin.production.runs.labor', $record) }}">@csrf
                 <x-forms.line-item-cards :line-label="__('production_execution.labor.worker_line')" />
                 <div class="card-body">
@@ -134,6 +165,7 @@
     </div>
     @endif
 
+    @unless($readOnlyReport)
     <div class="row g-3">
         @can('production.material_requests.create')
         <div class="col-lg-4"><div class="card h-100"><div class="card-header"><h6 class="mb-0">{{ __('production_execution.material_requests.title') }}</h6></div><div class="card-body">{{ __('production_execution.material_requests.bom_help') }}</div><div class="card-footer d-flex gap-2"><a class="btn btn-primary btn-sm" href="{{ route('admin.production.material-requests.create', ['run' => $record->id]) }}">{{ __('production_execution.actions.request_bom') }}</a><a class="btn btn-outline-primary btn-sm" href="{{ route('admin.production.material-requests.create', ['run' => $record->id, 'additional' => 1]) }}">{{ __('Additional Material Issue Request') }}</a></div></div></div>
@@ -168,6 +200,8 @@
                 <div class="col-6"><x-forms.numeric-input :scale="8" step="0.00000001" arrow-step="1" min="0" name="rejected_base_quantity" placeholder="{{ __('Rejected') }}" /></div>
                 <div class="col-6"><x-forms.numeric-input :scale="8" step="0.00000001" arrow-step="1" min="0" name="rework_base_quantity" placeholder="{{ __('Rework') }}" /></div>
                 <div class="col-6"><x-forms.numeric-input :scale="8" step="0.00000001" arrow-step="1" min="0" name="scrap_base_quantity" placeholder="{{ __('Scrap') }}" /></div>
+                <div class="col-6"><x-forms.label for="progress-good-weight" :label="__('production_execution.fields.good_weight_kg')" /><x-forms.numeric-input id="progress-good-weight" :scale="8" step="0.00000001" arrow-step="0.1" min="0" name="good_weight_kg" /></div>
+                <div class="col-6"><x-forms.label for="progress-scrap-weight" :label="__('production_execution.fields.production_scrap_weight_kg')" /><x-forms.numeric-input id="progress-scrap-weight" :scale="8" step="0.00000001" arrow-step="0.1" min="0" name="production_scrap_weight_kg" /></div>
                 <div class="col-12"><x-forms.input class="form-control" name="notes" placeholder="{{ __('production_execution.fields.notes') }}" /></div>
             </div>
             <div class="card-footer text-end"><button class="btn btn-primary btn-sm">{{ __('Record progress') }}</button></div>
@@ -215,6 +249,7 @@
         @endcan
         @endif
     </div>
+    @endunless
     </div>
 @endsection
 

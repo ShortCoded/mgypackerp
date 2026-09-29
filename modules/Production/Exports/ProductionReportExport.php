@@ -51,8 +51,45 @@ class ProductionReportExport implements WithMultipleSheets
     /** @return list<ProductionReportSheet> */
     private function controlSheets(): array
     {
-        $runColumns = ['branch', 'date', 'shift', 'machine', 'stage', 'order', 'run', 'product', 'status', 'planned', 'good', 'rejected', 'rework', 'scrap', 'received', 'unreceived', 'yield', 'hours', 'material_exceptions', 'quality_holds'];
-        $materialColumns = ['branch', 'run', 'product', 'material', 'unit', 'planned', 'issued', 'returned', 'consumed', 'waste', 'variance'];
+        $control = 'production_execution.reports.control.';
+        $columns = fn (array $keys): array => array_map(fn (string $key): string => __($control.'columns.'.$key), $keys);
+        $productRows = collect($this->report['controlProducts'])->map(fn (array $row): array => [
+            $row['branch'], $row['product']?->doc_num, $row['product']?->name, $row['color'], $row['customer'], $row['stage'],
+            $row['components'], $row['unit'], $row['pack_size'], $row['equivalent_unit'], $row['runs'],
+            $row['planned'], $row['good'], $row['equivalent_good'], $row['good_weight_kg'], $row['unit_weight_kg'],
+            $row['production_scrap_weight_kg'], $row['production_scrap_percent'], $row['rejected'], $row['rework'],
+            $row['scrap'], $row['received'], $row['yield'],
+        ]);
+        $dailyRows = collect($this->report['controlDaily'])->map(function (array $row): array {
+            $run = $row['run'];
+
+            return [
+                $row['date'], $run->order?->branch?->name, $run->fixedAsset?->asset_name ?? $run->machine?->name,
+                $run->shift?->name, $run->run_number, $run->product?->doc_num, $run->product?->name, $run->output_color_name,
+                $run->order?->salesOrder?->customer?->name, $run->product?->unit?->name,
+                $row['good'], $row['equivalent_good'], $row['good_weight_kg'], $row['production_scrap_weight_kg'],
+                $row['rejected'], $row['rework'], $row['scrap'],
+            ];
+        });
+        $dailyMaterialRows = collect($this->report['controlDailyMaterials'])->map(fn (array $row): array => [
+            $row['date'], $row['run']->order?->branch?->name, $row['run']->run_number,
+            $row['run']->product?->doc_num, $row['run']->product?->name,
+            $row['material']?->doc_num, $row['material']?->name, $row['unit'],
+            $row['consumed'], $row['waste'], $row['total_used'], $row['waste_percent'], $row['documents'],
+        ]);
+        $machineRows = collect($this->report['controlMachines'])->map(fn (array $row): array => [
+            $row['branch'], $row['machine'], $row['stage'], $row['product']?->doc_num,
+            $row['product']?->name, $row['color'], $row['unit'], $row['runs'], $row['planned'], $row['good'],
+            $row['good_weight_kg'], $row['production_scrap_weight_kg'], $row['scrap'], $row['yield'],
+        ]);
+        $materialSummaryRows = collect($this->report['controlMaterialSummary'])->map(fn (array $row): array => [
+            $row['branch'], $row['product']?->doc_num, $row['product']?->name, $row['color'], $row['customer'], $row['stage'],
+            $row['material']?->doc_num, $row['material']?->name, $row['unit'], $row['planned'],
+            $row['issued'], $row['returned'], $row['consumed'], $row['waste'], $row['total_used'],
+            $row['consumed_per_equivalent'], $row['consumption_unit'], $row['waste_percent'], $row['variance'],
+        ]);
+        $runColumns = ['branch', 'date', 'shift', 'machine', 'stage', 'order', 'run', 'product', 'status', 'planned', 'good', 'rejected', 'rework', 'scrap', 'received', 'unreceived', 'yield', 'good_weight_kg', 'production_scrap_weight_kg', 'hours', 'material_exceptions', 'quality_holds'];
+        $materialColumns = ['branch', 'run', 'product', 'material', 'unit', 'basis', 'per_equivalent_unit', 'planned', 'issued', 'returned', 'consumed', 'waste', 'variance', 'status'];
         $runRows = collect($this->report['controlRuns'])->map(fn ($run): array => [
             $run->order?->branch?->name,
             ($run->actual_start_at ?? $run->planned_start_at)?->format('Y-m-d H:i:s'),
@@ -64,13 +101,15 @@ class ProductionReportExport implements WithMultipleSheets
             $run->product?->doc_num.' — '.$run->product?->name,
             __('production_execution.statuses.'.$run->status),
             $run->planned_base_quantity,
-            $run->good_base_quantity,
-            $run->rejected_base_quantity,
-            $run->rework_base_quantity,
-            $run->scrap_base_quantity,
-            $run->received_base_quantity,
-            $run->receipt_remaining_base_quantity,
-            $run->yield_percent,
+            bccomp((string) $run->report_recorded_base_quantity, '0', 8) > 0 ? $run->report_good_base_quantity : null,
+            bccomp((string) $run->report_recorded_base_quantity, '0', 8) > 0 ? $run->report_rejected_base_quantity : null,
+            bccomp((string) $run->report_recorded_base_quantity, '0', 8) > 0 ? $run->report_rework_base_quantity : null,
+            bccomp((string) $run->report_recorded_base_quantity, '0', 8) > 0 ? $run->report_scrap_base_quantity : null,
+            bccomp((string) $run->report_received_base_quantity, '0', 8) > 0 ? $run->report_received_base_quantity : null,
+            bccomp((string) $run->report_recorded_base_quantity, '0', 8) > 0 ? $run->report_receipt_remaining_base_quantity : null,
+            $run->report_yield_percent,
+            $run->report_good_weight_kg,
+            $run->report_production_scrap_weight_kg,
             $run->actualDurationHours(),
             $run->material_exception_count,
             $run->quality_hold_count,
@@ -78,13 +117,17 @@ class ProductionReportExport implements WithMultipleSheets
         $materialRows = collect($this->report['controlMaterials'])->map(function (array $entry): array {
             $run = $entry['run'];
             $line = $entry['line'];
-            $issued = bcadd((string) $line->issued_quantity, (string) $line->additional_issued_quantity, 8);
-            $variance = bcsub($issued, bcadd(bcadd((string) $line->returned_quantity, (string) $line->consumed_quantity, 8), (string) $line->waste_quantity, 8), 8);
+            $pending = $entry['status'] === 'pending';
 
-            return [$run->order?->branch?->name, $run->run_number, $run->product?->doc_num, $line->product?->doc_num.' — '.$line->product?->name, $line->unit?->name, $line->planned_quantity, $issued, $line->returned_quantity, $line->consumed_quantity, $line->waste_quantity, $variance];
+            return [$run->order?->branch?->name, $run->run_number, $run->product?->doc_num.' — '.$run->product?->name, $line->product?->doc_num.' — '.$line->product?->name, $line->unit?->name, $entry['basis_quantity'], $line->component_quantity_snapshot, $line->planned_quantity, $pending ? null : $entry['issued'], $pending ? null : $line->returned_quantity, $pending ? null : $line->consumed_quantity, $pending ? null : $line->waste_quantity, $pending ? null : $entry['variance'], __('production_execution.reports.control.material_statuses.'.$entry['status'])];
         });
 
         return [
+            $this->sheet(__($control.'product_summary'), $columns(['branch', 'product_code', 'product', 'color', 'customer', 'stage', 'components', 'unit', 'pack_size', 'equivalent_unit', 'runs_count', 'planned', 'good', 'equivalent_good', 'good_weight_kg', 'unit_weight_kg', 'production_scrap_weight_kg', 'production_scrap_percent', 'rejected', 'rework', 'scrap', 'received', 'yield']), $productRows),
+            $this->sheet(__($control.'daily_output'), $columns(['date', 'branch', 'machine', 'shift', 'run', 'product_code', 'product', 'color', 'customer', 'unit', 'good', 'equivalent_good', 'good_weight_kg', 'production_scrap_weight_kg', 'rejected', 'rework', 'scrap']), $dailyRows),
+            $this->sheet(__($control.'daily_materials'), $columns(['date', 'branch', 'run', 'product_code', 'product', 'material_code', 'material', 'unit', 'consumed', 'waste', 'total_used', 'waste_percent', 'document']), $dailyMaterialRows),
+            $this->sheet(__($control.'machine_summary'), $columns(['branch', 'machine', 'stage', 'product_code', 'product', 'color', 'unit', 'runs_count', 'planned', 'good', 'good_weight_kg', 'production_scrap_weight_kg', 'scrap', 'yield']), $machineRows),
+            $this->sheet(__($control.'material_summary'), $columns(['branch', 'product_code', 'product', 'color', 'customer', 'stage', 'material_code', 'material', 'unit', 'planned', 'issued', 'returned', 'consumed', 'waste', 'total_used', 'consumed_per_equivalent', 'consumption_unit', 'waste_percent', 'variance']), $materialSummaryRows),
             $this->sheet(__('production_execution.reports.control.run_details'), array_map(fn (string $column): string => __('production_execution.reports.control.columns.'.$column), $runColumns), $runRows),
             $this->sheet(__('production_execution.reports.control.material_details'), array_map(fn (string $column): string => __('production_execution.reports.control.columns.'.$column), $materialColumns), $materialRows),
         ];

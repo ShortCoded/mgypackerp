@@ -11,6 +11,7 @@ class ProductionProgressEntry extends Model
     protected $fillable = [
         'public_id', 'production_run_id', 'recorded_at', 'good_base_quantity',
         'rejected_base_quantity', 'rework_base_quantity', 'scrap_base_quantity',
+        'good_weight_kg', 'production_scrap_weight_kg',
         'notes', 'recorded_by',
     ];
 
@@ -25,6 +26,7 @@ class ProductionProgressEntry extends Model
             'recorded_at' => 'datetime', 'good_base_quantity' => 'decimal:8',
             'rejected_base_quantity' => 'decimal:8', 'rework_base_quantity' => 'decimal:8',
             'scrap_base_quantity' => 'decimal:8',
+            'good_weight_kg' => 'decimal:8', 'production_scrap_weight_kg' => 'decimal:8',
         ];
     }
 

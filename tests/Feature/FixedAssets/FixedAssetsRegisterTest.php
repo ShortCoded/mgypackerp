@@ -1560,6 +1560,7 @@ test('Fixed Assets DataTable is company-scoped and returns columns configured by
     foreach (['checkbox', 'doc_num', 'asset_name', 'entry_type', 'asset_category', 'branch', 'cost_center', 'purchase_value', 'currency', 'previous_depreciation', 'net_value', 'is_depreciable', 'status', 'created_by', 'created_at', 'updated_by', 'updated_at', 'deleted_by', 'deleted_at', 'actions'] as $key) {
         expect($row)->toHaveKey($key);
     }
+    $createdByText = html_entity_decode(strip_tags($row['created_by']), ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
     expect($row)->not->toHaveKeys(['account', 'account_id', 'account_code', 'account_label', 'account_label_en', 'image_path', 'depreciation_method', 'depreciation_start_date', 'expected_usage_units'])
         ->and($row['currency'])->toContain($context['currency']->code)
@@ -1570,8 +1571,8 @@ test('Fixed Assets DataTable is company-scoped and returns columns configured by
         ->and($row['net_value'])->toBe('1,000 '.$context['currency']->code)
         ->and($row['purchase_value'])->not->toContain('<')
         ->and($row['net_value'])->not->toContain('<')
-        ->and(strip_tags($row['created_by']))->toContain($actor->name)
-        ->and(strip_tags($row['created_by']))->not->toBe((string) $actor->getKey());
+        ->and($createdByText)->toContain($actor->name)
+        ->and($createdByText)->not->toBe((string) $actor->getKey());
 });
 
 test('Fixed Assets index does not include a visible linked account column', function (): void {

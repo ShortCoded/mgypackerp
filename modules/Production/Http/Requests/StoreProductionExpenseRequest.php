@@ -31,7 +31,7 @@ class StoreProductionExpenseRequest extends FormRequest
             'payment_channel' => ['required', Rule::in(['cashbox', 'bank'])],
             'cashbox_id' => ['nullable', 'integer', 'required_if:payment_channel,cashbox'],
             'bank_account_id' => ['nullable', 'integer', 'required_if:payment_channel,bank'],
-            'expense_account_id' => ['nullable', 'integer', 'required_if:payment_channel,cashbox'],
+            'expense_account_id' => ['required', 'integer'],
             'reason' => ['required', 'string', 'max:2000'],
             'notes' => ['nullable', 'string', 'max:5000'],
             'submit_action' => ['nullable', Rule::in(['save', 'save_view', 'save_edit', 'save_back', 'save_clone'])],

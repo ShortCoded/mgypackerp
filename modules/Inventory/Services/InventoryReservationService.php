@@ -9,6 +9,7 @@ use Modules\Core\Models\Product;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\WarehouseLocation;
+use Modules\Production\Models\ProductionMaterialRequestLine;
 use Modules\Production\Models\ProductionMaterialRequirement;
 
 class InventoryReservationService
@@ -21,8 +22,9 @@ class InventoryReservationService
         ?string $quantity = null,
         ?int $warehouseLocationId = null,
         bool $allowBeyondRequirement = false,
+        ?int $materialRequestLineId = null,
     ): InventoryReservation {
-        return DB::transaction(function () use ($requirement, $branchStoreId, $quantity, $warehouseLocationId, $allowBeyondRequirement): InventoryReservation {
+        return DB::transaction(function () use ($requirement, $branchStoreId, $quantity, $warehouseLocationId, $allowBeyondRequirement, $materialRequestLineId): InventoryReservation {
             $locked = ProductionMaterialRequirement::query()
                 ->with('run.order.salesOrder')
                 ->lockForUpdate()
@@ -41,6 +43,16 @@ class InventoryReservationService
 
             if ((int) $branchStore->branch_id !== (int) $order->branch_id) {
                 throw new DomainException(__('Production reservations must use a store in the production branch.'));
+            }
+
+            if ($materialRequestLineId !== null && ! ProductionMaterialRequestLine::query()
+                ->whereKey($materialRequestLineId)
+                ->where('production_material_requirement_id', $locked->getKey())
+                ->whereHas('request', fn ($query) => $query
+                    ->where('production_run_id', $run->getKey())
+                    ->where('branch_store_id', $branchStoreId))
+                ->exists()) {
+                throw new DomainException(__('production_execution.messages.material_request_issue_line_invalid'));
             }
 
             if ($warehouseLocationId !== null && ! WarehouseLocation::query()
@@ -74,6 +86,7 @@ class InventoryReservationService
                 'production_order_id' => $order->getKey(),
                 'production_run_id' => $run->getKey(),
                 'production_material_requirement_id' => $locked->getKey(),
+                'production_material_request_line_id' => $materialRequestLineId,
                 'customer_id' => $order->salesOrder?->customer_id,
                 'product_id' => $locked->product_id,
                 'unit_id' => $product->item_unit_id,
@@ -134,9 +147,14 @@ class InventoryReservationService
     }
 
     /** @return list<array{reservation: InventoryReservation, quantity: string}> */
-    public function consumeForRequirement(ProductionMaterialRequirement $requirement, string $quantity): array
-    {
-        return DB::transaction(function () use ($requirement, $quantity): array {
+    public function consumeForRequirement(
+        ProductionMaterialRequirement $requirement,
+        string $quantity,
+        ?int $branchStoreId = null,
+        ?int $materialRequestLineId = null,
+        bool $unlinkedOnly = false,
+    ): array {
+        return DB::transaction(function () use ($requirement, $quantity, $branchStoreId, $materialRequestLineId, $unlinkedOnly): array {
             $remaining = $quantity;
             $consumed = [];
 
@@ -146,6 +164,9 @@ class InventoryReservationService
 
             $reservations = InventoryReservation::query()
                 ->where('production_material_requirement_id', $requirement->getKey())
+                ->when($branchStoreId !== null, fn ($query) => $query->where('branch_store_id', $branchStoreId))
+                ->when($materialRequestLineId !== null, fn ($query) => $query->where('production_material_request_line_id', $materialRequestLineId))
+                ->when($unlinkedOnly, fn ($query) => $query->whereNull('production_material_request_line_id'))
                 ->where('status', InventoryReservation::StatusActive)
                 ->oldest()
                 ->lockForUpdate()

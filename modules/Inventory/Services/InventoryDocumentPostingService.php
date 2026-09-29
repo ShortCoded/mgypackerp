@@ -274,7 +274,7 @@ class InventoryDocumentPostingService
                     ],
                 );
                 if (bccomp((string) $reversal->quantity_out, '0', 8) > 0) {
-                    $this->layers->allocateIssue($reversal);
+                    $this->layers->allocateIssue($reversal, (int) $transaction->getKey());
                 } else {
                     $this->layers->recordInbound($reversal);
                 }

@@ -216,7 +216,7 @@
         stateSave: false,
         autoWidth: false,
         responsive: element.hasAttribute('data-report-wide') ? false : { details: { type: 'inline', target: 0 } },
-        scrollX: element.hasAttribute('data-report-wide'),
+        scrollX: false,
         order: [],
         drawCallback: function () {
           if (window.AppDataTables && typeof window.AppDataTables.applyFalconEnhancements === 'function') {
@@ -1641,6 +1641,22 @@
 
   $(document).on('change', '[data-maintenance-order-form] [name="service_mode"]', updateMaintenanceOrderFields);
   $(document).on('change', '[data-maintenance-expense-form] [name="payment_channel"]', updateMaintenanceExpenseFields);
+  function scrollReportTable(trigger) {
+    const card = trigger.closest('.report-wide-card');
+    const scrollArea = card?.querySelector('[data-report-scroll-area]');
+    if (!scrollArea) {
+      return;
+    }
+    const distance = Math.max(400, Math.round(scrollArea.clientWidth * 0.75));
+    scrollArea.scrollLeft += trigger.dataset.reportScroll === 'left' ? -distance : distance;
+  }
+
+  document.addEventListener('click', function (event) {
+    const trigger = event.target.closest('[data-report-scroll]');
+    if (trigger) {
+      scrollReportTable(trigger);
+    }
+  }, true);
 
   $(function () {
     initializeWorkflowSelects(document);

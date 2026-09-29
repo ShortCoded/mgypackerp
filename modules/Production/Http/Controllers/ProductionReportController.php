@@ -5,6 +5,7 @@ namespace Modules\Production\Http\Controllers;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 use Maatwebsite\Excel\Facades\Excel;
 use Modules\Core\Models\Branch;
@@ -15,6 +16,7 @@ use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Production\Exports\ProductionReportExport;
+use Modules\Production\Models\ProductionRun;
 use Modules\Production\Services\ProductionReportService;
 use Modules\Sales\Services\SalesCycleReadService;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
@@ -60,6 +62,24 @@ class ProductionReportController extends Controller
         );
     }
 
+    public function exportCsv(Request $request): BinaryFileResponse
+    {
+        $section = $this->section($request);
+        abort_unless($section === 'control', 404);
+        $this->authorizeSection($request, $section, 'export');
+        $datasets = ['products', 'daily', 'daily_materials', 'machines', 'material_summary', 'runs', 'materials'];
+        $dataset = $request->validate(['dataset' => ['required', Rule::in($datasets)]])['dataset'];
+        [, $report] = $this->report($request, $section);
+        $sheet = (new ProductionReportExport($report, $section))->sheets()[array_search($dataset, $datasets, true)];
+
+        return Excel::download(
+            $sheet,
+            'production-control-'.$dataset.'-'.now()->format('Ymd-His').'.csv',
+            \Maatwebsite\Excel\Excel::CSV,
+            ['Content-Type' => 'text/csv; charset=UTF-8'],
+        );
+    }
+
     public function print(Request $request): Response
     {
         $section = $this->section($request);
@@ -75,6 +95,55 @@ class ProductionReportController extends Controller
             'title' => __('production_execution.reports.sections.'.$section),
             'companyPrintIdentity' => $this->printIdentity->forCompany($company),
         ], 'production-'.$section.'-report.pdf');
+    }
+
+    public function showControlRun(Request $request, ProductionRun $productionRun): View
+    {
+        $this->assertControlRunVisible($request, $productionRun, 'view');
+
+        return view('modules.production.runs.show', [
+            'record' => $productionRun->load([
+                'order.branch', 'order.salesOrder', 'orderLine.stageSnapshots', 'product', 'fixedAsset', 'stageSnapshot',
+                'requirements.product', 'requirements.unit', 'progressEntries', 'inspections.results',
+                'inventoryDocuments.journalEntry', 'materialRequests', 'expenseRequests',
+            ]),
+            'stores' => collect(),
+            'workers' => collect(),
+            'readOnlyReport' => true,
+        ]);
+    }
+
+    public function printControlRun(Request $request, ProductionRun $productionRun): Response
+    {
+        $this->assertControlRunVisible($request, $productionRun, 'print');
+        $record = $productionRun->load([
+            'order.company', 'order.salesOrder', 'orderLine.product.unit', 'orderLine.product.equivalentUnit',
+            'product', 'fixedAsset', 'stageSnapshot', 'shift', 'requirements.product', 'requirements.unit',
+            'progressEntries', 'inspections.results',
+        ]);
+
+        return $this->pdf->stream('reports.production.run-sheet', [
+            'title' => __('Print traveler'),
+            'record' => $record,
+            'companyPrintIdentity' => $record->order->print_identity_snapshot ?: $this->printIdentity->forCompany($record->order->company),
+        ], str('production-traveler-'.$record->run_number)->slug().'.pdf');
+    }
+
+    private function assertControlRunVisible(Request $request, ProductionRun $productionRun, string $action): void
+    {
+        $this->authorizeSection($request, 'control', $action);
+        $context = $this->context->snapshot($request);
+        abort_unless(
+            $context['company_id']
+            && $context['financial_period_id']
+            && (int) $productionRun->company_id === (int) $context['company_id']
+            && (int) $productionRun->financial_period_id === (int) $context['financial_period_id']
+            && $this->context->allowedBranchQueryForCurrentCompany($request)
+                ->whereKey($productionRun->branch_id)
+                ->where('branches.type', Branch::TypeFactory)
+                ->exists(),
+            404,
+        );
     }
 
     /** @return array{0: array<string, mixed>, 1: array<string, mixed>} */

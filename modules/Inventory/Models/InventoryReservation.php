@@ -9,6 +9,7 @@ use Illuminate\Support\Str;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
+use Modules\Production\Models\ProductionMaterialRequestLine;
 use Modules\Production\Models\ProductionMaterialRequirement;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionRun;
@@ -72,6 +73,11 @@ class InventoryReservation extends Model
     public function productionMaterialRequirement(): BelongsTo
     {
         return $this->belongsTo(ProductionMaterialRequirement::class);
+    }
+
+    public function productionMaterialRequestLine(): BelongsTo
+    {
+        return $this->belongsTo(ProductionMaterialRequestLine::class);
     }
 
     public function warehouseLocation(): BelongsTo

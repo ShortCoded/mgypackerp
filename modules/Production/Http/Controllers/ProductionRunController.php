@@ -483,7 +483,7 @@ class ProductionRunController extends Controller
         ]);
 
         return $this->pdf->stream($view, [
-            'title' => $documentTitle.' — '.$record->run_number,
+            'title' => $documentTitle,
             'record' => $record,
             'companyPrintIdentity' => $record->order->print_identity_snapshot ?: $this->printIdentity->forCompany($record->order->company),
         ], str($filenamePrefix.'-'.$record->run_number)->slug().'.pdf');
@@ -579,6 +579,8 @@ class ProductionRunController extends Controller
             'rejected_base_quantity' => ['nullable', 'numeric', 'min:0'],
             'rework_base_quantity' => ['nullable', 'numeric', 'min:0'],
             'scrap_base_quantity' => ['nullable', 'numeric', 'min:0'],
+            'good_weight_kg' => ['nullable', 'numeric', 'gt:0', 'decimal:0,8'],
+            'production_scrap_weight_kg' => ['nullable', 'numeric', 'min:0', 'decimal:0,8'],
             'notes' => ['nullable', 'string'],
         ]);
         $entry = $this->guard(fn () => $this->cycle->recordProgress($productionRun, $data));

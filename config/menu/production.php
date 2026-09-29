@@ -181,11 +181,11 @@ return [
                     ],
                     [
                         'label' => 'production_reports_control',
-                        'title' => 'Plant Production Monitoring',
+                        'title' => 'Production Monitoring Report',
                         'icon' => 'chart-area',
                         'route' => 'admin.production.reports.control',
                         'permission' => 'production.reports.control.view',
-                        'keywords' => ['factory monitoring', 'injection', 'cover', 'مراقبة إنتاج المصانع', 'الحقن', 'الكوفير'],
+                        'keywords' => ['production monitoring report', 'factory monitoring', 'injection', 'cover', 'تقرير مراقبة الإنتاج', 'الحقن', 'الكوفير'],
                         'actions' => [
                             'view' => 'production.reports.control.view',
                             'export' => 'production.reports.control.export',

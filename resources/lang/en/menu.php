@@ -114,7 +114,7 @@ return [
     'production_reports_overview' => 'Production Reports Overview',
     'production_reports_orders' => 'Production Order Status',
     'production_reports_runs' => 'Run and Shift Performance',
-    'production_reports_control' => 'Injection and Cover Production Monitoring',
+    'production_reports_control' => 'Production Monitoring Report',
     'production_reports_materials' => 'Production Material Reconciliation',
     'production_reports_quality' => 'Production Quality',
     'production_reports_receipts' => 'Finished Goods Receipts',

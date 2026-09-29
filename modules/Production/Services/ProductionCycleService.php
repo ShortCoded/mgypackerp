@@ -399,7 +399,7 @@ class ProductionCycleService
     public function releaseOrder(ProductionOrder $order): ProductionOrder
     {
         return DB::transaction(function () use ($order): ProductionOrder {
-            $locked = ProductionOrder::query()->with('lines.product')->lockForUpdate()->findOrFail($order->getKey());
+            $locked = ProductionOrder::query()->with('lines.product.color')->lockForUpdate()->findOrFail($order->getKey());
 
             if ($locked->status === ProductionOrder::StatusReleased) {
                 return $locked;
@@ -462,6 +462,7 @@ class ProductionCycleService
                     'bom_snapshot' => [
                         'captured_at' => now()->toIso8601String(),
                         'finished_product_id' => $line->product_id,
+                        'finished_product_color_name' => $line->product?->color?->name,
                         'basis_base_quantity' => $equivalentFactor,
                         'basis_unit_id' => $equivalentUnit?->getKey() ?? $line->product?->unit?->getKey(),
                         'basis_unit_name' => $equivalentUnit?->name ?? $line->product?->unit?->name,
@@ -786,15 +787,19 @@ class ProductionCycleService
         });
     }
 
-    /** @param array<int, string|int|float> $quantitiesByRequirementId */
+    /**
+     * @param  array<int, string|int|float>  $quantitiesByRequirementId
+     * @param  array<int, int>  $materialRequestLineIdsByRequirementId
+     */
     public function issueMaterials(
         ProductionRun $run,
         int $branchStoreId,
         array $quantitiesByRequirementId = [],
         bool $additional = false,
         ?int $warehouseLocationId = null,
+        array $materialRequestLineIdsByRequirementId = [],
     ): InventoryDocument {
-        return DB::transaction(function () use ($run, $branchStoreId, $quantitiesByRequirementId, $additional, $warehouseLocationId): InventoryDocument {
+        return DB::transaction(function () use ($run, $branchStoreId, $quantitiesByRequirementId, $additional, $warehouseLocationId, $materialRequestLineIdsByRequirementId): InventoryDocument {
             $locked = ProductionRun::query()->with(['requirements', 'order'])->lockForUpdate()->findOrFail($run->getKey());
 
             if (! in_array($locked->status, [
@@ -824,7 +829,8 @@ class ProductionCycleService
                     throw new DomainException(__('A planned material issue cannot exceed the remaining planned requirement.'));
                 }
 
-                if ($additional) {
+                $materialRequestLineId = $materialRequestLineIdsByRequirementId[$requirement->getKey()] ?? null;
+                if ($additional && $materialRequestLineId === null) {
                     $this->reservations->reserveForProduction(
                         $requirement,
                         $branchStoreId,
@@ -834,7 +840,13 @@ class ProductionCycleService
                     );
                 }
 
-                $consumptions = $this->reservations->consumeForRequirement($requirement, $quantity);
+                $consumptions = $this->reservations->consumeForRequirement(
+                    $requirement,
+                    $quantity,
+                    $branchStoreId,
+                    $materialRequestLineId,
+                    $materialRequestLineId === null,
+                );
 
                 foreach ($consumptions as $consumption) {
                     $reservation = $consumption['reservation'];
@@ -922,6 +934,7 @@ class ProductionCycleService
 
                     $activeReservations = InventoryReservation::query()
                         ->where('production_material_requirement_id', $requirement->getKey())
+                        ->whereNull('production_material_request_line_id')
                         ->where('status', InventoryReservation::StatusActive)
                         ->whereRaw('(quantity - consumed_quantity - released_quantity) > 0')
                         ->lockForUpdate()
@@ -960,7 +973,12 @@ class ProductionCycleService
                         continue;
                     }
 
-                    foreach ($this->reservations->consumeForRequirement($requirement, $targetQuantity) as $consumption) {
+                    foreach ($this->reservations->consumeForRequirement(
+                        $requirement,
+                        $targetQuantity,
+                        (int) $store->getKey(),
+                        unlinkedOnly: true,
+                    ) as $consumption) {
                         $reservation = $consumption['reservation'];
                         $movementLines[] = [
                             'product_id' => $requirement->product_id,
@@ -1248,6 +1266,17 @@ class ProductionCycleService
                 || collect($values)->every(fn (string $value): bool => bccomp($value, '0', 8) === 0)) {
                 throw new DomainException(__('Progress quantities must be non-negative and at least one must be positive.'));
             }
+            foreach (['good_weight_kg', 'production_scrap_weight_kg'] as $weightField) {
+                if (isset($data[$weightField]) && bccomp((string) $data[$weightField], '0', 8) < 0) {
+                    throw new DomainException(__('production_execution.messages.progress_weight_invalid'));
+                }
+            }
+            if (isset($data['good_weight_kg']) && bccomp((string) $data['good_weight_kg'], '0', 8) === 0) {
+                throw new DomainException(__('production_execution.messages.progress_weight_invalid'));
+            }
+            if (isset($data['good_weight_kg']) && bccomp((string) $values['good_base_quantity'], '0', 8) <= 0) {
+                throw new DomainException(__('production_execution.messages.good_weight_requires_output'));
+            }
 
             $entryTotal = array_reduce($values, fn (string $carry, string $value): string => bcadd($carry, $value, 8), '0');
             $allowed = bcmul(
@@ -1262,6 +1291,8 @@ class ProductionCycleService
 
             $entry = $locked->progressEntries()->create([
                 ...$values,
+                'good_weight_kg' => $data['good_weight_kg'] ?? null,
+                'production_scrap_weight_kg' => $data['production_scrap_weight_kg'] ?? null,
                 'recorded_at' => now(),
                 'notes' => $data['notes'] ?? null,
                 'recorded_by' => auth()->id(),

@@ -80,6 +80,7 @@ class ProductionReportService
      */
     public function controlReport(int $companyId, int $financialPeriodId, array $allowedBranchIds, array $filters = []): array
     {
+        $hasDateFilter = filled($filters['from'] ?? null) || filled($filters['to'] ?? null);
         $runs = ProductionRun::query()
             ->where('company_id', $companyId)
             ->where('financial_period_id', $financialPeriodId)
@@ -87,8 +88,24 @@ class ProductionReportService
             ->when($filters['branch_id'] ?? null, fn ($query, $branchId) => $query->where('branch_id', $branchId))
             ->when($filters['status'] ?? null, fn ($query, $status) => $query->where('status', $status))
             ->when($filters['production_shift_id'] ?? null, fn ($query, $shiftId) => $query->where('production_shift_id', $shiftId))
-            ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereRaw('date(coalesce(actual_start_at, planned_start_at)) >= ?', [$from]))
-            ->when($filters['to'] ?? null, fn ($query, $to) => $query->whereRaw('date(coalesce(actual_start_at, planned_start_at)) <= ?', [$to]))
+            ->when($hasDateFilter, function ($query) use ($filters): void {
+                $query->where(function ($dateQuery) use ($filters): void {
+                    $dateQuery->where(function ($startQuery) use ($filters): void {
+                        $startQuery
+                            ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereRaw('date(coalesce(actual_start_at, planned_start_at)) >= ?', [$from]))
+                            ->when($filters['to'] ?? null, fn ($query, $to) => $query->whereRaw('date(coalesce(actual_start_at, planned_start_at)) <= ?', [$to]));
+                    })->orWhereHas('progressEntries', function ($progressQuery) use ($filters): void {
+                        $progressQuery
+                            ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereDate('recorded_at', '>=', $from))
+                            ->when($filters['to'] ?? null, fn ($query, $to) => $query->whereDate('recorded_at', '<=', $to));
+                    })->orWhereHas('inventoryDocuments', function ($documentQuery) use ($filters): void {
+                        $documentQuery->where('status', InventoryDocument::StatusPosted)
+                            ->whereIn('document_type', [InventoryDocument::TypeMaterialConsumption, InventoryDocument::TypeProductionWaste, InventoryDocument::TypeProductionReceipt])
+                            ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereDate('document_date', '>=', $from))
+                            ->when($filters['to'] ?? null, fn ($query, $to) => $query->whereDate('document_date', '<=', $to));
+                    });
+                });
+            })
             ->when($filters['product'] ?? null, fn ($query, $term) => $query->whereHas('product', fn ($productQuery) => $productQuery->where(function ($searchQuery) use ($term): void {
                 $search = '%'.addcslashes($term, '%_\\').'%';
                 $searchQuery->where('doc_num', 'like', $search)->orWhere('name', 'like', $search);
@@ -102,15 +119,16 @@ class ProductionReportService
             ->when($filters['stage'] ?? null, fn ($query, $term) => $query->whereHas('stageSnapshot', fn ($stageQuery) => $stageQuery->where('stage_name', 'like', '%'.addcslashes($term, '%_\\').'%')))
             ->when($filters['order'] ?? null, fn ($query, $term) => $query->whereHas('order', fn ($orderQuery) => $orderQuery->where('doc_num', 'like', '%'.addcslashes($term, '%_\\').'%')))
             ->with([
-                'order.branch', 'order.salesOrder', 'orderLine', 'product.unit', 'fixedAsset', 'machine', 'shift',
-                'stageSnapshot', 'mold', 'requirements.product.unit', 'inventoryDocuments.lines',
+                'order.branch', 'order.salesOrder.customer', 'order.orderStageSnapshots', 'orderLine.stageSnapshots',
+                'product.unit', 'product.equivalentUnit', 'product.color', 'fixedAsset', 'machine', 'shift', 'progressEntries',
+                'stageSnapshot', 'mold', 'requirements.product.unit', 'inventoryDocuments.lines.product', 'inventoryDocuments.lines.unit',
                 'inspections',
             ])
             ->orderByDesc('planned_start_at')
             ->orderByDesc('id')
             ->get();
 
-        $runs->each(function (ProductionRun $run): void {
+        $runs->each(function (ProductionRun $run) use ($filters, $hasDateFilter): void {
             $recorded = bcadd(bcadd((string) $run->good_base_quantity, (string) $run->rejected_base_quantity, 8), bcadd((string) $run->rework_base_quantity, (string) $run->scrap_base_quantity, 8), 8);
             $unreceived = bcsub((string) $run->good_base_quantity, (string) $run->received_base_quantity, 8);
             $run->setAttribute('recorded_base_quantity', $recorded);
@@ -125,21 +143,344 @@ class ProductionReportService
                 return bccomp($issued, $accounted, 8) !== 0;
             })->count());
             $run->setAttribute('quality_hold_count', $run->inspections->filter(fn (ProductionQualityInspection $inspection): bool => $inspection->disposition === 'hold' || $inspection->result === 'failed')->count());
-            $run->setAttribute('receipt_document_count', $run->inventoryDocuments->filter(fn (InventoryDocument $document): bool => $document->document_type === InventoryDocument::TypeProductionReceipt && $document->status === InventoryDocument::StatusPosted)->count());
+            $run->setAttribute('receipt_document_count', $run->inventoryDocuments->filter(fn (InventoryDocument $document): bool => $document->document_type === InventoryDocument::TypeProductionReceipt
+                && $document->status === InventoryDocument::StatusPosted
+                && (! $hasDateFilter || $this->controlDateMatches($document->document_date?->toDateString(), $filters)))->count());
+            $stages = $run->order->orderStageSnapshots->where('is_required', true)
+                ->concat($run->orderLine->stageSnapshots->where('is_required', true))
+                ->unique('production_stage_id')->values();
+            $run->setAttribute('is_final_output_stage', $stages->isEmpty()
+                || (int) $stages->last()->getKey() === (int) $run->production_order_stage_snapshot_id);
+            $snapshot = $run->orderLine?->bom_snapshot;
+            $run->setAttribute('output_factor', is_array($snapshot) ? ($snapshot['basis_base_quantity'] ?? null) : null);
+            $run->setAttribute('output_unit_name', is_array($snapshot) ? ($snapshot['basis_unit_name'] ?? null) : null);
+            $run->setAttribute('output_color_name', is_array($snapshot) && array_key_exists('finished_product_color_name', $snapshot)
+                ? $snapshot['finished_product_color_name']
+                : $run->product?->color?->name);
+            $reportEntries = $run->progressEntries->filter(fn ($entry): bool => $this->controlDateMatches($entry->recorded_at?->toDateString(), $filters));
+            $run->setRelation('reportProgressEntries', $reportEntries);
+            $run->setAttribute('report_good_weight_kg', $this->controlMeasuredWeight($reportEntries, 'good_weight_kg', 'good_base_quantity'));
+            $run->setAttribute('report_production_scrap_weight_kg', $this->controlMeasuredWeight($reportEntries, 'production_scrap_weight_kg', 'scrap_base_quantity'));
+            $runStart = ($run->actual_start_at ?? $run->planned_start_at)?->toDateString();
+            foreach (['good_base_quantity', 'rejected_base_quantity', 'rework_base_quantity', 'scrap_base_quantity'] as $field) {
+                $reportQuantity = ! $hasDateFilter || ($run->progressEntries->isEmpty() && $this->controlDateMatches($runStart, $filters))
+                    ? (string) $run->{$field}
+                    : $reportEntries->reduce(fn (string $total, $entry): string => bcadd($total, (string) $entry->{$field}, 8), '0.00000000');
+                $run->setAttribute('report_'.$field, $reportQuantity);
+            }
+            $run->setAttribute('report_recorded_base_quantity', array_reduce(
+                ['good_base_quantity', 'rejected_base_quantity', 'rework_base_quantity', 'scrap_base_quantity'],
+                fn (string $total, string $field): string => bcadd($total, (string) $run->{'report_'.$field}, 8),
+                '0.00000000',
+            ));
+            $reportRecorded = (string) $run->report_recorded_base_quantity;
+            $run->setAttribute('report_yield_percent', bccomp($reportRecorded, '0', 8) > 0
+                ? bcmul(bcdiv((string) $run->report_good_base_quantity, $reportRecorded, 8), '100', 4)
+                : null);
+            $reportReceived = $hasDateFilter
+                ? $run->inventoryDocuments
+                    ->filter(fn (InventoryDocument $document): bool => $document->document_type === InventoryDocument::TypeProductionReceipt
+                        && $document->status === InventoryDocument::StatusPosted
+                        && $this->controlDateMatches($document->document_date?->toDateString(), $filters))
+                    ->flatMap(fn (InventoryDocument $document) => $document->lines)
+                    ->reduce(fn (string $total, $line): string => bcadd($total, (string) $line->base_quantity, 8), '0.00000000')
+                : (string) $run->received_base_quantity;
+            $run->setAttribute('report_received_base_quantity', $reportReceived);
+            $reportUnreceived = bcsub((string) $run->report_good_base_quantity, $reportReceived, 8);
+            $run->setAttribute('report_receipt_remaining_base_quantity', bccomp($reportUnreceived, '0', 8) > 0
+                ? $reportUnreceived
+                : '0.00000000');
         });
+
+        $materials = $runs->flatMap(fn (ProductionRun $run) => $run->requirements->map(function (ProductionMaterialRequirement $line) use ($run): array {
+            $issued = bcadd((string) $line->issued_quantity, (string) $line->additional_issued_quantity, 8);
+            $accounted = bcadd(bcadd((string) $line->returned_quantity, (string) $line->consumed_quantity, 8), (string) $line->waste_quantity, 8);
+            $variance = bcsub($issued, $accounted, 8);
+            $status = bccomp($issued, '0', 8) === 0 && bccomp($accounted, '0', 8) === 0
+                ? 'pending'
+                : (bccomp($variance, '0', 8) === 0 ? 'balanced' : 'variance');
+
+            return [
+                'run' => $run,
+                'line' => $line,
+                'basis_quantity' => is_array($run->orderLine?->bom_snapshot)
+                    ? bcmul((string) $run->planned_base_quantity, (string) ($run->orderLine->bom_snapshot['basis_base_quantity'] ?? '1'), 8)
+                    : null,
+                'issued' => $issued,
+                'variance' => $variance,
+                'status' => $status,
+            ];
+        }))->values();
+
+        $daily = $this->controlDailyOutput($runs);
+        $dailyMaterials = $this->controlDailyMaterials($runs, $filters);
 
         return [
             'controlRuns' => $runs,
-            'controlMaterials' => $runs->flatMap(fn (ProductionRun $run) => $run->requirements->map(fn (ProductionMaterialRequirement $line): array => ['run' => $run, 'line' => $line]))->values(),
+            'controlMaterials' => $materials,
+            'controlProducts' => $this->controlProductSummary($runs),
+            'controlDaily' => $daily,
+            'controlDailyMaterials' => $dailyMaterials,
+            'controlMachines' => $this->controlMachineSummary($runs),
+            'controlMaterialSummary' => $this->controlMaterialSummary($materials),
             'controlKpis' => [
                 'runs' => $runs->count(),
                 'products' => $runs->pluck('product_id')->unique()->count(),
+                'recorded_days' => $daily->pluck('date')->unique()->count(),
                 'unreceived_runs' => $runs->filter(fn (ProductionRun $run): bool => bccomp((string) $run->receipt_remaining_base_quantity, '0', 8) > 0)->count(),
                 'material_exception_runs' => $runs->filter(fn (ProductionRun $run): bool => $run->material_exception_count > 0)->count(),
                 'quality_hold_runs' => $runs->filter(fn (ProductionRun $run): bool => $run->quality_hold_count > 0)->count(),
                 'receipt_documents' => $runs->sum('receipt_document_count'),
             ],
         ];
+    }
+
+    /** @param array<string, mixed> $filters */
+    private function controlDateMatches(?string $date, array $filters): bool
+    {
+        return $date !== null
+            && (! filled($filters['from'] ?? null) || $date >= $filters['from'])
+            && (! filled($filters['to'] ?? null) || $date <= $filters['to']);
+    }
+
+    /** @return SupportCollection<int, array<string, mixed>> */
+    private function controlProductSummary(Collection $runs): SupportCollection
+    {
+        return $runs
+            ->groupBy(fn (ProductionRun $run): string => implode(':', [
+                $run->branch_id, $run->product_id, $run->order?->salesOrder?->customer_id ?? 0,
+                $run->output_factor ?? '', $run->output_unit_name ?? '', $run->output_color_name ?? '',
+                $run->stageSnapshot?->production_stage_id ?? 0, $run->stageSnapshot?->stage_name ?? '',
+                $run->is_final_output_stage ? 1 : 0,
+            ]))
+            ->map(function (SupportCollection $group): array {
+                $first = $group->first();
+                $recorded = $this->controlQuantitySum($group, 'report_recorded_base_quantity');
+                $good = $this->controlQuantitySum($group, 'report_good_base_quantity');
+                $received = $this->controlQuantitySum($group, 'report_received_base_quantity');
+                $hasOutput = bccomp($recorded, '0', 8) > 0;
+                $factor = $first->output_factor;
+                $goodWeight = $this->controlMeasuredWeight($group, 'report_good_weight_kg', 'report_good_base_quantity');
+                $scrapWeight = $this->controlMeasuredWeight($group, 'report_production_scrap_weight_kg', 'report_scrap_base_quantity');
+                $equivalentGood = $hasOutput && $factor !== null ? bcmul($good, (string) $factor, 8) : null;
+                $weightBasis = $equivalentGood ?? $good;
+                $totalMeasuredWeight = $goodWeight !== null && $scrapWeight !== null ? bcadd($goodWeight, $scrapWeight, 8) : null;
+                $components = $group->flatMap(fn (ProductionRun $run): array => $run->orderLine?->bom_snapshot['components'] ?? [])
+                    ->pluck('product_name')->filter()->unique()->implode('، ');
+
+                return [
+                    'branch' => $first->order?->branch?->name,
+                    'product' => $first->product,
+                    'color' => $first->output_color_name,
+                    'customer' => $first->order?->salesOrder?->customer?->name,
+                    'stage' => $first->stageSnapshot?->stage_name,
+                    'is_final_stage' => $first->is_final_output_stage,
+                    'components' => $components,
+                    'unit' => $first->product?->unit?->name,
+                    'pack_size' => $factor,
+                    'equivalent_unit' => $first->output_unit_name,
+                    'runs' => $group->count(),
+                    'planned' => $this->controlQuantitySum($group, 'planned_base_quantity'),
+                    'good' => $hasOutput ? $good : null,
+                    'equivalent_good' => $equivalentGood,
+                    'good_weight_kg' => $goodWeight,
+                    'unit_weight_kg' => $goodWeight !== null && bccomp($weightBasis, '0', 8) > 0 ? bcdiv($goodWeight, $weightBasis, 8) : null,
+                    'production_scrap_weight_kg' => $scrapWeight,
+                    'production_scrap_percent' => $totalMeasuredWeight !== null && bccomp($totalMeasuredWeight, '0', 8) > 0 ? bcmul(bcdiv($scrapWeight, $totalMeasuredWeight, 8), '100', 4) : null,
+                    'rejected' => $hasOutput ? $this->controlQuantitySum($group, 'report_rejected_base_quantity') : null,
+                    'rework' => $hasOutput ? $this->controlQuantitySum($group, 'report_rework_base_quantity') : null,
+                    'scrap' => $hasOutput ? $this->controlQuantitySum($group, 'report_scrap_base_quantity') : null,
+                    'received' => bccomp($received, '0', 8) > 0 ? $received : null,
+                    'yield' => $hasOutput ? bcmul(bcdiv($good, $recorded, 8), '100', 4) : null,
+                ];
+            })->values();
+    }
+
+    /** @return SupportCollection<int, array<string, mixed>> */
+    private function controlDailyOutput(Collection $runs): SupportCollection
+    {
+        return $runs->flatMap(fn (ProductionRun $run) => $run->reportProgressEntries->map(fn ($entry): array => [
+            'run' => $run,
+            'entry' => $entry,
+            'date' => $entry->recorded_at?->toDateString(),
+            'good' => (string) $entry->good_base_quantity,
+            'rejected' => (string) $entry->rejected_base_quantity,
+            'rework' => (string) $entry->rework_base_quantity,
+            'scrap' => (string) $entry->scrap_base_quantity,
+        ]))
+            ->groupBy(fn (array $row): string => $row['run']->getKey().':'.$row['date'])
+            ->map(function (SupportCollection $group): array {
+                $first = $group->first();
+                $good = $this->controlArrayQuantitySum($group, 'good');
+                $factor = $first['run']->output_factor;
+                $entries = $group->pluck('entry');
+                $goodWeight = $this->controlMeasuredWeight($entries, 'good_weight_kg', 'good_base_quantity');
+                $scrapWeight = $this->controlMeasuredWeight($entries, 'production_scrap_weight_kg', 'scrap_base_quantity');
+
+                return [
+                    'run' => $first['run'],
+                    'date' => $first['date'],
+                    'good' => $good,
+                    'equivalent_good' => $factor !== null ? bcmul($good, (string) $factor, 8) : null,
+                    'good_weight_kg' => $goodWeight,
+                    'production_scrap_weight_kg' => $scrapWeight,
+                    'rejected' => $this->controlArrayQuantitySum($group, 'rejected'),
+                    'rework' => $this->controlArrayQuantitySum($group, 'rework'),
+                    'scrap' => $this->controlArrayQuantitySum($group, 'scrap'),
+                ];
+            })->sortBy('date')->values();
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return SupportCollection<int, array<string, mixed>>
+     */
+    private function controlDailyMaterials(Collection $runs, array $filters): SupportCollection
+    {
+        return $runs->flatMap(fn (ProductionRun $run) => $run->inventoryDocuments
+            ->filter(fn (InventoryDocument $document): bool => $document->status === InventoryDocument::StatusPosted
+                && in_array($document->document_type, [InventoryDocument::TypeMaterialConsumption, InventoryDocument::TypeProductionWaste], true)
+                && $this->controlDateMatches($document->document_date?->toDateString(), $filters))
+            ->flatMap(fn (InventoryDocument $document) => $document->lines->map(fn ($line): array => [
+                'run' => $run,
+                'date' => $document->document_date?->toDateString(),
+                'document' => $document->doc_num,
+                'material' => $line->product,
+                'unit' => $line->unit?->name,
+                'product_id' => $line->product_id,
+                'unit_id' => $line->unit_id,
+                'consumed' => $document->document_type === InventoryDocument::TypeMaterialConsumption ? (string) $line->quantity : '0.00000000',
+                'waste' => $document->document_type === InventoryDocument::TypeProductionWaste ? (string) $line->quantity : '0.00000000',
+            ])))
+            ->groupBy(fn (array $row): string => implode(':', [$row['run']->getKey(), $row['date'], $row['product_id'], $row['unit_id'] ?? 0]))
+            ->map(function (SupportCollection $group): array {
+                $first = $group->first();
+                $consumed = $this->controlArrayQuantitySum($group, 'consumed');
+                $waste = $this->controlArrayQuantitySum($group, 'waste');
+                $totalUsed = bcadd($consumed, $waste, 8);
+
+                return [
+                    'run' => $first['run'],
+                    'date' => $first['date'],
+                    'material' => $first['material'],
+                    'unit' => $first['unit'],
+                    'documents' => $group->pluck('document')->unique()->implode('، '),
+                    'consumed' => $consumed,
+                    'waste' => $waste,
+                    'total_used' => $totalUsed,
+                    'waste_percent' => bccomp($totalUsed, '0', 8) > 0 ? bcmul(bcdiv($waste, $totalUsed, 8), '100', 4) : null,
+                ];
+            })->sortBy('date')->values();
+    }
+
+    /** @return SupportCollection<int, array<string, mixed>> */
+    private function controlMachineSummary(Collection $runs): SupportCollection
+    {
+        return $runs->groupBy(fn (ProductionRun $run): string => implode(':', [
+            $run->branch_id, $run->fixed_asset_id ?? 0, $run->production_machine_id ?? 0,
+            $run->stageSnapshot?->production_stage_id ?? 0, $run->stageSnapshot?->stage_name ?? '',
+            $run->product_id, $run->output_color_name ?? '',
+        ]))->map(function (Collection $group): array {
+            $first = $group->first();
+            $recorded = $this->controlQuantitySum($group, 'report_recorded_base_quantity');
+            $hasOutput = bccomp($recorded, '0', 8) > 0;
+            $good = $this->controlQuantitySum($group, 'report_good_base_quantity');
+            $goodWeight = $this->controlMeasuredWeight($group, 'report_good_weight_kg', 'report_good_base_quantity');
+            $scrapWeight = $this->controlMeasuredWeight($group, 'report_production_scrap_weight_kg', 'report_scrap_base_quantity');
+
+            return [
+                'branch' => $first->order?->branch?->name,
+                'machine' => $first->fixedAsset?->asset_name ?? $first->machine?->name,
+                'stage' => $first->stageSnapshot?->stage_name,
+                'product' => $first->product,
+                'color' => $first->output_color_name,
+                'unit' => $first->product?->unit?->name,
+                'runs' => $group->count(),
+                'planned' => $this->controlQuantitySum($group, 'planned_base_quantity'),
+                'good' => $hasOutput ? $good : null,
+                'good_weight_kg' => $goodWeight,
+                'production_scrap_weight_kg' => $scrapWeight,
+                'scrap' => $hasOutput ? $this->controlQuantitySum($group, 'report_scrap_base_quantity') : null,
+                'yield' => $hasOutput ? bcmul(bcdiv($good, $recorded, 8), '100', 4) : null,
+            ];
+        })->values();
+    }
+
+    /** @return SupportCollection<int, array<string, mixed>> */
+    private function controlMaterialSummary(SupportCollection $materials): SupportCollection
+    {
+        return $materials->groupBy(fn (array $entry): string => implode(':', [
+            $entry['run']->branch_id, $entry['run']->product_id,
+            $entry['run']->order?->salesOrder?->customer_id ?? 0,
+            $entry['run']->stageSnapshot?->production_stage_id ?? 0,
+            $entry['run']->stageSnapshot?->stage_name ?? '', $entry['run']->output_color_name ?? '',
+            $entry['run']->output_factor ?? '', $entry['run']->output_unit_name ?? '',
+            $entry['line']->product_id, $entry['line']->unit_id,
+        ]))->map(function (SupportCollection $group): array {
+            $first = $group->first();
+            $issued = $this->controlArrayQuantitySum($group->map(fn (array $entry): array => [
+                'quantity' => bcadd((string) $entry['line']->issued_quantity, (string) $entry['line']->additional_issued_quantity, 8),
+            ]), 'quantity');
+            $returned = $this->controlArrayQuantitySum($group->map(fn (array $entry): array => ['quantity' => (string) $entry['line']->returned_quantity]), 'quantity');
+            $consumed = $this->controlArrayQuantitySum($group->map(fn (array $entry): array => ['quantity' => (string) $entry['line']->consumed_quantity]), 'quantity');
+            $waste = $this->controlArrayQuantitySum($group->map(fn (array $entry): array => ['quantity' => (string) $entry['line']->waste_quantity]), 'quantity');
+            $used = bcadd($consumed, $waste, 8);
+            $usageRecorded = bccomp($used, '0', 8) > 0;
+            $hasMovement = bccomp($issued, '0', 8) !== 0 || bccomp($returned, '0', 8) !== 0 || bccomp($used, '0', 8) !== 0;
+            $groupRuns = $group->map(fn (array $entry): ProductionRun => $entry['run'])->unique(fn (ProductionRun $run): mixed => $run->getKey());
+            $hasEquivalentBasis = $groupRuns->every(fn (ProductionRun $run): bool => $run->output_factor !== null && bccomp((string) $run->output_factor, '0', 8) > 0);
+            $equivalentOutput = $hasEquivalentBasis
+                ? $groupRuns->reduce(
+                    fn (string $total, ProductionRun $run): string => bcadd($total, bcmul((string) $run->good_base_quantity, (string) $run->output_factor, 8), 8),
+                    '0.00000000',
+                )
+                : null;
+
+            return [
+                'branch' => $first['run']->order?->branch?->name,
+                'product' => $first['run']->product,
+                'color' => $first['run']->output_color_name,
+                'customer' => $first['run']->order?->salesOrder?->customer?->name,
+                'stage' => $first['run']->stageSnapshot?->stage_name,
+                'material' => $first['line']->product,
+                'unit' => $first['line']->unit?->name,
+                'consumption_unit' => $first['line']->unit?->name && $first['run']->output_unit_name
+                    ? $first['line']->unit->name.' / '.$first['run']->output_unit_name
+                    : null,
+                'planned' => $this->controlArrayQuantitySum($group->map(fn (array $entry): array => ['quantity' => (string) $entry['line']->planned_quantity]), 'quantity'),
+                'issued' => $hasMovement ? $issued : null,
+                'returned' => $hasMovement ? $returned : null,
+                'consumed' => $usageRecorded ? $consumed : null,
+                'waste' => $usageRecorded ? $waste : null,
+                'total_used' => $usageRecorded ? $used : null,
+                'consumed_per_equivalent' => $usageRecorded && $equivalentOutput !== null && bccomp($equivalentOutput, '0', 8) > 0
+                    ? bcdiv($consumed, $equivalentOutput, 8)
+                    : null,
+                'waste_percent' => $usageRecorded ? bcmul(bcdiv($waste, $used, 8), '100', 4) : null,
+                'variance' => $hasMovement ? bcsub(bcsub($issued, $returned, 8), $used, 8) : null,
+            ];
+        })->values();
+    }
+
+    private function controlQuantitySum(SupportCollection $runs, string $field): string
+    {
+        return $runs->reduce(fn (string $total, ProductionRun $run): string => bcadd($total, (string) $run->{$field}, 8), '0.00000000');
+    }
+
+    private function controlMeasuredWeight(SupportCollection $records, string $weightField, string $quantityField): ?string
+    {
+        $relevant = $records->filter(fn ($record): bool => $record->{$weightField} !== null
+            || bccomp((string) $record->{$quantityField}, '0', 8) > 0);
+        if ($relevant->isEmpty() || $relevant->contains(fn ($record): bool => $record->{$weightField} === null)) {
+            return null;
+        }
+
+        return $relevant->reduce(fn (string $total, $record): string => bcadd($total, (string) $record->{$weightField}, 8), '0.00000000');
+    }
+
+    private function controlArrayQuantitySum(SupportCollection $rows, string $field): string
+    {
+        return $rows->reduce(fn (string $total, array $row): string => bcadd($total, (string) $row[$field], 8), '0.00000000');
     }
 
     /** @param array<string, mixed> $filters */

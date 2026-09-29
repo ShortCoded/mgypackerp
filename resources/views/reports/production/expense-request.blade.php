@@ -11,6 +11,9 @@
         <tr><th>{{ __('production_execution.fields.amount') }}</th><td dir="ltr">{{ $numbers->format($record->amount) }} {{ $record->currency?->code }}</td><th>{{ __('production_execution.fields.payment_channel') }}</th><td>{{ __('production_execution.payment_channels.'.$record->payment_channel) }}</td></tr>
         <tr><th>{{ __('production_execution.fields.cashbox') }}</th><td>{{ $record->cashbox?->name ?: '—' }}</td><th>{{ __('production_execution.fields.bank_account') }}</th><td>{{ $record->bankAccount?->account_name ?: '—' }}</td></tr>
         <tr><th>{{ __('production_execution.fields.expense_account') }}</th><td>{{ $record->expenseAccount?->name ?: '—' }}</td><th>{{ __('production_execution.fields.payment_voucher') }}</th><td dir="ltr">{{ $record->cashVoucher?->doc_num ?: '—' }}</td></tr>
+        @if($record->journalEntry || $record->reversalJournalEntry)
+            <tr><th>{{ __('Journal Entry') }}</th><td dir="ltr">{{ $record->journalEntry?->doc_num ?: '—' }}</td><th>{{ __('Reversal Journal') }}</th><td dir="ltr">{{ $record->reversalJournalEntry?->doc_num ?: '—' }}</td></tr>
+        @endif
     </tbody></table>
     <p><strong>{{ __('production_execution.fields.reason') }}:</strong> {{ $record->reason }}</p>
     @if($record->notes)<p><strong>{{ __('production_execution.fields.notes') }}:</strong> {{ $record->notes }}</p>@endif

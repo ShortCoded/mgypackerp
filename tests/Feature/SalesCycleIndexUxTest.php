@@ -28,6 +28,35 @@ function salesIndexRequest(array $fixture): SalesRequest
         'lines' => [['product_id' => $fixture['finished']->id, 'unit_id' => $fixture['unit']->id, 'quantity' => 2, 'unit_price' => 12.5]]]);
 }
 
+test('operational sales report opens a pending request through its current route', function () {
+    $fixture = salesIndexFixture();
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    $request = salesIndexRequest($fixture);
+    $fixture['user']->givePermissionTo(Permission::findOrCreate('reports.sales.operational.view', 'web'));
+    $reportUrl = route('admin.reports.sales.sales-orders.index', ['report' => 'operational']);
+
+    $this->get($reportUrl)
+        ->assertOk()
+        ->assertSee(route('admin.sales.customer-requests.show', $request), false);
+
+    $fixture['user']->revokePermissionTo('sales_requests.view');
+    $this->get($reportUrl)
+        ->assertOk()
+        ->assertSee($request->doc_num)
+        ->assertDontSee(route('admin.sales.customer-requests.show', $request), false);
+});
+
+test('every sales analysis menu report renders with a pending request', function () {
+    $fixture = salesIndexFixture();
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    salesIndexRequest($fixture);
+
+    foreach (['financial', 'period', 'customers', 'products', 'invoices', 'receivables', 'collections', 'returns', 'quotations', 'fulfillment', 'pricing', 'operational', 'cost_of_sales'] as $report) {
+        $fixture['user']->givePermissionTo(Permission::findOrCreate("reports.sales.{$report}.view", 'web'));
+        $this->get(route('admin.reports.sales.sales-orders.index', ['report' => $report]))->assertOk();
+    }
+});
+
 test('request index offers valid workflow and print actions and supports draft recovery', function () {
     $f = salesIndexFixture();
     $this->actingAs($f['user'])->withSession(salesCycleSession($f));

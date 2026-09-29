@@ -677,6 +677,9 @@ class MaintenanceController extends Controller
 
     private function expenseForm(Request $request, ?ProductionExpenseRequest $record = null, string $mode = 'create'): View
     {
+        if ($record && $mode === 'view') {
+            $record->loadMissing(['maintenanceWorkOrder', 'bankAccount', 'cashVoucher', 'journalEntry', 'reversalJournalEntry']);
+        }
         $context = $this->requiredContext($request);
         $record?->load(['maintenanceWorkOrder.asset', 'maintenanceWorkOrder.mold', 'currency', 'cashbox', 'bankAccount', 'expenseAccount']);
         $selectedOrderId = (int) old('maintenance_work_order_id', $record?->maintenance_work_order_id ?? $request->integer('order'));

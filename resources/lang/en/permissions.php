@@ -215,9 +215,9 @@ foreach ([
 }
 
 $reportPermissionLabels = [
-    'production.reports.control.view' => 'View Injection and Cover Production Monitoring',
-    'production.reports.control.export' => 'Export Injection and Cover Production Monitoring',
-    'production.reports.control.print' => 'Print Injection and Cover Production Monitoring',
+    'production.reports.control.view' => 'View Production Monitoring Report',
+    'production.reports.control.export' => 'Export Production Monitoring Report',
+    'production.reports.control.print' => 'Print Production Monitoring Report',
     'reports.products_data.view' => 'View Products and Raw Materials Data Report',
     'reports.products_data.export' => 'Export Products and Raw Materials Data Report',
     'reports.products_data.pdf' => 'Export Products and Raw Materials Data Report PDF',

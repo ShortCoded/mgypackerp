@@ -244,6 +244,7 @@ class ProductionMaterialRequestService
                         $reserveQuantity,
                         null,
                         $locked->request_type === 'additional',
+                        $line->getKey(),
                     );
                 }
 
@@ -311,6 +312,9 @@ class ProductionMaterialRequestService
                 (int) $locked->branch_store_id,
                 $quantities,
                 $locked->request_type === 'additional',
+                materialRequestLineIdsByRequirementId: $locked->lines->mapWithKeys(
+                    fn (ProductionMaterialRequestLine $line): array => [$line->production_material_requirement_id => $line->getKey()],
+                )->all(),
             );
             $document->update(['production_material_request_id' => $locked->getKey()]);
 
@@ -380,6 +384,7 @@ class ProductionMaterialRequestService
                     $reserveQuantity,
                     null,
                     $locked->request_type === 'additional',
+                    $line->getKey(),
                 );
                 $line->update([
                     'reserved_quantity' => bcadd((string) $line->reserved_quantity, $reserveQuantity, 8),

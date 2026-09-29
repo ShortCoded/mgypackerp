@@ -3,6 +3,7 @@
 use App\Models\User;
 use Database\Seeders\DefaultOperatingContextSeeder;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Storage;
@@ -18,14 +19,17 @@ use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\Core\Models\ItemColor;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashboxCurrency;
+use Modules\Finance\Services\FinanceReportService;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\HR\Models\HrEmployee;
 use Modules\Inventory\Exports\InventoryReportExport;
@@ -49,6 +53,7 @@ use Modules\Maintenance\Models\MaintenancePlan;
 use Modules\Maintenance\Models\MaintenancePlanDue;
 use Modules\Maintenance\Models\MaintenanceRequest;
 use Modules\Maintenance\Models\MaintenanceWorkOrder;
+use Modules\Production\Exports\ProductionReportExport;
 use Modules\Production\Models\ProductionExpenseRequest;
 use Modules\Production\Models\ProductionMachine;
 use Modules\Production\Models\ProductionMaterialRequest;
@@ -62,11 +67,13 @@ use Modules\Production\Models\QualityInspectionType;
 use Modules\Production\Models\QualityStockHold;
 use Modules\Production\Services\ProductionCostService;
 use Modules\Production\Services\ProductionCycleService;
+use Modules\Production\Services\ProductionExpenseRequestService;
 use Modules\Production\Services\ProductionMaterialRequestService;
 use Modules\Production\Services\ProductionReportService;
 use Modules\Production\Services\SalesProductionDemandService;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\SalesOrder;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -143,7 +150,7 @@ function manufacturingMaintenanceAssetAccount(array $fixture): Account
 }
 
 /** @param array<string, mixed> $fixture @return array<string, mixed> */
-function manufacturingIntegrityRun(array $fixture, string $plannedQuantity = '1'): array
+function manufacturingIntegrityRun(array $fixture, string $plannedQuantity = '1', int $offsetHours = 0): array
 {
     $cycle = app(ProductionCycleService::class);
     $order = $cycle->createMakeToStockOrder([
@@ -159,8 +166,8 @@ function manufacturingIntegrityRun(array $fixture, string $plannedQuantity = '1'
     $orderLine = $order->lines->firstOrFail();
     $run = $cycle->createRun($orderLine, [
         'planned_quantity' => $plannedQuantity,
-        'planned_start_at' => now()->addHour(),
-        'planned_end_at' => now()->addHours(2),
+        'planned_start_at' => now()->addHours($offsetHours + 1),
+        'planned_end_at' => now()->addHours($offsetHours + 2),
         'production_machine_id' => $fixture['machine']->getKey(),
         'production_mold_id' => $fixture['mold']->getKey(),
         'batch_lot' => 'INTEGRITY-LOT-001',
@@ -212,6 +219,160 @@ test('finished goods receipt cost rejects an unvalued material issue', function 
 
     expect(fn () => app(ProductionCostService::class)->receiptCost($run, '1'))
         ->toThrow(DomainException::class, __('production_execution.messages.unvalued_material_cost'));
+});
+
+test('a run material request issues a linked warehouse document and a paid expense retains its payment lineage', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $fixture['branch']->update(['type' => Branch::TypeFactory]);
+    $run = manufacturingIntegrityRun($fixture)['run'];
+    $session = manufacturingIntegritySession($fixture);
+    $permissions = [
+        'production.runs.view', 'production.material_requests.view', 'production.material_requests.approve',
+        'production.material_requests.issue', 'inventory.documents.view', 'production.expenses.view',
+        'cash_payment_vouchers.view', 'journal_entries.view',
+    ];
+    foreach ($permissions as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $fixture['user']->givePermissionTo($permissions);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.runs.show', $run))->assertOk();
+
+    $requirement = $run->requirements->firstOrFail();
+    $materials = app(ProductionMaterialRequestService::class);
+    $materialRequest = $materials->create($run, $fixture['store']->getKey(), [$requirement->getKey() => '2']);
+    $materials->approve($materialRequest);
+    $issue = $materials->issue($materialRequest->fresh(), [$materialRequest->lines->firstOrFail()->getKey() => '2']);
+    expect($issue->status)->toBe(InventoryDocument::StatusPosted)
+        ->and($issue->production_run_id)->toBe($run->getKey())
+        ->and($issue->production_material_request_id)->toBe($materialRequest->getKey())
+        ->and($issue->lines->firstOrFail()->production_material_request_line_id)->toBe($materialRequest->lines->firstOrFail()->getKey());
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.material-requests.show', $materialRequest))
+        ->assertOk()->assertSee($issue->doc_num);
+
+    $currency = Currency::query()->where('company_id', $fixture['company']->getKey())->firstOrFail();
+    $cashAccount = Account::query()->where('company_id', $fixture['company']->getKey())->where('is_postable', true)->where('account_type', Account::TypeAsset)->firstOrFail();
+    $expenseAccount = Account::query()->where('company_id', $fixture['company']->getKey())->where('is_postable', true)->where('account_type', Account::TypeExpense)->firstOrFail();
+    $cashbox = Cashbox::query()->create([
+        ...app(DocumentNumberService::class)->nextForCompany('cashboxes', Cashbox::class, $fixture['company']->getKey()),
+        'company_id' => $fixture['company']->getKey(), 'branch_id' => $fixture['branch']->getKey(),
+        'account_id' => $cashAccount->getKey(), 'name' => 'Production Cashbox', 'status' => 'active',
+    ]);
+    CashboxCurrency::query()->create(['cashbox_id' => $cashbox->getKey(), 'currency_id' => $currency->getKey(), 'is_default' => true, 'status' => 'active']);
+    $expenses = app(ProductionExpenseRequestService::class);
+    $expense = $expenses->create($run, [
+        'amount' => '125', 'currency_id' => $currency->getKey(), 'payment_channel' => 'cashbox',
+        'cashbox_id' => $cashbox->getKey(), 'expense_account_id' => $expenseAccount->getKey(),
+        'reason' => 'Run transport',
+    ]);
+    $expenses->approve($expense);
+    $expenses->pay($expense);
+    $expense->refresh()->load(['cashVoucher', 'journalEntry']);
+    expect($expense->cashVoucher)->not->toBeNull()
+        ->and($expense->journalEntry)->not->toBeNull()
+        ->and(app(ProductionCostService::class)->runPosition($run)['other_direct_cost'])->toBe('125.00000000');
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.expenses.show', $expense))
+        ->assertOk()
+        ->assertSee($run->run_number)
+        ->assertSee($expense->cashVoucher->doc_num)
+        ->assertSee($expense->journalEntry->doc_num);
+    $expenses->reverse($expense, 'Duplicate payment');
+    expect(app(ProductionCostService::class)->runPosition($run)['other_direct_cost'])->toBe('0.00000000');
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.expenses.show', $expense))
+        ->assertOk()->assertSee($expense->refresh()->reversalJournalEntry->doc_num);
+
+    $bankGroup = Account::query()->where('company_id', $fixture['company']->getKey())
+        ->where('account_type', Account::TypeAsset)->where('is_group', true)->firstOrFail();
+    $bankLedger = Account::query()->where('company_id', $fixture['company']->getKey())
+        ->where('account_type', Account::TypeAsset)->where('is_postable', true)
+        ->whereKeyNot($cashAccount->getKey())->firstOrFail();
+    $bank = BankAccount::query()->create([
+        ...app(DocumentNumberService::class)->nextForCompany('bank_accounts', BankAccount::class, $fixture['company']->getKey()),
+        'company_id' => $fixture['company']->getKey(), 'bank_id' => $bankGroup->getKey(),
+        'account_id' => $bankLedger->getKey(), 'currency_id' => $currency->getKey(),
+        'account_name' => 'Production Bank', 'account_number' => 'MFG-BANK-01', 'status' => 'active',
+    ]);
+    $bankExpense = $expenses->create($run, [
+        'amount' => '75', 'currency_id' => $currency->getKey(), 'payment_channel' => 'bank',
+        'bank_account_id' => $bank->getKey(), 'expense_account_id' => $expenseAccount->getKey(),
+        'reason' => 'Run bank transport',
+    ]);
+    $expenses->approve($bankExpense);
+    $expenses->pay($bankExpense);
+    $bankExpense->refresh()->load(['journalEntry.lines', 'cashVoucher']);
+    expect($bankExpense->cashVoucher)->toBeNull()
+        ->and($bankExpense->journalEntry->lines->where('bank_account_id', $bank->getKey())->sole()->credit_amount)->toBe('75.0000')
+        ->and(app(ProductionCostService::class)->runPosition($run)['other_direct_cost'])->toBe('75.00000000');
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.expenses.show', $bankExpense))
+        ->assertOk()->assertSee($bank->account_name)->assertSee($bankExpense->journalEntry->doc_num);
+    $bankStatement = app(FinanceReportService::class)->report([
+        'type' => FinanceReportService::BankAccountStatement,
+        'bank_account_doc_num' => $bank->doc_num,
+    ]);
+    expect($bankStatement['rows']->where('document', $bankExpense->doc_num)->sole()['payment'])->toBe('75.0000');
+
+    $expenses->reverse($bankExpense, 'Duplicate bank payment');
+    $bankStatement = app(FinanceReportService::class)->report([
+        'type' => FinanceReportService::BankAccountStatement,
+        'bank_account_doc_num' => $bank->doc_num,
+    ]);
+    expect($bankStatement['rows']->where('document', $bankExpense->doc_num))->toHaveCount(2)
+        ->and($bankStatement['rows']->where('document', $bankExpense->doc_num)->sum('receipt'))->toEqual(75)
+        ->and(app(ProductionCostService::class)->runPosition($run)['other_direct_cost'])->toBe('0.00000000');
+    $bankBalances = app(FinanceReportService::class)->report([
+        'type' => FinanceReportService::BankAccountBalances,
+        'bank_account_doc_num' => $bank->doc_num,
+        'as_of_date' => now()->toDateString(),
+    ]);
+    expect($bankBalances['rows']->sole()['balance'])->toBe('0.0000');
+});
+
+test('material issue consumes only its own request reservation and additional issue does not reserve twice', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $fixture['branch']->update(['type' => Branch::TypeFactory]);
+    $run = manufacturingIntegrityRun($fixture, '10')['run'];
+    request()->setLaravelSession(app('session.store'));
+    request()->session()->put(manufacturingIntegritySession($fixture));
+
+    $requirement = $run->requirements->firstOrFail();
+    $requests = app(ProductionMaterialRequestService::class);
+    $older = $requests->create($run, $fixture['store']->getKey(), [$requirement->getKey() => '5']);
+    $newer = $requests->create($run, $fixture['store']->getKey(), [$requirement->getKey() => '7']);
+    $requests->approve($older);
+    $requests->approve($newer);
+    $olderLine = $older->lines->firstOrFail();
+    $newerLine = $newer->lines->firstOrFail();
+    $olderReservation = InventoryReservation::query()->where('production_material_request_line_id', $olderLine->getKey())->sole();
+    $newerReservation = InventoryReservation::query()->where('production_material_request_line_id', $newerLine->getKey())->sole();
+
+    Permission::findOrCreate('production.material_requests.issue', 'web');
+    $fixture['user']->givePermissionTo('production.material_requests.issue');
+    $this->actingAs($fixture['user'])->withSession(manufacturingIntegritySession($fixture))
+        ->withHeader('Idempotency-Key', (string) Str::uuid())
+        ->postJson(route('admin.production.material-requests.issue', $newer), [
+            'lines' => [['request_line_id' => $newerLine->getKey(), 'quantity' => '7']],
+        ])->assertOk();
+    $newerIssue = InventoryDocument::query()->where('production_material_request_id', $newer->getKey())->sole();
+    expect($newerIssue->production_material_request_id)->toBe($newer->getKey())
+        ->and($newerIssue->lines->sole()->inventory_reservation_id)->toBe($newerReservation->getKey())
+        ->and($olderReservation->fresh()->remaining_quantity)->toBe('5.00000000')
+        ->and($newerReservation->fresh()->remaining_quantity)->toBe('0.00000000');
+
+    $additional = $requests->create($run, $fixture['store']->getKey(), [$requirement->getKey() => '2'], true, 'Extra resin');
+    $requests->approve($additional);
+    $additionalLine = $additional->lines->firstOrFail();
+    $additionalReservation = InventoryReservation::query()->where('production_material_request_line_id', $additionalLine->getKey())->sole();
+    $reservedBeforeIssue = $requirement->fresh()->reserved_quantity;
+    $additionalIssue = $requests->issue($additional->fresh());
+
+    expect($additionalIssue->lines->sole()->inventory_reservation_id)->toBe($additionalReservation->getKey())
+        ->and($additionalIssue->document_type)->toBe(InventoryDocument::TypeAdditionalMaterialIssue)
+        ->and($requirement->fresh()->reserved_quantity)->toBe($reservedBeforeIssue)
+        ->and(InventoryReservation::query()->where('production_material_requirement_id', $requirement->getKey())->count())->toBe(3);
 });
 
 test('finished stock valuation includes production receipts tied to their run', function (): void {
@@ -684,10 +845,18 @@ test('the canonical manufacturing cycle reconciles physical stock, reservations,
     $progress = $cycle->recordProgress($run, [
         'recorded_at' => now()->subYear(),
         'good_base_quantity' => '4',
+        'good_weight_kg' => '12.5',
         'scrap_base_quantity' => '1',
+        'production_scrap_weight_kg' => '0.5',
         'notes' => 'First completed production run',
     ]);
-    expect($progress->recorded_at->greaterThanOrEqualTo($progressTimeFloor))->toBeTrue();
+    expect($progress->recorded_at->greaterThanOrEqualTo($progressTimeFloor))->toBeTrue()
+        ->and($progress->fresh()->good_weight_kg)->toBe('12.50000000')
+        ->and($progress->fresh()->production_scrap_weight_kg)->toBe('0.50000000');
+    expect(fn () => $cycle->recordProgress($run, [
+        'good_base_quantity' => '1',
+        'good_weight_kg' => '0',
+    ]))->toThrow(DomainException::class, __('production_execution.messages.progress_weight_invalid'));
 
     $otherCompany = Company::factory()->create();
     $otherCompanyInspectionType = QualityInspectionType::query()->create([
@@ -2234,6 +2403,177 @@ test('manual inventory receipt issue return and transfer use the full posted mov
         ->toContain('إذن استلام مخزني', 'تحويل مخزني');
 });
 
+test('reversing a receipt consumes its own layers and rejects a receipt already used by a later issue', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $movement = app(InventoryMovementService::class);
+    $posting = app(InventoryDocumentPostingService::class);
+    $post = fn (Product $product, string $type, string $quantity): InventoryDocument => $movement->createAndPost([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'document_type' => $type,
+        'document_date' => now()->toDateString(),
+        'source_stock_status' => InventoryTransaction::StatusAvailable,
+        'destination_stock_status' => InventoryTransaction::StatusAvailable,
+    ], [[
+        'product_id' => $product->getKey(),
+        'quantity' => $quantity,
+        'unit_cost' => $type === InventoryDocument::TypeReceipt ? '2' : null,
+    ]]);
+
+    $receipt = $post($fixture['raw'], InventoryDocument::TypeReceipt, '10');
+    $receiptTransaction = $receipt->transactions()->sole();
+    $posting->reverse($receipt);
+    $reversal = InventoryTransaction::query()->where('reversal_of_id', $receiptTransaction->getKey())->sole();
+    $receiptLayer = InventoryReceiptLayer::query()->where('receipt_transaction_id', $receiptTransaction->getKey())->sole();
+    $reversalAllocations = InventoryLayerAllocation::query()->where('issue_transaction_id', $reversal->getKey())->get();
+
+    expect((string) $receiptLayer->fresh()->remaining_quantity)->toBe('0.00000000')
+        ->and($reversalAllocations)->toHaveCount(1)
+        ->and($reversalAllocations->sole()->inventory_receipt_layer_id)->toBe($receiptLayer->getKey())
+        ->and((string) InventoryReceiptLayer::query()->where('source_doc_num', 'OPEN-MFG')->sole()->remaining_quantity)->toBe('1000.00000000');
+
+    $otherProduct = Product::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'doc_number' => 9903,
+        'doc_num' => 'RM-REVERSAL',
+        'name' => 'Receipt reversal material',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $fixture['unit']->getKey(),
+        'status' => 'active',
+    ]);
+    $firstReceipt = $post($otherProduct, InventoryDocument::TypeReceipt, '10');
+    $firstTransaction = $firstReceipt->transactions()->sole();
+    $issue = $post($otherProduct, InventoryDocument::TypeIssue, '4');
+    $secondReceipt = $post($otherProduct, InventoryDocument::TypeReceipt, '10');
+
+    expect(fn () => $posting->reverse($firstReceipt))
+        ->toThrow(DomainException::class, __('The issue exceeds the receipt-layer quantity available for allocation.'));
+    expect($firstReceipt->fresh()->status)->toBe(InventoryDocument::StatusPosted)
+        ->and(InventoryTransaction::query()->where('reversal_of_id', $firstTransaction->getKey())->count())->toBe(0)
+        ->and((string) InventoryReceiptLayer::query()->where('receipt_transaction_id', $firstTransaction->getKey())->sole()->remaining_quantity)->toBe('6.00000000')
+        ->and((string) InventoryReceiptLayer::query()->where('receipt_transaction_id', $secondReceipt->transactions()->sole()->getKey())->sole()->remaining_quantity)->toBe('10.00000000');
+
+    $posting->reverse($issue);
+    $originalIssue = $issue->transactions()->whereNull('reversal_of_id')->sole();
+    $restoration = InventoryTransaction::query()->where('reversal_of_id', $originalIssue->getKey())->sole();
+    $posting->reverse($firstReceipt);
+    $receiptReversal = InventoryTransaction::query()->where('reversal_of_id', $firstTransaction->getKey())->sole();
+    $allocatedLayerIds = InventoryLayerAllocation::query()
+        ->where('issue_transaction_id', $receiptReversal->getKey())
+        ->pluck('inventory_receipt_layer_id')
+        ->all();
+
+    expect($firstReceipt->fresh()->status)->toBe(InventoryDocument::StatusReversed)
+        ->and($allocatedLayerIds)->toHaveCount(2)
+        ->toContain(
+            InventoryReceiptLayer::query()->where('receipt_transaction_id', $firstTransaction->getKey())->sole()->getKey(),
+            InventoryReceiptLayer::query()->where('receipt_transaction_id', $restoration->getKey())->sole()->getKey(),
+        )
+        ->and((string) InventoryReceiptLayer::query()->where('receipt_transaction_id', $secondReceipt->transactions()->sole()->getKey())->sole()->remaining_quantity)->toBe('10.00000000');
+});
+
+test('reversing a transfer consumes the destination receipt layer and restores the source position', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $destinationStore = BranchStore::query()->create([
+        'branch_id' => $fixture['branch']->getKey(),
+        'name' => 'Transfer reversal destination',
+        'position' => 2,
+    ]);
+    $transfer = app(InventoryMovementService::class)->createAndPost([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'destination_branch_store_id' => $destinationStore->getKey(),
+        'document_type' => InventoryDocument::TypeTransfer,
+        'document_date' => now()->toDateString(),
+        'source_stock_status' => InventoryTransaction::StatusAvailable,
+        'destination_stock_status' => InventoryTransaction::StatusAvailable,
+    ], [[
+        'product_id' => $fixture['raw']->getKey(),
+        'quantity' => '10',
+    ]]);
+    $destinationReceipt = $transfer->transactions()->whereNull('reversal_of_id')->where('quantity_in', '>', 0)->sole();
+    $destinationLayer = InventoryReceiptLayer::query()->where('receipt_transaction_id', $destinationReceipt->getKey())->sole();
+
+    app(InventoryDocumentPostingService::class)->reverse($transfer);
+    $destinationReversal = InventoryTransaction::query()->where('reversal_of_id', $destinationReceipt->getKey())->sole();
+
+    expect($transfer->fresh()->status)->toBe(InventoryDocument::StatusReversed)
+        ->and((string) $destinationLayer->fresh()->remaining_quantity)->toBe('0.00000000')
+        ->and(InventoryLayerAllocation::query()->where('issue_transaction_id', $destinationReversal->getKey())->sole()->inventory_receipt_layer_id)->toBe($destinationLayer->getKey())
+        ->and(app(InventoryAvailabilityService::class)->forProduct(
+            $fixture['company']->getKey(), $fixture['store']->getKey(), $fixture['raw']->getKey(),
+        )['physical_on_hand'])->toBe('1000.00000000')
+        ->and(app(InventoryAvailabilityService::class)->forProduct(
+            $fixture['company']->getKey(), $destinationStore->getKey(), $fixture['raw']->getKey(),
+        )['physical_on_hand'])->toBe('0.00000000');
+});
+
+test('historical reversed receipt layer repair previews and applies only the expected allocation quantity', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $receipt = app(InventoryMovementService::class)->createAndPost([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'document_type' => InventoryDocument::TypeReceipt,
+        'document_date' => now()->toDateString(),
+    ], [[
+        'product_id' => $fixture['raw']->getKey(),
+        'quantity' => '10',
+    ]]);
+    $original = $receipt->transactions()->whereNull('reversal_of_id')->sole();
+    app(InventoryDocumentPostingService::class)->reverse($receipt);
+    $reversal = InventoryTransaction::query()->where('reversal_of_id', $original->getKey())->sole();
+    $ownLayer = InventoryReceiptLayer::query()->where('receipt_transaction_id', $original->getKey())->sole();
+    $olderLayer = InventoryReceiptLayer::query()->where('source_doc_num', 'OPEN-MFG')->sole();
+
+    InventoryLayerAllocation::query()->where('issue_transaction_id', $reversal->getKey())->delete();
+    $ownLayer->update(['remaining_quantity' => '10']);
+    $olderLayer->update(['remaining_quantity' => '990']);
+    InventoryLayerAllocation::query()->create([
+        'inventory_receipt_layer_id' => $olderLayer->getKey(),
+        'issue_transaction_id' => $reversal->getKey(),
+        'quantity' => '10',
+    ]);
+
+    expect(Artisan::call('inventory:repair-reversed-receipt-layers', ['document' => $receipt->doc_num]))->toBe(0)
+        ->and(Artisan::output())->toContain('10.00000000')
+        ->and((string) $ownLayer->fresh()->remaining_quantity)->toBe('10.00000000');
+    expect(Artisan::call('inventory:repair-reversed-receipt-layers', [
+        'document' => $receipt->doc_num, '--apply' => true, '--expect-quantity' => '9',
+    ]))->toBe(1);
+    expect((string) $ownLayer->fresh()->remaining_quantity)->toBe('10.00000000');
+
+    expect(Artisan::call('inventory:repair-reversed-receipt-layers', [
+        'document' => $receipt->doc_num, '--apply' => true, '--expect-quantity' => '10',
+    ]))->toBe(0)
+        ->and((string) $ownLayer->fresh()->remaining_quantity)->toBe('0.00000000')
+        ->and((string) $olderLayer->fresh()->remaining_quantity)->toBe('1000.00000000')
+        ->and(InventoryLayerAllocation::query()->where('issue_transaction_id', $reversal->getKey())->sole()->inventory_receipt_layer_id)->toBe($ownLayer->getKey())
+        ->and(InventoryTransaction::query()->where('source_doc_num', $receipt->doc_num)->sum(DB::raw('quantity_in - quantity_out')))->toEqual(0)
+        ->and(DB::table('activity_log')->where('event', 'reversed_receipt_layer_repair')->count())->toBe(1);
+
+    $pricedReceipt = app(InventoryMovementService::class)->createAndPost([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'document_type' => InventoryDocument::TypeReceipt,
+        'document_date' => now()->toDateString(),
+    ], [[
+        'product_id' => $fixture['raw']->getKey(),
+        'quantity' => '1',
+        'unit_cost' => '2',
+    ]]);
+    app(InventoryDocumentPostingService::class)->reverse($pricedReceipt);
+    expect(Artisan::call('inventory:repair-reversed-receipt-layers', ['document' => $pricedReceipt->doc_num]))->toBe(1)
+        ->and(Artisan::output())->toContain('Priced receipts require cost and journal reconciliation');
+});
+
 test('generic inventory receipt cannot accept finished output without production lineage', function (): void {
     $fixture = manufacturingInventoryFixture();
 
@@ -2964,8 +3304,58 @@ test('capability permissions separate warehouse planning quality and cost access
 test('factory monitoring uses one screen for company and branch scopes with matching exports', function (): void {
     $fixture = manufacturingInventoryFixture();
     $fixture['branch']->update(['type' => Branch::TypeFactory]);
+    $pieceUnit = ItemUnit::query()->create([
+        'company_id' => $fixture['company']->getKey(), 'doc_number' => 9902,
+        'doc_num' => 'UNIT-MFG-PIECE', 'name' => 'Piece', 'status' => 'active',
+    ]);
+    $color = ItemColor::query()->create([
+        'company_id' => $fixture['company']->getKey(), 'doc_number' => 9902,
+        'doc_num' => 'COLOR-MFG-SNAPSHOT', 'name' => 'Snapshot White', 'status' => 'active',
+    ]);
+    $fixture['finished']->update([
+        'equivalent_value' => '500', 'equivalent_unit_id' => $pieceUnit->getKey(),
+        'item_color_id' => $color->getKey(),
+    ]);
     $runData = manufacturingIntegrityRun($fixture);
-    foreach (['production.reports.control.view', 'production.reports.control.export', 'production.reports.control.print'] as $permission) {
+    $color->update(['name' => 'Changed White']);
+    $runData['run']->progressEntries()->create([
+        'recorded_at' => now(), 'good_base_quantity' => '0.4', 'rejected_base_quantity' => '0.1',
+        'rework_base_quantity' => '0', 'scrap_base_quantity' => '0.05',
+        'good_weight_kg' => '8', 'production_scrap_weight_kg' => '2',
+        'recorded_by' => $fixture['user']->getKey(),
+    ]);
+    $runData['run']->update([
+        'good_base_quantity' => '0.4', 'rejected_base_quantity' => '0.1',
+        'scrap_base_quantity' => '0.05',
+    ]);
+    $runData['run']->requirements()->firstOrFail()->update([
+        'issued_quantity' => '2', 'consumed_quantity' => '1.8', 'waste_quantity' => '0.2',
+    ]);
+    foreach ([InventoryDocument::TypeMaterialConsumption => '1.8', InventoryDocument::TypeProductionWaste => '0.2'] as $index => $quantity) {
+        $documentNumber = $index === InventoryDocument::TypeMaterialConsumption ? 99501 : 99502;
+        $document = InventoryDocument::query()->create([
+            'doc_number' => $documentNumber,
+            'doc_num' => 'INV-MFG-'.$documentNumber,
+            'company_id' => $fixture['company']->getKey(),
+            'financial_period_id' => $fixture['period']->getKey(),
+            'branch_id' => $fixture['branch']->getKey(),
+            'branch_store_id' => $fixture['store']->getKey(),
+            'production_run_id' => $runData['run']->getKey(),
+            'document_type' => $index,
+            'document_date' => now()->toDateString(),
+            'status' => InventoryDocument::StatusPosted,
+        ]);
+        $document->lines()->create([
+            'company_id' => $fixture['company']->getKey(),
+            'financial_period_id' => $fixture['period']->getKey(),
+            'line_number' => 1,
+            'production_run_id' => $runData['run']->getKey(),
+            'product_id' => $fixture['raw']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'quantity' => $quantity,
+        ]);
+    }
+    foreach (['production.reports.control.view', 'production.reports.control.export', 'production.reports.control.print', 'production.runs.view', 'production.runs.setup'] as $permission) {
         Permission::findOrCreate($permission, 'web');
         $fixture['user']->givePermissionTo($permission);
     }
@@ -2976,24 +3366,248 @@ test('factory monitoring uses one screen for company and branch scopes with matc
         ->assertOk()
         ->assertSee($runData['run']->run_number)
         ->assertSee($fixture['branch']->name)
+        ->assertSee(route('admin.production.reports.control.runs.show', $runData['run']), false)
         ->assertSee('name="branch_doc_num"', false)
         ->assertSee('js-select2-ajax')
         ->assertSee(route('admin.production.reports.export', ['section' => 'control']), false)
+        ->assertSee(route('admin.production.reports.export.csv'), false)
+        ->assertSee('dataset=runs')
+        ->assertSee('dataset=materials')
+        ->assertSee('dataset=products')
+        ->assertSee('dataset=daily')
+        ->assertSee('dataset=daily_materials')
+        ->assertSee('dataset=machines')
+        ->assertSee('dataset=material_summary')
+        ->assertDontSee('dataset=legacy')
+        ->assertSee('تقرير مراقبة الإنتاج')
+        ->assertSee('Snapshot White')
+        ->assertDontSee('Changed White')
+        ->assertSee('200')
         ->assertSee(route('admin.production.reports.print', ['section' => 'control']), false);
     $this->actingAs($fixture['user'])->withSession($session)
         ->get(route('admin.production.reports.control', ['branch_id' => $fixture['branch']->getKey(), 'product' => 'FG-MFG']))
         ->assertOk()
-        ->assertSee($runData['run']->run_number);
+        ->assertSee($runData['run']->run_number)
+        ->assertSee(route('admin.production.reports.control.runs.show', [
+            'productionRun' => $runData['run']->getRouteKey(),
+            'branch_id' => $fixture['branch']->getKey(),
+            'product' => 'FG-MFG',
+        ]));
     $this->actingAs($fixture['user'])->withSession($session)
         ->get(route('admin.production.reports.control', ['branch_doc_num' => $fixture['branch']->doc_num]))
         ->assertOk()
         ->assertSee($runData['run']->run_number);
-    $this->actingAs($fixture['user'])->withSession($session)
+    $excel = $this->actingAs($fixture['user'])->withSession($session)
         ->get(route('admin.production.reports.export', ['section' => 'control', 'branch_id' => $fixture['branch']->getKey()]))
         ->assertOk()->assertDownload();
+    $workbook = IOFactory::load($excel->baseResponse->getFile()->getPathname());
+    expect($workbook->getSheetCount())->toBe(7)
+        ->and($workbook->getSheet(0)->toArray()[0])->toContain(__('production_execution.reports.control.columns.customer'), __('production_execution.reports.control.columns.color'), __('production_execution.reports.control.columns.equivalent_good'))
+        ->and((float) $workbook->getSheet(0)->getCell('N2')->getValue())->toBe(200.0)
+        ->and((float) $workbook->getSheet(0)->getCell('O2')->getValue())->toBe(8.0)
+        ->and((float) $workbook->getSheet(0)->getCell('P2')->getValue())->toBe(0.04)
+        ->and((float) $workbook->getSheet(0)->getCell('Q2')->getValue())->toBe(2.0)
+        ->and((float) $workbook->getSheet(0)->getCell('R2')->getValue())->toBe(20.0)
+        ->and($workbook->getSheet(0)->getCell('D2')->getValue())->toBe('Snapshot White')
+        ->and($workbook->getSheet(1)->toArray()[0])->toContain(__('production_execution.reports.control.columns.date'), __('production_execution.reports.control.columns.machine'))
+        ->and($workbook->getSheet(2)->toArray()[0])->toContain(__('production_execution.reports.control.columns.document'), __('production_execution.reports.control.columns.waste_percent'))
+        ->and((float) $workbook->getSheet(2)->getCell('I2')->getValue())->toBe(1.8)
+        ->and((float) $workbook->getSheet(2)->getCell('J2')->getValue())->toBe(0.2)
+        ->and((float) $workbook->getSheet(2)->getCell('L2')->getValue())->toBe(10.0)
+        ->and($workbook->getSheet(4)->toArray()[0])->toContain(__('production_execution.reports.control.columns.waste_percent'), __('production_execution.reports.control.columns.total_used'), __('production_execution.reports.control.columns.consumed_per_equivalent'))
+        ->and($workbook->getSheet(4)->getCell('D2')->getValue())->toBe('Snapshot White')
+        ->and((float) $workbook->getSheet(4)->getCell('O2')->getValue())->toBe(2.0)
+        ->and((float) $workbook->getSheet(4)->getCell('P2')->getValue())->toBe(0.009)
+        ->and((float) $workbook->getSheet(4)->getCell('R2')->getValue())->toBe(10.0)
+        ->and($workbook->getSheet(6)->toArray()[0])->toContain(__('production_execution.reports.control.columns.basis'), __('production_execution.reports.control.columns.per_equivalent_unit'), __('production_execution.reports.control.columns.status'));
+    foreach (['products', 'daily', 'daily_materials', 'machines', 'material_summary', 'runs', 'materials'] as $dataset) {
+        $csv = $this->actingAs($fixture['user'])->withSession($session)
+            ->get(route('admin.production.reports.export.csv', [
+                'section' => 'control', 'branch_id' => $fixture['branch']->getKey(), 'dataset' => $dataset,
+            ]))
+            ->assertOk()->assertDownload();
+        $csvContents = file_get_contents($csv->baseResponse->getFile()->getPathname());
+        expect($csvContents)->toContain($fixture['finished']->doc_num);
+        if (in_array($dataset, ['daily', 'daily_materials', 'runs', 'materials'], true)) {
+            expect($csvContents)->toContain($runData['run']->run_number);
+        }
+        if ($dataset === 'materials') {
+            expect(file_get_contents($csv->baseResponse->getFile()->getPathname()))
+                ->toContain(__('production_execution.reports.control.columns.basis'), __('production_execution.reports.control.columns.status'), $fixture['raw']->doc_num, $fixture['finished']->name);
+        }
+    }
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.production.runs.show', $runData['run']))
+        ->assertOk()
+        ->assertSee($fixture['raw']->doc_num)
+        ->assertSee('×');
     $this->actingAs($fixture['user'])->withSession($session)
         ->get(route('admin.production.reports.print', ['section' => 'control', 'branch_id' => $fixture['branch']->getKey()]))
         ->assertOk()->assertHeader('content-type', 'application/pdf');
+
+    $administrativeBranch = Branch::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'doc_number' => 9903,
+        'doc_num' => 'BR-CONTROL-9903',
+        'name' => 'Administrative Branch',
+        'type' => Branch::TypeAdministrative,
+        'status' => 'active',
+    ]);
+    $administrativeSession = [
+        ...$session,
+        OperatingContextService::BranchIdKey => $administrativeBranch->getKey(),
+        OperatingContextService::BranchDocNumKey => $administrativeBranch->doc_num,
+    ];
+    $this->actingAs($fixture['user'])->withSession($administrativeSession)
+        ->get(route('admin.production.runs.show', $runData['run']))
+        ->assertNotFound();
+    $this->actingAs($fixture['user'])->withSession($administrativeSession)
+        ->get(route('admin.production.reports.control'))
+        ->assertOk()
+        ->assertSee(route('admin.production.reports.control.runs.show', $runData['run']), false);
+    $this->actingAs($fixture['user'])->withSession($administrativeSession)
+        ->get(route('admin.production.reports.control.runs.show', $runData['run']))
+        ->assertOk()
+        ->assertSee($runData['run']->run_number)
+        ->assertSee($fixture['raw']->doc_num)
+        ->assertSee('×')
+        ->assertDontSee(route('admin.production.runs.setup.start', $runData['run']), false);
+    $this->actingAs($fixture['user'])->withSession($administrativeSession)
+        ->get(route('admin.production.reports.control.runs.print', $runData['run']))
+        ->assertOk()->assertHeader('content-type', 'application/pdf');
+
+    $fixture['user']->revokePermissionTo('production.runs.view');
+    $this->actingAs($fixture['user'])->withSession($administrativeSession)
+        ->get(route('admin.production.reports.control'))
+        ->assertOk()
+        ->assertDontSee(route('admin.production.reports.control.runs.show', $runData['run']), false);
+    $this->actingAs($fixture['user'])->withSession($administrativeSession)
+        ->get(route('admin.production.reports.control.runs.show', $runData['run']))
+        ->assertForbidden();
+});
+
+test('factory monitoring aggregates matching order snapshots but separates changed product colors', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $fixture['branch']->update(['type' => Branch::TypeFactory]);
+    $color = ItemColor::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'doc_number' => 9904,
+        'doc_num' => 'COLOR-MFG-GROUP',
+        'name' => 'First Color',
+        'status' => 'active',
+    ]);
+    $fixture['finished']->update(['item_color_id' => $color->getKey()]);
+    manufacturingIntegrityRun($fixture, '1', 0);
+    $color->update(['name' => 'Second Color']);
+    manufacturingIntegrityRun($fixture, '1', 3);
+    manufacturingIntegrityRun($fixture, '1', 6);
+
+    $report = app(ProductionReportService::class)->controlReport(
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+        [$fixture['branch']->getKey()],
+    );
+
+    expect($report['controlProducts'])->toHaveCount(2)
+        ->and($report['controlProducts']->pluck('runs', 'color')->all())->toBe(['Second Color' => 2, 'First Color' => 1])
+        ->and($report['controlMachines'])->toHaveCount(2)
+        ->and($report['controlMaterialSummary'])->toHaveCount(2)
+        ->and($report['controlMaterialSummary']->pluck('color')->all())->toContain('First Color', 'Second Color');
+});
+
+test('factory monitoring dates actual output by progress even when the run started earlier', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $fixture['branch']->update(['type' => Branch::TypeFactory]);
+    $run = manufacturingIntegrityRun($fixture)['run'];
+    $run->update([
+        'planned_start_at' => now()->subDays(2),
+        'good_base_quantity' => '0.7',
+    ]);
+    $run->progressEntries()->create([
+        'recorded_at' => now()->subDay(),
+        'good_base_quantity' => '0.3',
+        'good_weight_kg' => '3',
+        'recorded_by' => $fixture['user']->getKey(),
+    ]);
+    $run->progressEntries()->create([
+        'recorded_at' => now(),
+        'good_base_quantity' => '0.4',
+        'good_weight_kg' => '4',
+        'recorded_by' => $fixture['user']->getKey(),
+    ]);
+
+    $report = app(ProductionReportService::class)->controlReport(
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+        [$fixture['branch']->getKey()],
+        ['from' => now()->toDateString(), 'to' => now()->toDateString()],
+    );
+
+    expect($report['controlRuns'])->toHaveCount(1)
+        ->and($report['controlRuns']->first()->report_good_base_quantity)->toBe('0.40000000')
+        ->and($report['controlRuns']->first()->report_good_weight_kg)->toBe('4.00000000')
+        ->and($report['controlRuns']->first()->report_yield_percent)->toBe('100.0000')
+        ->and($report['controlRuns']->first()->good_base_quantity)->toBe('0.70000000')
+        ->and($report['controlProducts']->first()['good'])->toBe('0.40000000')
+        ->and($report['controlProducts']->first()['good_weight_kg'])->toBe('4.00000000')
+        ->and($report['controlDaily'])->toHaveCount(1)
+        ->and($report['controlDaily']->first()['good'])->toBe('0.40000000')
+        ->and($report['controlDaily']->first()['good_weight_kg'])->toBe('4.00000000')
+        ->and($report['controlMachines']->first()['good'])->toBe('0.40000000');
+
+    $runExport = (new ProductionReportExport($report, 'control'))->sheets()[5]->array()[0];
+    expect((float) $runExport[10])->toBe(0.4)
+        ->and((float) $runExport[17])->toBe(4.0);
+
+    $run->progressEntries()->create([
+        'recorded_at' => now(),
+        'good_base_quantity' => '0.1',
+        'recorded_by' => $fixture['user']->getKey(),
+    ]);
+    $run->update(['good_base_quantity' => '0.8']);
+    $incompleteWeights = app(ProductionReportService::class)->controlReport(
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+        [$fixture['branch']->getKey()],
+        ['from' => now()->toDateString(), 'to' => now()->toDateString()],
+    );
+    expect($incompleteWeights['controlProducts']->first()['good_weight_kg'])->toBeNull()
+        ->and($incompleteWeights['controlDaily']->first()['good_weight_kg'])->toBeNull();
+
+    $receiptDate = now()->addDays(2)->toDateString();
+    $receipt = InventoryDocument::query()->create([
+        'doc_number' => 99503,
+        'doc_num' => 'INV-MFG-99503',
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'production_run_id' => $run->getKey(),
+        'document_type' => InventoryDocument::TypeProductionReceipt,
+        'document_date' => $receiptDate,
+        'status' => InventoryDocument::StatusPosted,
+    ]);
+    $receipt->lines()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'line_number' => 1,
+        'production_run_id' => $run->getKey(),
+        'product_id' => $fixture['finished']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'quantity' => '0.2',
+        'base_quantity' => '0.2',
+    ]);
+    $receiptOnly = app(ProductionReportService::class)->controlReport(
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+        [$fixture['branch']->getKey()],
+        ['from' => $receiptDate, 'to' => $receiptDate],
+    );
+    expect($receiptOnly['controlRuns'])->toHaveCount(1)
+        ->and($receiptOnly['controlRuns']->first()->report_good_base_quantity)->toBe('0.00000000')
+        ->and($receiptOnly['controlRuns']->first()->report_received_base_quantity)->toBe('0.20000000')
+        ->and($receiptOnly['controlProducts']->first()['received'])->toBe('0.20000000')
+        ->and($receiptOnly['controlKpis']['receipt_documents'])->toBe(1);
 });
 
 test('operational inventory reports remain usable when a required account classification is missing', function () {

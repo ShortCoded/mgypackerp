@@ -8,6 +8,7 @@ use Modules\Core\Models\BranchStore;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\MenuService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashboxCurrency;
 use Modules\Finance\Models\CashVoucher;
@@ -320,6 +321,10 @@ test('purchase invoices allow an optional order and preserve deliberately unlink
     $directInvoice = app(PurchaseInvoiceService::class)->approve($directInvoice);
     expect($directInvoice->matching_status)->toBe('direct_invoice')
         ->and($directInvoice->journal_entry_id)->not->toBeNull();
+    $purchasePrice = app(NumericFormatService::class)->format($directInvoice->lines()->sole()->unit_price);
+    $this->get(route('admin.purchases.purchase-invoices.show', $directInvoice))
+        ->assertOk()
+        ->assertSee('<div class="form-control-plaintext text-end" dir="ltr">'.$purchasePrice.'</div>', false);
 
     $order = app(PurchaseOrderService::class)->create([
         'document_date' => now()->toDateString(),
@@ -419,6 +424,10 @@ test('purchase invoices allow an optional order and preserve deliberately unlink
         ->assertSee(__('purchase_invoices.attributes.freight_amount'))
         ->assertSee(__('purchase_invoices.actions.duplicate_line'))
         ->assertSee(__('purchase_invoices.actions.delete_line'));
+
+    $fixture['user']->revokePermissionTo('purchases.prices.view');
+    $this->get(route('admin.purchases.purchase-invoices.show', $directInvoice))
+        ->assertForbidden();
 });
 
 test('supplier invoice schedule uses one date and an explicit cashbox or bank source', function (): void {

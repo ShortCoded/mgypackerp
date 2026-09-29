@@ -9,6 +9,7 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cheque;
 use Modules\HR\Models\HrArea;
@@ -1341,6 +1342,26 @@ test('authorized users can load the concrete create edit collection reporting an
         ->assertOk()->assertSee('Edit Sales Order')->assertDontSee('Customer reference / PO');
     $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.sales-invoices.edit', $invoice))
         ->assertOk()->assertSee('Correct Sales Invoice')->assertSee('Corrected quantity');
+    $invoiceLineTotal = app(NumericFormatService::class)->format($invoice->lines->first()->line_total);
+    $orderLineTotal = app(NumericFormatService::class)->format($approved->lines->first()->line_total);
+    $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.sales-orders.show', $approved))
+        ->assertOk()
+        ->assertSee('<th>Unit</th>', false)
+        ->assertSee('<th class="text-end">Unit price</th>', false)
+        ->assertSee('<th class="text-end">Discount</th>', false)
+        ->assertSee('<th class="text-end">Tax</th>', false)
+        ->assertSee('<td class="text-end fw-semibold" dir="ltr">'.$orderLineTotal.'</td>', false)
+        ->assertSee('Grand total')
+        ->assertDontSee('<th>Quality disposition</th>', false);
+    $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.sales-invoices.show', $invoice))
+        ->assertOk()
+        ->assertSee('<th>Unit</th>', false)
+        ->assertSee('<th class="text-end">Unit price</th>', false)
+        ->assertSee('<th class="text-end">Discount</th>', false)
+        ->assertSee('<th class="text-end">Tax</th>', false)
+        ->assertSee('<td class="text-end fw-semibold" dir="ltr">'.$invoiceLineTotal.'</td>', false)
+        ->assertDontSee('<th class="text-end">Delivered</th>', false)
+        ->assertSee('Grand total');
     $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.customer-receipts.create', ['invoice' => $invoice->doc_num]))
         ->assertOk()->assertSee('Customer Receipt / Collection')->assertSee('Cheque')->assertSee('Bank transfer');
     $orderPdf = $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.sales-orders.print', $draftOrder));
@@ -1351,6 +1372,19 @@ test('authorized users can load the concrete create edit collection reporting an
     expect($reportPdf->getContent())->toStartWith('%PDF-');
     $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.reports.sales.sales-orders.export'))
         ->assertOk()->assertDownload();
+
+    $fixture['user']->revokePermissionTo('customer_invoices.view_prices');
+    $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.sales-invoices.show', $invoice))
+        ->assertOk()
+        ->assertDontSee('<th class="text-end">Unit price</th>', false)
+        ->assertDontSee('<td class="text-end fw-semibold" dir="ltr">'.$invoiceLineTotal.'</td>', false)
+        ->assertDontSee('Grand total');
+    $fixture['user']->revokePermissionTo('sales_orders.view_prices');
+    $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.sales-orders.show', $approved))
+        ->assertOk()
+        ->assertDontSee('<th class="text-end">Unit price</th>', false)
+        ->assertDontSee('<td class="text-end fw-semibold" dir="ltr">'.$orderLineTotal.'</td>', false)
+        ->assertDontSee('Grand total');
 });
 
 test('every formal sales document streams canonical inline mPDF with operational price privacy', function () {

@@ -2627,6 +2627,43 @@ html[dir="rtl"] .erp-date-picker-calendar {
     background-clip: padding-box;
   }
 
+  .report-wide-card {
+    min-inline-size: 0;
+    max-inline-size: 100%;
+  }
+
+  .report-wide-card [data-report-scroll-area] {
+    overflow-x: scroll !important;
+    scrollbar-gutter: stable;
+    scrollbar-width: auto;
+  }
+
+  .report-wide-card [data-report-scroll-area] table[data-report-wide] {
+    min-width: var(--report-table-min-width) !important;
+    width: 100% !important;
+  }
+
+  .report-wide-card [data-report-scroll-area] th,
+  .report-wide-card [data-report-scroll-area] td {
+    white-space: nowrap;
+  }
+
+  .report-wide-card [data-report-scroll-area]::-webkit-scrollbar {
+    height: .75rem;
+  }
+
+  @media (min-width: 768px) {
+    .report-wide-card .dt-container > .row:first-child {
+      --bs-gutter-y: 0;
+      padding-block: .5rem !important;
+    }
+
+    .report-wide-card .dt-container > .row:first-child > .col-12.col-xl-4 {
+      flex: 0 0 33.333333%;
+      max-width: 33.333333%;
+    }
+  }
+
   .select2-container {
     max-inline-size: 100%;
     min-inline-size: 0;

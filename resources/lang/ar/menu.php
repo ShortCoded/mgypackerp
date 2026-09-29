@@ -114,7 +114,7 @@ return [
     'production_reports_overview' => 'ملخص تقارير الإنتاج',
     'production_reports_orders' => 'موقف أوامر الإنتاج',
     'production_reports_runs' => 'أداء التشغيلات والورديات',
-    'production_reports_control' => 'مراقبة إنتاج الحقن والكوفير',
+    'production_reports_control' => 'تقرير مراقبة الإنتاج',
     'production_reports_materials' => 'ترصيد خامات الإنتاج',
     'production_reports_quality' => 'جودة الإنتاج',
     'production_reports_receipts' => 'استلامات المنتج التام',

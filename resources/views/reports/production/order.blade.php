@@ -20,7 +20,7 @@
         @if($formula)<p>{{ __('production_execution.orders.bom_basis', ['quantity' => $numbers->format($formula['basis_quantity']), 'unit' => $formula['basis_unit_name'] ?? '']) }}</p>@endif
         <table dir="{{ $direction ?? 'ltr' }}" class="report-table"><thead><tr><th>#</th><th>{{ __('production_execution.fields.product') }}</th><th>{{ __('production_execution.orders.per_equivalent_unit') }}</th><th>{{ __('production_execution.orders.required_quantity') }}</th></tr></thead><tbody>
             @forelse($formula['components'] ?? [] as $index => $component)
-                <tr><td>{{ $index + 1 }}</td><td>{{ $component['product_doc_num'] }} — {{ $component['product_name'] }}</td><td dir="ltr">{{ $numbers->format($component['quantity_per_output']) }} {{ $component['unit_name'] }}</td><td dir="ltr">{{ $numbers->format(bcmul($component['quantity_per_output'], $formula['basis_quantity'], 8)) }} {{ $component['unit_name'] }}</td></tr>
+                <tr><td>{{ $index + 1 }}</td><td>{{ $component['product_doc_num'] }} — {{ $component['product_name'] }}</td><td dir="ltr">{{ $numbers->format($component['quantity_per_output']) }} {{ $component['unit_name'] }}</td><td dir="ltr">{{ $numbers->format(bcmul($component['quantity_per_output'], $formula['basis_quantity'], 8)) }} {{ $component['unit_name'] }}<br><small>{{ $numbers->format($formula['basis_quantity']) }} × {{ $numbers->format($component['quantity_per_output']) }} = {{ $numbers->format(bcmul($component['quantity_per_output'], $formula['basis_quantity'], 8)) }}</small></td></tr>
             @empty
                 <tr><td colspan="4">{{ __('production_execution.orders.no_components') }}</td></tr>
             @endforelse

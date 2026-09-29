@@ -149,7 +149,7 @@ class ProductionExpenseRequestController extends Controller
         $this->assertProductionExpense($request, $productionExpenseRequest);
         $record = $productionExpenseRequest->load([
             'run.order.company', 'run.product', 'run.stageSnapshot', 'currency', 'cashbox', 'bankAccount',
-            'expenseAccount', 'cashVoucher',
+            'expenseAccount', 'cashVoucher', 'journalEntry', 'reversalJournalEntry',
         ]);
 
         return $this->pdf->stream('reports.production.expense-request', [
@@ -186,7 +186,7 @@ class ProductionExpenseRequestController extends Controller
         $context = $this->requiredContext($request);
         $companyId = $context['company_id'];
         $branchId = $context['branch_id'];
-        $record?->loadMissing(['run.stageSnapshot', 'currency', 'cashbox', 'bankAccount', 'expenseAccount']);
+        $record?->loadMissing(['run.stageSnapshot', 'currency', 'cashbox', 'bankAccount', 'expenseAccount', 'cashVoucher', 'journalEntry', 'reversalJournalEntry']);
         $runs = ProductionRun::query()
             ->where('company_id', $companyId)
             ->where('financial_period_id', $context['financial_period_id'])
