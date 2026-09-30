@@ -109,7 +109,7 @@
         </form>
 
         @if($isView && $record && $issuableLines->isNotEmpty() && in_array($record->status, [\Modules\Production\Models\ProductionMaterialRequest::StatusApproved, \Modules\Production\Models\ProductionMaterialRequest::StatusShortage, \Modules\Production\Models\ProductionMaterialRequest::StatusPartiallyIssued], true))
-            @can('production.material_requests.issue')
+            @canany(['production.material_requests.issue', 'inventory.documents.issue'])
                 <form method="POST" action="{{ route('admin.production.material-requests.issue', $record) }}">
                     @csrf
                     <div class="card mb-3" id="production-material-partial-issue">
@@ -138,7 +138,7 @@
                         </div>
                     </div>
                 </form>
-            @endcan
+            @endcanany
         @endif
     </div>
 @endsection

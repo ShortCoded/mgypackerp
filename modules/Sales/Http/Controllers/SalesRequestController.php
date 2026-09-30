@@ -29,7 +29,12 @@ class SalesRequestController extends Controller
     public function index(Request $request): View|JsonResponse
     {
         $context = $this->context->snapshot($request);
-        $records = SalesRequest::query()->with('customer')->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
+        $records = SalesRequest::query()->with('customer')->withExists([
+            'quotations as has_quotations' => fn ($query) => $query->withTrashed(),
+            'orders as has_orders' => fn ($query) => $query->withTrashed(),
+            'directInvoices as has_direct_invoices' => fn ($query) => $query->withTrashed(),
+            'lines as has_converted_lines' => fn ($query) => $query->where('converted_quantity', '>', 0),
+        ])->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
             ->when($request->filled('status'), fn ($query) => $query->where('status', $request->string('status')->toString()))->latest('request_date')->latest('id');
         if ($request->has('draw')) {
             return app(SalesCycleDataTable::class)->json($request, $records, 'sales_requests', 'request_date');
@@ -46,7 +51,7 @@ class SalesRequestController extends Controller
     public function edit(Request $request, SalesRequest $salesRequest): View
     {
         $this->assertBranch($request, $salesRequest);
-        abort_unless(in_array($salesRequest->status, ['draft', 'rejected'], true), 422);
+        abort_unless($salesRequest->isEditable(), 422);
 
         return $this->form($request, $salesRequest);
     }
@@ -101,6 +106,13 @@ class SalesRequestController extends Controller
         abort_unless($request->user()->can('sales_requests.'.$permission), 403);
 
         return $this->saved($this->service->transition($salesRequest, $status, $request->validated('reason')));
+    }
+
+    public function reopen(SalesRequestWorkflowRequest $request, SalesRequest $salesRequest): JsonResponse
+    {
+        $this->assertBranch($request, $salesRequest);
+
+        return $this->saved($this->service->reopen($salesRequest, $request->validated('reason')));
     }
 
     public function convert(SalesRequestWorkflowRequest $request, SalesRequest $salesRequest): JsonResponse

@@ -129,7 +129,9 @@
                 @endif
 
                 @if($type === 'purchase_requisition' && $record->status === 'draft' && $isOwnBranch)
-                    @can('purchases.purchase_requisitions.delete')<form method="POST" action="{{ route('admin.purchases.purchase-requisitions.destroy', $record) }}">@csrf @method('DELETE')<button class="btn btn-outline-danger btn-sm">{{ __('Delete draft') }}</button></form>@endcan
+                    @if($record->approved_at === null && $record->closed_at === null && ! $record->hasDownstreamDocuments())
+                        @can('purchases.purchase_requisitions.delete')<form method="POST" action="{{ route('admin.purchases.purchase-requisitions.destroy', $record) }}">@csrf @method('DELETE')<button class="btn btn-outline-danger btn-sm">{{ __('Delete draft') }}</button></form>@endcan
+                    @endif
                     @can('purchases.purchase_requisitions.edit')<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-requisitions.edit', $record->doc_num) }}">{{ __('Edit') }}</a>@endcan
                     @can('purchases.purchase_requisitions.submit')
                     <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.submit', $record->doc_num) }}">@csrf<button class="btn btn-falcon-primary btn-sm">{{ __('Submit for approval') }}</button></form>
@@ -161,7 +163,7 @@
                         <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.reject', $record->doc_num) }}" class="d-flex gap-2">@csrf<x-forms.input class="form-control form-control-sm" name="rejection_reason" placeholder="{{ __('Rejection reason') }}" required /><button class="btn btn-danger btn-sm">{{ __('Reject') }}</button></form>
                         @endcan
                     @endif
-                    @if(($isOwnBranch || ($isAdministrativeBranch ?? false)) && !in_array($record->status, ['cancelled', 'closed']))
+                    @if(($isOwnBranch || ($isAdministrativeBranch ?? false)) && !in_array($record->status, ['cancelled', 'closed', 'partially_converted', 'fully_converted'], true) && $record->closed_at === null && ! $record->hasDownstreamDocuments())
                         @can('purchases.purchase_requisitions.cancel')
                         <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.cancel', $record->doc_num) }}" class="d-flex gap-2">@csrf<x-forms.input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" required /><button class="btn btn-falcon-danger btn-sm">{{ __('Cancel') }}</button></form>
                         @endcan
@@ -245,7 +247,7 @@
                     @endcan
                     @endif
                 @endif
-                @if($type === 'goods_receipt' && $record->status === 'draft' && $isOwnBranch && ! ($isAdministrativeBranch ?? false) && ! $record->hasBlockingInspection())
+                @if($type === 'goods_receipt' && $record->status === 'draft' && $isOwnBranch && ! ($isAdministrativeBranch ?? false) && ! $record->isLockedForEditing() && $record->posting_status === 'unposted' && $record->posted_at === null && $record->reversed_at === null && $record->grni_journal_entry_id === null && ! $record->hasBlockingInspection())
                     @if(in_array($record->qc_status, ['pending_inspection', 'not_required'], true) || $record->sourceInspection !== null)
                     @can('purchases.goods_receipt_notes.edit')
                     <a class="btn btn-primary btn-sm" href="{{ route('admin.purchases.goods-receipt-notes.edit', $record->doc_num) }}">{{ __('Edit draft') }}</a>
@@ -265,8 +267,8 @@
                     <form method="POST" action="{{ route('admin.purchases.goods-receipt-notes.reverse', $record->doc_num) }}" class="d-flex gap-2">@csrf<x-forms.input class="form-control form-control-sm" name="reversal_reason" placeholder="{{ __('Reversal reason') }}" required /><button class="btn btn-danger btn-sm">{{ __('Reverse receipt') }}</button></form>
                     @endcan
                 @endif
-                @if($type === 'goods_receipt' && $isOwnBranch && ! ($isAdministrativeBranch ?? false) && $record->status === 'draft' && $record->posting_status === 'unposted' && $record->qc_status === 'pending_inspection')
-                    @can('purchases.goods_receipt_notes.edit')
+                @if($type === 'goods_receipt' && $isOwnBranch && ! ($isAdministrativeBranch ?? false) && $record->status === 'draft' && ! $record->is_closed && $record->closed_at === null && ! $record->approved && $record->approved_at === null && $record->posting_status === 'unposted' && $record->posted_at === null && $record->reversed_at === null && $record->grni_journal_entry_id === null && $record->qc_status === 'pending_inspection')
+                    @can('purchases.goods_receipt_notes.cancel')
                     <form method="POST" action="{{ route('admin.purchases.goods-receipt-notes.cancel', $record->doc_num) }}" class="d-flex gap-2">
                         @csrf
                         <x-forms.input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" required />

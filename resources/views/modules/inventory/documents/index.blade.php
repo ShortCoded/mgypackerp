@@ -8,6 +8,11 @@
             <div class="row flex-between-center g-2">
                 <div class="col-auto"><h5 class="mb-0">{{ __('inventory.movements.title') }}</h5></div>
                 <div class="col-auto ms-auto">
+                    @can('inventory.documents.view')
+                        @canany(['production.material_requests.issue', 'inventory.documents.issue'])
+                            <a class="btn btn-falcon-primary btn-sm me-2" href="{{ route('admin.inventory.documents.production-material-issue.create') }}"><span class="fas fa-dolly me-1"></span>{{ __('inventory.movements.production_material_issue_action') }}</a>
+                        @endcanany
+                    @endcan
                     @can('inventory.documents.view_trashed')<div class="btn-group btn-group-sm me-2"><a class="btn btn-falcon-default" href="{{ route('admin.inventory.documents.index') }}">{{ __('production_execution.actions.active') }}</a><a class="btn btn-falcon-default" href="{{ route('admin.inventory.documents.index', ['trash_filter' => 'trashed']) }}">{{ __('production_execution.actions.deleted') }}</a><a class="btn btn-falcon-default" href="{{ route('admin.inventory.documents.index', ['trash_filter' => 'all']) }}">{{ __('production_execution.actions.all') }}</a></div>@endcan
                     @can('inventory.documents.create')
                         <x-buttons.add-record :href="route('admin.inventory.documents.create')" permission="inventory.documents.create" />

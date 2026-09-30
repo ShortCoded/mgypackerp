@@ -225,4 +225,58 @@ class InventoryReservationService
             }
         });
     }
+
+    public function releaseForMaterialRequestLine(ProductionMaterialRequestLine $line, string $reason): void
+    {
+        DB::transaction(function () use ($line, $reason): void {
+            if (trim($reason) === '') {
+                throw new DomainException(__('open_documents.validation.reason_required'));
+            }
+
+            $requirement = ProductionMaterialRequirement::query()->lockForUpdate()
+                ->findOrFail($line->production_material_requirement_id);
+            $reservations = InventoryReservation::query()
+                ->where('production_material_request_line_id', $line->getKey())
+                ->lockForUpdate()
+                ->get();
+            $reserved = '0.00000000';
+            foreach ($reservations as $reservation) {
+                if ((int) $reservation->production_material_requirement_id !== (int) $line->production_material_requirement_id
+                    || (int) $reservation->production_run_id !== (int) $line->request->production_run_id
+                    || bccomp((string) $reservation->consumed_quantity, '0', 8) !== 0) {
+                    throw new DomainException(__('open_documents.messages.skipped_blocked', ['count' => 1]));
+                }
+                if ($reservation->status === InventoryReservation::StatusReleased
+                    && bccomp((string) $reservation->remaining_quantity, '0', 8) === 0) {
+                    continue;
+                }
+                if ($reservation->status !== InventoryReservation::StatusActive
+                    || bccomp((string) $reservation->released_quantity, '0', 8) !== 0) {
+                    throw new DomainException(__('open_documents.messages.skipped_blocked', ['count' => 1]));
+                }
+                $reserved = bcadd($reserved, (string) $reservation->quantity, 8);
+            }
+
+            if (bccomp($reserved, (string) $line->reserved_quantity, 8) !== 0
+                || bccomp((string) $requirement->reserved_quantity, $reserved, 8) < 0) {
+                throw new DomainException(__('open_documents.messages.skipped_blocked', ['count' => 1]));
+            }
+
+            foreach ($reservations as $reservation) {
+                if ($reservation->status === InventoryReservation::StatusReleased) {
+                    continue;
+                }
+                $reservation->forceFill([
+                    'released_quantity' => $reservation->quantity,
+                    'status' => InventoryReservation::StatusReleased,
+                    'released_by' => auth()->id(),
+                    'released_at' => now(),
+                    'release_reason' => trim($reason),
+                ])->save();
+            }
+            $requirement->forceFill([
+                'reserved_quantity' => bcsub((string) $requirement->reserved_quantity, $reserved, 8),
+            ])->save();
+        }, 3);
+    }
 }

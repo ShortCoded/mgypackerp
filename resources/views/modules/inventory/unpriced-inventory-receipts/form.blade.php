@@ -379,7 +379,7 @@
                             </button>
                         @endcan
                     @endif
-                    @if(! $record->isClosed() && ! $record->isCancelled())
+                    @if($record->status === \Modules\Inventory\Models\UnpricedInventoryReceipt::StatusDraft && ! $record->isApproved() && $record->approved_at === null && ! $record->isClosed() && ! $record->isCancelled() && $record->posting_status === 'unposted')
                         @can('inventory.unpriced_inventory_receipts.cancel')
                             <button class="btn btn-falcon-default text-warning btn-sm js-cancel-unpriced-inventory-receipt me-2" type="button" data-url="{{ route($routePrefix.'.cancel', $record->doc_num) }}">
                                 <span class="fas fa-ban me-1"></span>{{ __('inventory.unpriced_inventory_receipts.actions.cancel') }}

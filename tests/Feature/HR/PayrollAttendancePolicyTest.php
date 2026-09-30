@@ -13,6 +13,7 @@ use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrEmployeeServiceRequest;
 use Modules\HR\Models\HrLeaveType;
 use Modules\HR\Models\HrPayrollAttendancePolicy;
+use Modules\HR\Models\HrShift;
 use Modules\HR\Services\PayrollAttendancePolicyService;
 use Modules\HR\Services\PayrollCalculationService;
 use Spatie\Permission\Models\Permission;
@@ -167,8 +168,8 @@ test('attendance payroll effects are safely disabled when no policy exists and o
     seedPayrollAttendanceEvidence($fixture);
 
     $result = app(PayrollCalculationService::class)->calculate($fixture['company']->getKey(), [
-        'period_start' => '2026-12-30',
-        'period_end' => '2027-01-02',
+        'period_start' => '2026-12-01',
+        'period_end' => '2026-12-31',
         'branch_doc_num' => $fixture['branch']->doc_num,
     ]);
 
@@ -183,8 +184,8 @@ test('attendance payroll effects are safely disabled when no policy exists and o
     expect($input['payroll_attendance_effects']['policies'])->toBe([])
         ->and($input['payroll_attendance_effects']['summary'])->toMatchArray([
             'absence_days' => 1,
-            'paid_leave_days' => 1,
-            'unpaid_leave_days' => 1,
+            'paid_leave_days' => 0,
+            'unpaid_leave_days' => 0,
         ]);
 });
 
@@ -202,6 +203,7 @@ test('versioned policy deducts absence late early and unpaid leave exactly once 
         'deduct_late' => true,
         'deduct_early_leave' => true,
         'deduct_unpaid_leave' => true,
+        'monthly_partial_method' => HrPayrollAttendancePolicy::MonthlyFixedDivisor,
         'salary_day_divisor' => 30,
         'standard_day_minutes' => 480,
         'deduction_payroll_item_code' => 'ATTENDANCE-DED',
@@ -220,9 +222,9 @@ test('versioned policy deducts absence late early and unpaid leave exactly once 
     ]);
 
     expect($first)->toMatchArray([
-        'gross' => '9200.0000',
+        'gross' => '1400.0000',
         'deductions' => '656.2500',
-        'payable' => '8543.7500',
+        'payable' => '743.7500',
     ])->and($second)->toMatchArray($first)
         ->and(DB::table('hr_payslip_items')->where('source_type', 'attendance_policy')->count())->toBe(4)
         ->and(DB::table('hr_payslip_items')->where('source_type', 'approved_overtime')->count())->toBe(1)
@@ -307,6 +309,7 @@ test('latest applicable branch policy wins and half cent attendance effects roun
         'branch_scope_key' => 'branch:'.$fixture['branch']->getKey(),
         'effective_from' => '2027-01-01',
         'deduct_late' => false,
+        'monthly_partial_method' => HrPayrollAttendancePolicy::MonthlyFixedDivisor,
         'salary_day_divisor' => 1,
         'standard_day_minutes' => 200,
         'deduction_payroll_item_code' => 'ATTENDANCE-DED',
@@ -318,6 +321,7 @@ test('latest applicable branch policy wins and half cent attendance effects roun
         'branch_scope_key' => 'branch:'.$fixture['branch']->getKey(),
         'effective_from' => '2027-02-01',
         'deduct_late' => true,
+        'monthly_partial_method' => HrPayrollAttendancePolicy::MonthlyFixedDivisor,
         'salary_day_divisor' => 1,
         'standard_day_minutes' => 200,
         'deduction_payroll_item_code' => 'ATTENDANCE-DED',
@@ -473,6 +477,12 @@ test('payroll attendance policy http workflow enforces company and branch scope'
         'branch_doc_num' => $fixture['branch']->doc_num,
         'effective_from' => '2026-01-01',
         'deduct_absence' => '1',
+        'monthly_partial_method' => HrPayrollAttendancePolicy::MonthlyCalendarDays,
+        'weekly_accrual_method' => HrPayrollAttendancePolicy::WeeklyCalendarDays,
+        'daily_accrual_method' => HrPayrollAttendancePolicy::DailyFinalizedAttendance,
+        'hourly_accrual_method' => HrPayrollAttendancePolicy::HourlyFinalizedMinutes,
+        'shift_accrual_method' => HrPayrollAttendancePolicy::ShiftFinalizedAttendance,
+        'piece_accrual_method' => HrPayrollAttendancePolicy::PieceApprovedOutput,
         'salary_day_divisor' => 30,
         'standard_day_minutes' => 480,
         'deduction_payroll_item_code' => 'ATTENDANCE-DED',
@@ -492,6 +502,9 @@ test('payroll attendance policy http workflow enforces company and branch scope'
         'company_id' => $fixture['company']->getKey(),
         'branch_id' => $fixture['branch']->getKey(),
         'deduct_absence' => true,
+        'monthly_partial_method' => HrPayrollAttendancePolicy::MonthlyCalendarDays,
+        'weekly_accrual_method' => HrPayrollAttendancePolicy::WeeklyCalendarDays,
+        'piece_accrual_method' => HrPayrollAttendancePolicy::PieceApprovedOutput,
     ]);
 
     $this->actingAs($actor)->withSession($session)
@@ -526,16 +539,215 @@ test('standard payroll item setup fills missing items without changing existing 
         ->toThrow(DomainException::class, __('hr_payroll_policies.validation.catalog_item_conflict', ['code' => 'PAYROLL-TAX']));
 });
 
-test('a salary assignment beginning within a payroll period cannot pay a full monthly salary', function (): void {
+test('accrual policy migration refuses rollback after a rule is configured', function (): void {
+    $fixture = payrollAttendancePolicyFixture();
+    HrPayrollAttendancePolicy::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_scope_key' => 'branch:'.$fixture['branch']->getKey(),
+        'effective_from' => '2026-01-01',
+        'monthly_partial_method' => HrPayrollAttendancePolicy::MonthlyCalendarDays,
+        'salary_day_divisor' => 30,
+        'standard_day_minutes' => 480,
+        'status' => 'active',
+    ]);
+
+    $migration = require base_path('modules/HR/Database/Migrations/2026_09_30_120000_add_accrual_rules_to_hr_payroll_attendance_policies_table.php');
+    expect(fn () => $migration->down())->toThrow(RuntimeException::class);
+    expect(DB::table('hr_payroll_attendance_policies')->whereNotNull('monthly_partial_method')->count())->toBe(1);
+});
+
+test('a salary assignment beginning within a payroll period uses the approved proration rule and snapshots it', function (): void {
     $fixture = payrollAttendancePolicyFixture();
     DB::table('hr_employee_salary_assignments')->where('employee_id', $fixture['employee']->getKey())->update([
         'effective_from' => '2026-09-15',
     ]);
+    $policy = HrPayrollAttendancePolicy::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_scope_key' => 'branch:'.$fixture['branch']->getKey(),
+        'effective_from' => '2026-01-01',
+        'monthly_partial_method' => HrPayrollAttendancePolicy::MonthlyCalendarDays,
+        'salary_day_divisor' => 30,
+        'standard_day_minutes' => 480,
+        'status' => 'active',
+    ]);
+
+    $result = app(PayrollCalculationService::class)->calculate($fixture['company']->getKey(), [
+        'period_start' => '2026-09-01',
+        'period_end' => '2026-09-30',
+        'branch_doc_num' => $fixture['branch']->doc_num,
+    ]);
+    $basicItem = DB::table('hr_payslip_items')->where('source_type', 'salary_assignment')->where('amount', '4800.0000')->sole();
+    $snapshot = json_decode($basicItem->source_snapshot, true, 512, JSON_THROW_ON_ERROR);
+
+    expect($result['gross'])->toBe('4800.0000')
+        ->and(data_get($snapshot, 'accrual.method'))->toBe(HrPayrollAttendancePolicy::MonthlyCalendarDays)
+        ->and(data_get($snapshot, 'accrual.evidence.accrued_days'))->toBe(16)
+        ->and(data_get($snapshot, 'accrual.policy_snapshots.0.id'))->toBe($policy->getKey());
+});
+
+test('a short payroll run is prorated and overlapping payroll periods are rejected', function (): void {
+    $fixture = payrollAttendancePolicyFixture();
+    HrPayrollAttendancePolicy::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_scope_key' => 'branch:'.$fixture['branch']->getKey(),
+        'effective_from' => '2026-01-01',
+        'monthly_partial_method' => HrPayrollAttendancePolicy::MonthlyCalendarDays,
+        'salary_day_divisor' => 30,
+        'standard_day_minutes' => 480,
+        'status' => 'active',
+    ]);
+
+    $shortRun = app(PayrollCalculationService::class)->calculate($fixture['company']->getKey(), [
+        'period_start' => '2026-09-01',
+        'period_end' => '2026-09-15',
+        'branch_doc_num' => $fixture['branch']->doc_num,
+    ]);
+    expect($shortRun['gross'])->toBe('4500.0000');
 
     expect(fn () => app(PayrollCalculationService::class)->calculate($fixture['company']->getKey(), [
         'period_start' => '2026-09-01',
         'period_end' => '2026-09-30',
         'branch_doc_num' => $fixture['branch']->doc_num,
-    ]))->toThrow(DomainException::class, __('hr_payroll.messages.partial_period_salary_requires_policy', ['employee' => $fixture['employee']->doc_num]));
-    expect(DB::table('hr_payslips')->count())->toBe(0);
+    ]))->toThrow(DomainException::class, __('hr_payroll.messages.overlapping_period'));
+    expect(DB::table('hr_payroll_periods')->where('company_id', $fixture['company']->getKey())->count())->toBe(1);
+});
+
+test('an assignment ending mid-month and a recorded employee departure prorate the final salary', function (): void {
+    $fixture = payrollAttendancePolicyFixture();
+    HrPayrollAttendancePolicy::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_scope_key' => 'branch:'.$fixture['branch']->getKey(),
+        'effective_from' => '2026-01-01',
+        'monthly_partial_method' => HrPayrollAttendancePolicy::MonthlyCalendarDays,
+        'salary_day_divisor' => 30,
+        'standard_day_minutes' => 480,
+        'status' => 'active',
+    ]);
+    DB::table('hr_employee_salary_assignments')->where('employee_id', $fixture['employee']->getKey())
+        ->update(['effective_to' => '2026-09-15']);
+    $fixture['employee']->forceFill(['status' => 'left', 'termination_date' => '2026-09-15'])->save();
+    $monthRun = app(PayrollCalculationService::class)->calculate($fixture['company']->getKey(), [
+        'period_start' => '2026-09-01',
+        'period_end' => '2026-09-30',
+        'branch_doc_num' => $fixture['branch']->doc_num,
+    ]);
+    expect($monthRun['gross'])->toBe('4500.0000');
+});
+
+test('partial monthly pay fails closed without a rule and salary changes require a split run', function (): void {
+    $fixture = payrollAttendancePolicyFixture();
+    DB::table('hr_employee_salary_assignments')->where('employee_id', $fixture['employee']->getKey())->update([
+        'effective_from' => '2026-09-15',
+    ]);
+    $payload = [
+        'period_start' => '2026-09-01',
+        'period_end' => '2026-09-30',
+        'branch_doc_num' => $fixture['branch']->doc_num,
+    ];
+
+    expect(fn () => app(PayrollCalculationService::class)->calculate($fixture['company']->getKey(), $payload))
+        ->toThrow(DomainException::class, __('hr_payroll.messages.accrual_policy_required', [
+            'employee' => $fixture['employee']->doc_num,
+            'pay_basis' => 'monthly_salary',
+            'date' => '2026-09-15',
+        ]));
+
+    HrPayrollAttendancePolicy::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_scope_key' => 'branch:'.$fixture['branch']->getKey(),
+        'effective_from' => '2026-01-01',
+        'monthly_partial_method' => HrPayrollAttendancePolicy::MonthlyCalendarDays,
+        'salary_day_divisor' => 30,
+        'standard_day_minutes' => 480,
+        'status' => 'active',
+    ]);
+    DB::table('hr_employee_salary_assignments')->insert([
+        'employee_id' => $fixture['employee']->getKey(),
+        'effective_from' => '2026-01-01',
+        'effective_to' => '2026-09-14',
+        'basic_salary' => '8000.0000',
+        'components' => json_encode(['items' => []], JSON_THROW_ON_ERROR),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    expect(fn () => app(PayrollCalculationService::class)->calculate($fixture['company']->getKey(), $payload))
+        ->toThrow(DomainException::class, __('hr_payroll.messages.multiple_salary_assignments_require_split', [
+            'employee' => $fixture['employee']->doc_num,
+        ]))
+        ->and(DB::table('hr_payslips')->count())->toBe(0);
+});
+
+test('weekly daily hourly and shift pay use approved evidence while piece pay fails closed without a source', function (): void {
+    $fixture = payrollAttendancePolicyFixture();
+    $shift = HrShift::query()->create([
+        'doc_number' => 8810,
+        'doc_num' => 'PAY-POL-SHIFT-08810',
+        'name' => 'Payroll evidence shift',
+        'start_time' => '08:00:00',
+        'end_time' => '16:00:00',
+        'break_minutes' => 0,
+        'crosses_midnight' => false,
+        'status' => 'active',
+    ]);
+    HrPayrollAttendancePolicy::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_scope_key' => 'branch:'.$fixture['branch']->getKey(),
+        'effective_from' => '2026-01-01',
+        'weekly_accrual_method' => HrPayrollAttendancePolicy::WeeklyCalendarDays,
+        'daily_accrual_method' => HrPayrollAttendancePolicy::DailyFinalizedAttendance,
+        'hourly_accrual_method' => HrPayrollAttendancePolicy::HourlyFinalizedMinutes,
+        'shift_accrual_method' => HrPayrollAttendancePolicy::ShiftFinalizedAttendance,
+        'piece_accrual_method' => HrPayrollAttendancePolicy::PieceApprovedOutput,
+        'salary_day_divisor' => 30,
+        'standard_day_minutes' => 480,
+        'status' => 'active',
+    ]);
+    DB::table('hr_attendance_daily_records')->insert([
+        'employee_id' => $fixture['employee']->getKey(),
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'shift_id' => $shift->getKey(),
+        'work_date' => '2026-09-01',
+        'check_in_at' => '2026-09-01 08:00:00',
+        'check_out_at' => '2026-09-01 16:00:00',
+        'worked_minutes' => 480,
+        'status' => 'present',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+
+    foreach ([
+        'weekly_wage' => ['weekly_wage' => '700.0000', 'expected' => '700.0000'],
+        'daily_wage' => ['daily_wage' => '300.0000', 'expected' => '300.0000'],
+        'hourly_wage' => ['hourly_wage' => '50.0000', 'expected' => '400.0000'],
+        'shift_wage' => ['shift_wage' => '600.0000', 'expected' => '600.0000'],
+    ] as $basis => $case) {
+        $fixture['employee']->update(['pay_basis' => $basis, array_key_first($case) => $case[array_key_first($case)]]);
+        $result = app(PayrollCalculationService::class)->calculate($fixture['company']->getKey(), [
+            'period_start' => '2026-09-01',
+            'period_end' => '2026-09-07',
+            'branch_doc_num' => $fixture['branch']->doc_num,
+        ]);
+        $snapshot = json_decode((string) DB::table('hr_payslip_items')->where('payroll_item_id', DB::table('hr_payroll_items')->where('code', 'BASIC')->value('id'))->value('source_snapshot'), true, 512, JSON_THROW_ON_ERROR);
+
+        expect($result['gross'])->toBe($case['expected'])
+            ->and(data_get($snapshot, 'accrual.pay_basis'))->toBe($basis);
+    }
+
+    $fixture['employee']->update(['pay_basis' => 'piece_rate', 'piece_rate' => '10.0000']);
+    expect(fn () => app(PayrollCalculationService::class)->calculate($fixture['company']->getKey(), [
+        'period_start' => '2026-09-01',
+        'period_end' => '2026-09-07',
+        'branch_doc_num' => $fixture['branch']->doc_num,
+    ]))->toThrow(DomainException::class, __('hr_payroll.messages.accrual_evidence_unavailable', [
+        'employee' => $fixture['employee']->doc_num,
+        'pay_basis' => 'piece_rate',
+    ]));
 });

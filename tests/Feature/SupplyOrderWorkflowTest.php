@@ -140,6 +140,7 @@ test('supply order drives partial warehouse receipts without duplicate inventory
         $fixture['company']->id,
         $fixture['period']->id,
     )->pluck('document')->all())->not->toContain($firstInspection->doc_num);
+    expect(fn () => $supplyOrders->cancel($supplyOrder->fresh(), 'A linked receipt is still a draft.'))->toThrow(DomainException::class);
     $firstReceipt = $receiving->postReceipt($firstReceipt->fresh());
 
     expect($supplyOrder->fresh()->status)->toBe(SupplyOrder::StatusPartiallyReceived)

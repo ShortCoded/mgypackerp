@@ -331,6 +331,159 @@ test('a run material request issues a linked warehouse document and a paid expen
     expect($bankBalances['rows']->sole()['balance'])->toBe('0.0000');
 });
 
+test('inventory movements issue an approved production material request through the same linked workflow', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $fixture['branch']->update(['type' => Branch::TypeFactory]);
+    $run = manufacturingIntegrityRun($fixture)['run'];
+    $session = manufacturingIntegritySession($fixture);
+    request()->setLaravelSession(app('session.store'));
+    request()->session()->put($session);
+
+    foreach (['inventory.documents.view', 'inventory.documents.issue', 'inventory.documents.print'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $fixture['user']->givePermissionTo($permission);
+    }
+
+    $requirement = $run->requirements->firstOrFail();
+    $materials = app(ProductionMaterialRequestService::class);
+    $materialRequest = $materials->create($run, $fixture['store']->getKey(), [$requirement->getKey() => '2']);
+    $materials->approve($materialRequest);
+    $materialRequest->refresh()->load('lines');
+    $requestLine = $materialRequest->lines->firstOrFail();
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.inventory.documents.index'))
+        ->assertOk()
+        ->assertSee(route('admin.inventory.documents.production-material-issue.create'), false);
+    $this->getJson(route('admin.inventory.documents.select2.production-material-requests', ['q' => $materialRequest->doc_num]))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', $materialRequest->doc_num);
+    $this->getJson(route('admin.inventory.documents.select2.production-material-requests', ['q' => $run->run_number]))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', $materialRequest->doc_num);
+    $this->get(route('admin.inventory.documents.production-material-issue.create', ['material_request' => $materialRequest->doc_num]))
+        ->assertOk()
+        ->assertSee($run->run_number)
+        ->assertSee($materialRequest->doc_num)
+        ->assertSee('lines[0][request_line_id]', false);
+
+    $firstIssuePayload = [
+        '_submission_token' => (string) Str::uuid(),
+        'return_to' => 'inventory_document',
+        'lines' => [['request_line_id' => $requestLine->getKey(), 'quantity' => '1']],
+    ];
+    $issueResponse = $this->post(route('admin.production.material-requests.issue', $materialRequest), $firstIssuePayload);
+
+    $firstDocument = InventoryDocument::query()->where('production_material_request_id', $materialRequest->getKey())->sole();
+    $issueResponse->assertRedirect(route('admin.inventory.documents.show', $firstDocument));
+    expect($materialRequest->fresh()->status)->toBe(ProductionMaterialRequest::StatusPartiallyIssued);
+    $this->getJson(route('admin.inventory.documents.select2.production-material-requests', ['q' => $materialRequest->doc_num]))
+        ->assertOk()
+        ->assertJsonPath('results.0.id', $materialRequest->doc_num);
+
+    $secondResponse = $this->post(route('admin.production.material-requests.issue', $materialRequest), [
+        '_submission_token' => (string) Str::uuid(),
+        'return_to' => 'inventory_document',
+        'lines' => [['request_line_id' => $requestLine->getKey(), 'quantity' => '1']],
+    ]);
+    $document = InventoryDocument::query()->where('production_material_request_id', $materialRequest->getKey())->latest('id')->firstOrFail();
+    $secondResponse->assertRedirect(route('admin.inventory.documents.show', $document));
+    expect($materialRequest->fresh()->status)->toBe(ProductionMaterialRequest::StatusIssued)
+        ->and(InventoryDocument::query()->where('production_material_request_id', $materialRequest->getKey())->count())->toBe(2)
+        ->and($document->status)->toBe(InventoryDocument::StatusPosted)
+        ->and($document->production_run_id)->toBe($run->getKey())
+        ->and($document->lines->sole()->production_material_request_line_id)->toBe($requestLine->getKey());
+    $this->get(route('admin.inventory.documents.show', $document))
+        ->assertOk()
+        ->assertSee($materialRequest->doc_num)
+        ->assertDontSee(route('admin.production.material-requests.show', $materialRequest), false)
+        ->assertDontSee(route('admin.production.runs.show', $run), false);
+    $this->get(route('admin.inventory.documents.print', $document))
+        ->assertOk()
+        ->assertHeader('content-type', 'application/pdf');
+    $this->getJson(route('admin.inventory.documents.select2.production-material-requests', ['q' => $materialRequest->doc_num]))
+        ->assertOk()
+        ->assertJsonCount(0, 'results');
+
+    $fixture['user']->revokePermissionTo('inventory.documents.issue');
+    $this->post(route('admin.production.material-requests.issue', $materialRequest), $firstIssuePayload)
+        ->assertForbidden();
+    expect(InventoryDocument::query()->where('production_material_request_id', $materialRequest->getKey())->count())->toBe(2);
+    $this->get(route('admin.inventory.documents.production-material-issue.create'))->assertForbidden();
+    $this->getJson(route('admin.inventory.documents.select2.production-material-requests'))->assertForbidden();
+    $this->withHeader('Idempotency-Key', (string) Str::uuid())
+        ->postJson(route('admin.production.material-requests.issue', $materialRequest), [])
+        ->assertForbidden();
+});
+
+test('an approved material request reopens from Tools only after its own reservations can be released', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $fixture['branch']->update(['type' => Branch::TypeFactory]);
+    $run = manufacturingIntegrityRun($fixture)['run'];
+    $session = manufacturingIntegritySession($fixture);
+    request()->setLaravelSession(app('session.store'));
+    request()->session()->put($session);
+
+    $permissions = [
+        'tools.open_documents.view', 'tools.open_documents.execute',
+        'production.material_requests.reopen', 'production.material_requests.edit',
+    ];
+    foreach ($permissions as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $fixture['user']->givePermissionTo($permissions);
+    $this->actingAs($fixture['user'])->withSession($session);
+
+    $requirement = $run->requirements->firstOrFail();
+    $requests = app(ProductionMaterialRequestService::class);
+    $materialRequest = $requests->create($run, $fixture['store']->getKey(), [$requirement->getKey() => '2']);
+    $requests->approve($materialRequest);
+    $line = $materialRequest->fresh()->lines->sole();
+    $reservation = InventoryReservation::query()->where('production_material_request_line_id', $line->getKey())->sole();
+
+    expect($requirement->fresh()->reserved_quantity)->toBe('2.00000000');
+    $this->get(route('admin.tools.open-documents.index'))->assertOk()
+        ->assertSee('value="production_material_requests"', false);
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'production_material_requests',
+        'from_number' => $materialRequest->doc_number,
+        'to_number' => $materialRequest->doc_number,
+        'reason' => 'Correct the requested raw material quantity.',
+    ])->assertOk()->assertJsonPath('summary.opened', 1);
+
+    expect($materialRequest->fresh()->status)->toBe(ProductionMaterialRequest::StatusSubmitted)
+        ->and($materialRequest->fresh()->approved_at)->not->toBeNull()
+        ->and($line->fresh()->reserved_quantity)->toBe('0.00000000')
+        ->and($requirement->fresh()->reserved_quantity)->toBe('0.00000000')
+        ->and($reservation->fresh()->status)->toBe(InventoryReservation::StatusReleased)
+        ->and($reservation->fresh()->remaining_quantity)->toBe('0.00000000');
+    expect(fn () => $requests->delete($materialRequest->fresh()))->toThrow(DomainException::class);
+    $this->get(route('admin.production.material-requests.edit', $materialRequest))->assertOk();
+
+    $requests->approve($materialRequest->fresh());
+    expect($requirement->fresh()->reserved_quantity)->toBe('2.00000000')
+        ->and(InventoryReservation::query()->where('production_material_request_line_id', $line->getKey())
+            ->where('status', InventoryReservation::StatusActive)->count())->toBe(1);
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'production_material_requests',
+        'from_number' => $materialRequest->doc_number,
+        'to_number' => $materialRequest->doc_number,
+        'reason' => 'Correct the request again before any issue.',
+    ])->assertOk()->assertJsonPath('summary.opened', 1);
+    expect($requirement->fresh()->reserved_quantity)->toBe('0.00000000')
+        ->and(InventoryReservation::query()->where('production_material_request_line_id', $line->getKey())
+            ->where('status', InventoryReservation::StatusReleased)->count())->toBe(2);
+    $requests->approve($materialRequest->fresh());
+    $requests->issue($materialRequest->fresh());
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'production_material_requests',
+        'from_number' => $materialRequest->doc_number,
+        'to_number' => $materialRequest->doc_number,
+        'reason' => 'Unsafe after warehouse issue.',
+    ])->assertOk()->assertJsonPath('summary.opened', 0)
+        ->assertJsonPath('summary.skipped_blocked', 1);
+});
+
 test('material issue consumes only its own request reservation and additional issue does not reserve twice', function (): void {
     $fixture = manufacturingInventoryFixture();
     $fixture['branch']->update(['type' => Branch::TypeFactory]);
@@ -1047,6 +1200,8 @@ test('the canonical manufacturing cycle reconciles physical stock, reservations,
     expect($order->status)->toBe(ProductionOrder::StatusShortClosed)
         ->and($order->short_close_reason)->toBe('Balance no longer required')
         ->and($secondRun->fresh()->status)->toBe(ProductionRun::StatusCancelled);
+    expect(fn () => $cycle->shortCloseOrder($order->fresh(), 'A second closure is not permitted'))
+        ->toThrow(DomainException::class, __('An open production order and a short-close reason are required.'));
 });
 
 test('production quality runs the controlled request receive inspect review close and reinspection lifecycle', function (): void {
@@ -2093,6 +2248,28 @@ test('inventory status transfers remain physically balanced and reject negative 
         ->and(InventoryTransaction::query()->count())->toBe($transactionCount);
 });
 
+test('stock count deletion rejects stale drafts and historical approval markers', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $service = app(StockCountService::class);
+    $count = $service->createSnapshot([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'stock_status' => InventoryTransaction::StatusAvailable,
+        'product_ids' => [$fixture['raw']->getKey()],
+    ]);
+    $staleDraft = $count->fresh();
+    $count->forceFill(['status' => StockCount::StatusApproved, 'approved_at' => now()])->save();
+
+    expect(fn () => $service->delete($staleDraft))->toThrow(DomainException::class)
+        ->and($count->fresh()->trashed())->toBeFalse();
+
+    $count->forceFill(['status' => StockCount::StatusDraft])->save();
+    expect($count->fresh()->isEditable())->toBeFalse();
+    expect(fn () => $service->delete($count))->toThrow(DomainException::class);
+});
+
 test('stock count web workflow saves master detail lines and approves the count', function () {
     $fixture = manufacturingInventoryFixture();
     $permissions = [
@@ -2593,6 +2770,147 @@ test('generic inventory receipt cannot accept finished output without production
     expect(InventoryDocument::query()->where('document_type', InventoryDocument::TypeReceipt)->count())->toBe(0);
 });
 
+test('posted legacy receipt can be priced once with a source reference and an accounting journal', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $receipt = app(InventoryMovementService::class)->createAndPost([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'document_type' => InventoryDocument::TypeReceipt,
+        'document_date' => now()->toDateString(),
+        'movement_reason' => 'Legacy receipt awaiting valuation',
+    ], [[
+        'product_id' => $fixture['raw']->getKey(),
+        'quantity' => '3',
+    ]]);
+    $line = $receipt->lines->sole();
+    $transaction = $receipt->transactions->sole();
+    $layer = InventoryReceiptLayer::query()->where('receipt_transaction_id', $transaction->getKey())->sole();
+    expect($receipt->journal_entry_id)->toBeNull()
+        ->and($transaction->unit_cost)->toBeNull()
+        ->and($layer->unit_cost)->toBeNull();
+
+    foreach (['inventory.documents.view', 'inventory.documents.post', 'inventory.documents.receive'] as $ability) {
+        Permission::findOrCreate($ability, 'web');
+        $fixture['user']->givePermissionTo($ability);
+    }
+    $session = [
+        OperatingContextService::CompanyIdKey => $fixture['company']->getKey(),
+        OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
+        OperatingContextService::BranchIdKey => $fixture['branch']->getKey(),
+        OperatingContextService::BranchDocNumKey => $fixture['branch']->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
+    ];
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.inventory.documents.show', $receipt))
+        ->assertOk()
+        ->assertSee(__('inventory.movements.receipt_pricing_title'));
+    $payload = [
+        'source_reference' => 'Approved cost source QA-001',
+        'unit_costs' => [$line->getKey() => '7.2500'],
+    ];
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.inventory.documents.price-receipt', $receipt), $payload)
+        ->assertRedirect(route('admin.inventory.documents.show', $receipt));
+
+    expect($line->fresh()->unit_cost)->toBe('7.25000000')
+        ->and($line->fresh()->total_cost)->toBe('21.75000000')
+        ->and($transaction->fresh()->unit_cost)->toBe('7.25000000')
+        ->and($layer->fresh()->unit_cost)->toBe('7.25000000')
+        ->and($receipt->fresh()->journal_entry_id)->not->toBeNull()
+        ->and(DB::table('activity_log')->where('event', 'receipt_pricing')->count())->toBe(1);
+
+    $journalTotals = DB::table('journal_entry_lines')
+        ->where('journal_entry_id', $receipt->fresh()->journal_entry_id)
+        ->selectRaw('sum(debit_amount) as debit, sum(credit_amount) as credit')
+        ->first();
+    expect(bccomp((string) $journalTotals->debit, '21.7500', 4))->toBe(0)
+        ->and(bccomp((string) $journalTotals->credit, '21.7500', 4))->toBe(0)
+        ->and(bccomp((string) $transaction->fresh()->total_cost, (string) $journalTotals->debit, 8))->toBe(0);
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.inventory.documents.price-receipt', $receipt), $payload)
+        ->assertSessionHasErrors('document');
+    expect(DB::table('activity_log')->where('event', 'receipt_pricing')->count())->toBe(1);
+});
+
+test('legacy receipt cost correction rejects a fractional journal residual without changing stock', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $receipt = app(InventoryMovementService::class)->createAndPost([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'document_type' => InventoryDocument::TypeReceipt,
+        'document_date' => now()->toDateString(),
+    ], [['product_id' => $fixture['raw']->getKey(), 'quantity' => '3']]);
+    $line = $receipt->lines->sole();
+
+    foreach (['inventory.documents.post', 'inventory.documents.receive'] as $ability) {
+        Permission::findOrCreate($ability, 'web');
+        $fixture['user']->givePermissionTo($ability);
+    }
+    $this->actingAs($fixture['user'])->withSession([
+        OperatingContextService::CompanyIdKey => $fixture['company']->getKey(),
+        OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
+        OperatingContextService::BranchIdKey => $fixture['branch']->getKey(),
+        OperatingContextService::BranchDocNumKey => $fixture['branch']->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
+    ])->post(route('admin.inventory.documents.price-receipt', $receipt), [
+        'source_reference' => 'Approved cost source QA-002',
+        'unit_costs' => [$line->getKey() => '0.33333333'],
+    ])->assertSessionHasErrors('document');
+
+    expect($line->fresh()->unit_cost)->toBeNull()
+        ->and($receipt->fresh()->journal_entry_id)->toBeNull()
+        ->and(InventoryReceiptLayer::query()->where('receipt_transaction_id', $receipt->transactions->sole()->getKey())->sole()->unit_cost)->toBeNull();
+});
+
+test('legacy receipt cost correction rejects later stock movement atomically', function (): void {
+    $fixture = manufacturingInventoryFixture();
+    $receipt = app(InventoryMovementService::class)->createAndPost([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'document_type' => InventoryDocument::TypeReceipt,
+        'document_date' => now()->toDateString(),
+    ], [['product_id' => $fixture['raw']->getKey(), 'quantity' => '3']]);
+    app(InventoryMovementService::class)->createAndPost([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'document_type' => InventoryDocument::TypeIssue,
+        'document_date' => now()->toDateString(),
+    ], [['product_id' => $fixture['raw']->getKey(), 'quantity' => '1']]);
+
+    foreach (['inventory.documents.post', 'inventory.documents.receive'] as $ability) {
+        Permission::findOrCreate($ability, 'web');
+        $fixture['user']->givePermissionTo($ability);
+    }
+    $session = [
+        OperatingContextService::CompanyIdKey => $fixture['company']->getKey(),
+        OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
+        OperatingContextService::BranchIdKey => $fixture['branch']->getKey(),
+        OperatingContextService::BranchDocNumKey => $fixture['branch']->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $fixture['period']->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $fixture['period']->doc_num,
+    ];
+    $line = $receipt->lines->sole();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.inventory.documents.price-receipt', $receipt), [
+            'source_reference' => 'Approved cost source QA-001',
+            'unit_costs' => [$line->getKey() => '7.2500'],
+        ])
+        ->assertSessionHasErrors('document');
+    expect($line->fresh()->unit_cost)->toBeNull()
+        ->and($receipt->fresh()->journal_entry_id)->toBeNull();
+});
+
 test('manual inventory movement supports draft edit datatable navigation and controlled posting', function () {
     $fixture = manufacturingInventoryFixture();
     $permissions = [
@@ -2600,6 +2918,7 @@ test('manual inventory movement supports draft edit datatable navigation and con
         'inventory.documents.create',
         'inventory.documents.edit',
         'inventory.documents.post',
+        'inventory.documents.delete',
         'inventory.documents.adjust',
     ];
     foreach ($permissions as $permission) {
@@ -2677,6 +2996,26 @@ test('manual inventory movement supports draft edit datatable navigation and con
         ->put(route('admin.inventory.documents.update', $document), $payload)
         ->assertRedirect(route('admin.inventory.documents.show', $document))
         ->assertSessionHasErrors('document');
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->deleteJson(route('admin.inventory.documents.destroy', $document))
+        ->assertStatus(409);
+
+    $document->forceFill(['status' => InventoryDocument::StatusDraft, 'is_closed' => false])->save();
+    expect($document->fresh()->isUntouchedDraft())->toBeFalse();
+    expect(fn () => app(InventoryDocumentPostingService::class)->post($document))->toThrow(DomainException::class);
+    expect(fn () => app(InventoryMovementService::class)->updateDraft($document, [], []))->toThrow(DomainException::class);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.inventory.documents.edit', $document))
+        ->assertStatus(409);
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->deleteJson(route('admin.inventory.documents.destroy', $document))
+        ->assertStatus(409);
+    $dataResponse = $this->actingAs($fixture['user'])->withSession($session)
+        ->getJson(route('admin.inventory.documents.data', ['draw' => 1, 'start' => 0, 'length' => 10]))
+        ->assertOk();
+    expect($dataResponse->json('data.0.actions'))->not->toContain('data-action="delete"', 'data-action="post"')
+        ->and($dataResponse->json('data.0.doc_num'))->not->toContain(route('admin.inventory.documents.edit', $document));
 });
 
 test('the browser inventory movement contract posts and prints twenty five quantity only lines', function () {

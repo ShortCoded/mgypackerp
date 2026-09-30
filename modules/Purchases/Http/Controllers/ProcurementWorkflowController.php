@@ -645,7 +645,10 @@ class ProcurementWorkflowController extends Controller
             'purchaseOrder.lines' => fn ($query) => $query->withQuantityProgress()->with(['product', 'unit', 'deliverySchedules']),
             'supplyOrder.lines' => fn ($query) => $query->with(['product', 'unit', 'purchaseOrderLine.deliverySchedules']),
         ]);
-        abort_unless($draft->status === 'draft' && $draft->posting_status === 'unposted' && ! $draft->hasBlockingInspection(), 403);
+        abort_unless($draft->status === 'draft' && ! $draft->isLockedForEditing()
+            && $draft->posting_status === 'unposted' && $draft->posted_at === null
+            && $draft->reversed_at === null && $draft->grni_journal_entry_id === null
+            && ! $draft->hasBlockingInspection(), 403);
 
         if ($draft->sourceInspection instanceof GoodsReceiptInspection) {
             return view('modules.purchases.procurement.receipt-form', [
@@ -692,7 +695,7 @@ class ProcurementWorkflowController extends Controller
 
     public function showReceipt(string $goodsReceiptNote): View
     {
-        $receipt = $this->receipt($goodsReceiptNote)->load(['purchaseOrder', 'supplyOrder', 'supplier', 'branchStore', 'lines.product', 'lines.unit', 'lines.supplyOrderLine', 'inspection', 'sourceInspection']);
+        $receipt = $this->receipt($goodsReceiptNote, allowHistorical: true)->load(['purchaseOrder', 'supplyOrder', 'supplier', 'branchStore', 'lines.product', 'lines.unit', 'lines.supplyOrderLine', 'inspection', 'sourceInspection']);
 
         return $this->showView('goods_receipt', $receipt, false);
     }
@@ -825,7 +828,7 @@ class ProcurementWorkflowController extends Controller
     {
         $this->assertInventoryBranch();
         $context = $this->context();
-        $sourceReceipt = $draft?->receipt ?? (filled($request->query('receipt')) ? $this->receipt($request->query('receipt')) : null);
+        $sourceReceipt = $draft?->receipt ?? (filled($request->query('receipt')) ? $this->receipt($request->query('receipt'), allowHistorical: true) : null);
         if ($sourceReceipt instanceof UnpricedInventoryReceipt) {
             abort_unless($sourceReceipt->approved && $sourceReceipt->posting_status === 'posted' && ! in_array($sourceReceipt->status, ['cancelled', 'reversed'], true), 422, __('Only posted receipts can be returned.'));
         }
@@ -1211,7 +1214,7 @@ class ProcurementWorkflowController extends Controller
             'purchase-order-change-request' => PurchaseOrderChangeRequest::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with('purchaseOrder.supplier')->firstOrFail(),
             'purchase-order-delivery-schedule' => PurchaseOrder::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['supplier', 'lines.deliverySchedules.purchaseOrderLine.product'])->firstOrFail(),
             'supply-order' => SupplyOrder::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['purchaseOrder', 'purchaseInvoice', 'supplier', 'branchStore', 'lines.product', 'lines.unit', 'receipts'])->firstOrFail(),
-            'goods-receipt' => $this->receipt($docNum)->load(['purchaseOrder', 'supplyOrder', 'supplier', 'branchStore', 'inspection', 'sourceInspection', 'lines.product', 'lines.unit', 'lines.purchaseOrderLine', 'lines.supplyOrderLine']),
+            'goods-receipt' => $this->receipt($docNum, allowHistorical: true)->load(['purchaseOrder', 'supplyOrder', 'supplier', 'branchStore', 'inspection', 'sourceInspection', 'lines.product', 'lines.unit', 'lines.purchaseOrderLine', 'lines.supplyOrderLine']),
             'goods-receipt-inspection' => GoodsReceiptInspection::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with([
                 'branch', 'receipt.supplier', 'receipts.supplier', 'purchaseOrder.supplier', 'purchaseOrder.branchStore.branch',
                 'supplyOrder.supplier', 'supplyOrder.branchStore.branch',
@@ -1343,7 +1346,7 @@ class ProcurementWorkflowController extends Controller
         abort_unless($request->user()?->can('purchases.'.$definition['permission'].'.restore'), 403);
         $context = $this->context();
         DB::transaction(function () use ($definition, $document, $context, $screen): void {
-            $record = $definition['model']::onlyTrashed()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('doc_num', $document)->lockForUpdate()->firstOrFail();
+            $record = $definition['model']::onlyTrashed()->where('company_id', $context['company_id'])->where('financial_period_id', $context['financial_period_id'])->where('branch_id', $context['branch_id'])->where('doc_num', $document)->lockForUpdate()->firstOrFail();
             abort_unless($record->status === 'draft' && ($screen !== 'goods_receipts' || $record->posting_status === 'unposted'), 422);
             app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $record->{$definition['date']}->toDateString(), $record->financial_period_id, lockForUpdate: true);
             abort_unless($record->lines()->exists(), 422, __('A purchase request requires at least one line.'));
@@ -1398,13 +1401,17 @@ class ProcurementWorkflowController extends Controller
         return redirect()->to($destination)->with('success', __('Document saved successfully.'));
     }
 
-    private function receipt(string $docNum): UnpricedInventoryReceipt
+    private function receipt(string $docNum, bool $allowHistorical = false): UnpricedInventoryReceipt
     {
         $context = $this->context();
 
         return UnpricedInventoryReceipt::query()->where('company_id', $context['company_id'])
             ->when(! $this->isAdministrativeBranch(), fn ($query) => $query->where('branch_id', $context['branch_id']))
-            ->where('doc_num', $docNum)->whereNotNull('purchase_order_id')->firstOrFail();
+            ->where('doc_num', $docNum)->whereNotNull('purchase_order_id')
+            ->when($allowHistorical,
+                fn ($query) => $query->orderByRaw('CASE WHEN financial_period_id = ? THEN 0 ELSE 1 END', [$context['financial_period_id']])->orderByDesc('financial_period_id'),
+                fn ($query) => $query->where('financial_period_id', $context['financial_period_id']))
+            ->firstOrFail();
     }
 
     private function pendingInspectionQuantity(Collection $inspectionLines): float

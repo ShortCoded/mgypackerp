@@ -13,6 +13,20 @@ class HrPayrollAttendancePolicy extends Model
 {
     use SoftDeletes;
 
+    public const MonthlyCalendarDays = 'calendar_days_in_period';
+
+    public const MonthlyFixedDivisor = 'salary_day_divisor';
+
+    public const WeeklyCalendarDays = 'calendar_days';
+
+    public const DailyFinalizedAttendance = 'finalized_attendance_days';
+
+    public const HourlyFinalizedMinutes = 'finalized_worked_minutes';
+
+    public const ShiftFinalizedAttendance = 'finalized_attendance_shifts';
+
+    public const PieceApprovedOutput = 'approved_piece_quantities';
+
     protected $table = 'hr_payroll_attendance_policies';
 
     /** @var list<string> */
@@ -26,6 +40,12 @@ class HrPayrollAttendancePolicy extends Model
         'deduct_late',
         'deduct_early_leave',
         'deduct_unpaid_leave',
+        'monthly_partial_method',
+        'weekly_accrual_method',
+        'daily_accrual_method',
+        'hourly_accrual_method',
+        'shift_accrual_method',
+        'piece_accrual_method',
         'salary_day_divisor',
         'standard_day_minutes',
         'deduction_payroll_item_code',

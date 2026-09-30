@@ -85,6 +85,12 @@ class PayrollAttendancePolicyController extends Controller
                 'branch_id' => $policy->branch_id,
                 'effective_from' => $policy->effective_from?->toDateString(),
                 'deduction_payroll_item_code' => $policy->deduction_payroll_item_code,
+                'monthly_partial_method' => $policy->monthly_partial_method,
+                'weekly_accrual_method' => $policy->weekly_accrual_method,
+                'daily_accrual_method' => $policy->daily_accrual_method,
+                'hourly_accrual_method' => $policy->hourly_accrual_method,
+                'shift_accrual_method' => $policy->shift_accrual_method,
+                'piece_accrual_method' => $policy->piece_accrual_method,
             ],
         ]);
 

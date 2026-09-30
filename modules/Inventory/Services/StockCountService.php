@@ -91,9 +91,10 @@ class StockCountService
     public function delete(StockCount $stockCount): void
     {
         DB::transaction(function () use ($stockCount): void {
-            $this->assertEditable($stockCount);
-            $this->audit->softDelete($stockCount);
-            $stockCount->lines()->get()->each(function (StockCountLine $line): void {
+            $locked = StockCount::query()->lockForUpdate()->findOrFail($stockCount->getKey());
+            $this->assertEditable($locked);
+            $this->audit->softDelete($locked);
+            $locked->lines()->get()->each(function (StockCountLine $line): void {
                 $line->forceFill(['deleted_with_document' => true])->saveQuietly();
                 $this->audit->softDelete($line);
             });

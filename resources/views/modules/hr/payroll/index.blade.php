@@ -3,6 +3,21 @@
 @inject('dates', 'Modules\Core\Services\DateFormatService')
 @inject('numbers', 'Modules\Core\Services\NumericFormatService')
 
+@php
+    $manualDeductionRows = [];
+
+    foreach ((array) old('adjustments', []) as $adjustment) {
+        foreach ((array) ($adjustment['deductions'] ?? []) as $deduction) {
+            $manualDeductionRows[] = [
+                'employee_doc_num' => (string) ($adjustment['employee_doc_num'] ?? ''),
+                'payroll_item_code' => (string) ($deduction['payroll_item_code'] ?? ''),
+                'amount' => (string) ($deduction['amount'] ?? ''),
+                'reference' => (string) ($deduction['reference'] ?? ''),
+            ];
+        }
+    }
+@endphp
+
 @section('title', __('hr_payroll.title'))
 
 @section('content')
@@ -63,7 +78,81 @@
                                     <span class="fas fa-calculator me-1"></span>{{ __('hr_payroll.actions.calculate') }}
                                 </button>
                             </div>
+                            <div class="col-12 mt-3">
+                                <div class="border rounded-3 p-3">
+                                    <div class="d-flex flex-wrap align-items-start justify-content-between gap-2 mb-3">
+                                        <div>
+                                            <h6 class="mb-1">{{ __('hr_payroll.workspace.manual_deductions_title') }}</h6>
+                                            <div class="small text-muted">{{ __('hr_payroll.workspace.manual_deductions_help') }}</div>
+                                        </div>
+                                        <button class="btn btn-sm btn-outline-primary" id="add-manual-deduction" type="button" @disabled($payrollDeductionItems->isEmpty())>
+                                            <span class="fas fa-plus me-1"></span>{{ __('hr_payroll.actions.add_deduction') }}
+                                        </button>
+                                    </div>
+                                    <div id="manual-deduction-rows"></div>
+                                    <div class="small text-muted" id="manual-deduction-empty">{{ __('hr_payroll.workspace.no_manual_deductions') }}</div>
+                                </div>
+                            </div>
                         </form>
+                        <template id="manual-deduction-row-template">
+                            <div class="row g-2 align-items-end mb-2" data-manual-deduction-row>
+                                <div class="col-12 col-lg-3">
+                                    <x-forms.label for="manual_deduction_employee___INDEX__" :label="__('hr_payroll.labels.employee')" :required="true" />
+                                    <x-forms.select
+                                        variant="ajax"
+                                        id="manual_deduction_employee___INDEX__"
+                                        class="js-manual-deduction-employee"
+                                        name="adjustments[__INDEX__][employee_doc_num]"
+                                        :url="route('admin.hr.select2.employees', ['identity' => 'doc_num'])"
+                                        :data-extra-params="json_encode(['purpose' => 'payroll', 'payroll_period_start' => '#payroll_period_start', 'payroll_period_end' => '#payroll_period_end', 'payroll_branch_doc_num' => '#payroll_branch'])"
+                                        :placeholder="__('common.placeholders.select')"
+                                        :allow-clear="false"
+                                        required />
+                                </div>
+                                <div class="col-12 col-lg-3">
+                                    <x-forms.label for="manual_deduction_item___INDEX__" :label="__('hr_payroll.labels.deduction_item')" :required="true" />
+                                    <x-forms.select
+                                        variant="local"
+                                        id="manual_deduction_item___INDEX__"
+                                        class="js-manual-deduction-item"
+                                        name="adjustments[__INDEX__][deductions][0][payroll_item_code]"
+                                        :placeholder="__('common.placeholders.select')"
+                                        :allow-clear="false"
+                                        required>
+                                        <option value="">{{ __('common.placeholders.select') }}</option>
+                                        @foreach ($payrollDeductionItems as $item)
+                                            <option value="{{ $item->code }}">{{ $item->display_name }}</option>
+                                        @endforeach
+                                    </x-forms.select>
+                                </div>
+                                <div class="col-12 col-md-5 col-lg-2">
+                                    <x-forms.label for="manual_deduction_amount___INDEX__" :label="__('hr_payroll.labels.amount')" :required="true" />
+                                    <x-forms.numeric-input
+                                        id="manual_deduction_amount___INDEX__"
+                                        class="js-manual-deduction-amount"
+                                        name="adjustments[__INDEX__][deductions][0][amount]"
+                                        :scale="4"
+                                        :allow-negative="false"
+                                        step="0.0001"
+                                        min="0.0001"
+                                        max="99999999999999.9999"
+                                        required />
+                                </div>
+                                <div class="col-12 col-md-5 col-lg-3">
+                                    <x-forms.label for="manual_deduction_reference___INDEX__" :label="__('hr_payroll.labels.reference')" />
+                                    <x-forms.input
+                                        id="manual_deduction_reference___INDEX__"
+                                        class="js-manual-deduction-reference"
+                                        name="adjustments[__INDEX__][deductions][0][reference]"
+                                        maxlength="255" />
+                                </div>
+                                <div class="col-12 col-md-2 col-lg-1">
+                                    <button class="btn btn-outline-danger w-100 js-remove-manual-deduction" type="button" title="{{ __('hr_payroll.actions.remove_deduction') }}" aria-label="{{ __('hr_payroll.actions.remove_deduction') }}">
+                                        <span class="fas fa-trash"></span>
+                                    </button>
+                                </div>
+                            </div>
+                        </template>
                     </div>
                 </div>
             @endcan
@@ -223,6 +312,11 @@
             const token = document.querySelector('meta[name="csrf-token"]')?.content;
             const feedback = document.getElementById('payroll-feedback');
             const messages = @json(__('hr_payroll.javascript'));
+            const initialManualDeductions = @json($manualDeductionRows);
+            const manualDeductionRows = document.getElementById('manual-deduction-rows');
+            const manualDeductionTemplate = document.getElementById('manual-deduction-row-template');
+            const manualDeductionEmpty = document.getElementById('manual-deduction-empty');
+            let manualDeductionIndex = 0;
 
             const showFeedback = (message, type = 'danger') => {
                 if (!feedback) return;
@@ -264,11 +358,83 @@
                 return body;
             };
 
+            const refreshManualDeductionEmptyState = () => {
+                if (manualDeductionEmpty && manualDeductionRows) {
+                    manualDeductionEmpty.classList.toggle('d-none', manualDeductionRows.children.length > 0);
+                }
+            };
+
+            const addManualDeductionRow = (initial = {}) => {
+                if (!manualDeductionRows || !manualDeductionTemplate) return;
+                const wrapper = document.createElement('div');
+                wrapper.innerHTML = manualDeductionTemplate.innerHTML.replaceAll('__INDEX__', String(manualDeductionIndex++));
+                const row = wrapper.firstElementChild;
+                const employee = row.querySelector('.js-manual-deduction-employee');
+                const item = row.querySelector('.js-manual-deduction-item');
+                const amount = row.querySelector('.js-manual-deduction-amount');
+                const reference = row.querySelector('.js-manual-deduction-reference');
+
+                if (initial.employee_doc_num) {
+                    employee.append(new Option(initial.employee_doc_num, initial.employee_doc_num, true, true));
+                }
+                item.value = initial.payroll_item_code || '';
+                amount.value = initial.amount || '';
+                reference.value = initial.reference || '';
+                manualDeductionRows.append(row);
+                window.AppSelect2Ajax?.init(row);
+                window.AppNumbers?.refresh(row);
+                refreshManualDeductionEmptyState();
+            };
+
+            document.getElementById('add-manual-deduction')?.addEventListener('click', () => addManualDeductionRow());
+            manualDeductionRows?.addEventListener('click', event => {
+                const button = event.target.closest('.js-remove-manual-deduction');
+                if (!button) return;
+                const row = button.closest('[data-manual-deduction-row]');
+                const employee = row?.querySelector('.js-manual-deduction-employee');
+                if (employee && window.jQuery?.fn?.select2 && window.jQuery(employee).data('select2')) {
+                    window.jQuery(employee).select2('destroy');
+                }
+                row?.remove();
+                refreshManualDeductionEmptyState();
+            });
+            initialManualDeductions.forEach(addManualDeductionRow);
+            refreshManualDeductionEmptyState();
+
+            ['payroll_period_start', 'payroll_period_end', 'payroll_branch'].forEach(id => {
+                document.getElementById(id)?.addEventListener('change', () => {
+                    manualDeductionRows?.querySelectorAll('.js-manual-deduction-employee').forEach(select => {
+                        window.jQuery(select).val(null).trigger('change');
+                    });
+                });
+            });
+
             document.getElementById('payroll-calculation-form')?.addEventListener('submit', async event => {
                 event.preventDefault();
                 const form = event.currentTarget;
-                const data = Object.fromEntries(new FormData(form).entries());
-                delete data._token;
+                const formData = new FormData(form);
+                const data = {
+                    period_start: formData.get('period_start'),
+                    period_end: formData.get('period_end'),
+                    branch_doc_num: formData.get('branch_doc_num'),
+                };
+                const adjustments = new Map();
+                manualDeductionRows?.querySelectorAll('[data-manual-deduction-row]').forEach(row => {
+                    const employeeDocNum = row.querySelector('.js-manual-deduction-employee').value;
+                    const deduction = {
+                        payroll_item_code: row.querySelector('.js-manual-deduction-item').value,
+                        amount: window.AppNumbers?.normalize(row.querySelector('.js-manual-deduction-amount').value)
+                            ?? row.querySelector('.js-manual-deduction-amount').value,
+                        reference: row.querySelector('.js-manual-deduction-reference').value.trim() || null,
+                    };
+                    if (!adjustments.has(employeeDocNum)) {
+                        adjustments.set(employeeDocNum, {employee_doc_num: employeeDocNum, deductions: []});
+                    }
+                    adjustments.get(employeeDocNum).deductions.push(deduction);
+                });
+                if (adjustments.size > 0) {
+                    data.adjustments = [...adjustments.values()];
+                }
                 try {
                     const result = await submitJson(form.dataset.url, data);
                     await success(result.message);

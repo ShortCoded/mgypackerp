@@ -365,9 +365,7 @@ class ProcurementReceivingService
         return DB::transaction(function () use ($receipt, $data): UnpricedInventoryReceipt {
             $locked = UnpricedInventoryReceipt::query()->with('sourceInspection')->lockForUpdate()->findOrFail($receipt->getKey());
             $this->assertReceiptContext($locked, $this->context());
-            if ($locked->status !== UnpricedInventoryReceipt::StatusDraft || $locked->posting_status !== 'unposted' || $locked->hasBlockingInspection()) {
-                throw new DomainException(__('Only a draft goods receipt can be edited or deleted.'));
-            }
+            $this->assertMutableDraftReceipt($locked);
 
             if ($locked->sourceInspection instanceof GoodsReceiptInspection) {
                 return $this->saveReceiptFromInspection($locked->sourceInspection, $data, $locked);
@@ -382,15 +380,30 @@ class ProcurementReceivingService
         return DB::transaction(function () use ($receipt): UnpricedInventoryReceipt {
             $locked = UnpricedInventoryReceipt::query()->lockForUpdate()->findOrFail($receipt->getKey());
             $this->assertReceiptContext($locked, $this->context());
-            if ($locked->status !== UnpricedInventoryReceipt::StatusDraft || $locked->posting_status !== 'unposted' || $locked->hasBlockingInspection()) {
-                throw new DomainException(__('Only a draft goods receipt can be edited or deleted.'));
-            }
+            $this->assertMutableDraftReceipt($locked);
             $locked->forceFill(['deleted_by' => auth()->id()])->save();
             $locked->delete();
             $this->audit->record($locked, 'goods_receipt.deleted');
 
             return $locked;
         }, 3);
+    }
+
+    private function assertMutableDraftReceipt(UnpricedInventoryReceipt $receipt): void
+    {
+        $lineIds = $receipt->lines()->withTrashed()->pluck('id');
+        if ($receipt->status !== UnpricedInventoryReceipt::StatusDraft
+            || $receipt->isLockedForEditing()
+            || $receipt->posting_status !== 'unposted'
+            || $receipt->posted_at !== null || $receipt->reversed_at !== null
+            || $receipt->grni_journal_entry_id !== null
+            || $receipt->hasBlockingInspection()
+            || InventoryTransaction::query()->whereIn('source_line_id', $lineIds)
+                ->where('source_line_type', UnpricedInventoryReceiptLine::class)->exists()
+            || DB::table('purchase_invoice_lines')->whereIn('receipt_line_id', $lineIds)->exists()
+            || DB::table('purchase_return_lines')->whereIn('receipt_line_id', $lineIds)->exists()) {
+            throw new DomainException(__('Only a draft goods receipt can be edited or deleted.'));
+        }
     }
 
     public function receive(PurchaseOrder $order, array $data): UnpricedInventoryReceipt
@@ -415,7 +428,7 @@ class ProcurementReceivingService
             if ($locked->posting_status === 'posted') {
                 return $locked;
             }
-            if ($locked->status !== UnpricedInventoryReceipt::StatusDraft || ! $locked->purchase_order_id) {
+            if ($locked->status !== UnpricedInventoryReceipt::StatusDraft || $locked->isLockedForEditing() || ! $locked->purchase_order_id) {
                 throw new DomainException(__('Only a draft goods receipt can be posted.'));
             }
             if (FinancialPeriod::query()->lockForUpdate()->findOrFail($context['financial_period_id'])->is_closed) {
@@ -776,10 +789,11 @@ class ProcurementReceivingService
             $this->assertReceiptContext($locked, $context);
 
             if ($locked->status !== UnpricedInventoryReceipt::StatusDraft
+                || $locked->isLockedForEditing()
                 || $locked->posting_status !== 'unposted'
                 || in_array($locked->status, ['cancelled', 'reversed'], true)
                 || $locked->qc_status !== 'pending_inspection'
-                || $locked->inspection()->exists()) {
+                || $locked->inspection()->withTrashed()->exists()) {
                 throw new DomainException(__('This goods receipt is not awaiting an incoming inspection.'));
             }
 
@@ -902,11 +916,20 @@ class ProcurementReceivingService
                 return $locked;
             }
 
-            $lineIds = $locked->lines->modelKeys();
+            if ($locked->status !== UnpricedInventoryReceipt::StatusDraft
+                || $locked->is_closed || $locked->closed_at !== null
+                || $locked->approved || $locked->approved_at !== null
+                || $locked->posting_status !== 'unposted'
+                || $locked->posted_at !== null || $locked->reversed_at !== null
+                || $locked->grni_journal_entry_id !== null || blank($reason)) {
+                throw new DomainException(__('Only an open, unposted draft receipt can be cancelled before quality inspection.'));
+            }
+
+            $lineIds = $locked->lines()->withTrashed()->pluck('id');
             $hasDownstreamEffects = $locked->qc_status !== 'pending_inspection'
-                || $locked->inspection()->exists()
+                || $locked->inspection()->withTrashed()->exists()
                 || InventoryTransaction::query()->whereIn('source_line_id', $lineIds)->where('source_line_type', UnpricedInventoryReceiptLine::class)->exists()
-                || DB::table('purchase_invoice_lines')->whereIn('receipt_line_id', $lineIds)->whereNull('deleted_at')->exists()
+                || DB::table('purchase_invoice_lines')->whereIn('receipt_line_id', $lineIds)->exists()
                 || DB::table('purchase_return_lines')->whereIn('receipt_line_id', $lineIds)->exists();
 
             if ($hasDownstreamEffects) {

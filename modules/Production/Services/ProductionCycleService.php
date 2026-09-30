@@ -1909,7 +1909,7 @@ class ProductionCycleService
         return DB::transaction(function () use ($order, $reason): ProductionOrder {
             $locked = ProductionOrder::query()->with(['runs', 'lines'])->lockForUpdate()->findOrFail($order->getKey());
 
-            if (trim($reason) === '' || in_array($locked->status, [ProductionOrder::StatusCompleted, ProductionOrder::StatusCancelled], true)) {
+            if (trim($reason) === '' || in_array($locked->status, [ProductionOrder::StatusCompleted, ProductionOrder::StatusCancelled, ProductionOrder::StatusShortClosed], true)) {
                 throw new DomainException(__('An open production order and a short-close reason are required.'));
             }
 

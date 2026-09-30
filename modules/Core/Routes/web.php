@@ -212,10 +212,8 @@ Route::middleware('auth')
             ->controller(OpenDocumentsController::class)
             ->group(function (): void {
                 Route::get('/', 'index')
-                    ->middleware('can:tools.open_documents.view')
                     ->name('index');
                 Route::post('/', 'store')
-                    ->middleware('can:tools.open_documents.execute')
                     ->name('store');
             });
 

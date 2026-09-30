@@ -85,7 +85,7 @@ return [
             'remaining_quantity' => 'Remaining quantity',
             'statuses' => [
                 'draft' => 'Draft', 'submitted' => 'Submitted', 'approved' => 'Approved',
-                'partially_converted' => 'Partially converted',
+                'reopened' => 'Reopened', 'partially_converted' => 'Partially converted',
             ],
         ],
         'choose_report' => 'Sales reports',

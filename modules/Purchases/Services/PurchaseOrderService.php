@@ -3,6 +3,7 @@
 namespace Modules\Purchases\Services;
 
 use DomainException;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Models\Branch;
@@ -19,8 +20,6 @@ use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitConversionService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\Core\Services\ProductImageResolver;
-use Modules\Inventory\Models\UnpricedInventoryReceipt;
-use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\PurchaseOrderLine;
 use Modules\Purchases\Models\PurchaseRequisition;
@@ -192,6 +191,61 @@ class PurchaseOrderService
         });
     }
 
+    public function reopen(PurchaseOrder $record, string $reason): PurchaseOrder
+    {
+        return DB::transaction(function () use ($record, $reason): PurchaseOrder {
+            $context = $this->currentContext();
+            $locked = PurchaseOrder::query()->lockForUpdate()->findOrFail($record->getKey());
+            $this->assertInCurrentContext($locked, $context);
+
+            if ((int) $locked->branch_id !== $context['branch_id'] || blank($reason)) {
+                throw new DomainException(__('open_documents.validation.reopen_context_or_reason'));
+            }
+
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate(
+                $context['company_id'],
+                $locked->document_date,
+                $context['financial_period_id'],
+                lockForUpdate: true,
+            );
+
+            if ($locked->trashed() || ! $locked->canReopenSafely()) {
+                throw new DomainException(__('open_documents.messages.skipped_blocked', ['count' => 1]));
+            }
+
+            $previousStatus = $locked->status;
+            $approvedSnapshot = [
+                'header' => Arr::only($locked->attributesToArray(), [
+                    'doc_num', 'document_date', 'supplier_id', 'branch_store_id', 'currency_id',
+                    'exchange_rate', 'expected_delivery_date', 'freight_amount', 'subtotal_amount',
+                    'total_amount', 'payment_terms', 'notes', 'approved_by', 'approved_at',
+                    'closed_by', 'closed_at',
+                ]),
+                'lines' => $locked->lines()->orderBy('line_number')->get()->map(
+                    fn (PurchaseOrderLine $line): array => Arr::only($line->attributesToArray(), [
+                        'public_id', 'line_number', 'product_id', 'unit_id', 'ordered_quantity',
+                        'unit_price', 'discount_type', 'discount_value', 'discount_amount',
+                        'tax_rate', 'tax_amount', 'subtotal_amount', 'total_after_tax',
+                        'purchase_requisition_line_id', 'specification',
+                    ]),
+                )->all(),
+            ];
+            $locked->forceFill([
+                'status' => PurchaseOrder::StatusDraft,
+                'updated_by' => auth()->id(),
+            ])->save();
+
+            $this->refreshSourceRequests($locked);
+            app(ProcurementAuditService::class)->record($locked, 'purchase_order.reopened', [
+                'previous_status' => $previousStatus,
+                'reason' => trim($reason),
+                'approved_snapshot' => $approvedSnapshot,
+            ]);
+
+            return $this->load($locked->refresh());
+        }, 3);
+    }
+
     public function markSent(PurchaseOrder $record): PurchaseOrder
     {
         return DB::transaction(function () use ($record): PurchaseOrder {
@@ -251,7 +305,7 @@ class PurchaseOrderService
                 throw new DomainException(__('purchase_orders.messages.deleted_not_cancelable'));
             }
 
-            if ($locked->isClosed()) {
+            if ($locked->isClosed() || $locked->closed_at !== null) {
                 throw new DomainException(__('purchase_orders.messages.closed_cancel_forbidden'));
             }
 
@@ -259,8 +313,7 @@ class PurchaseOrderService
                 return $this->load($locked);
             }
 
-            if (PurchaseInvoice::query()->where('purchase_order_id', $locked->getKey())->whereNotIn('status', ['cancelled', 'reversed'])->exists()
-                || UnpricedInventoryReceipt::query()->where('purchase_order_id', $locked->getKey())->whereNotIn('status', ['cancelled', 'reversed'])->exists()) {
+            if ($locked->hasDownstreamDocuments()) {
                 throw new DomainException(__('purchase_orders.messages.received_cancel_forbidden'));
             }
 

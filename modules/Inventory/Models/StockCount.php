@@ -142,7 +142,8 @@ class StockCount extends Model
 
     public function isEditable(): bool
     {
-        return ! $this->trashed() && ! $this->isApproved();
+        return ! $this->trashed() && ! $this->isApproved()
+            && $this->approved_at === null && $this->adjustment_document_id === null;
     }
 
     public function scopeForContext(Builder $query, int $companyId, int $financialPeriodId, int $branchId): Builder

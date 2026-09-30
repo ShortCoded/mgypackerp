@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
@@ -70,6 +71,30 @@ class PurchaseRequisition extends Model
     public function isLockedForEditing(): bool
     {
         return $this->status !== self::StatusDraft;
+    }
+
+    public function canReopenSafely(): bool
+    {
+        if (! in_array($this->status, [self::StatusSubmitted, self::StatusRejected, self::StatusApproved, self::StatusClosed], true)) {
+            return false;
+        }
+
+        return ! $this->hasDownstreamDocuments();
+    }
+
+    public function hasDownstreamDocuments(): bool
+    {
+        foreach (['purchase_orders', 'request_for_quotations', 'supplier_quotations', 'production_material_requests'] as $table) {
+            if (DB::table($table)->where('purchase_requisition_id', $this->getKey())->exists()) {
+                return true;
+            }
+        }
+
+        return DB::table('purchase_order_lines')
+            ->whereIn('purchase_requisition_line_id', DB::table('purchase_requisition_lines')
+                ->where('purchase_requisition_id', $this->getKey())
+                ->select('id'))
+            ->exists();
     }
 
     public function lines(): HasMany

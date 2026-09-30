@@ -77,13 +77,15 @@ class CustomerInvoice extends Model
     public function canAmend(): bool
     {
         return $this->document_type === self::TypeInvoice
-            && ($this->isEditable() || (self::allowsFullCrud() && $this->canReopenSafely()));
+            && $this->source_type !== 'fixed_asset_disposal'
+            && $this->isEditable();
     }
 
     public function canDeleteDraft(): bool
     {
         return self::allowsFullCrud()
             && $this->document_type === self::TypeInvoice
+            && $this->source_type !== 'fixed_asset_disposal'
             && $this->status === self::StatusDraft
             && $this->posting_status === 'unposted'
             && ! $this->is_closed;
@@ -92,6 +94,7 @@ class CustomerInvoice extends Model
     public function canReopenSafely(): bool
     {
         if ($this->document_type !== self::TypeInvoice
+            || $this->source_type === 'fixed_asset_disposal'
             || $this->posting_status !== 'posted'
             || bccomp((string) $this->paid_amount, '0', 4) > 0
             || bccomp((string) $this->credited_amount, '0', 4) > 0
@@ -100,7 +103,8 @@ class CustomerInvoice extends Model
             return false;
         }
 
-        return ! $this->deliveries()->exists()
+        return ! $this->issueOrder()->where('status', '<>', SalesIssueOrder::StatusPending)->exists()
+            && ! $this->deliveries()->exists()
             && ! $this->returns()->where('status', '<>', 'cancelled')->exists()
             && ! $this->creditNotes()->exists()
             && ! $this->allocations()->whereHas('receipt', fn ($query) => $query->where('status', 'approved'))->exists();

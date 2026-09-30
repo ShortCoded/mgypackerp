@@ -9,6 +9,7 @@ use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
+use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerCommercialAgreement;
@@ -26,6 +27,8 @@ class SalesOrderService
         private readonly SalesUnitConversionService $unitConversions,
         private readonly CreditControlService $creditControl,
         private readonly SalesCycleAuditService $audit,
+        private readonly OperatingContextService $operatingContext,
+        private readonly FinancialPeriodService $periods,
     ) {}
 
     /** @param array{company_id: int, financial_period_id: int, branch_id: int, branch_store_id?: int|null} $context */
@@ -346,6 +349,10 @@ class SalesOrderService
     {
         return DB::transaction(function () use ($order, $reason): SalesOrder {
             $locked = SalesOrder::query()->with('lines')->lockForUpdate()->findOrFail($order->getKey());
+            $this->assertReopenContext($locked);
+            if (blank($reason)) {
+                throw new DomainException(__('A reason is required for this action.'));
+            }
             if (! in_array($locked->status, [SalesOrder::StatusApproved, SalesOrder::StatusRejected, SalesOrder::StatusClosed], true)) {
                 throw new DomainException(__('The sales order cannot be reopened from its current status.'));
             }
@@ -358,6 +365,9 @@ class SalesOrderService
             ])->contains(fn (mixed $quantity): bool => $this->amounts->compare($quantity, '0', 8) > 0))) {
                 throw new DomainException(__('An order with reservations, production, deliveries, or invoices cannot be amended; use controlled downstream reversal documents.'));
             }
+            if ($locked->hasDownstreamDocuments()) {
+                throw new DomainException(__('An order with downstream documents cannot be reopened.'));
+            }
             $from = $locked->status;
             $locked->update(['status' => SalesOrder::StatusReopened, 'reopened_by' => auth()->id(), 'reopened_at' => now(), 'reopen_reason' => trim($reason)]);
             $this->recordStatus($locked, $from, SalesOrder::StatusReopened, $reason);
@@ -367,18 +377,43 @@ class SalesOrderService
         });
     }
 
+    private function assertReopenContext(SalesOrder $order): void
+    {
+        $request = request();
+        if (! $request->hasSession()) {
+            throw new DomainException(__('operating_context.messages.required'));
+        }
+
+        $context = $this->operatingContext->snapshot($request);
+        if (! $context['company_id'] || ! $context['branch_id'] || ! $context['financial_period_id']) {
+            throw new DomainException(__('operating_context.messages.required'));
+        }
+        if ((int) $order->company_id !== (int) $context['company_id']
+            || (int) $order->branch_id !== (int) $context['branch_id']
+            || (int) $order->financial_period_id !== (int) $context['financial_period_id']) {
+            throw new DomainException(__('The document is outside the active operating context.'));
+        }
+
+        $this->periods->resolveOpenForPostingDate(
+            (int) $order->company_id,
+            $order->order_date,
+            (int) $order->financial_period_id,
+            lockForUpdate: true,
+        );
+    }
+
     public function cancel(SalesOrder $order, string $reason): SalesOrder
     {
         return DB::transaction(function () use ($order, $reason): SalesOrder {
             $locked = SalesOrder::query()->with('lines')->lockForUpdate()->findOrFail($order->getKey());
-            if (in_array($locked->status, [SalesOrder::StatusCancelled, SalesOrder::StatusClosed], true)) {
+            if (in_array($locked->status, [SalesOrder::StatusCancelled, SalesOrder::StatusClosed], true) || $locked->reopened_at !== null) {
                 throw new DomainException(__('The sales order cannot be cancelled from its current status.'));
             }
             if ($locked->lines->contains(fn (SalesOrderLine $line): bool => $this->amounts->compare($line->delivered_quantity, '0', 8) > 0 || $this->amounts->compare($line->invoiced_quantity, '0', 8) > 0)) {
                 throw new DomainException(__('An order with deliveries or invoices must be reversed through downstream documents.'));
             }
-            if ($locked->productionOrders()->where('status', '<>', 'cancelled')->exists()) {
-                throw new DomainException(__('Cancel or close the linked production demand before cancelling this sales order.'));
+            if ($locked->hasDownstreamDocuments()) {
+                throw new DomainException(__('An order with downstream documents cannot be cancelled.'));
             }
             foreach (InventoryReservation::query()->where('sales_order_id', $locked->getKey())->where('status', InventoryReservation::StatusActive)->lockForUpdate()->get() as $reservation) {
                 $reservation->update(['released_quantity' => bcadd((string) $reservation->released_quantity, $reservation->remaining_quantity, 8), 'status' => InventoryReservation::StatusReleased, 'released_by' => auth()->id(), 'released_at' => now(), 'release_reason' => trim($reason)]);

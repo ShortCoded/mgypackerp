@@ -25,7 +25,15 @@ return [
                 'title' => 'Open Document',
                 'icon' => 'unlock',
                 'route' => 'admin.tools.open-documents.index',
-                'permission' => 'tools.open_documents.view',
+                'permission' => [
+                    'tools.open_documents.view',
+                    'sales_requests.reopen',
+                    'sales_orders.reopen',
+                    'customer_invoices.reopen',
+                    'purchase_orders.reopen',
+                    'purchases.purchase_requisitions.reopen',
+                    'production.material_requests.reopen',
+                ],
                 'keywords' => ['open document', 'reopen documents', 'closed documents', 'فتح مستند', 'فتح المستندات'],
                 'actions' => [
                     'view' => 'tools.open_documents.view',

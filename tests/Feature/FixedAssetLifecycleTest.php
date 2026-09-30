@@ -36,6 +36,7 @@ use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerReceipt;
+use Modules\Sales\Services\CustomerInvoiceService;
 use Modules\Sales\Services\CustomerReceiptService;
 use Modules\Sales\Services\ElectronicInvoicePayloadBuilder;
 use Spatie\Permission\Models\Permission;
@@ -641,6 +642,10 @@ test('customer invoiced asset disposal clears NBV once without inventory or COGS
         ->and(InventoryTransaction::query()->count())->toBe($inventoryCount)
         ->and(JournalEntry::query()->where('source_type', 'sales_delivery_cogs')->count())->toBe($cogsJournalCount);
 
+    expect($invoice->canReopenSafely())->toBeFalse()
+        ->and(fn () => app(CustomerInvoiceService::class)->reopen($invoice, 'Incorrect general invoice correction.'))
+        ->toThrow(DomainException::class, __('Source-owned invoices must be corrected in their source workflow.'));
+
     config([
         'e_invoice.issuer_taxpayer_id' => null,
         'e_invoice.branch_code' => 'FACTORY-01',
@@ -660,6 +665,11 @@ test('customer invoiced asset disposal clears NBV once without inventory or COGS
         ->and($asset->fresh()->status)->toBe(FixedAsset::StatusActive)
         ->and($asset->fresh()->disposed_at)->toBeNull()
         ->and(InventoryTransaction::query()->count())->toBe($inventoryCount);
+    expect($invoice->fresh()->canAmend())->toBeFalse()
+        ->and(fn () => app(CustomerInvoiceService::class)->amend($invoice->fresh(), [], []))
+        ->toThrow(DomainException::class, __('Only a draft or safely reopened invoice may be amended.'));
+    expect(fn () => app(CustomerInvoiceService::class)->post($invoice->fresh()))
+        ->toThrow(DomainException::class, __('A reversed fixed asset disposal cannot repost its invoice.'));
 
     $cashClassification = AccountClassification::query()->where('code', 'cash')->firstOrFail();
     $cashParent = Account::query()

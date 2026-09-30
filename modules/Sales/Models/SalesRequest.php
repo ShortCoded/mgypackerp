@@ -19,6 +19,14 @@ class SalesRequest extends Model
 {
     use SnapshotsCompanyPrintIdentity, SoftDeletes;
 
+    public const StatusApproved = 'approved';
+
+    public const StatusDraft = 'draft';
+
+    public const StatusRejected = 'rejected';
+
+    public const StatusReopened = 'reopened';
+
     protected $guarded = ['id'];
 
     protected $attributes = ['status' => 'draft', 'priority' => 'normal', 'exchange_rate' => 1];
@@ -31,8 +39,27 @@ class SalesRequest extends Model
     public function scopeOperationallyOpen(Builder $query): Builder
     {
         return $query
-            ->whereIn($this->qualifyColumn('status'), ['draft', 'submitted', 'approved', 'partially_converted'])
+            ->whereIn($this->qualifyColumn('status'), [self::StatusDraft, 'submitted', self::StatusApproved, 'partially_converted', self::StatusReopened])
             ->whereHas('lines', fn (Builder $lineQuery) => $lineQuery->whereColumn('converted_quantity', '<', 'quantity'));
+    }
+
+    public function isEditable(): bool
+    {
+        return in_array($this->status, [self::StatusDraft, self::StatusRejected, self::StatusReopened], true);
+    }
+
+    public function canReopenSafely(): bool
+    {
+        if ($this->status !== self::StatusApproved || $this->lines()->where('converted_quantity', '>', 0)->exists()) {
+            return false;
+        }
+
+        return ! $this->quotations()->withTrashed()->exists()
+            && ! $this->orders()->withTrashed()->exists()
+            && ! CustomerInvoice::query()->withTrashed()
+                ->where('source_type', 'sales_request')
+                ->where('source_id', $this->getKey())
+                ->exists();
     }
 
     public function salesEmployee(): BelongsTo
@@ -88,5 +115,11 @@ class SalesRequest extends Model
     public function orders(): HasMany
     {
         return $this->hasMany(SalesOrder::class);
+    }
+
+    public function directInvoices(): HasMany
+    {
+        return $this->hasMany(CustomerInvoice::class, 'source_id')
+            ->where('source_type', 'sales_request');
     }
 }

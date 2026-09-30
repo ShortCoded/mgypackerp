@@ -21,6 +21,7 @@ use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\OperatingContextService;
 use Modules\FixedAssets\Models\FixedAsset;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Worksheet\Worksheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -492,7 +493,7 @@ test('formula cells are rejected at their physical Excel row and produce an erro
     $workbook = IOFactory::load($templateResponse->baseResponse->getFile()->getPathname());
     $sheet = $workbook->getSheetByName('Products');
     $sheet->setCellValue('A5', 'formula-001');
-    $sheet->setCellValue('B5', '=1+1');
+    $sheet->setCellValueExplicit('B5', '=1+1', DataType::TYPE_FORMULA);
     $sheet->setCellValue('C5', Product::ClassificationFinishedProduct);
     $sheet->setCellValue('F5', 'active');
     $path = tempnam(sys_get_temp_dir(), 'product-formula-import-');

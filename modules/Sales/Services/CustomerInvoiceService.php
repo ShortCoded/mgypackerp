@@ -9,6 +9,8 @@ use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
+use Modules\Core\Services\OperatingContextService;
+use Modules\FixedAssets\Models\FixedAssetDisposal;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Sales\Models\Customer;
@@ -32,6 +34,8 @@ class CustomerInvoiceService
         private readonly SalesUnitConversionService $unitConversions,
         private readonly PriceListPricingService $priceLists,
         private readonly SalesIssueOrderService $issueOrders,
+        private readonly OperatingContextService $operatingContext,
+        private readonly FinancialPeriodService $periods,
     ) {}
 
     /** @param array<string, mixed> $data */
@@ -290,6 +294,10 @@ class CustomerInvoiceService
             if ($locked->posting_status === 'posted') {
                 return $locked;
             }
+            if ($locked->source_type === 'fixed_asset_disposal'
+                && ! FixedAssetDisposal::query()->whereKey($locked->source_id)->where('status', FixedAssetDisposal::StatusPosted)->exists()) {
+                throw new DomainException(__('A reversed fixed asset disposal cannot repost its invoice.'));
+            }
             if (! $locked->isEditable()) {
                 throw new DomainException(__('The invoice is locked and cannot be posted.'));
             }
@@ -355,12 +363,7 @@ class CustomerInvoiceService
         return DB::transaction(function () use ($invoice, $lines, $schedules): CustomerInvoice {
             $locked = CustomerInvoice::query()->with(['lines', 'paymentSchedules'])->lockForUpdate()->findOrFail($invoice->getKey());
 
-            if (! $locked->isEditable() && CustomerInvoice::allowsFullCrud() && $locked->canReopenSafely()) {
-                $this->reopen($locked, __('Automatic accounting reversal before invoice amendment.'));
-                $locked = CustomerInvoice::query()->with(['lines', 'paymentSchedules'])->lockForUpdate()->findOrFail($invoice->getKey());
-            }
-
-            if ($locked->document_type !== CustomerInvoice::TypeInvoice || ! $locked->isEditable()) {
+            if ($locked->document_type !== CustomerInvoice::TypeInvoice || $locked->source_type === 'fixed_asset_disposal' || ! $locked->isEditable()) {
                 throw new DomainException(__('Only a draft or safely reopened invoice may be amended.'));
             }
 
@@ -514,12 +517,31 @@ class CustomerInvoiceService
         });
     }
 
-    public function reopen(CustomerInvoice $invoice, string $reason): CustomerInvoice
+    public function reopen(CustomerInvoice $invoice, string $reason, ?FixedAssetDisposal $sourceDisposal = null): CustomerInvoice
     {
-        return DB::transaction(function () use ($invoice, $reason): CustomerInvoice {
+        return DB::transaction(function () use ($invoice, $reason, $sourceDisposal): CustomerInvoice {
+            $issueOrder = SalesIssueOrder::query()->where('customer_invoice_id', $invoice->getKey())->lockForUpdate()->first();
             $locked = CustomerInvoice::query()->with(['returns', 'creditNotes', 'deliveries'])->lockForUpdate()->findOrFail($invoice->getKey());
+            $this->assertReopenContext($locked);
+            if ($locked->source_type === 'fixed_asset_disposal'
+                && (! $sourceDisposal
+                    || (int) $locked->source_id !== (int) $sourceDisposal->getKey()
+                    || (int) $locked->company_id !== (int) $sourceDisposal->company_id
+                    || $sourceDisposal->status !== FixedAssetDisposal::StatusPosted)) {
+                throw new DomainException(__('Source-owned invoices must be corrected in their source workflow.'));
+            }
+            if (blank($reason)) {
+                throw new DomainException(__('A reason is required for this action.'));
+            }
             if ($locked->posting_status !== 'posted' || $this->amounts->compare($locked->paid_amount, '0') > 0 || $this->amounts->compare($locked->credited_amount, '0') > 0) {
                 throw new DomainException(__('Only an unsettled posted invoice may be reopened.'));
+            }
+            if ($locked->document_type !== CustomerInvoice::TypeInvoice
+                || ($issueOrder !== null && $issueOrder->status !== SalesIssueOrder::StatusPending)) {
+                throw new DomainException(__('An invoice with an issued sales issue order cannot be reopened.'));
+            }
+            if ((int) ($locked->issueOrder()->value('id') ?? 0) !== (int) ($issueOrder?->getKey() ?? 0)) {
+                throw new DomainException(__('The invoice issue order changed while reopening; please retry.'));
             }
             if ($locked->deliveries->isNotEmpty() || $locked->returns->where('status', '<>', 'cancelled')->isNotEmpty() || $locked->creditNotes->isNotEmpty() || $locked->allocations()->whereHas('receipt', fn ($query) => $query->where('status', 'approved'))->exists()) {
                 throw new DomainException(__('An invoice with a delivery, return, receipt, or credit note cannot be reopened.'));
@@ -527,7 +549,7 @@ class CustomerInvoiceService
             if ($locked->electronic_invoice_uuid !== null || ! in_array($locked->electronic_invoice_status, ['not_configured', 'draft', 'rejected'], true)) {
                 throw new DomainException(__('A submitted electronic invoice must be corrected through the tax-authority amendment workflow.'));
             }
-            $locked->issueOrder()->where('status', SalesIssueOrder::StatusPending)->delete();
+            $issueOrder?->delete();
             $revision = ((int) $locked->posting_revision) + 1;
             $reversal = $this->accounting->reverseInvoice($locked, $reason, $revision);
             $locked->update([
@@ -541,6 +563,31 @@ class CustomerInvoiceService
 
             return $locked->refresh();
         });
+    }
+
+    private function assertReopenContext(CustomerInvoice $invoice): void
+    {
+        $request = request();
+        if (! $request->hasSession()) {
+            throw new DomainException(__('operating_context.messages.required'));
+        }
+
+        $context = $this->operatingContext->snapshot($request);
+        if (! $context['company_id'] || ! $context['branch_id'] || ! $context['financial_period_id']) {
+            throw new DomainException(__('operating_context.messages.required'));
+        }
+        if ((int) $invoice->company_id !== (int) $context['company_id']
+            || (int) $invoice->branch_id !== (int) $context['branch_id']
+            || (int) $invoice->financial_period_id !== (int) $context['financial_period_id']) {
+            throw new DomainException(__('The document is outside the active operating context.'));
+        }
+
+        $this->periods->resolveOpenForPostingDate(
+            (int) $invoice->company_id,
+            $invoice->invoice_date,
+            (int) $invoice->financial_period_id,
+            lockForUpdate: true,
+        );
     }
 
     /**

@@ -53,12 +53,6 @@ class SalesCostReportService
             ? $filters['to']->toDateString()
             : ($filters['to'] !== null ? (string) $filters['to'] : null);
 
-        $cogsAccountId = $this->accounts->resolveFirst(
-            $companyId,
-            PostingAccountResolver::CostOfGoodsSold,
-            'Cost of sales report',
-        )->getKey();
-
         $rows = collect();
         $deliveryCount = 0;
         $returnCount = 0;
@@ -74,6 +68,34 @@ class SalesCostReportService
                 'customerInvoices.order',
             ])
             ->get();
+
+        $returns = $this->returnQuery($companyId, $branchId, $periodId, $customerId, $productId, $orderId, $invoiceId, $from, $to)
+            ->with([
+                'returnInventoryDocument.lines.product', 'returnInventoryDocument.lines.unit',
+                'customer',
+                'lines',
+                'invoice',
+                'order',
+                'quarantineJournalEntry.lines',
+            ])
+            ->get();
+
+        if ($deliveries->isEmpty() && $returns->isEmpty()) {
+            return new SalesCostReportResult($rows, [
+                'delivery_count' => 0,
+                'return_count' => 0,
+                'delivery_cost' => $deliveryCost,
+                'return_cost' => $returnCost,
+                'net_cost' => '0.0000',
+                'unreconciled_count' => 0,
+            ]);
+        }
+
+        $cogsAccountId = $this->accounts->resolveFirst(
+            $companyId,
+            PostingAccountResolver::CostOfGoodsSold,
+            'Cost of sales report',
+        )->getKey();
 
         foreach ($deliveries as $document) {
             $allLines = $document->lines;
@@ -153,17 +175,6 @@ class SalesCostReportService
         }
 
         // ── Return rows ──────────────────────────────────────────────
-        $returns = $this->returnQuery($companyId, $branchId, $periodId, $customerId, $productId, $orderId, $invoiceId, $from, $to)
-            ->with([
-                'returnInventoryDocument.lines.product', 'returnInventoryDocument.lines.unit',
-                'customer',
-                'lines',
-                'invoice',
-                'order',
-                'quarantineJournalEntry.lines',
-            ])
-            ->get();
-
         foreach ($returns as $return) {
             $inventoryDoc = $return->returnInventoryDocument;
             if (! $inventoryDoc || $inventoryDoc->status !== InventoryDocument::StatusPosted) {

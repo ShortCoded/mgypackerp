@@ -56,6 +56,14 @@
     });
   }
 
+  function updateReasonRequirement($form) {
+    const $reason = $form.find('[name="reason"]');
+    const requiredTypes = String($reason.data('required-types') || '').split(',');
+    const required = requiredTypes.indexOf(String($form.find('[name="document_type"]').val() || '')) !== -1;
+
+    $reason.prop('required', required).attr('aria-required', required ? 'true' : 'false');
+  }
+
   function showToast(icon, title) {
     if (window.AppAlerts && typeof window.AppAlerts.toast === 'function') {
       window.AppAlerts.toast(icon, title);
@@ -63,13 +71,18 @@
   }
 
   function confirmExecution($form) {
+    const $type = $form.find('[name="document_type"]');
+    const selectedType = $type.find('option:selected').text().trim();
+    const selection = selectedType + ' (' + String($form.find('[name="from_number"]').val() || '') + '–' + String($form.find('[name="to_number"]').val() || '') + ')';
+
     if (!window.Swal) {
-      return $.Deferred().resolve({ isConfirmed: window.confirm($form.data('confirm-title') || '') }).promise();
+      return $.Deferred().resolve({ isConfirmed: window.confirm(($form.data('confirm-title') || '') + '\n' + selection) }).promise();
     }
 
     return window.Swal.fire({
       icon: 'warning',
       title: $form.data('confirm-title') || '',
+      text: selection,
       showCloseButton: true,
       showCancelButton: true,
       focusCancel: true,
@@ -87,6 +100,9 @@
     }
 
     $form.find('[name="' + field + '"]').removeClass('is-invalid');
+    if (field === 'document_type') {
+      $form.find('.js-open-documents-type').next('.select2-container').find('.select2-selection').removeClass('is-invalid');
+    }
     $form.find('[data-error-for="' + field + '"]').text('');
   }
 
@@ -101,6 +117,9 @@
       const message = values.filter(Boolean).join(' ');
 
       $form.find('[name="' + field + '"]').addClass('is-invalid');
+      if (field === 'document_type') {
+        $form.find('.js-open-documents-type').next('.select2-container').find('.select2-selection').addClass('is-invalid');
+      }
       $form.find('[data-error-for="' + field + '"]').text(message);
     });
   }
@@ -169,6 +188,11 @@
 
   $(function () {
     initSelect2(document);
+    $('.js-open-documents-form').each(function () { updateReasonRequirement($(this)); });
+
+    $(document).on('change', '.js-open-documents-type', function () {
+      updateReasonRequirement($(this).closest('.js-open-documents-form'));
+    });
 
     $(document).on('input change', '.js-open-documents-form :input[name]', function () {
       clearFieldError($(this).closest('.js-open-documents-form'), $(this).attr('name'));
@@ -180,6 +204,11 @@
       const $form = $(this);
 
       clearErrors($form);
+
+      if (!$form[0].checkValidity()) {
+        $form[0].reportValidity();
+        return;
+      }
 
       confirmExecution($form).then(function (result) {
         if (result && result.isConfirmed) {

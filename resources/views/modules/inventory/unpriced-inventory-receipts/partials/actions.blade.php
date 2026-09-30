@@ -3,7 +3,7 @@
     $canView = auth()->user()?->can('inventory.unpriced_inventory_receipts.view') && $record->doc_num !== null;
     $canApprove = ! $isTrashed && ! $record->isApproved() && ! $record->isClosed() && ! $record->isCancelled() && auth()->user()?->can('inventory.unpriced_inventory_receipts.approve') && $record->doc_num !== null;
     $canClose = ! $isTrashed && $record->isApproved() && ! $record->isClosed() && ! $record->isCancelled() && auth()->user()?->can('inventory.unpriced_inventory_receipts.close') && $record->doc_num !== null;
-    $canCancel = ! $isTrashed && ! $record->isClosed() && ! $record->isCancelled() && auth()->user()?->can('inventory.unpriced_inventory_receipts.cancel') && $record->doc_num !== null;
+    $canCancel = ! $isTrashed && $record->status === \Modules\Inventory\Models\UnpricedInventoryReceipt::StatusDraft && ! $record->isApproved() && $record->approved_at === null && ! $record->isClosed() && ! $record->isCancelled() && $record->posting_status === 'unposted' && auth()->user()?->can('inventory.unpriced_inventory_receipts.cancel') && $record->doc_num !== null;
     $canEdit = ! $isTrashed && ! $record->isLockedForEditing() && auth()->user()?->can('inventory.unpriced_inventory_receipts.edit') && $record->doc_num !== null;
     $canDelete = ! $isTrashed && ! $record->isLockedForEditing() && auth()->user()?->can('inventory.unpriced_inventory_receipts.delete') && $record->doc_num !== null;
     $canRestore = $isTrashed && auth()->user()?->can('inventory.unpriced_inventory_receipts.restore') && $record->doc_num !== null;

@@ -59,6 +59,7 @@ class HrEmployeeService
         'hire_date',
         'contract_start_date',
         'contract_end_date',
+        'termination_date',
         'probation_end_date',
         'work_email',
         'email',

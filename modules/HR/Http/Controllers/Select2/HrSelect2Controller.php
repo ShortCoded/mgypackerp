@@ -37,6 +37,11 @@ class HrSelect2Controller extends Controller
 
     public function employees(Request $request): JsonResponse
     {
+        if ($request->string('purpose')->toString() === 'payroll'
+            && ! $request->user()?->can('hr.payroll_preparation.calculate')) {
+            return $this->forbiddenSelect2Response();
+        }
+
         if (! $this->canUseHrSelect2($request) && ! $this->canUseHrReportSelect2($request)) {
             return $this->forbiddenSelect2Response();
         }
@@ -67,6 +72,7 @@ class HrSelect2Controller extends Controller
             'hr.attendance_report.view',
             'hr.employee_attendance.correct',
             'hr.employee_attendance.import',
+            'hr.payroll_preparation.calculate',
         ] as $permission) {
             if ($user?->can($permission)) {
                 return true;

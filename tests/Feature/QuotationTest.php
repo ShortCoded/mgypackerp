@@ -21,6 +21,7 @@ use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\QuotationPaymentMilestone;
 use Modules\Sales\Models\QuotationRevision;
 use Modules\Sales\Models\SalesOrder;
+use Modules\Sales\Services\QuotationService;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 use Symfony\Component\Process\Process;
@@ -634,6 +635,15 @@ test('quotation status transitions work', function (): void {
         ->and($quotation->currentRevision->status)->toBe(QuotationRevision::StatusAccepted);
 });
 
+test('quotation cancellation reads the current state rather than a stale draft', function (): void {
+    ['quotation' => $quotation] = createQuotationThroughHttp();
+    $staleDraft = $quotation->fresh();
+    $quotation->forceFill(['status' => Quotation::StatusConverted])->save();
+
+    expect(fn () => app(QuotationService::class)->cancel($staleDraft))->toThrow(DomainException::class)
+        ->and($quotation->fresh()->status)->toBe(Quotation::StatusConverted);
+});
+
 test('accepted quotation converts once into a fully linked sales order without re-entry', function (): void {
     ['actor' => $actor, 'quotation' => $quotation] = createQuotationThroughHttp([
         'quotations.print',
@@ -713,6 +723,13 @@ test('accepted quotation converts once into a fully linked sales order without r
 
     expect(SalesOrder::query()->count())->toBe(1)
         ->and($response->json('data.url'))->toContain($order->doc_num);
+
+    $order->delete();
+    $quotation->forceFill(['status' => Quotation::StatusDraft])->save();
+    expect($quotation->fresh()->canCancel())->toBeFalse()
+        ->and($quotation->fresh()->canDeleteDraft())->toBeFalse();
+    expect(fn () => app(QuotationService::class)->cancel($quotation))->toThrow(DomainException::class);
+    expect(fn () => app(QuotationService::class)->delete($quotation))->toThrow(DomainException::class);
 });
 
 test('25-line quotation remains complete across English and Arabic mPDF pages', function (): void {

@@ -85,7 +85,7 @@ return [
             'remaining_quantity' => 'الكمية المتبقية',
             'statuses' => [
                 'draft' => 'مسودة', 'submitted' => 'مقدم', 'approved' => 'معتمد',
-                'partially_converted' => 'محول جزئيًا',
+                'reopened' => 'أعيد فتحه', 'partially_converted' => 'محول جزئيًا',
             ],
         ],
         'choose_report' => 'تقارير المبيعات',

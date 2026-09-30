@@ -30,6 +30,7 @@ Route::middleware('auth')
             Route::get('/{salesRequest}/edit', 'edit')->middleware('can:sales_requests.edit')->name('edit');
             Route::put('/{salesRequest}', 'update')->middleware('can:sales_requests.edit')->name('update');
             Route::get('/{salesRequest}/print', 'print')->middleware('can:sales_requests.print')->name('print');
+            Route::post('/{salesRequest}/reopen', 'reopen')->middleware('can:sales_requests.reopen')->name('reopen');
             Route::post('/{salesRequest}/transition', 'transition')->name('transition');
             Route::post('/{salesRequest}/convert', 'convert')->middleware('can:sales_requests.convert')->middleware(IdempotentDocumentSubmission::class)->name('convert');
             Route::get('/{salesRequest}', 'show')->middleware('can:sales_requests.view')->name('show');

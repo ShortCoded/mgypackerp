@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
@@ -186,9 +187,36 @@ class PurchaseOrder extends Model
         return ! $this->isDraft() || $this->hasReceipts();
     }
 
+    public function canReopenSafely(): bool
+    {
+        if (! in_array($this->status, [self::StatusApproved, self::StatusClosed], true) || $this->sent_at !== null) {
+            return false;
+        }
+
+        return ! $this->hasDownstreamDocuments();
+    }
+
+    public function hasDownstreamDocuments(): bool
+    {
+        return DB::table('purchase_orders')
+            ->where('purchase_orders.id', $this->getKey())
+            ->where(function ($query): void {
+                foreach (['goods_receipt_inspections', 'unpriced_inventory_receipts', 'purchase_invoices', 'supply_orders', 'purchase_returns', 'supplier_payment_contexts', 'purchase_order_delivery_schedules'] as $table) {
+                    $query->orWhereExists(fn ($subquery) => $subquery->selectRaw('1')->from($table)->whereColumn($table.'.purchase_order_id', 'purchase_orders.id'));
+                }
+                $query->orWhereExists(fn ($subquery) => $subquery->selectRaw('1')->from('purchase_order_change_requests')
+                    ->whereColumn('purchase_order_change_requests.purchase_order_id', 'purchase_orders.id')
+                    ->where('purchase_order_change_requests.status', 'pending'));
+            })
+            ->exists();
+    }
+
     public function isDeletable(): bool
     {
-        return $this->isDraft() && ! $this->hasReceipts();
+        return $this->isDraft()
+            && $this->approved_at === null
+            && $this->closed_at === null
+            && ! $this->hasDownstreamDocuments();
     }
 
     public function company(): BelongsTo

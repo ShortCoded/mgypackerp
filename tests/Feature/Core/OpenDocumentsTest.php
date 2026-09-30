@@ -1,6 +1,9 @@
 <?php
 
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\MessageBag;
+use Illuminate\Support\ViewErrorBag;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
@@ -11,9 +14,23 @@ use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\OpeningBalance;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Inventory\Models\OpeningStockPricing;
+use Modules\Purchases\Models\GoodsReceiptInspection;
+use Modules\Purchases\Models\PurchaseOrder;
+use Modules\Purchases\Models\PurchaseOrderChangeRequest;
+use Modules\Purchases\Models\PurchaseRequisition;
+use Modules\Purchases\Services\ProcurementSourcingService;
+use Modules\Purchases\Services\PurchaseOrderService;
+use Modules\Sales\Models\CustomerInvoice;
+use Modules\Sales\Models\SalesOrder;
+use Modules\Sales\Models\SalesRequest;
+use Modules\Sales\Services\SalesOrderService;
+use Modules\Sales\Services\SalesRequestService;
 use Spatie\Activitylog\Models\Activity;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
+
+require_once dirname(__DIR__, 2).'/SalesCycleSupport.php';
+require_once dirname(__DIR__, 2).'/ProcurementSupport.php';
 
 function openDocumentsActor(array $permissions = []): User
 {
@@ -186,9 +203,12 @@ test('Open Document menu appears under Tools with permission', function (): void
 
     expect($openDocuments)->not->toBeNull()
         ->and($openDocuments['route'])->toBe('admin.tools.open-documents.index')
-        ->and($openDocuments['permission'])->toBe('tools.open_documents.view')
+        ->and($openDocuments['permission'])->toContain('tools.open_documents.view', 'sales_orders.reopen')
         ->and(Permission::query()->where('name', 'tools.open_documents.view')->exists())->toBeTrue()
-        ->and(Permission::query()->where('name', 'tools.open_documents.execute')->exists())->toBeTrue();
+        ->and(Permission::query()->where('name', 'tools.open_documents.execute')->exists())->toBeTrue()
+        ->and(Permission::query()->where('name', 'purchase_orders.reopen')->exists())->toBeTrue()
+        ->and(Permission::query()->where('name', 'purchases.purchase_requisitions.reopen')->exists())->toBeTrue()
+        ->and(Permission::query()->where('name', 'production.material_requests.reopen')->exists())->toBeTrue();
 });
 
 test('Open Document screen and execute action require their permissions', function (): void {
@@ -208,7 +228,38 @@ test('Open Document screen and execute action require their permissions', functi
         ->assertForbidden();
 });
 
-test('Open Document form exposes only the three supported document types', function (): void {
+test('sales reopen permission grants only its own type on the central screen', function (): void {
+    openDocumentsContext($this);
+    $actor = openDocumentsActor(['sales_orders.reopen']);
+    $menu = app(MenuService::class)->getMenu($actor);
+    $tools = collect($menu)->firstWhere('label', 'tools');
+    $filesAndDocuments = collect($tools['children'] ?? [])->firstWhere('label', 'files_documents');
+    $openDocuments = collect($filesAndDocuments['children'] ?? [])->firstWhere('label', 'open_documents');
+
+    expect($openDocuments)->not->toBeNull();
+
+    $this->actingAs($actor)
+        ->get(route('admin.tools.open-documents.index'))
+        ->assertOk()
+        ->assertSee('value="sales_orders"', false)
+        ->assertDontSee('value="opening_balances"', false)
+        ->assertDontSee('value="customer_invoices"', false);
+
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'opening_balances',
+        'from_number' => 1,
+        'to_number' => 1,
+    ])->assertForbidden();
+
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'sales_orders',
+        'from_number' => 1,
+        'to_number' => 1,
+        'reason' => 'Correct this approved sales order.',
+    ])->assertOk()->assertJsonPath('summary.total_found', 0);
+});
+
+test('Open Document form exposes opening documents and hides unauthorized workflows', function (): void {
     $actor = openDocumentsActor(['tools.open_documents.view']);
 
     $this->actingAs($actor)
@@ -217,7 +268,42 @@ test('Open Document form exposes only the three supported document types', funct
         ->assertSee('value="opening_balances"', false)
         ->assertSee('value="opening_stocks"', false)
         ->assertSee('value="opening_stock_pricings"', false)
+        ->assertDontSee('value="production_material_requests"', false)
         ->assertDontSee('value="customers"', false);
+});
+
+test('Open Document form preselects an authorized document linked from its detail page', function (): void {
+    $actor = openDocumentsActor(['tools.open_documents.view', 'sales_orders.reopen']);
+
+    $this->actingAs($actor)
+        ->get(route('admin.tools.open-documents.index', [
+            'document_type' => 'sales_orders',
+            'from_number' => 57,
+            'to_number' => 57,
+        ]))
+        ->assertOk()
+        ->assertSee('value="sales_orders" selected', false)
+        ->assertSee('name="from_number"', false)
+        ->assertSee('name="to_number"', false)
+        ->assertSee('value="57"', false);
+});
+
+test('Open Document form does not show stale validation errors before submission', function (): void {
+    $actor = openDocumentsActor(['tools.open_documents.view']);
+
+    $errors = new ViewErrorBag;
+    $errors->put('default', new MessageBag([
+        'document_type' => 'Error from a previous screen',
+        'from_number' => 'Error from a previous screen',
+        'to_number' => 'Error from a previous screen',
+    ]));
+
+    $this->actingAs($actor)
+        ->withSession(['errors' => $errors])
+        ->get(route('admin.tools.open-documents.index'))
+        ->assertOk()
+        ->assertDontSee('Error from a previous screen')
+        ->assertDontSee('is-invalid', false);
 });
 
 test('Open Document rejects invalid document type and reversed ranges', function (): void {
@@ -248,6 +334,20 @@ test('Open Document rejects invalid document type and reversed ranges', function
         ])
         ->assertStatus(422)
         ->assertJsonValidationErrors(['from_number']);
+});
+
+test('Open Document limits a posted-invoice batch before any financial reversal', function (): void {
+    $actor = openDocumentsActor(['tools.open_documents.view', 'tools.open_documents.execute', 'customer_invoices.reopen']);
+
+    $this->actingAs($actor)
+        ->postJson(route('admin.tools.open-documents.store'), [
+            'document_type' => 'customer_invoices',
+            'from_number' => 1,
+            'to_number' => 11,
+            'reason' => 'Correct invoice descriptions.',
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('to_number');
 });
 
 test('Open Document reopens only closed unapproved Opening Balances in current company and period', function (): void {
@@ -310,6 +410,20 @@ test('Open Document reopens only closed unapproved Opening Balances in current c
         ->and($properties['meta']['document_number'] ?? null)->toBe((int) $eligible->doc_number)
         ->and($properties)->not->toHaveKey('id')
         ->and($properties['record'] ?? [])->not->toHaveKey('id');
+});
+
+test('Open Document keeps a generic opening document closed when its financial period is closed', function (): void {
+    $context = openDocumentsContext($this);
+    $actor = openDocumentsActor(['tools.open_documents.view', 'tools.open_documents.execute']);
+    $opening = openDocumentsOpeningBalance($context['company'], $context['period'], $context['currency'], 88);
+    $context['period']->forceFill(['is_closed' => true])->save();
+
+    $this->actingAs($actor)->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'opening_balances',
+        'from_number' => 88,
+        'to_number' => 88,
+    ])->assertUnprocessable();
+    expect($opening->fresh()->is_closed)->toBeTrue();
 });
 
 test('Open Document reopens Opening Stock across all branches in current company and period', function (): void {
@@ -392,4 +506,279 @@ test('Open Document returns no-reopenable message when no documents are eligible
         ->assertJsonPath('type', 'no_changes')
         ->assertJsonPath('message', __('open_documents.messages.none_reopenable'))
         ->assertJsonPath('summary.opened', 0);
+});
+
+test('Open Document routes approved sales order reopening through its workflow and enforces its permission', function (): void {
+    $fixture = salesCycleFixture();
+    $actor = $fixture['user'];
+    foreach (['tools.open_documents.view', 'tools.open_documents.execute', 'sales_orders.reopen'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $actor->givePermissionTo(['tools.open_documents.view', 'tools.open_documents.execute']);
+    $this->actingAs($actor)->withSession(salesCycleSession($fixture));
+
+    $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture)));
+    $this->get(route('admin.tools.open-documents.index'))->assertOk()->assertDontSee('value="sales_orders"', false);
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'sales_orders', 'from_number' => $order->doc_number, 'to_number' => $order->doc_number, 'reason' => 'Correct the agreed quantity.',
+    ])->assertForbidden();
+    expect($order->fresh()->status)->toBe(SalesOrder::StatusApproved);
+
+    $actor->givePermissionTo('sales_orders.reopen');
+    $this->get(route('admin.tools.open-documents.index'))->assertOk()->assertSee('value="sales_orders"', false);
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'sales_orders', 'from_number' => $order->doc_number, 'to_number' => $order->doc_number,
+    ])->assertInvalid('reason');
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'sales_orders', 'from_number' => $order->doc_number, 'to_number' => $order->doc_number, 'reason' => 'Correct the agreed quantity.',
+    ])->assertOk()->assertJsonPath('summary.opened', 1);
+
+    $reopened = $order->fresh();
+    expect($reopened->status)->toBe(SalesOrder::StatusReopened)
+        ->and($reopened->reopen_reason)->toBe('Correct the agreed quantity.')
+        ->and($reopened->canCancelSafely())->toBeFalse();
+    Permission::findOrCreate('sales_orders.cancel', 'web');
+    $actor->givePermissionTo('sales_orders.cancel');
+    $this->postJson(route('admin.sales.sales-orders.cancel', $order), ['reason' => 'Delete the previously approved order.'])->assertUnprocessable();
+    expect($order->fresh()->status)->toBe(SalesOrder::StatusReopened);
+});
+
+test('Open Document cannot reopen a sales order in a closed financial period', function (): void {
+    $fixture = salesCycleFixture();
+    $actor = $fixture['user'];
+    foreach (['tools.open_documents.view', 'tools.open_documents.execute', 'sales_orders.reopen'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $actor->givePermissionTo(['tools.open_documents.view', 'tools.open_documents.execute', 'sales_orders.reopen']);
+    $this->actingAs($actor)->withSession(salesCycleSession($fixture));
+    $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture)));
+    $fixture['period']->forceFill(['is_closed' => true])->save();
+
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'sales_orders', 'from_number' => $order->doc_number, 'to_number' => $order->doc_number, 'reason' => 'Correct the agreed quantity.',
+    ])->assertUnprocessable();
+    expect($order->fresh()->status)->toBe(SalesOrder::StatusApproved);
+});
+
+test('Open Document delegates sales request and posted invoice reopening to their audited workflows', function (): void {
+    $fixture = salesCycleFixture();
+    $actor = $fixture['user'];
+    foreach (['tools.open_documents.view', 'tools.open_documents.execute', 'sales_requests.reopen', 'customer_invoices.reopen'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $actor->givePermissionTo(['tools.open_documents.view', 'tools.open_documents.execute', 'sales_requests.reopen', 'customer_invoices.reopen']);
+    $this->actingAs($actor)->withSession(salesCycleSession($fixture));
+
+    $requestService = app(SalesRequestService::class);
+    $salesRequest = $requestService->save([
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'request_date' => now()->toDateString(),
+        'lines' => [[
+            'product_id' => $fixture['finished']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'quantity' => '2',
+        ]],
+    ]);
+    $requestService->transition($salesRequest, 'submitted');
+    $requestService->transition($salesRequest->fresh(), SalesRequest::StatusApproved);
+
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'sales_requests', 'from_number' => $salesRequest->doc_number,
+        'to_number' => $salesRequest->doc_number, 'reason' => 'Correct the customer request.',
+    ])->assertOk()->assertJsonPath('summary.opened', 1);
+    expect($salesRequest->fresh()->status)->toBe(SalesRequest::StatusReopened);
+
+    $invoice = salesPostedServiceInvoice($fixture, '100.0000');
+    $originalJournalId = (int) $invoice->journal_entry_id;
+    $originalLines = DB::table('journal_entry_lines')->where('journal_entry_id', $originalJournalId)->get();
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'customer_invoices', 'from_number' => $invoice->doc_number,
+        'to_number' => $invoice->doc_number, 'reason' => 'Correct the service description.',
+    ])->assertOk()->assertJsonPath('summary.opened', 1);
+    $reopenedInvoice = $invoice->fresh();
+    expect($reopenedInvoice->status)->toBe(CustomerInvoice::StatusReopened)
+        ->and($reopenedInvoice->is_closed)->toBeFalse()
+        ->and($reopenedInvoice->reversal_journal_entry_id)->not->toBeNull();
+    $reversalJournal = DB::table('journal_entries')->find($reopenedInvoice->reversal_journal_entry_id);
+    $originalJournal = DB::table('journal_entries')->find($originalJournalId);
+    $reversalLines = DB::table('journal_entry_lines')->where('journal_entry_id', $reversalJournal->id)->get();
+
+    expect((int) $originalJournal->reversed_entry_id)->toBe((int) $reversalJournal->id)
+        ->and((int) $reversalJournal->company_id)->toBe((int) $originalJournal->company_id)
+        ->and((int) $reversalJournal->branch_id)->toBe((int) $originalJournal->branch_id)
+        ->and((int) $reversalJournal->financial_period_id)->toBe((int) $originalJournal->financial_period_id)
+        ->and($reversalLines)->toHaveCount($originalLines->count());
+    foreach ($originalLines as $originalLine) {
+        $reversalLine = $reversalLines->firstWhere('account_id', $originalLine->account_id);
+        expect($reversalLine)->not->toBeNull()
+            ->and((string) $reversalLine->debit_amount)->toBe((string) $originalLine->credit_amount)
+            ->and((string) $reversalLine->credit_amount)->toBe((string) $originalLine->debit_amount);
+    }
+});
+
+test('Open Document reopens an unsent purchase order and blocks orders with downstream commitments', function (): void {
+    $fixture = procurementFixture();
+    $actor = $fixture['user'];
+    foreach (['tools.open_documents.view', 'tools.open_documents.execute', 'purchase_orders.reopen'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $actor->givePermissionTo(['tools.open_documents.view', 'tools.open_documents.execute', 'purchase_orders.reopen']);
+    $this->actingAs($actor);
+
+    $orders = app(PurchaseOrderService::class);
+    $order = $orders->approve($orders->create([
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'branch_store_uuid' => $fixture['store']->public_uuid,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'document_date' => now()->toDateString(),
+        'exchange_rate' => 1,
+        'direct_procurement_override' => true,
+        'direct_procurement_reason' => 'Test direct purchasing.',
+        'lines' => [[
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'ordered_quantity' => 5,
+            'unit_price' => 10,
+            'tax_rate' => 0,
+        ]],
+    ])['record']);
+
+    $this->get(route('admin.tools.open-documents.index'))->assertOk()->assertSee('value="purchase_orders"', false);
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'purchase_orders',
+        'from_number' => $order->doc_number,
+        'to_number' => $order->doc_number,
+    ])->assertInvalid('reason');
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'purchase_orders',
+        'from_number' => $order->doc_number,
+        'to_number' => $order->doc_number,
+        'reason' => 'Correct the requested quantity.',
+    ])->assertOk()->assertJsonPath('summary.opened', 1);
+
+    expect($order->fresh()->status)->toBe(PurchaseOrder::StatusDraft)
+        ->and($order->fresh()->approved_at)->not->toBeNull()
+        ->and($order->fresh()->isDeletable())->toBeFalse()
+        ->and(Activity::query()->where('event', 'purchase_order.reopened')->exists())->toBeTrue();
+    expect(fn () => $orders->delete($order->fresh()))->toThrow(DomainException::class);
+
+    $order = $orders->approve($order->fresh());
+    $order->forceFill(['sent_at' => now(), 'sent_by' => $actor->getKey()])->save();
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'purchase_orders',
+        'from_number' => $order->doc_number,
+        'to_number' => $order->doc_number,
+        'reason' => 'Unsafe after supplier dispatch.',
+    ])->assertOk()->assertJsonPath('summary.opened', 0)->assertJsonPath('summary.skipped_blocked', 1);
+    expect($order->fresh()->status)->toBe(PurchaseOrder::StatusApproved);
+
+    $order->forceFill(['sent_at' => null, 'sent_by' => null])->save();
+    $inspection = GoodsReceiptInspection::query()->create([
+        'doc_number' => 99001,
+        'doc_num' => 'GRI-REOPEN-BLOCK',
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'purchase_order_id' => $order->getKey(),
+        'inspection_at' => now(),
+    ]);
+    expect($order->fresh()->canReopenSafely())->toBeFalse();
+    $inspection->delete();
+    expect($order->fresh()->canReopenSafely())->toBeFalse();
+    expect(fn () => $orders->cancel($order->fresh(), 'The inspection was deleted.'))->toThrow(DomainException::class);
+    $inspection->forceDelete();
+
+    $changeRequest = PurchaseOrderChangeRequest::query()->create([
+        'doc_number' => 99001,
+        'doc_num' => 'POCR-REOPEN-BLOCK',
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'purchase_order_id' => $order->getKey(),
+        'request_date' => now()->toDateString(),
+        'original_values' => [],
+        'requested_values' => ['notes' => 'stale'],
+        'reason' => 'Pending amendment.',
+    ]);
+    expect($order->fresh()->canReopenSafely())->toBeFalse();
+    $changeRequest->forceFill(['status' => 'rejected'])->save();
+    expect($order->fresh()->canReopenSafely())->toBeTrue();
+
+    $orders->close($order->fresh());
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'purchase_orders',
+        'from_number' => $order->doc_number,
+        'to_number' => $order->doc_number,
+        'reason' => 'Revise a closed order without discarding its history.',
+    ])->assertOk()->assertJsonPath('summary.opened', 1);
+    expect($order->fresh()->closed_at)->not->toBeNull()
+        ->and($order->fresh()->isDeletable())->toBeFalse();
+    expect(fn () => $orders->cancel($order->fresh(), 'Do not cancel a previously closed order.'))->toThrow(DomainException::class)
+        ->and(fn () => $orders->delete($order->fresh()))->toThrow(DomainException::class);
+});
+
+test('Open Document reopens a purchase requisition and preserves downstream sourcing locks', function (): void {
+    $fixture = procurementFixture();
+    $actor = $fixture['user'];
+    foreach (['tools.open_documents.view', 'tools.open_documents.execute', 'purchases.purchase_requisitions.reopen'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $actor->givePermissionTo(['tools.open_documents.view', 'tools.open_documents.execute', 'purchases.purchase_requisitions.reopen']);
+    $this->actingAs($actor);
+
+    $sourcing = app(ProcurementSourcingService::class);
+    $requisition = procurementManualRequisition($fixture);
+    $sourcing->submitRequisition($requisition);
+    $sourcing->approveRequisition($requisition->fresh());
+
+    $this->get(route('admin.tools.open-documents.index'))->assertOk()->assertSee('value="purchase_requisitions"', false);
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'purchase_requisitions',
+        'from_number' => $requisition->doc_number,
+        'to_number' => $requisition->doc_number,
+        'reason' => 'Correct the source request.',
+    ])->assertOk()->assertJsonPath('summary.opened', 1);
+    expect($requisition->fresh()->status)->toBe(PurchaseRequisition::StatusDraft)
+        ->and($requisition->fresh()->approved_at)->not->toBeNull()
+        ->and((string) $requisition->fresh()->lines()->firstOrFail()->approved_quantity)->toBe('0.00000000');
+    expect(fn () => $sourcing->deleteRequisition($requisition->fresh()))->toThrow(DomainException::class);
+
+    $sourcing->submitRequisition($requisition->fresh());
+    $sourcing->approveRequisition($requisition->fresh());
+    PurchaseOrder::query()->create([
+        'doc_number' => 99005,
+        'doc_num' => 'PO-REOPEN-REQ-BLOCK',
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'supplier_id' => $fixture['firstSupplier']->getKey(),
+        'document_date' => now()->toDateString(),
+        'purchase_requisition_id' => $requisition->getKey(),
+    ]);
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'purchase_requisitions',
+        'from_number' => $requisition->doc_number,
+        'to_number' => $requisition->doc_number,
+        'reason' => 'Unsafe after an order.',
+    ])->assertOk()->assertJsonPath('summary.opened', 0)->assertJsonPath('summary.skipped_blocked', 1);
+    expect($requisition->fresh()->status)->toBe(PurchaseRequisition::StatusApproved);
+    expect(fn () => $sourcing->finishRequisition($requisition->fresh(), PurchaseRequisition::StatusCancelled, 'Attempt to cancel a converted request.'))->toThrow(DomainException::class)
+        ->and($requisition->fresh()->status)->toBe(PurchaseRequisition::StatusApproved);
+
+    $closedRequisition = procurementManualRequisition($fixture);
+    $sourcing->submitRequisition($closedRequisition);
+    $sourcing->approveRequisition($closedRequisition->fresh());
+    $sourcing->finishRequisition($closedRequisition->fresh(), PurchaseRequisition::StatusClosed);
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'purchase_requisitions',
+        'from_number' => $closedRequisition->doc_number,
+        'to_number' => $closedRequisition->doc_number,
+        'reason' => 'Revise the closed request.',
+    ])->assertOk()->assertJsonPath('summary.opened', 1);
+    expect($closedRequisition->fresh()->status)->toBe(PurchaseRequisition::StatusDraft)
+        ->and($closedRequisition->fresh()->closed_at)->not->toBeNull();
+    expect(fn () => $sourcing->finishRequisition($closedRequisition->fresh(), PurchaseRequisition::StatusCancelled, 'No longer needed.'))->toThrow(DomainException::class)
+        ->and(fn () => $sourcing->deleteRequisition($closedRequisition->fresh()))->toThrow(DomainException::class);
 });

@@ -107,6 +107,18 @@ class HrSelect2Service
             ->orderBy('full_name')
             ->orderBy('doc_number');
 
+        if ($request->string('purpose')->toString() === 'payroll') {
+            $filters = $request->validate([
+                'payroll_period_start' => ['required', 'date_format:Y-m-d'],
+                'payroll_period_end' => ['required', 'date_format:Y-m-d', 'after_or_equal:payroll_period_start'],
+                'payroll_branch_doc_num' => ['nullable', 'string'],
+            ]);
+            $query->eligibleForPayrollPeriod($filters['payroll_period_start'], $filters['payroll_period_end']);
+            if (filled($filters['payroll_branch_doc_num'] ?? null)) {
+                $query->whereHas('branch', fn (Builder $branchQuery): Builder => $branchQuery->where('doc_num', $filters['payroll_branch_doc_num']));
+            }
+        }
+
         $terms = $this->searchService->terms(is_string($search) ? $search : null);
 
         if ($terms !== []) {

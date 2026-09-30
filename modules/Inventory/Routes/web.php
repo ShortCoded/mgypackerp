@@ -21,6 +21,8 @@ Route::middleware('auth')
             Route::get('/select2/sales-issue-stores', 'stores')->middleware(['can:inventory.documents.create', 'can:inventory.documents.issue'])->name('select2.sales-issue-stores');
             Route::get('/select2/products', 'products')->middleware('can:inventory.documents.view')->name('select2.products');
             Route::get('/select2/production-run-batches', 'productionRunBatches')->middleware('can:inventory.documents.create')->name('select2.production-run-batches');
+            Route::get('/select2/production-material-requests', 'productionMaterialIssueRequests')->middleware('can:inventory.documents.view')->name('select2.production-material-requests');
+            Route::get('/production-material-issue', 'productionMaterialIssue')->middleware('can:inventory.documents.view')->name('production-material-issue.create');
             Route::get('/select2/sales-issue-orders', [SalesIssueController::class, 'orders'])->middleware(['can:inventory.documents.create', 'can:inventory.documents.issue'])->name('select2.sales-issue-orders');
             Route::get('/sales-issue-orders/{salesIssueOrder}/details', [SalesIssueController::class, 'details'])->middleware(['can:inventory.documents.create', 'can:inventory.documents.issue'])->name('sales-issue-orders.details');
             Route::get('/sales-issue/create', [SalesIssueController::class, 'create'])->middleware(['can:inventory.documents.create', 'can:inventory.documents.issue'])->name('sales-issue.create');
@@ -37,6 +39,9 @@ Route::middleware('auth')
             Route::post('/{inventoryDocument}/post', 'post')->middleware('can:inventory.documents.post')->name('post');
             Route::get('/{inventoryDocument}/print', 'print')->middleware('can:inventory.documents.print')->name('print');
             Route::post('/{inventoryDocument}/reverse', 'reverse')->middleware('can:inventory.documents.reverse')->name('reverse');
+            Route::post('/{inventoryDocument}/price-receipt', 'priceReceipt')
+                ->middleware(['can:inventory.documents.post', 'can:inventory.documents.receive'])
+                ->name('price-receipt');
             Route::get('/{inventoryDocument}', 'show')->middleware('can:inventory.documents.view')->name('show');
         });
         Route::get('/reports/operations', [InventoryReportController::class, 'index'])

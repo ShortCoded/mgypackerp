@@ -557,7 +557,7 @@ class FixedAssetLifecycleService
             app(FixedAssetAccessService::class)->assertPeriod($period);
             $disposal->loadMissing(['journalEntry.lines', 'gainLossJournalEntry.lines', 'customerInvoice']);
             if ($disposal->customerInvoice) {
-                $this->customerInvoices->reopen($disposal->customerInvoice, $reason);
+                $this->customerInvoices->reopen($disposal->customerInvoice, $reason, $disposal);
             }
             $gainLossReversal = $disposal->gainLossJournalEntry
                 ? $this->journals->createPostedReversalFromSource($disposal->gainLossJournalEntry, [

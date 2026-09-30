@@ -13,6 +13,7 @@ use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Concerns\SnapshotsCompanyPrintIdentity;
 use Modules\Core\Services\OperatingCompanyContextService;
+use Modules\Production\Models\ProductionMaterialRequest;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Models\ProductionRunBatch;
@@ -106,6 +107,20 @@ class InventoryDocument extends Model
         return $companyId === null ? null : $this->newQuery()->where($field ?? 'doc_num', $value)->where('company_id', $companyId)->first();
     }
 
+    public function isUntouchedDraft(): bool
+    {
+        return ! $this->trashed()
+            && $this->status === self::StatusDraft
+            && ! $this->is_closed
+            && $this->approved_at === null
+            && $this->closed_at === null
+            && $this->cancelled_at === null
+            && $this->reversed_at === null
+            && $this->journal_entry_id === null
+            && $this->reversal_journal_entry_id === null
+            && ! $this->transactions()->exists();
+    }
+
     public function company(): BelongsTo
     {
         return $this->belongsTo(Company::class);
@@ -164,6 +179,11 @@ class InventoryDocument extends Model
     public function productionRun(): BelongsTo
     {
         return $this->belongsTo(ProductionRun::class);
+    }
+
+    public function productionMaterialRequest(): BelongsTo
+    {
+        return $this->belongsTo(ProductionMaterialRequest::class, 'production_material_request_id');
     }
 
     public function productionRunBatch(): BelongsTo

@@ -4,6 +4,7 @@ namespace Modules\Purchases\Services;
 
 use DomainException;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\Branch;
@@ -126,9 +127,10 @@ class ProcurementSourcingService
                 if (blank($reason)) {
                     throw new DomainException(__('Cancellation reason is required.'));
                 }
-                if ($locked->lines->contains(fn (PurchaseRequisitionLine $line): bool => $line->orderedQuantity(true) > 0)
-                    || $locked->requestsForQuotation()->whereNotIn('status', ['cancelled', 'rejected'])->exists()) {
-                    throw new DomainException(__('Cancel the dependent sourcing documents and purchase orders first.'));
+                if ($locked->closed_at !== null
+                    || in_array($locked->status, [PurchaseRequisition::StatusPartiallyConverted, PurchaseRequisition::StatusFullyConverted], true)
+                    || $locked->hasDownstreamDocuments()) {
+                    throw new DomainException(__('A closed or converted purchase request cannot be cancelled.'));
                 }
                 $values = ['cancelled_by' => auth()->id(), 'cancelled_at' => now(), 'cancel_reason' => trim($reason)];
             } else {
@@ -151,6 +153,9 @@ class ProcurementSourcingService
         DB::transaction(function () use ($requisition): void {
             $locked = $this->lockRequisition($requisition);
             $this->requireStatus($locked->status, [PurchaseRequisition::StatusDraft]);
+            if ($locked->approved_at !== null || $locked->closed_at !== null || $locked->hasDownstreamDocuments()) {
+                throw new DomainException(__('Only unused drafts can be deleted.'));
+            }
             $locked->forceFill(['deleted_by' => auth()->id()])->save();
             $locked->delete();
             $this->audit->record($locked, 'purchase_requisition.deleted');
@@ -319,6 +324,61 @@ class ProcurementSourcingService
             $this->audit->record($locked, 'purchase_requisition.approved');
 
             return $locked->refresh()->load(['lines.product', 'lines.unit']);
+        }, 3);
+    }
+
+    public function reopenRequisition(PurchaseRequisition $requisition, string $reason): PurchaseRequisition
+    {
+        return DB::transaction(function () use ($requisition, $reason): PurchaseRequisition {
+            $context = $this->context();
+            $locked = $this->lockRequisition($requisition, true);
+
+            if ((int) $locked->branch_id !== $context['branch_id'] || blank($reason)) {
+                throw new DomainException(__('open_documents.validation.reopen_context_or_reason'));
+            }
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate(
+                $context['company_id'],
+                $locked->request_date,
+                $context['financial_period_id'],
+                lockForUpdate: true,
+            );
+            if ($locked->trashed() || ! $locked->canReopenSafely()) {
+                throw new DomainException(__('open_documents.messages.skipped_blocked', ['count' => 1]));
+            }
+
+            $previousStatus = $locked->status;
+            $approvedSnapshot = [
+                'header' => Arr::only($locked->attributesToArray(), [
+                    'doc_num', 'request_date', 'required_by_date', 'branch_store_id',
+                    'department', 'priority', 'requested_by', 'submitted_by', 'submitted_at',
+                    'approved_by', 'approved_at', 'closed_by', 'closed_at',
+                ]),
+                'lines' => $locked->lines->map(fn (PurchaseRequisitionLine $line): array => Arr::only(
+                    $line->attributesToArray(),
+                    ['public_id', 'line_number', 'product_id', 'unit_id', 'requested_quantity',
+                        'approved_quantity', 'source_type', 'source_doc_num', 'source_line_reference'],
+                ))->all(),
+            ];
+            $locked->lines->each(fn (PurchaseRequisitionLine $line) => $line->forceFill([
+                'approved_quantity' => 0,
+                'updated_by' => auth()->id(),
+            ])->save());
+            $locked->forceFill([
+                'status' => PurchaseRequisition::StatusDraft,
+                'submitted_by' => null,
+                'submitted_at' => null,
+                'rejected_by' => null,
+                'rejected_at' => null,
+                'rejection_reason' => null,
+                'updated_by' => auth()->id(),
+            ])->save();
+            $this->audit->record($locked, 'purchase_requisition.reopened', [
+                'previous_status' => $previousStatus,
+                'reason' => trim($reason),
+                'approved_snapshot' => $approvedSnapshot,
+            ]);
+
+            return $locked->refresh()->load('lines');
         }, 3);
     }
 

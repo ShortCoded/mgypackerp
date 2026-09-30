@@ -6,10 +6,13 @@ use Illuminate\Support\Str;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\LedgerQueryService;
 use Modules\Core\Models\Branch;
+use Modules\Core\Models\Company;
+use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\NumericFormatService;
+use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cheque;
 use Modules\HR\Models\HrArea;
@@ -32,7 +35,10 @@ use Modules\Sales\Models\CustomerCreditRefund;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerReceipt;
 use Modules\Sales\Models\ElectronicInvoiceSubmission;
+use Modules\Sales\Models\Quotation;
+use Modules\Sales\Models\SalesIssueOrder;
 use Modules\Sales\Models\SalesOrder;
+use Modules\Sales\Models\SalesRequest;
 use Modules\Sales\Models\SalesReturn;
 use Modules\Sales\Services\CustomerCreditService;
 use Modules\Sales\Services\CustomerInvoiceService;
@@ -41,12 +47,457 @@ use Modules\Sales\Services\CustomerSalesOverviewService;
 use Modules\Sales\Services\ElectronicInvoicePayloadBuilder;
 use Modules\Sales\Services\ElectronicInvoiceService;
 use Modules\Sales\Services\SalesFulfillmentService;
+use Modules\Sales\Services\SalesIssueOrderService;
 use Modules\Sales\Services\SalesOrderService;
+use Modules\Sales\Services\SalesRequestService;
 use Modules\Sales\Services\SalesReturnService;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use Spatie\Permission\Models\Permission;
 
 require_once dirname(__DIR__).'/SalesCycleSupport.php';
+
+/** @param array<string, mixed> $fixture */
+function activateSalesCycleOperatingContext(array $fixture): void
+{
+    if (! request()->hasSession()) {
+        request()->setLaravelSession(app('session.store'));
+    }
+
+    request()->session()->put(salesCycleSession($fixture));
+}
+
+test('a sales order cannot be cancelled after a linked production order was cancelled or deleted', function (): void {
+    $fixture = salesCycleFixture();
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    $orders = app(SalesOrderService::class);
+    $order = $orders->approve($orders->create(salesCycleOrderPayload($fixture)));
+    $productionOrder = $order->productionOrders()->create([
+        'doc_number' => 99002,
+        'doc_num' => 'PROD-CANCELLED-SALES-LINEAGE',
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'customer_id' => $fixture['customer']->getKey(),
+        'production_order_date' => now()->toDateString(),
+        'expected_delivery_date' => now()->toDateString(),
+        'status' => ProductionOrder::StatusCancelled,
+    ]);
+
+    expect($order->fresh()->canCancelSafely())->toBeFalse();
+    expect(fn () => $orders->cancel($order->fresh(), 'The linked production order is cancelled.'))->toThrow(DomainException::class);
+    expect($order->fresh()->canReopenSafely())->toBeFalse();
+    expect(fn () => $orders->reopen($order->fresh(), 'The linked production order is cancelled.'))->toThrow(DomainException::class);
+    $productionOrder->delete();
+    expect(fn () => $orders->cancel($order->fresh(), 'The linked production order is soft deleted.'))->toThrow(DomainException::class)
+        ->and(fn () => $orders->reopen($order->fresh(), 'The linked production order is soft deleted.'))->toThrow(DomainException::class)
+        ->and($order->fresh()->status)->toBe(SalesOrder::StatusApproved);
+});
+
+test('approved sales requests require reopen permission before amendment and must be reapproved', function (): void {
+    $fixture = salesCycleFixture();
+    foreach (['sales_requests.view', 'sales_requests.edit', 'sales_requests.approve', 'sales_requests.reopen'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $fixture['user']->givePermissionTo(['sales_requests.view', 'sales_requests.edit', 'sales_requests.approve']);
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+
+    $service = app(SalesRequestService::class);
+    $record = $service->save([
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'request_date' => now()->toDateString(),
+        'lines' => [[
+            'product_id' => $fixture['finished']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'quantity' => '10',
+        ]],
+    ]);
+    $service->transition($record, 'submitted');
+    $service->transition($record->fresh(), 'approved');
+
+    expect(fn () => $service->transition($record->fresh(), 'cancelled', 'Cannot cancel an approved request.'))->toThrow(DomainException::class)
+        ->and($record->fresh()->status)->toBe(SalesRequest::StatusApproved);
+
+    $this->get(route('admin.sales.customer-requests.edit', $record))->assertUnprocessable();
+    $this->postJson(route('admin.sales.customer-requests.reopen', $record), ['reason' => 'Customer changed the requested quantity.'])->assertForbidden();
+    expect($record->fresh()->status)->toBe(SalesRequest::StatusApproved);
+
+    $fixture['user']->givePermissionTo('sales_requests.reopen');
+    $this->postJson(route('admin.sales.customer-requests.reopen', $record), [])->assertInvalid('reason');
+    $this->postJson(route('admin.sales.customer-requests.reopen', $record), ['reason' => 'Customer changed the requested quantity.'])->assertOk();
+
+    $reopened = $record->fresh();
+    $reopenRevisionId = $reopened->status_history[2]['reopen_revision_id'];
+    $approvedSnapshot = $reopened->status_history[2]['approved_snapshot'];
+    expect($reopened->status)->toBe(SalesRequest::StatusReopened)
+        ->and($reopened->status_reason)->toBe('Customer changed the requested quantity.')
+        ->and($reopened->status_history)->toHaveCount(3)
+        ->and($reopened->status_history[2])->toMatchArray([
+            'from' => SalesRequest::StatusApproved,
+            'to' => SalesRequest::StatusReopened,
+            'by' => $fixture['user']->getKey(),
+            'reason' => 'Customer changed the requested quantity.',
+        ])
+        ->and($reopenRevisionId)->toBeString()->not->toBeEmpty()
+        ->and($approvedSnapshot['header']['status'])->toBe(SalesRequest::StatusApproved)
+        ->and($approvedSnapshot['lines'][0]['quantity'])->toBe('10.00000000');
+    $this->postJson(route('admin.sales.customer-requests.reopen', $record), ['reason' => 'Duplicate reopen request.'])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', __('Only approved sales requests may be reopened.'));
+    expect($record->fresh()->status_history)->toHaveCount(3)
+        ->and(DB::table(config('activitylog.table_name', 'activity_log'))
+            ->where('event', 'sales_request.reopened')
+            ->where('subject_type', SalesRequest::class)
+            ->where('subject_id', $record->getKey())
+            ->count())->toBe(1);
+
+    $this->get(route('admin.sales.customer-requests.edit', $record))->assertOk();
+    $this->putJson(route('admin.sales.customer-requests.update', $record), [
+        'request_type' => 'internal',
+        'request_date' => now()->toDateString(),
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'exchange_rate' => '1',
+        'lines' => [[
+            'product_doc_num' => $fixture['finished']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'quantity' => '12',
+        ]],
+    ])->assertOk();
+    $amended = $record->fresh();
+    $amendment = collect($amended->status_history)->last();
+    expect($amended->lines->sole()->quantity)->toBe('12.00000000')
+        ->and($amendment['event'])->toBe('amended')
+        ->and($amendment['reopen_revision_id'])->toBe($reopenRevisionId)
+        ->and($amendment['before_snapshot'])->toBe($approvedSnapshot)
+        ->and($amendment['after_snapshot']['header']['status'])->toBe(SalesRequest::StatusReopened)
+        ->and($amendment['after_snapshot']['lines'][0]['quantity'])->toBe('12.00000000');
+    $amendmentAudit = DB::table(config('activitylog.table_name', 'activity_log'))
+        ->where('event', 'sales_request.amended')
+        ->where('subject_type', SalesRequest::class)
+        ->where('subject_id', $record->getKey())
+        ->sole();
+    $amendmentAuditProperties = json_decode((string) $amendmentAudit->properties, true, 512, JSON_THROW_ON_ERROR);
+    expect($amendmentAuditProperties['reopen_revision_id'])->toBe($reopenRevisionId)
+        ->and($amendmentAuditProperties['before_snapshot'])->toBe($approvedSnapshot)
+        ->and($amendmentAuditProperties['after_snapshot']['lines'][0]['quantity'])->toBe('12.00000000');
+
+    $this->postJson(route('admin.sales.customer-requests.transition', $record), ['status' => 'submitted'])->assertOk();
+    $this->postJson(route('admin.sales.customer-requests.transition', $record), ['status' => 'approved'])->assertOk();
+    expect($record->fresh()->status)->toBe(SalesRequest::StatusApproved)
+        ->and($record->fresh()->status_history)->toHaveCount(6)
+        ->and($record->fresh()->status_history[2]['approved_snapshot'])->toBe($approvedSnapshot);
+});
+
+test('approved sales requests cannot reopen after conversion or downstream lineage exists', function (): void {
+    $fixture = salesCycleFixture();
+    activateSalesCycleOperatingContext($fixture);
+    $service = app(SalesRequestService::class);
+    $record = $service->save([
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'request_date' => now()->toDateString(),
+        'lines' => [[
+            'product_id' => $fixture['finished']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'quantity' => '10',
+        ]],
+    ]);
+    $service->transition($record, 'submitted');
+    $service->transition($record->fresh(), 'approved');
+    $record->lines()->update(['converted_quantity' => '1']);
+
+    expect(fn () => $service->reopen($record->fresh(), 'Unsafe conversion amendment.'))
+        ->toThrow(DomainException::class, __('A sales request with conversions or downstream documents cannot be reopened.'));
+    expect($record->fresh()->status)->toBe(SalesRequest::StatusApproved);
+
+    $record->lines()->update(['converted_quantity' => '0']);
+    app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, ['sales_request_id' => $record->getKey()]));
+
+    expect(fn () => $service->reopen($record->fresh(), 'Unsafe downstream amendment.'))
+        ->toThrow(DomainException::class, __('A sales request with conversions or downstream documents cannot be reopened.'));
+    expect($record->fresh()->status)->toBe(SalesRequest::StatusApproved);
+});
+
+test('soft deleted sales request descendants remain reopen blockers', function (): void {
+    $fixture = salesCycleFixture();
+    activateSalesCycleOperatingContext($fixture);
+    $service = app(SalesRequestService::class);
+    $approvedRequest = function () use ($fixture, $service): SalesRequest {
+        $request = $service->save([
+            'company_id' => $fixture['company']->getKey(),
+            'branch_id' => $fixture['branch']->getKey(),
+            'customer_id' => $fixture['customer']->getKey(),
+            'currency_id' => $fixture['currency']->getKey(),
+            'request_date' => now()->toDateString(),
+            'lines' => [[
+                'product_id' => $fixture['finished']->getKey(),
+                'unit_id' => $fixture['unit']->getKey(),
+                'quantity' => '10',
+            ]],
+        ]);
+        $service->transition($request, 'submitted');
+
+        return $service->transition($request->fresh(), 'approved');
+    };
+
+    $quotationRequest = $approvedRequest();
+    $quotation = Quotation::query()->create([
+        'doc_number' => 99001,
+        'doc_num' => 'Q-REOPEN-BLOCK',
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'sales_request_id' => $quotationRequest->getKey(),
+        'customer_id' => $fixture['customer']->getKey(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'quotation_date' => now()->toDateString(),
+        'status' => Quotation::StatusDraft,
+    ]);
+    $quotation->delete();
+    expect(fn () => $service->reopen($quotationRequest->fresh(), 'Unsafe historical quotation amendment.'))
+        ->toThrow(DomainException::class, __('A sales request with conversions or downstream documents cannot be reopened.'));
+
+    $orderRequest = $approvedRequest();
+    $order = app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, ['sales_request_id' => $orderRequest->getKey()]));
+    $order->delete();
+    expect(fn () => $service->reopen($orderRequest->fresh(), 'Unsafe historical order amendment.'))
+        ->toThrow(DomainException::class, __('A sales request with conversions or downstream documents cannot be reopened.'));
+
+    $invoiceRequest = $approvedRequest();
+    $invoice = CustomerInvoice::query()->create([
+        'doc_number' => 99001,
+        'doc_num' => 'INV-REOPEN-BLOCK',
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'customer_id' => $fixture['customer']->getKey(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'invoice_date' => now()->toDateString(),
+        'source_type' => 'sales_request',
+        'source_id' => $invoiceRequest->getKey(),
+        'source_doc_num' => $invoiceRequest->doc_num,
+    ]);
+    $invoice->delete();
+    expect(fn () => $service->reopen($invoiceRequest->fresh(), 'Unsafe historical direct invoice amendment.'))
+        ->toThrow(DomainException::class, __('A sales request with conversions or downstream documents cannot be reopened.'));
+});
+
+test('sales request reopen rolls back in a closed period and remains company and branch isolated', function (): void {
+    $fixture = salesCycleFixture();
+    activateSalesCycleOperatingContext($fixture);
+    foreach (['sales_requests.view', 'sales_requests.reopen'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $fixture['user']->givePermissionTo(['sales_requests.view', 'sales_requests.reopen']);
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    $service = app(SalesRequestService::class);
+    $approvedRequest = function (int $branchId) use ($fixture, $service): SalesRequest {
+        $request = $service->save([
+            'company_id' => $fixture['company']->getKey(),
+            'branch_id' => $branchId,
+            'currency_id' => $fixture['currency']->getKey(),
+            'request_date' => now()->toDateString(),
+            'lines' => [[
+                'product_id' => $fixture['finished']->getKey(),
+                'unit_id' => $fixture['unit']->getKey(),
+                'quantity' => '10',
+            ]],
+        ]);
+        $service->transition($request, 'submitted');
+
+        return $service->transition($request->fresh(), 'approved');
+    };
+
+    $closedPeriodRequest = $approvedRequest($fixture['branch']->getKey());
+    $fixture['period']->forceFill(['is_closed' => true])->save();
+    expect(fn () => $service->reopen($closedPeriodRequest->fresh(), 'Closed-period amendment.'))
+        ->toThrow(DomainException::class, __('journal_entries.messages.period_closed'));
+    expect($closedPeriodRequest->fresh()->status)->toBe(SalesRequest::StatusApproved)
+        ->and($closedPeriodRequest->fresh()->status_history)->toHaveCount(2)
+        ->and(DB::table(config('activitylog.table_name', 'activity_log'))
+            ->where('event', 'sales_request.reopened')
+            ->where('subject_id', $closedPeriodRequest->getKey())
+            ->count())->toBe(0);
+    $fixture['period']->forceFill(['is_closed' => false])->save();
+
+    $otherBranch = Branch::query()->create([
+        'doc_number' => 99001,
+        'doc_num' => 'Branch-REOPEN-OTHER',
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Other reopen branch',
+        'type' => Branch::TypeShowroom,
+        'status' => 'active',
+    ]);
+    $otherBranchRequest = $approvedRequest($otherBranch->getKey());
+    $this->postJson(route('admin.sales.customer-requests.reopen', $otherBranchRequest), ['reason' => 'Cross-branch attempt.'])->assertNotFound();
+
+    $otherPeriod = FinancialPeriod::query()->create([
+        'doc_number' => 99010,
+        'doc_num' => 'Period-REQUEST-REOPEN-OTHER',
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Other open request period',
+        'from_date' => now()->addYear()->startOfYear()->toDateString(),
+        'to_date' => now()->addYear()->endOfYear()->toDateString(),
+        'is_closed' => false,
+    ]);
+    $otherPeriodRequest = $approvedRequest($fixture['branch']->getKey());
+    $otherPeriodRequest->forceFill([
+        'financial_period_id' => $otherPeriod->getKey(),
+        'request_date' => $otherPeriod->from_date,
+    ])->save();
+    expect(fn () => $service->reopen($otherPeriodRequest->fresh(), 'Cross-period direct attempt.'))
+        ->toThrow(DomainException::class, __('The document is outside the active operating context.'));
+    $this->postJson(route('admin.sales.customer-requests.reopen', $otherPeriodRequest), ['reason' => 'Cross-period route attempt.'])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', __('The document is outside the active operating context.'));
+    expect($otherPeriodRequest->fresh()->status)->toBe(SalesRequest::StatusApproved);
+
+    $otherCompany = Company::factory()->create();
+    $otherCompanySession = [
+        ...salesCycleSession($fixture),
+        OperatingContextService::CompanyIdKey => $otherCompany->getKey(),
+        OperatingContextService::CompanyDocNumKey => $otherCompany->doc_num,
+    ];
+    $this->withSession($otherCompanySession)
+        ->postJson(route('admin.sales.customer-requests.reopen', $closedPeriodRequest), ['reason' => 'Cross-company attempt.'])
+        ->assertNotFound();
+});
+
+test('sales order reopen enforces reason operating context and open document period in service and route', function (): void {
+    $fixture = salesCycleFixture();
+    activateSalesCycleOperatingContext($fixture);
+    Permission::findOrCreate('sales_orders.reopen', 'web');
+    $fixture['user']->givePermissionTo('sales_orders.reopen');
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+
+    $service = app(SalesOrderService::class);
+    $order = $service->approve($service->create(salesCycleOrderPayload($fixture)));
+    $originalDate = $order->order_date->toDateString();
+
+    expect(fn () => $service->reopen($order->fresh(), '   '))
+        ->toThrow(DomainException::class, __('A reason is required for this action.'));
+
+    $otherBranch = Branch::query()->create([
+        'doc_number' => 99011,
+        'doc_num' => 'Branch-ORDER-REOPEN-OTHER',
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Other order reopen branch',
+        'type' => Branch::TypeShowroom,
+        'status' => 'active',
+    ]);
+    $order->forceFill(['branch_id' => $otherBranch->getKey()])->save();
+    $this->postJson(route('admin.sales.sales-orders.reopen', $order), ['reason' => 'Cross-branch route attempt.'])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', __('The document is outside the active operating context.'));
+    expect(fn () => $service->reopen($order->fresh(), 'Cross-branch direct attempt.'))
+        ->toThrow(DomainException::class, __('The document is outside the active operating context.'));
+
+    $otherCompany = Company::factory()->create();
+    $order->forceFill(['company_id' => $otherCompany->getKey(), 'branch_id' => $fixture['branch']->getKey()])->save();
+    expect(fn () => $service->reopen($order->fresh(), 'Cross-company direct attempt.'))
+        ->toThrow(DomainException::class, __('The document is outside the active operating context.'));
+
+    $otherPeriod = FinancialPeriod::query()->create([
+        'doc_number' => 99011,
+        'doc_num' => 'Period-ORDER-REOPEN-OTHER',
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Other order reopen period',
+        'from_date' => now()->addYear()->startOfYear()->toDateString(),
+        'to_date' => now()->addYear()->endOfYear()->toDateString(),
+        'is_closed' => false,
+    ]);
+    $order->forceFill(['company_id' => $fixture['company']->getKey(), 'financial_period_id' => $otherPeriod->getKey()])->save();
+    expect(fn () => $service->reopen($order->fresh(), 'Cross-period direct attempt.'))
+        ->toThrow(DomainException::class, __('The document is outside the active operating context.'));
+
+    $order->forceFill([
+        'financial_period_id' => $fixture['period']->getKey(),
+        'order_date' => $fixture['period']->to_date->copy()->addDay(),
+    ])->save();
+    expect(fn () => $service->reopen($order->fresh(), 'Out-of-period date attempt.'))
+        ->toThrow(DomainException::class, __('journal_entries.messages.date_outside_period'));
+
+    $order->forceFill(['order_date' => $originalDate])->save();
+    $fixture['period']->forceFill(['is_closed' => true])->save();
+    expect(fn () => $service->reopen($order->fresh(), 'Closed-period direct attempt.'))
+        ->toThrow(DomainException::class, __('journal_entries.messages.period_closed'));
+    $this->postJson(route('admin.sales.sales-orders.reopen', $order), ['reason' => 'Closed-period route attempt.'])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', __('journal_entries.messages.period_closed'));
+
+    expect($order->fresh()->status)->toBe(SalesOrder::StatusApproved)
+        ->and($order->fresh()->reopened_at)->toBeNull();
+});
+
+test('customer invoice reopen protects accounting reversal with reason context and open document period checks', function (): void {
+    $fixture = salesCycleFixture();
+    activateSalesCycleOperatingContext($fixture);
+    Permission::findOrCreate('customer_invoices.reopen', 'web');
+    $fixture['user']->givePermissionTo('customer_invoices.reopen');
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+
+    $service = app(CustomerInvoiceService::class);
+    $invoice = salesPostedServiceInvoice($fixture, '100');
+    $originalDate = $invoice->invoice_date->toDateString();
+    $originalJournalId = $invoice->journal_entry_id;
+
+    expect(fn () => $service->reopen($invoice->fresh(), '   '))
+        ->toThrow(DomainException::class, __('A reason is required for this action.'));
+
+    $otherBranch = Branch::query()->create([
+        'doc_number' => 99012,
+        'doc_num' => 'Branch-INVOICE-REOPEN-OTHER',
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Other invoice reopen branch',
+        'type' => Branch::TypeShowroom,
+        'status' => 'active',
+    ]);
+    $invoice->forceFill(['branch_id' => $otherBranch->getKey()])->save();
+    $this->postJson(route('admin.sales.sales-invoices.reopen', $invoice), ['reason' => 'Cross-branch route attempt.'])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', __('The document is outside the active operating context.'));
+    expect(fn () => $service->reopen($invoice->fresh(), 'Cross-branch direct attempt.'))
+        ->toThrow(DomainException::class, __('The document is outside the active operating context.'));
+
+    $otherCompany = Company::factory()->create();
+    $invoice->forceFill(['company_id' => $otherCompany->getKey(), 'branch_id' => $fixture['branch']->getKey()])->save();
+    expect(fn () => $service->reopen($invoice->fresh(), 'Cross-company direct attempt.'))
+        ->toThrow(DomainException::class, __('The document is outside the active operating context.'));
+
+    $otherPeriod = FinancialPeriod::query()->create([
+        'doc_number' => 99012,
+        'doc_num' => 'Period-INVOICE-REOPEN-OTHER',
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Other invoice reopen period',
+        'from_date' => now()->addYear()->startOfYear()->toDateString(),
+        'to_date' => now()->addYear()->endOfYear()->toDateString(),
+        'is_closed' => false,
+    ]);
+    $invoice->forceFill(['company_id' => $fixture['company']->getKey(), 'financial_period_id' => $otherPeriod->getKey()])->save();
+    expect(fn () => $service->reopen($invoice->fresh(), 'Cross-period direct attempt.'))
+        ->toThrow(DomainException::class, __('The document is outside the active operating context.'));
+
+    $invoice->forceFill([
+        'financial_period_id' => $fixture['period']->getKey(),
+        'invoice_date' => $fixture['period']->to_date->copy()->addDay(),
+    ])->save();
+    expect(fn () => $service->reopen($invoice->fresh(), 'Out-of-period date attempt.'))
+        ->toThrow(DomainException::class, __('journal_entries.messages.date_outside_period'));
+
+    $invoice->forceFill(['invoice_date' => $originalDate])->save();
+    $fixture['period']->forceFill(['is_closed' => true])->save();
+    expect(fn () => $service->reopen($invoice->fresh(), 'Closed-period direct attempt.'))
+        ->toThrow(DomainException::class, __('journal_entries.messages.period_closed'));
+    $this->postJson(route('admin.sales.sales-invoices.reopen', $invoice), ['reason' => 'Closed-period route attempt.'])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', __('journal_entries.messages.period_closed'));
+
+    expect($invoice->fresh()->status)->toBe(CustomerInvoice::StatusPosted)
+        ->and($invoice->fresh()->posting_status)->toBe('posted')
+        ->and($invoice->fresh()->reversal_journal_entry_id)->toBeNull()
+        ->and(JournalEntry::query()->findOrFail($originalJournalId)->reversed_entry_id)->toBeNull();
+});
 
 test('sales delivery rolls back when its inventory cost is unknown', function (): void {
     $fixture = salesCycleFixture();
@@ -224,6 +675,7 @@ test('stock sale, mixed service, installments, collection, and quality returns r
 
 test('fully paid invoice credit remains a customer credit and conserves every return disposition', function () {
     $fixture = salesCycleFixture();
+    activateSalesCycleOperatingContext($fixture);
     InventoryTransaction::query()->where('posting_key', 'sales-cycle-opening-stock')->update([
         'quantity_in' => '10000',
         'total_cost' => '50000',
@@ -860,8 +1312,9 @@ test('transaction units snapshot base quantities through reservation delivery in
         ->and($return->returnInventoryDocument->lines->first()->fresh()->quantity)->toBe('10.00000000');
 });
 
-test('full invoice CRUD automatically reverses a safe posted invoice before amendment and reposts a new revision', function () {
+test('posted invoice must be explicitly reopened before amendment and reposts a new revision', function () {
     $fixture = salesCycleFixture();
+    activateSalesCycleOperatingContext($fixture);
     $payload = salesCycleOrderPayload($fixture, [
         'lines' => [[
             'product_id' => $fixture['finished']->getKey(), 'unit_id' => $fixture['unit']->getKey(),
@@ -881,6 +1334,13 @@ test('full invoice CRUD automatically reverses a safe posted invoice before amen
     ]], [['due_date' => now()->addMonth()->toDateString(), 'amount' => '100']]));
     $originalJournalId = $invoice->journal_entry_id;
 
+    expect($invoice->canAmend())->toBeFalse();
+    expect(fn () => $invoices->amend($invoice, [[
+        'invoice_line_public_id' => $invoice->lines()->firstOrFail()->public_id,
+        'quantity' => '8',
+    ]], [['due_date' => now()->addMonth()->toDateString(), 'amount' => '80']]))
+        ->toThrow(DomainException::class, __('Only a draft or safely reopened invoice may be amended.'));
+    $invoice = $invoices->reopen($invoice, 'Approved correction requested through Open Document.');
     expect($invoice->canAmend())->toBeTrue();
     $invoice = $invoices->amend($invoice, [[
         'invoice_line_public_id' => $invoice->lines()->firstOrFail()->public_id,
@@ -915,6 +1375,45 @@ test('full invoice CRUD automatically reverses a safe posted invoice before amen
     ]]);
     expect(fn () => $invoices->reopen($invoice->fresh(), 'Unsafe descendant mutation attempt.'))
         ->toThrow(DomainException::class, __('An invoice with a delivery, return, receipt, or credit note cannot be reopened.'));
+});
+
+test('an issued sales issue order prevents reopening its posted invoice even before delivery receipt', function (): void {
+    $fixture = salesCycleFixture();
+    activateSalesCycleOperatingContext($fixture);
+    $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
+        'lines' => [[
+            'product_id' => $fixture['finished']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Issued invoice',
+            'quantity' => '1',
+            'unit_price' => '10',
+            'discount_amount' => 0,
+            'tax_amount' => 0,
+        ]],
+        'payment_schedules' => [['title' => 'Due', 'amount' => '10', 'due_date' => now()->addMonth()->toDateString()]],
+    ])));
+    $invoice = app(CustomerInvoiceService::class)->post(app(CustomerInvoiceService::class)->createFromOrder($order->fresh(), [[
+        'sales_order_line_id' => $order->lines()->sole()->getKey(),
+        'quantity' => '1',
+    ]], [['due_date' => now()->addMonth()->toDateString(), 'amount' => '10']]));
+    $issueOrder = $invoice->issueOrder()->firstOrFail();
+    $delivery = app(SalesIssueOrderService::class)->issue($issueOrder, $fixture['store'], now()->toDateString());
+    $invoiceJournalId = $invoice->journal_entry_id;
+    $deliveryJournalId = $delivery->journal_entry_id;
+    $stockTransactionCount = InventoryTransaction::query()->where('source_type', InventoryDocument::class)->where('source_id', $delivery->getKey())->count();
+
+    expect($invoice->refresh()->canReopenSafely())->toBeFalse()
+        ->and(fn () => app(CustomerInvoiceService::class)->reopen($invoice, 'Unsafe issued stock order.'))
+        ->toThrow(DomainException::class, __('An invoice with an issued sales issue order cannot be reopened.'));
+    expect($invoice->fresh()->posting_status)->toBe('posted')
+        ->and($invoice->fresh()->reversal_journal_entry_id)->toBeNull()
+        ->and($invoice->fresh()->delivery_document_id)->toBe($delivery->getKey())
+        ->and($delivery->fresh()->status)->toBe(InventoryDocument::StatusPosted)
+        ->and($delivery->fresh()->reversal_journal_entry_id)->toBeNull()
+        ->and($issueOrder->fresh()->status)->toBe(SalesIssueOrder::StatusIssued)
+        ->and(JournalEntry::query()->findOrFail($invoiceJournalId)->reversed_entry_id)->toBeNull()
+        ->and(JournalEntry::query()->findOrFail($deliveryJournalId)->reversed_entry_id)->toBeNull()
+        ->and(InventoryTransaction::query()->where('source_type', InventoryDocument::class)->where('source_id', $delivery->getKey())->count())->toBe($stockTransactionCount);
 });
 
 test('full invoice CRUD feature can be disabled and safely deletes only unused drafts', function () {
@@ -1147,6 +1646,7 @@ test('credit hold requires a separately audited authorized override reason', fun
 
 test('released orders require controlled reopen and cannot be amended after fulfillment planning starts', function () {
     $fixture = salesCycleFixture();
+    activateSalesCycleOperatingContext($fixture);
     $orders = app(SalesOrderService::class);
     $order = $orders->approve($orders->create(salesCycleOrderPayload($fixture)));
 

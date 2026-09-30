@@ -3,13 +3,17 @@
 namespace Modules\Sales\Services;
 
 use DomainException;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
+use Modules\Core\Services\OperatingContextService;
 use Modules\Sales\Models\Customer;
+use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesRequest;
@@ -23,6 +27,7 @@ class SalesRequestService
         private readonly SalesUnitConversionService $units,
         private readonly SalesCycleAuditService $audit,
         private readonly PriceListPricingService $priceLists,
+        private readonly OperatingContextService $operatingContext,
     ) {}
 
     /** @param array<string, mixed> $data */
@@ -30,8 +35,8 @@ class SalesRequestService
     {
         return DB::transaction(function () use ($data, $request): SalesRequest {
             $record = $request ? SalesRequest::query()->lockForUpdate()->findOrFail($request->id) : new SalesRequest;
-            if ($record->exists && ! in_array($record->status, ['draft', 'rejected'], true)) {
-                throw new DomainException(__('Only draft or rejected sales requests can be edited.'));
+            if ($record->exists && ! $record->isEditable()) {
+                throw new DomainException(__('Only draft, rejected, or reopened sales requests can be edited.'));
             }
             $companyId = $record->company_id ?? (int) $data['company_id'];
             if ($record->exists) {
@@ -61,8 +66,9 @@ class SalesRequestService
                     'unit_price' => null,
                     ...collect($this->units->snapshot($product, $input['unit_id'] ?? null, $input['quantity']))->except('base_unit_id')->all(), 'line_number' => $index + 1];
             }
-            $record->fill([...$values, 'company_id' => $companyId, 'financial_period_id' => $period->id]);
             $existingLines = $record->exists ? $record->lines()->get() : collect();
+            $reopenRevision = $record->status === SalesRequest::StatusReopened ? $this->latestReopenRevision($record) : null;
+            $record->fill([...$values, 'company_id' => $companyId, 'financial_period_id' => $period->id]);
             $sameLines = $existingLines->count() === count($lines) && $existingLines->values()->every(function (SalesRequestLine $line, int $index) use ($lines): bool {
                 return ! (clone $line)->fill($lines[$index])->isDirty();
             });
@@ -79,7 +85,31 @@ class SalesRequestService
                 $record->lines()->delete();
                 $record->lines()->createMany($lines);
             }
-            $this->audit->record($record, 'sales_request.saved');
+            if ($reopenRevision !== null) {
+                $record->refresh()->load('lines');
+                $afterSnapshot = $this->snapshot($record, $record->lines);
+                $history = [
+                    ...($record->status_history ?? []),
+                    [
+                        'event' => 'amended',
+                        'from' => SalesRequest::StatusReopened,
+                        'to' => SalesRequest::StatusReopened,
+                        'at' => now()->toIso8601String(),
+                        'by' => auth()->id(),
+                        'reopen_revision_id' => $reopenRevision['id'],
+                        'before_snapshot' => $reopenRevision['approved_snapshot'],
+                        'after_snapshot' => $afterSnapshot,
+                    ],
+                ];
+                $record->forceFill(['status_history' => $history])->save();
+                $this->audit->record($record, 'sales_request.amended', [
+                    'reopen_revision_id' => $reopenRevision['id'],
+                    'before_snapshot' => $reopenRevision['approved_snapshot'],
+                    'after_snapshot' => $afterSnapshot,
+                ]);
+            } else {
+                $this->audit->record($record, 'sales_request.saved');
+            }
 
             return $record->refresh()->load('lines.product', 'lines.unit');
         });
@@ -116,12 +146,17 @@ class SalesRequestService
         return DB::transaction(function () use ($request, $status, $reason): SalesRequest {
             $record = SalesRequest::query()->lockForUpdate()->findOrFail($request->id);
             $this->periods->resolveOpenForPostingDate((int) $record->company_id, $record->request_date, (int) $record->financial_period_id, lockForUpdate: true);
-            $allowed = ['submitted' => ['draft', 'rejected'], 'approved' => ['submitted'], 'rejected' => ['submitted'], 'cancelled' => ['draft', 'submitted', 'approved', 'rejected'], 'closed' => ['approved', 'partially_converted', 'converted']];
+            $allowed = ['submitted' => ['draft', 'rejected', 'reopened'], 'approved' => ['submitted'], 'rejected' => ['submitted'], 'cancelled' => ['draft', 'submitted', 'approved', 'rejected', 'reopened'], 'closed' => ['approved', 'partially_converted', 'converted']];
             if (! in_array($record->status, $allowed[$status] ?? [], true)) {
                 throw new DomainException(__('This sales request status transition is not allowed.'));
             }
             if (in_array($status, ['rejected', 'cancelled', 'closed'], true) && blank($reason)) {
                 throw new DomainException(__('A reason is required for this action.'));
+            }
+            if ($status === 'cancelled' && ($record->approved_at !== null || $record->closed_at !== null
+                || $record->quotations()->withTrashed()->exists() || $record->orders()->withTrashed()->exists()
+                || CustomerInvoice::query()->withTrashed()->where('source_type', 'sales_request')->where('source_id', $record->getKey())->exists())) {
+                throw new DomainException(__('A sales request with conversions or downstream documents cannot be cancelled.'));
             }
             $record->update(['status' => $status, $status.'_by' => auth()->id(), $status.'_at' => now(), 'status_reason' => $reason,
                 'status_history' => [...($record->status_history ?? []), ['from' => $record->status, 'to' => $status, 'at' => now()->toIso8601String(), 'by' => auth()->id(), 'reason' => $reason]]]);
@@ -129,6 +164,123 @@ class SalesRequestService
 
             return $record->refresh();
         });
+    }
+
+    public function reopen(SalesRequest $request, string $reason): SalesRequest
+    {
+        return DB::transaction(function () use ($request, $reason): SalesRequest {
+            $record = SalesRequest::query()->lockForUpdate()->findOrFail($request->getKey());
+            $activeRequest = request();
+            if (! $activeRequest->hasSession()) {
+                throw new DomainException(__('operating_context.messages.required'));
+            }
+            $context = $this->operatingContext->snapshot($activeRequest);
+            if (! $context['company_id'] || ! $context['branch_id'] || ! $context['financial_period_id']
+                || (int) $record->company_id !== (int) $context['company_id']
+                || (int) $record->branch_id !== (int) $context['branch_id']
+                || (int) $record->financial_period_id !== (int) $context['financial_period_id']) {
+                throw new DomainException(__('The document is outside the active operating context.'));
+            }
+            $this->periods->resolveOpenForPostingDate((int) $record->company_id, $record->request_date, (int) $record->financial_period_id, lockForUpdate: true);
+            if ($record->status !== SalesRequest::StatusApproved) {
+                throw new DomainException(__('Only approved sales requests may be reopened.'));
+            }
+            if (blank($reason)) {
+                throw new DomainException(__('A reason is required for this action.'));
+            }
+            if (! $record->canReopenSafely()) {
+                throw new DomainException(__('A sales request with conversions or downstream documents cannot be reopened.'));
+            }
+
+            $reason = trim($reason);
+            $revisionId = (string) Str::uuid();
+            $approvedSnapshot = $this->snapshot($record, $record->lines()->get());
+            $record->update([
+                'status' => SalesRequest::StatusReopened,
+                'status_reason' => $reason,
+                'updated_by' => auth()->id(),
+                'status_history' => [
+                    ...($record->status_history ?? []),
+                    [
+                        'event' => 'reopened',
+                        'from' => SalesRequest::StatusApproved,
+                        'to' => SalesRequest::StatusReopened,
+                        'at' => now()->toIso8601String(),
+                        'by' => auth()->id(),
+                        'reason' => $reason,
+                        'reopen_revision_id' => $revisionId,
+                        'approved_snapshot' => $approvedSnapshot,
+                    ],
+                ],
+            ]);
+            $this->audit->record($record, 'sales_request.reopened', [
+                'reason' => $reason,
+                'reopen_revision_id' => $revisionId,
+                'approved_snapshot' => $approvedSnapshot,
+            ]);
+
+            return $record->refresh();
+        });
+    }
+
+    /** @return array{id: string, approved_snapshot: array<string, mixed>}|null */
+    private function latestReopenRevision(SalesRequest $request): ?array
+    {
+        $event = collect($request->status_history ?? [])
+            ->reverse()
+            ->first(fn (mixed $event): bool => is_array($event)
+                && ($event['event'] ?? null) === 'reopened'
+                && filled($event['reopen_revision_id'] ?? null)
+                && is_array($event['approved_snapshot'] ?? null));
+
+        if (! is_array($event)) {
+            return null;
+        }
+
+        return [
+            'id' => (string) $event['reopen_revision_id'],
+            'approved_snapshot' => $event['approved_snapshot'],
+        ];
+    }
+
+    /**
+     * @param  Collection<int, SalesRequestLine>  $lines
+     * @return array<string, mixed>
+     */
+    private function snapshot(SalesRequest $request, Collection $lines): array
+    {
+        return [
+            'header' => [
+                'doc_num' => $request->doc_num,
+                'company_id' => $request->company_id,
+                'financial_period_id' => $request->financial_period_id,
+                'branch_id' => $request->branch_id,
+                'branch_store_id' => $request->branch_store_id,
+                'customer_id' => $request->customer_id,
+                'currency_id' => $request->currency_id,
+                'business_employee_id' => $request->business_employee_id,
+                'request_date' => $request->request_date?->toDateString(),
+                'required_delivery_date' => $request->required_delivery_date?->toDateString(),
+                'priority' => $request->priority,
+                'customer_reference' => $request->customer_reference,
+                'exchange_rate' => $request->exchange_rate,
+                'notes' => $request->notes,
+                'status' => $request->status,
+            ],
+            'lines' => $lines->sortBy('line_number')->values()->map(fn (SalesRequestLine $line): array => [
+                'public_id' => $line->public_id,
+                'line_number' => $line->line_number,
+                'product_id' => $line->product_id,
+                'unit_id' => $line->unit_id,
+                'description' => $line->description,
+                'quantity' => $line->quantity,
+                'conversion_factor' => $line->conversion_factor,
+                'base_quantity' => $line->base_quantity,
+                'converted_quantity' => $line->converted_quantity,
+                'specifications' => $line->specifications,
+                'notes' => $line->notes,
+            ])->all(),
+        ];
     }
 
     /** @param array<string, mixed> $data */

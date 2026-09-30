@@ -149,6 +149,18 @@ class PayrollController extends Controller
             ->where('status', 'active')
             ->whereNull('deleted_at')
             ->when($branchIds !== null, fn ($query) => $query->whereIn('branch_id', $branchIds !== [] ? $branchIds : [0]));
+        $payrollDeductionItems = DB::table('hr_payroll_items')
+            ->where('item_kind', 'deduction')
+            ->where('status', 'active')
+            ->whereNull('deleted_at')
+            ->orderBy('name')
+            ->get(['code', 'name'])
+            ->map(function (object $item): object {
+                $translationKey = 'hr_payroll_reports.item_names.'.$item->code;
+                $item->display_name = __($translationKey) !== $translationKey ? __($translationKey) : $item->name;
+
+                return $item;
+            });
         $basicItem = DB::table('hr_payroll_items')
             ->where('code', 'BASIC')
             ->where('item_kind', 'earning')
@@ -218,6 +230,7 @@ class PayrollController extends Controller
             'cashboxes' => $cashboxes,
             'payrollPaymentSources' => $payrollPaymentSources,
             'payrollEmployees' => $payrollEmployees,
+            'payrollDeductionItems' => $payrollDeductionItems,
             'paymentIdempotencyKey' => (string) Str::uuid(),
             'payrollReadiness' => $payrollReadiness,
         ]);

@@ -6,11 +6,15 @@ use Illuminate\Routing\Route as RoutingRoute;
 use Illuminate\Support\Facades\Lang;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
+use Modules\Core\Models\Branch;
+use Modules\Core\Models\Company;
+use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\ErpUi\ErpUiScreenRegistry;
 use Modules\Core\Services\MenuConfigFileOrder;
 use Modules\Core\Services\MenuService;
 use Modules\Core\Services\NavigationSearchService;
+use Modules\Core\Services\OperatingContextService;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -485,4 +489,56 @@ test('inventory and sales reports use their owning modules without a top-level r
         )
         ->and($records->where('route', 'admin.reports.customers.index'))->toHaveCount(1)
         ->and($records->firstWhere('route', 'admin.reports.customers.index')['label_path'])->toBe(['sales', 'sales_cycle_reports', 'customers_report']);
+});
+
+test('every report page in the authorized menu opens successfully', function (): void {
+    config()->set('erp.phase_mode', 'expanded');
+    $admin = navigationAuditAdmin();
+    $company = Company::query()->create([
+        'doc_number' => 91001,
+        'doc_num' => 'Company-91001',
+        'name' => 'Report Navigation Company',
+        'status' => 'active',
+        'is_main' => ! Company::query()->exists(),
+    ]);
+    $branch = Branch::query()->create([
+        'doc_number' => 91001,
+        'doc_num' => 'Branch-91001',
+        'company_id' => $company->getKey(),
+        'name' => 'Report Navigation Factory',
+        'type' => Branch::TypeFactory,
+        'status' => 'active',
+    ]);
+    $period = FinancialPeriod::query()->create([
+        'doc_number' => 91001,
+        'doc_num' => 'Period-91001',
+        'company_id' => $company->getKey(),
+        'name' => 'Report Navigation Period',
+        'from_date' => '2026-01-01',
+        'to_date' => '2026-12-31',
+        'is_closed' => false,
+    ]);
+    $session = [
+        OperatingContextService::CompanyIdKey => $company->getKey(),
+        OperatingContextService::CompanyDocNumKey => $company->doc_num,
+        OperatingContextService::BranchIdKey => $branch->getKey(),
+        OperatingContextService::BranchDocNumKey => $branch->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $period->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $period->doc_num,
+    ];
+    $items = collect(navigationAuditRoutedItems(app(MenuService::class)->getMenu($admin)))
+        ->filter(fn (array $item): bool => str_contains((string) $item['route'], 'report'))
+        ->unique(fn (array $item): string => navigationAuditNormalizedUrl($item['url']))
+        ->values();
+    $failures = [];
+
+    foreach ($items as $item) {
+        $response = $this->actingAs($admin)->withSession($session)->get($item['url']);
+        if ($response->status() !== 200) {
+            $failures[] = $item['route'].' ('.$response->status().')';
+        }
+    }
+
+    expect($items->count())->toBeGreaterThan(20)
+        ->and($failures)->toBe([]);
 });

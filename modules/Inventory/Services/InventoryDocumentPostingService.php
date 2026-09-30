@@ -45,7 +45,7 @@ class InventoryDocumentPostingService
                 return $locked;
             }
 
-            if ($locked->status !== InventoryDocument::StatusDraft) {
+            if (! $locked->isUntouchedDraft()) {
                 throw new DomainException(__('Only a draft inventory document can be posted.'));
             }
 

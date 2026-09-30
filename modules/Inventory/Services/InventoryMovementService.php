@@ -75,7 +75,7 @@ class InventoryMovementService
         return DB::transaction(function () use ($document, $header, $lines): InventoryDocument {
             $document = InventoryDocument::query()->lockForUpdate()->findOrFail($document->getKey());
 
-            if ($document->status !== InventoryDocument::StatusDraft) {
+            if (! $document->isUntouchedDraft()) {
                 throw new DomainException(__('inventory.movements.messages.only_drafts_editable'));
             }
 

@@ -115,7 +115,7 @@ class SalesOrder extends Model
             return false;
         }
 
-        return ! $this->lines()->where(function (Builder $query): void {
+        return ! $this->hasDownstreamDocuments() && ! $this->lines()->where(function (Builder $query): void {
             $query->where('reserved_quantity', '>', 0)
                 ->orWhere('production_requested_quantity', '>', 0)
                 ->orWhere('produced_quantity', '>', 0)
@@ -126,7 +126,7 @@ class SalesOrder extends Model
 
     public function canCancelSafely(): bool
     {
-        if (in_array($this->status, [self::StatusCancelled, self::StatusClosed], true)) {
+        if (in_array($this->status, [self::StatusCancelled, self::StatusClosed], true) || $this->reopened_at !== null) {
             return false;
         }
 
@@ -135,8 +135,16 @@ class SalesOrder extends Model
                 ->orWhere('invoiced_quantity', '>', 0);
         })->exists();
 
-        return ! $hasFulfilledQuantity
-            && ! $this->productionOrders()->where('status', '<>', 'cancelled')->exists();
+        return ! $hasFulfilledQuantity && ! $this->hasDownstreamDocuments();
+    }
+
+    public function hasDownstreamDocuments(): bool
+    {
+        return $this->productionOrders()->withTrashed()->exists()
+            || $this->invoices()->withTrashed()->exists()
+            || $this->deliveries()->withTrashed()->exists()
+            || $this->receipts()->withTrashed()->exists()
+            || $this->returns()->exists();
     }
 
     public function company(): BelongsTo

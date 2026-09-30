@@ -225,6 +225,7 @@ class QuotationService
     public function cancel(Quotation $record): Quotation
     {
         return DB::transaction(function () use ($record): Quotation {
+            $record = Quotation::query()->lockForUpdate()->findOrFail($record->getKey());
             $record->loadMissing('currentRevision');
 
             if (! $record->canCancel()) {
@@ -241,6 +242,7 @@ class QuotationService
     public function delete(Quotation $record): void
     {
         DB::transaction(function () use ($record): void {
+            $record = Quotation::query()->lockForUpdate()->findOrFail($record->getKey());
             if (! $record->canDeleteDraft()) {
                 throw new DomainException(__('quotations.messages.transition_not_allowed'));
             }

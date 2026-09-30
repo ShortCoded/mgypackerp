@@ -48,10 +48,11 @@ class SalesCycleDataTable
         if ($kind === 'sales_orders') {
             $query->withExists([
                 'invoices as has_invoices' => fn ($related) => $related->withTrashed(),
-                'deliveries',
-                'productionOrders',
+                'deliveries as has_deliveries' => fn ($related) => $related->withTrashed(),
+                'productionOrders as has_production_orders' => fn ($related) => $related->withTrashed(),
                 'productionOrders as has_active_production_orders' => fn ($related) => $related->where('status', '<>', 'cancelled'),
                 'receipts as has_receipts' => fn ($related) => $related->withTrashed(),
+                'returns as has_returns',
                 'lines as has_amendment_quantities' => fn ($related) => $related->where(function (Builder $lines): void {
                     $lines->where('reserved_quantity', '>', 0)
                         ->orWhere('production_requested_quantity', '>', 0)

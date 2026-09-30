@@ -1,7 +1,7 @@
 @php
     $prefix = 'admin.purchases.'.$definition['route'];
     $permission = 'purchases.'.$definition['permission'];
-    $draft = $record->status === 'draft' && ($screen !== 'goods_receipts' || $record->posting_status === 'unposted');
+    $draft = $record->status === 'draft' && ($screen !== 'goods_receipts' || ($record->posting_status === 'unposted' && ! $record->isLockedForEditing()));
     $editableDraft = $draft && ($screen !== 'goods_receipts' || (
         (in_array($record->qc_status, ['pending_inspection', 'not_required'], true) || $record->sourceInspection !== null)
         && $record->inspection === null

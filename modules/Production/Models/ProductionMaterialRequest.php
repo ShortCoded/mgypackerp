@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Services\OperatingContextService;
@@ -57,6 +58,29 @@ class ProductionMaterialRequest extends Model
     public function getRouteKeyName(): string
     {
         return 'doc_num';
+    }
+
+    public function canReopenSafely(): bool
+    {
+        if ($this->status !== self::StatusApproved || $this->purchase_requisition_id !== null) {
+            return false;
+        }
+
+        if (DB::table('inventory_documents')->where('production_material_request_id', $this->getKey())->exists()
+            || DB::table('inventory_document_lines')
+                ->whereIn('production_material_request_line_id', DB::table('production_material_request_lines')
+                    ->where('production_material_request_id', $this->getKey())->select('id'))
+                ->exists()) {
+            return false;
+        }
+
+        if ($this->lines()->where(function (Builder $query): void {
+            $query->where('issued_quantity', '>', 0)->orWhere('shortage_quantity', '>', 0);
+        })->exists()) {
+            return false;
+        }
+
+        return $this->run()->whereNotIn('status', [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled])->exists();
     }
 
     public function resolveRouteBinding($value, $field = null): ?self

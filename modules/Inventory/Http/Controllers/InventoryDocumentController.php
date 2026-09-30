@@ -27,6 +27,8 @@ use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryDocumentPostingService;
 use Modules\Inventory\Services\InventoryMovementService;
+use Modules\Inventory\Services\PostedInventoryReceiptPricingService;
+use Modules\Production\Models\ProductionMaterialRequest;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Models\ProductionRunBatch;
 use Modules\Production\Services\ProductionCycleService;
@@ -66,6 +68,47 @@ class InventoryDocumentController extends Controller
         ]);
     }
 
+    public function productionMaterialIssue(Request $request): View
+    {
+        $this->authorizeProductionMaterialIssue($request);
+        $context = $this->requiredContext($request);
+        $selectedRequest = null;
+
+        if ($request->filled('material_request')) {
+            $selectedRequest = $this->issuableProductionMaterialRequests($context)
+                ->with(['run', 'store', 'lines.product', 'lines.unit'])
+                ->where('doc_num', $request->string('material_request')->trim()->toString())
+                ->firstOrFail();
+        }
+
+        return view('modules.inventory.documents.production-material-issue', compact('selectedRequest'));
+    }
+
+    public function productionMaterialIssueRequests(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
+    {
+        $this->authorizeProductionMaterialIssue($request);
+        $context = $this->requiredContext($request);
+        $query = $this->issuableProductionMaterialRequests($context)->with(['run', 'store'])->orderByDesc('id');
+        $terms = $search->terms($request->input('q', $request->input('term')));
+
+        if ($terms !== []) {
+            $search->applyMultiTermSearch($query, $terms, [
+                'text' => ['production_material_requests.doc_num'],
+                'exists' => [[
+                    'table' => 'production_runs',
+                    'first' => 'production_runs.id',
+                    'second' => 'production_material_requests.production_run_id',
+                    'columns' => ['production_runs.run_number'],
+                ]],
+            ]);
+        }
+
+        return response()->json($select2->paginated($query, $request, fn (ProductionMaterialRequest $materialRequest): array => [
+            'id' => $materialRequest->doc_num,
+            'text' => $materialRequest->doc_num.' — '.$materialRequest->run?->run_number.' — '.$materialRequest->store?->name,
+        ]));
+    }
+
     public function clone(Request $request, InventoryDocument $inventoryDocument): View
     {
         $this->assertInCurrentContext($request, $inventoryDocument);
@@ -83,7 +126,7 @@ class InventoryDocumentController extends Controller
     public function edit(Request $request, InventoryDocument $inventoryDocument): View
     {
         $this->assertInCurrentContext($request, $inventoryDocument);
-        abort_unless($inventoryDocument->status === InventoryDocument::StatusDraft, 409, __('inventory.movements.messages.only_drafts_editable'));
+        abort_unless($inventoryDocument->isUntouchedDraft(), 409, __('inventory.movements.messages.only_drafts_editable'));
 
         $allowedDocumentTypes = $this->allowedDocumentTypes($request);
         abort_unless(in_array($inventoryDocument->document_type, $allowedDocumentTypes, true), 403);
@@ -339,10 +382,13 @@ class InventoryDocumentController extends Controller
 
     public function destroy(Request $request, InventoryDocument $inventoryDocument): JsonResponse|RedirectResponse
     {
-        $this->assertInCurrentContext($request, $inventoryDocument);
-        abort_unless($inventoryDocument->status === InventoryDocument::StatusDraft && ! $inventoryDocument->transactions()->exists(), 409, __('Only an unposted draft inventory movement can be deleted.'));
-        $inventoryDocument->update(['deleted_by' => $request->user()?->getKey()]);
-        $inventoryDocument->delete();
+        DB::transaction(function () use ($request, $inventoryDocument): void {
+            $locked = InventoryDocument::query()->lockForUpdate()->findOrFail($inventoryDocument->getKey());
+            $this->assertInCurrentContext($request, $locked);
+            abort_unless($locked->isUntouchedDraft(), 409, __('Only an unposted draft inventory movement can be deleted.'));
+            $locked->update(['deleted_by' => $request->user()?->getKey()]);
+            $locked->delete();
+        });
 
         return $request->expectsJson()
             ? response()->json(['success' => true])
@@ -389,7 +435,7 @@ class InventoryDocumentController extends Controller
                 ->get();
 
             foreach ($records as $record) {
-                if ($record->status !== InventoryDocument::StatusDraft || $record->transactions()->exists()) {
+                if (! $record->isUntouchedDraft()) {
                     throw ValidationException::withMessages(['doc_nums' => __('Only unposted draft inventory movements can be deleted.')]);
                 }
                 $record->update(['deleted_by' => $request->user()?->getKey()]);
@@ -408,7 +454,7 @@ class InventoryDocumentController extends Controller
             'record' => $inventoryDocument->load([
                 'lines.product', 'lines.unit', 'transactions', 'branchStore',
                 'lines.reservation.productionMaterialRequirement', 'destinationBranchStore',
-                'productionOrder.salesOrder', 'productionRun.order.salesOrder', 'salesOrder',
+                'productionOrder.salesOrder', 'productionRun.order.salesOrder', 'productionMaterialRequest', 'salesOrder',
             ]),
         ]);
     }
@@ -418,7 +464,7 @@ class InventoryDocumentController extends Controller
         $this->assertInCurrentContext($request, $inventoryDocument);
         $record = $inventoryDocument->load([
             'company', 'lines.product', 'lines.unit', 'branchStore', 'destinationBranchStore',
-            'productionOrder', 'productionRun',
+            'productionOrder', 'productionRun', 'productionMaterialRequest',
         ]);
 
         return $this->pdf->stream('reports.inventory.document', [
@@ -440,6 +486,36 @@ class InventoryDocumentController extends Controller
             200,
             'inventory.movements.messages.reversed',
         );
+    }
+
+    public function priceReceipt(
+        Request $request,
+        InventoryDocument $inventoryDocument,
+        PostedInventoryReceiptPricingService $pricing,
+        NumericFormatService $numbers,
+    ): RedirectResponse {
+        $this->assertInCurrentContext($request, $inventoryDocument);
+        $request->merge([
+            'unit_costs' => collect($request->input('unit_costs', []))
+                ->map(fn (mixed $cost): ?string => $numbers->normalizeToScale($cost, 8))
+                ->all(),
+        ]);
+        $data = $request->validate([
+            'source_reference' => ['required', 'string', 'min:5', 'max:255'],
+            'provisional' => ['nullable', 'boolean'],
+            'unit_costs' => ['required', 'array', 'min:1'],
+            'unit_costs.*' => ['required', 'numeric', 'gt:0', 'decimal:0,8'],
+        ]);
+        $this->guard(fn (): InventoryDocument => $pricing->price(
+            $inventoryDocument,
+            $data['unit_costs'],
+            trim($data['source_reference']),
+            (bool) ($data['provisional'] ?? false),
+            $request,
+        ));
+
+        return to_route('admin.inventory.documents.show', $inventoryDocument)
+            ->with('success', __('inventory.movements.messages.receipt_priced'));
     }
 
     /** @return array{company_id: int, financial_period_id: int, branch_id: int} */
@@ -473,6 +549,28 @@ class InventoryDocumentController extends Controller
             ->whereHas('runs.requirements', fn ($requirements) => $requirements
                 ->whereColumn('planned_quantity', '>', 'issued_quantity'))
             ->orderByDesc('id');
+    }
+
+    /** @param array{company_id: int, financial_period_id: int, branch_id: int} $context */
+    private function issuableProductionMaterialRequests(array $context): Builder
+    {
+        return ProductionMaterialRequest::query()
+            ->forContext($context['company_id'], $context['financial_period_id'], $context['branch_id'])
+            ->whereIn('status', [
+                ProductionMaterialRequest::StatusApproved,
+                ProductionMaterialRequest::StatusShortage,
+                ProductionMaterialRequest::StatusPartiallyIssued,
+            ])
+            ->whereHas('lines', fn (Builder $lines): Builder => $lines
+                ->whereColumn('reserved_quantity', '>', 'issued_quantity'));
+    }
+
+    private function authorizeProductionMaterialIssue(Request $request): void
+    {
+        abort_unless((bool) $request->user()?->canAny([
+            'inventory.documents.issue',
+            'production.material_requests.issue',
+        ]), 403);
     }
 
     /** @param array{company_id: int, financial_period_id: int, branch_id: int} $context */

@@ -174,6 +174,10 @@ class ProductionMaterialRequestController extends Controller
 
     public function issue(Request $request, ProductionMaterialRequest $productionMaterialRequest): JsonResponse|RedirectResponse
     {
+        abort_unless((bool) $request->user()?->canAny([
+            'production.material_requests.issue',
+            'inventory.documents.issue',
+        ]), 403);
         $this->assertProductionRequest($request, $productionMaterialRequest);
         $numbers = app(NumericFormatService::class);
         $request->merge([
@@ -194,6 +198,8 @@ class ProductionMaterialRequestController extends Controller
             $productionMaterialRequest,
             $this->issueQuantities($data['lines'] ?? []),
         ));
+        $returnToInventory = $request->input('return_to') === 'inventory_document'
+            && (bool) $request->user()?->can('inventory.documents.view');
 
         return $request->expectsJson()
             ? response()->json([
@@ -202,7 +208,10 @@ class ProductionMaterialRequestController extends Controller
                 'doc_num' => $document->doc_num,
                 'message' => __('production_execution.messages.material_issue_created'),
             ])
-            : to_route('admin.production.material-requests.show', $productionMaterialRequest)
+            : to_route($returnToInventory
+                ? 'admin.inventory.documents.show'
+                : 'admin.production.material-requests.show',
+                $returnToInventory ? $document : $productionMaterialRequest)
                 ->with('success', __('production_execution.messages.material_issue_created_with_number', ['number' => $document->doc_num]));
     }
 

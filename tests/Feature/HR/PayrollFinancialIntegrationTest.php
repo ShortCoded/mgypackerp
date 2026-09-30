@@ -498,6 +498,225 @@ test('payroll calculation approval finance payment and both reconciliations are 
         ->and((float) DB::table('hr_salary_advances')->where('id', $fixture['advance_id'])->value('balance'))->toBe(200.0);
 });
 
+test('payroll calculation endpoint snapshots a selected manual deduction without posting it', function (): void {
+    $fixture = payrollFinancialFixture();
+    $actor = payrollFinancialActor([
+        'hr.payroll_preparation.view',
+        'hr.payroll_preparation.calculate',
+    ]);
+    $session = payrollFinancialContext($fixture);
+
+    DB::table('hr_payroll_items')->insert([
+        [
+            'code' => 'INACTIVE-MANUAL-DEDUCTION',
+            'name' => 'Inactive Manual Deduction',
+            'item_kind' => 'deduction',
+            'status' => 'inactive',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+        [
+            'code' => 'ACTIVE-EARNING-ONLY',
+            'name' => 'Active Earning Only',
+            'item_kind' => 'earning',
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ],
+    ]);
+
+    $oldAdjustments = [[
+        'employee_doc_num' => $fixture['employee']->doc_num,
+        'deductions' => [[
+            'payroll_item_code' => 'PAYROLL-TAX',
+            'amount' => '275.1250',
+            'reference' => 'Manual tax correction',
+        ]],
+    ]];
+    $this->actingAs($actor)->withSession([...$session, '_old_input' => ['adjustments' => $oldAdjustments]])
+        ->get(route('admin.hr.payroll-preparation.index'))
+        ->assertOk()
+        ->assertSee('value="PAYROLL-TAX"', false)
+        ->assertDontSee('INACTIVE-MANUAL-DEDUCTION')
+        ->assertDontSee('ACTIVE-EARNING-ONLY')
+        ->assertSee('data-manual-deduction-row', false)
+        ->assertSee('"employee_doc_num":"'.$fixture['employee']->doc_num.'"', false)
+        ->assertSee('"payroll_item_code":"PAYROLL-TAX"', false)
+        ->assertSee('"amount":"275.1250"', false);
+
+    $response = $this->withSession($session)
+        ->postJson(route('admin.hr.payroll-runs.calculate'), [
+            'period_start' => '2026-09-01',
+            'period_end' => '2026-09-30',
+            'branch_doc_num' => $fixture['branch']->doc_num,
+            'adjustments' => [[
+                'employee_doc_num' => $fixture['employee']->doc_num,
+                'deductions' => [[
+                    'payroll_item_code' => 'PAYROLL-TAX',
+                    'amount' => '275.1250',
+                    'reference' => 'Manual tax correction',
+                ], [
+                    'payroll_item_code' => 'SALARY-ADVANCE',
+                    'amount' => '24.8750',
+                    'reference' => 'Manual advance correction',
+                ]],
+            ]],
+        ])
+        ->assertOk()
+        ->assertJsonPath('data.deductions', '300.0000');
+
+    $runId = (int) $response->json('data.run_id');
+    $payslipItem = DB::table('hr_payslip_items as payslip_item')
+        ->join('hr_payroll_items as payroll_item', 'payroll_item.id', '=', 'payslip_item.payroll_item_id')
+        ->where('source_type', 'manual_deduction')
+        ->where('payroll_item.code', 'PAYROLL-TAX')
+        ->select('payslip_item.*')
+        ->sole();
+    $inputSnapshot = json_decode(
+        (string) DB::table('hr_payroll_inputs')->where('payroll_run_id', $runId)->value('payload'),
+        true,
+        512,
+        JSON_THROW_ON_ERROR,
+    );
+
+    expect(bccomp((string) $payslipItem->amount, '275.1250', 4))->toBe(0)
+        ->and(json_decode($payslipItem->source_snapshot, true, 512, JSON_THROW_ON_ERROR))->toBe([
+            'reference' => 'Manual tax correction',
+        ])
+        ->and(data_get($inputSnapshot, 'manual_adjustments.employee_doc_num'))->toBe($fixture['employee']->doc_num)
+        ->and(data_get($inputSnapshot, 'manual_adjustments.deductions.0'))->toMatchArray([
+            'payroll_item_code' => 'PAYROLL-TAX',
+            'amount' => '275.1250',
+            'reference' => 'Manual tax correction',
+        ])
+        ->and(data_get($inputSnapshot, 'manual_adjustments.deductions.1'))->toMatchArray([
+            'payroll_item_code' => 'SALARY-ADVANCE',
+            'amount' => '24.8750',
+            'reference' => 'Manual advance correction',
+        ])
+        ->and(DB::table('hr_payslip_items')->where('source_type', 'manual_deduction')->count())->toBe(2)
+        ->and(DB::table('journal_entries')->where('source_type', 'hr_payroll_run')->where('source_id', $runId)->exists())->toBeFalse();
+});
+
+test('payroll calculators can select only active employees in their allowed company and branch scope', function (): void {
+    $fixture = payrollFinancialFixture();
+    $otherBranch = Branch::query()->create([
+        'doc_number' => 7002,
+        'doc_num' => 'PAY-BR-07002',
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Other Payroll Branch',
+        'type' => Branch::TypeFactory,
+        'status' => 'active',
+    ]);
+    $outsideEmployee = $fixture['employee']->replicate();
+    $outsideEmployee->forceFill([
+        'doc_number' => 7002,
+        'doc_num' => 'PAY-EMP-07002',
+        'employee_code' => 'PAY-E002',
+        'full_name' => 'Outside Payroll Employee',
+        'name' => 'Outside Payroll Employee',
+        'branch_id' => $otherBranch->getKey(),
+        'public_uuid' => (string) Str::uuid(),
+    ])->save();
+
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    Permission::findOrCreate('hr.payroll_preparation.calculate', 'web');
+    Permission::findOrCreate('hr.payroll_preparation.view', 'web');
+    $calculator = User::factory()->create();
+    $calculatorRole = Role::query()->create([
+        'name' => 'Scoped Payroll Calculator '.Str::random(8),
+        'guard_name' => 'web',
+        'company_access_restricted' => true,
+        'branch_access_restricted' => true,
+        'financial_period_access_restricted' => false,
+    ]);
+    $calculatorRole->givePermissionTo('hr.payroll_preparation.calculate');
+    $calculatorRole->companyAccessCompanies()->sync([$fixture['company']->getKey()]);
+    $calculatorRole->branchAccessBranches()->sync([$fixture['branch']->getKey()]);
+    $calculator->assignRole($calculatorRole);
+    $session = payrollFinancialContext($fixture);
+
+    $response = $this->actingAs($calculator)->withSession($session)
+        ->getJson(route('admin.hr.select2.employees', [
+            'identity' => 'doc_num',
+            'q' => 'PAY-EMP',
+            'per_page' => 50,
+        ]))
+        ->assertOk();
+
+    expect(collect($response->json('results'))->pluck('id')->all())
+        ->toContain($fixture['employee']->doc_num)
+        ->not->toContain($outsideEmployee->doc_num);
+
+    $viewer = payrollFinancialActor(['hr.payroll_preparation.view']);
+    $this->actingAs($viewer)->withSession($session)
+        ->getJson(route('admin.hr.select2.employees', ['identity' => 'doc_num']))
+        ->assertForbidden();
+});
+
+test('payroll rejects deductions for employees outside the selected pay period instead of omitting them', function (): void {
+    $fixture = payrollFinancialFixture();
+    $futureEmployee = $fixture['employee']->replicate();
+    $futureEmployee->forceFill([
+        'doc_number' => 7003,
+        'doc_num' => 'PAY-EMP-07003',
+        'employee_code' => 'PAY-E003',
+        'full_name' => 'Future Payroll Employee',
+        'name' => 'Future Payroll Employee',
+        'hire_date' => '2026-10-01',
+        'contract_start_date' => '2026-10-01',
+        'public_uuid' => (string) Str::uuid(),
+    ])->save();
+    $actor = payrollFinancialActor(['hr.payroll_preparation.calculate']);
+    $session = payrollFinancialContext($fixture);
+    $this->actingAs($actor)->withSession($session)
+        ->getJson(route('admin.hr.select2.employees', [
+            'identity' => 'doc_num',
+            'purpose' => 'payroll',
+            'payroll_period_start' => '2026-09-01',
+            'payroll_period_end' => '2026-09-30',
+            'payroll_branch_doc_num' => $fixture['branch']->doc_num,
+            'q' => 'PAY-EMP',
+        ]))
+        ->assertOk()
+        ->assertJsonMissing(['id' => $futureEmployee->doc_num]);
+
+    $payload = [
+        'period_start' => '2026-09-01',
+        'period_end' => '2026-09-30',
+        'branch_doc_num' => $fixture['branch']->doc_num,
+        'adjustments' => [[
+            'employee_doc_num' => $futureEmployee->doc_num,
+            'deductions' => [['payroll_item_code' => 'PAYROLL-TAX', 'amount' => '10.0000']],
+        ]],
+    ];
+    $this->withSession($session)
+        ->postJson(route('admin.hr.payroll-runs.calculate'), $payload)
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('adjustments');
+    expect(fn (): array => app(PayrollCalculationService::class)->calculate($fixture['company']->getKey(), $payload))
+        ->toThrow(DomainException::class);
+    expect(DB::table('hr_payslips')->count())->toBe(0);
+});
+
+test('payroll deduction amounts above four decimal places fail request validation', function (): void {
+    $fixture = payrollFinancialFixture();
+    $actor = payrollFinancialActor(['hr.payroll_preparation.calculate']);
+    $this->actingAs($actor)->withSession(payrollFinancialContext($fixture))
+        ->postJson(route('admin.hr.payroll-runs.calculate'), [
+            'period_start' => '2026-09-01',
+            'period_end' => '2026-09-30',
+            'branch_doc_num' => $fixture['branch']->doc_num,
+            'adjustments' => [[
+                'employee_doc_num' => $fixture['employee']->doc_num,
+                'deductions' => [['payroll_item_code' => 'PAYROLL-TAX', 'amount' => '1.00001']],
+            ]],
+        ])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('adjustments.0.deductions.0.amount');
+    expect(DB::table('hr_payslips')->count())->toBe(0);
+});
+
 test('payroll reports exports and payslips use persisted snapshots with branch and employee isolation', function (): void {
     $fixture = payrollFinancialFixture();
     $workflowActor = User::factory()->create();

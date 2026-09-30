@@ -4,7 +4,7 @@
     $prefix = \Modules\Sales\DataTables\SalesCycleDataTable::routePrefix($kind);
     $canCreate = in_array($kind, ['sales_requests', 'sales_orders', 'customer_receipts', 'customer_invoices', 'sales_returns', 'sales_deliveries']);
     $states = match($kind) {
-        'sales_requests' => ['draft','submitted','approved','rejected','partially_converted','converted','closed','cancelled'],
+        'sales_requests' => ['draft','submitted','approved','rejected','reopened','partially_converted','converted','closed','cancelled'],
         'sales_orders' => ['draft','pending_approval','held_credit','approved','partially_fulfilled','fulfilled','rejected','reopened','closed','cancelled'],
         'sales_returns' => ['pending_authorization','authorized','received','inspected','closed','cancelled'],
         'customer_receipts' => ['approved','cancelled'],

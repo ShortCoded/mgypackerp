@@ -222,13 +222,13 @@ class Quotation extends Model
     public function canDeleteDraft(): bool
     {
         return ! $this->trashed() && $this->status === self::StatusDraft
-            && $this->revisions()->count() === 1 && ! $this->salesOrders()->exists();
+            && $this->revisions()->count() === 1 && ! $this->salesOrders()->withTrashed()->exists();
     }
 
     public function canCancel(): bool
     {
         return ! $this->trashed() && ! in_array($this->status, [self::StatusCancelled, self::StatusConverted], true)
-            && ! $this->salesOrders()->exists();
+            && ! $this->salesOrders()->withTrashed()->exists();
     }
 
     public function canIssueRevision(): bool

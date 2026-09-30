@@ -5,6 +5,7 @@ namespace Modules\Core\Http\Controllers;
 use DomainException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Validation\ValidationException;
 use Modules\Core\Http\Requests\OpenDocumentsRequest;
@@ -18,11 +19,14 @@ class OpenDocumentsController extends Controller
         private readonly BreadcrumbService $breadcrumbs,
     ) {}
 
-    public function index(): View
+    public function index(Request $request): View
     {
+        abort_unless($this->openDocuments->canView($request), 403);
+
         return view('modules.core.open-documents.index', [
             'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.tools.open-documents.index'),
-            'documentTypes' => $this->openDocuments->documentTypes(),
+            'documentTypes' => $this->openDocuments->documentTypes($request),
+            'canExecute' => $this->openDocuments->canExecuteAny($request),
         ]);
     }
 
@@ -36,6 +40,7 @@ class OpenDocumentsController extends Controller
                 $data['from_number'],
                 $data['to_number'],
                 $request,
+                $data['reason'] ?? null,
             );
         } catch (DomainException $exception) {
             throw ValidationException::withMessages([

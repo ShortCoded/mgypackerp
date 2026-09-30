@@ -7,6 +7,7 @@ use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingScopeAccessService;
+use Modules\HR\Models\HrPayrollAttendancePolicy;
 
 class StorePayrollAttendancePolicyRequest extends FormRequest
 {
@@ -31,6 +32,15 @@ class StorePayrollAttendancePolicyRequest extends FormRequest
             'deduct_late' => ['nullable', 'boolean'],
             'deduct_early_leave' => ['nullable', 'boolean'],
             'deduct_unpaid_leave' => ['nullable', 'boolean'],
+            'monthly_partial_method' => ['nullable', Rule::in([
+                HrPayrollAttendancePolicy::MonthlyCalendarDays,
+                HrPayrollAttendancePolicy::MonthlyFixedDivisor,
+            ])],
+            'weekly_accrual_method' => ['nullable', Rule::in([HrPayrollAttendancePolicy::WeeklyCalendarDays])],
+            'daily_accrual_method' => ['nullable', Rule::in([HrPayrollAttendancePolicy::DailyFinalizedAttendance])],
+            'hourly_accrual_method' => ['nullable', Rule::in([HrPayrollAttendancePolicy::HourlyFinalizedMinutes])],
+            'shift_accrual_method' => ['nullable', Rule::in([HrPayrollAttendancePolicy::ShiftFinalizedAttendance])],
+            'piece_accrual_method' => ['nullable', Rule::in([HrPayrollAttendancePolicy::PieceApprovedOutput])],
             'salary_day_divisor' => ['required', 'integer', 'min:1', 'max:366'],
             'standard_day_minutes' => ['required', 'integer', 'min:1', 'max:1440'],
             'deduction_payroll_item_code' => [
@@ -85,6 +95,12 @@ class StorePayrollAttendancePolicyRequest extends FormRequest
             'deduct_late' => $this->boolean('deduct_late'),
             'deduct_early_leave' => $this->boolean('deduct_early_leave'),
             'deduct_unpaid_leave' => $this->boolean('deduct_unpaid_leave'),
+            'monthly_partial_method' => $this->nullableString('monthly_partial_method'),
+            'weekly_accrual_method' => $this->nullableString('weekly_accrual_method'),
+            'daily_accrual_method' => $this->nullableString('daily_accrual_method'),
+            'hourly_accrual_method' => $this->nullableString('hourly_accrual_method'),
+            'shift_accrual_method' => $this->nullableString('shift_accrual_method'),
+            'piece_accrual_method' => $this->nullableString('piece_accrual_method'),
             'deduction_payroll_item_code' => $this->filled('deduction_payroll_item_code')
                 ? strtoupper($this->string('deduction_payroll_item_code')->trim()->toString())
                 : null,
@@ -100,6 +116,17 @@ class StorePayrollAttendancePolicyRequest extends FormRequest
             'deduction_payroll_item_code' => __('hr_payroll_policies.fields.deduction_payroll_item_code'),
             'salary_day_divisor' => __('hr_payroll_policies.fields.salary_day_divisor'),
             'standard_day_minutes' => __('hr_payroll_policies.fields.standard_day_minutes'),
+            'monthly_partial_method' => __('hr_payroll_policies.fields.monthly_partial_method'),
+            'weekly_accrual_method' => __('hr_payroll_policies.fields.weekly_accrual_method'),
+            'daily_accrual_method' => __('hr_payroll_policies.fields.daily_accrual_method'),
+            'hourly_accrual_method' => __('hr_payroll_policies.fields.hourly_accrual_method'),
+            'shift_accrual_method' => __('hr_payroll_policies.fields.shift_accrual_method'),
+            'piece_accrual_method' => __('hr_payroll_policies.fields.piece_accrual_method'),
         ];
+    }
+
+    private function nullableString(string $key): ?string
+    {
+        return $this->filled($key) ? $this->string($key)->trim()->toString() : null;
     }
 }

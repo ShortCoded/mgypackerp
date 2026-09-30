@@ -2254,6 +2254,7 @@ test('report pdf shell uses inline disposition and shared header footer data', f
     app()->setLocale('en');
 
     $actor = reportUserWithPermissions(['activity.logs.pdf']);
+    $actor->forceFill(['name' => "O'Connor Report Reviewer"])->save();
     $company = Company::factory()->main()->create(['name' => 'Client Facing Company']);
 
     $response = $this->actingAs($actor)
@@ -2285,7 +2286,7 @@ test('report pdf shell uses inline disposition and shared header footer data', f
         ->toContain($company->name)
         ->and(substr_count($header, '<img'))->toBe(1)
         ->and($footer)
-        ->toContain($actor->name)
+        ->toContain(e($actor->name))
         ->toContain($company->name)
         ->toContain(__('reports.page').' {PAGENO}/{nbpg}');
 });

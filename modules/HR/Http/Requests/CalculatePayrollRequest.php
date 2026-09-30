@@ -8,6 +8,7 @@ use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingScopeAccessService;
+use Modules\HR\Models\HrEmployee;
 
 class CalculatePayrollRequest extends FormRequest
 {
@@ -44,7 +45,7 @@ class CalculatePayrollRequest extends FormRequest
                 'string',
                 Rule::exists('hr_payroll_items', 'code')->where('item_kind', 'deduction')->where('status', 'active')->whereNull('deleted_at'),
             ],
-            'adjustments.*.deductions.*.amount' => ['required', 'numeric', 'gt:0', 'max:99999999999999.9999'],
+            'adjustments.*.deductions.*.amount' => ['required', 'numeric', 'decimal:0,4', 'gt:0', 'max:99999999999999.9999'],
             'adjustments.*.deductions.*.reference' => ['nullable', 'string', 'max:255'],
             'adjustments.*.advance_applications' => ['nullable', 'array'],
             'adjustments.*.advance_applications.*' => ['array:salary_advance_id,payroll_item_code,amount'],
@@ -54,7 +55,7 @@ class CalculatePayrollRequest extends FormRequest
                 'string',
                 Rule::exists('hr_payroll_items', 'code')->where('item_kind', 'deduction')->where('status', 'active')->whereNull('deleted_at'),
             ],
-            'adjustments.*.advance_applications.*.amount' => ['required', 'numeric', 'gt:0', 'max:99999999999999.9999'],
+            'adjustments.*.advance_applications.*.amount' => ['required', 'numeric', 'decimal:0,4', 'gt:0', 'max:99999999999999.9999'],
         ];
     }
 
@@ -97,10 +98,10 @@ class CalculatePayrollRequest extends FormRequest
 
             $adjustments = collect($this->input('adjustments', []));
             $employeeDocNums = $adjustments->pluck('employee_doc_num')->filter()->unique()->values();
-            $employees = DB::table('hr_employees')
+            $employees = HrEmployee::query()
                 ->where('company_id', $company->getKey())
                 ->when($branchId !== null, fn ($query) => $query->where('branch_id', $branchId))
-                ->whereNull('deleted_at')
+                ->eligibleForPayrollPeriod($this->string('period_start')->toString(), $this->string('period_end')->toString())
                 ->whereIn('doc_num', $employeeDocNums)
                 ->pluck('id', 'doc_num');
             if ($employees->count() !== $employeeDocNums->count()) {

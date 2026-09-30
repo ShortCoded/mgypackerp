@@ -33,7 +33,9 @@ use Modules\HR\Models\HrCity;
 use Modules\HR\Models\HrCountry;
 use Modules\HR\Models\HrGovernorate;
 use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Inventory\Models\UnpricedInventoryReceipt;
 use Modules\Inventory\Services\InventoryReportService;
+use Modules\Inventory\Services\UnpricedInventoryReceiptService;
 use Modules\Purchases\Exports\ProcurementCycleReportExport;
 use Modules\Purchases\Http\Controllers\ProcurementWorkflowController;
 use Modules\Purchases\Models\PurchaseInvoice;
@@ -1365,9 +1367,32 @@ test('freight discount tax posting, invoice reversal, and period locks are exact
     $reversed = app(PurchaseInvoiceService::class)->reverse($invoice, 'Supplier invoice reference was duplicated.');
     $reversal = JournalEntry::query()->with('lines')->findOrFail($reversed->reversal_journal_entry_id);
     expect($reversed->status)->toBe(PurchaseInvoice::StatusCancelled)
+        ->and($reversed->isDeletable())->toBeFalse()
         ->and($journal->fresh()->reversed_entry_id)->toBe($reversal->getKey())
         ->and((float) $reversal->lines->sum('debit_amount'))->toBe(26.22)
         ->and((float) $reversal->lines->sum('credit_amount'))->toBe(26.22);
+    expect(fn () => app(PurchaseInvoiceService::class)->delete($reversed))->toThrow(DomainException::class);
+
+    $closedInvoice = app(PurchaseInvoiceService::class)->create([
+        'financial_period_doc_num' => $fixture['period']->doc_num,
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'invoice_date' => now()->toDateString(),
+        'payment_type' => PurchaseInvoice::PaymentTypeCredit,
+        'purchase_type' => 'direct',
+        'direct_procurement_override' => true,
+        'direct_procurement_reason' => 'Approved direct purchasing exception.',
+        'lines' => [[
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'quantity' => 1,
+            'unit_price' => 10,
+        ]],
+    ])['record'];
+    $closedInvoice = app(PurchaseInvoiceService::class)->close(app(PurchaseInvoiceService::class)->approve($closedInvoice));
+    expect(fn () => app(PurchaseInvoiceService::class)->reverse($closedInvoice, 'Attempt to cancel a closed invoice.'))->toThrow(DomainException::class)
+        ->and($closedInvoice->fresh()->status)->toBe(PurchaseInvoice::StatusClosed)
+        ->and($closedInvoice->fresh()->reversal_journal_entry_id)->toBeNull();
 
     $lockedInvoice = app(PurchaseInvoiceService::class)->create([
         'financial_period_doc_num' => $fixture['period']->doc_num,
@@ -2096,6 +2121,215 @@ test('goods receipt drafts post once and reverse quantities and grni without tru
         ->and(JournalEntry::query()->count())->toBe(3);
 });
 
+test('a closed or formerly approved goods receipt cannot be cancelled as a pre-quality draft', function (): void {
+    $fixture = procurementFixture();
+    $orders = app(PurchaseOrderService::class);
+    $receiving = app(ProcurementReceivingService::class);
+    $order = $orders->approve($orders->create([
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'branch_store_uuid' => $fixture['store']->public_uuid,
+        'document_date' => now()->toDateString(),
+        'exchange_rate' => 1,
+        'lines' => [[
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'ordered_quantity' => 10,
+            'unit_price' => 2,
+        ]],
+    ])['record']);
+    $receipt = $receiving->createReceipt($order, [
+        'document_date' => now()->toDateString(),
+        'lines' => [[
+            'purchase_order_line_public_id' => $order->lines()->sole()->public_id,
+            'delivered_quantity' => 5,
+        ]],
+    ]);
+    expect($receipt->qc_status)->toBe('pending_inspection');
+
+    $receipt->forceFill([
+        'status' => UnpricedInventoryReceipt::StatusClosed,
+        'is_closed' => true,
+        'closed_at' => now(),
+    ])->save();
+    expect(fn () => $receiving->cancelBeforeQuality($receipt->fresh(), 'Closed receipt.'))
+        ->toThrow(DomainException::class);
+    expect(fn () => $receiving->updateReceipt($receipt->fresh(), []))->toThrow(DomainException::class)
+        ->and(fn () => $receiving->deleteReceipt($receipt->fresh()))->toThrow(DomainException::class);
+
+    $receipt->forceFill(['status' => UnpricedInventoryReceipt::StatusDraft, 'is_closed' => false])->save();
+    expect(fn () => $receiving->cancelBeforeQuality($receipt->fresh(), 'Historically closed receipt.'))
+        ->toThrow(DomainException::class);
+
+    $receipt->forceFill(['closed_at' => null, 'approved_at' => now()])->save();
+    expect(fn () => $receiving->cancelBeforeQuality($receipt->fresh(), 'Formerly approved receipt.'))
+        ->toThrow(DomainException::class);
+    expect(fn () => $receiving->updateReceipt($receipt->fresh(), []))->toThrow(DomainException::class)
+        ->and(fn () => $receiving->deleteReceipt($receipt->fresh()))->toThrow(DomainException::class);
+    expect(fn () => $receiving->inspect($receipt->fresh(), []))->toThrow(DomainException::class);
+    expect(fn () => $receiving->postReceipt($receipt->fresh()))->toThrow(DomainException::class);
+
+    Permission::findOrCreate('purchases.goods_receipt_notes.view', 'web');
+    Permission::findOrCreate('purchases.goods_receipt_notes.edit', 'web');
+    $fixture['user']->givePermissionTo(['purchases.goods_receipt_notes.view', 'purchases.goods_receipt_notes.edit']);
+    $rows = $this->actingAs($fixture['user'])->getJson(route('admin.purchases.procurement.data', [
+        'screen' => 'goods_receipts', 'draw' => 1, 'start' => 0, 'length' => 10,
+    ]))->assertOk();
+    $rows->assertJsonPath('data.0.can_edit', false);
+    expect($rows->json('data.0.actions'))->not->toContain('/edit', 'data-method="DELETE"');
+
+    $receipt->forceFill(['approved_at' => null])->save();
+    Permission::findOrCreate('purchases.goods_receipt_notes.cancel', 'web');
+    $fixture['user']->givePermissionTo('purchases.goods_receipt_notes.edit');
+    $this->actingAs($fixture['user'])
+        ->postJson(route('admin.purchases.goods-receipt-notes.cancel', $receipt->doc_num), [
+            'cancel_reason' => 'Supplier cancelled the delivery.',
+        ])->assertForbidden();
+    expect($receipt->fresh()->status)->toBe(UnpricedInventoryReceipt::StatusDraft);
+
+    $fixture['user']->givePermissionTo('purchases.goods_receipt_notes.cancel');
+    $this->postJson(route('admin.purchases.goods-receipt-notes.cancel', $receipt->doc_num), [
+        'cancel_reason' => 'Supplier cancelled the delivery.',
+    ])->assertOk()->assertJsonPath('success', true);
+    expect($receipt->fresh()->status)->toBe(UnpricedInventoryReceipt::StatusCancelled);
+
+    $nextReceipt = $receiving->createReceipt($order->fresh(), [
+        'document_date' => now()->toDateString(),
+        'lines' => [[
+            'purchase_order_line_public_id' => $order->lines()->sole()->public_id,
+            'delivered_quantity' => 5,
+        ]],
+    ]);
+    $inspection = $receiving->inspect($nextReceipt, [
+        'lines' => [[
+            'receipt_line_public_id' => $nextReceipt->lines()->sole()->public_id,
+            'accepted_quantity' => 5,
+            'rejected_quantity' => 0,
+        ]],
+    ]);
+    $inspection->delete();
+    $nextReceipt->fresh()->forceFill(['qc_status' => 'pending_inspection'])->save();
+    expect($nextReceipt->fresh()->hasBlockingInspection())->toBeTrue();
+    $rows = $this->getJson(route('admin.purchases.procurement.data', [
+        'screen' => 'goods_receipts', 'draw' => 2, 'start' => 0, 'length' => 10,
+    ]))->assertOk();
+    $row = collect($rows->json('data'))->first(fn (array $item): bool => str_contains($item['doc_num'], $nextReceipt->doc_num));
+    expect($row['can_edit'] ?? null)->toBeFalse()
+        ->and($row['actions'] ?? '')->not->toContain('/edit', 'data-method="DELETE"');
+    expect(fn () => $receiving->inspect($nextReceipt->fresh(), [
+        'lines' => [[
+            'receipt_line_public_id' => $nextReceipt->lines()->sole()->public_id,
+            'accepted_quantity' => 5,
+            'rejected_quantity' => 0,
+        ]],
+    ]))->toThrow(DomainException::class);
+    expect(fn () => $receiving->cancelBeforeQuality($nextReceipt->fresh(), 'Ignore old inspection.'))
+        ->toThrow(DomainException::class);
+    expect(fn () => $receiving->updateReceipt($nextReceipt->fresh(), []))->toThrow(DomainException::class)
+        ->and(fn () => $receiving->deleteReceipt($nextReceipt->fresh()))->toThrow(DomainException::class);
+});
+
+test('a generic stock receipt can only be cancelled before approval or closure', function (): void {
+    $fixture = procurementFixture();
+    $service = app(UnpricedInventoryReceiptService::class);
+    $payload = [
+        'branch_doc_num' => $fixture['branch']->doc_num,
+        'branch_store_uuid' => $fixture['store']->public_uuid,
+        'document_date' => now()->toDateString(),
+        'lines' => [[
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'quantity' => 5,
+        ]],
+    ];
+    $receipt = $service->create($payload)['record'];
+
+    $receipt->forceFill(['closed_at' => now()])->save();
+    expect(fn () => $service->cancel($receipt->fresh()))->toThrow(DomainException::class);
+    $receipt->forceFill(['closed_at' => null])->save();
+
+    $staleDraft = $receipt->fresh();
+    $service->approve($receipt->fresh());
+    expect(fn () => $service->cancel($receipt->fresh()))->toThrow(DomainException::class);
+    expect(fn () => $service->update($staleDraft, $payload))->toThrow(DomainException::class)
+        ->and(fn () => $service->delete($staleDraft))->toThrow(DomainException::class);
+    $receipt = $receipt->fresh();
+    $receipt->forceFill(['status' => UnpricedInventoryReceipt::StatusDraft, 'approved' => false])->save();
+    expect(fn () => $service->cancel($receipt->fresh()))->toThrow(DomainException::class)
+        ->and($receipt->fresh()->isLockedForEditing())->toBeTrue();
+
+    $receipt->forceFill(['approved_at' => null])->save();
+    expect($service->cancel($receipt->fresh())->status)->toBe(UnpricedInventoryReceipt::StatusCancelled);
+});
+
+test('goods receipt lookup resolves duplicate document numbers within the selected financial period', function (): void {
+    $fixture = procurementFixture();
+    $orders = app(PurchaseOrderService::class);
+    $receiving = app(ProcurementReceivingService::class);
+    $historicalPeriod = FinancialPeriod::query()->create([
+        ...app(DocumentNumberService::class)->next('financial_periods', FinancialPeriod::class),
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Historical receiving period',
+        'from_date' => '2025-01-01',
+        'to_date' => '2025-12-31',
+        'is_closed' => false,
+    ]);
+    $selectPeriod = function (FinancialPeriod $period): void {
+        $context = [
+            OperatingContextService::FinancialPeriodIdKey => $period->getKey(),
+            OperatingContextService::FinancialPeriodDocNumKey => $period->doc_num,
+        ];
+        session($context);
+        $this->withSession($context);
+    };
+    $createReceipt = function (string $documentDate) use ($fixture, $orders, $receiving): UnpricedInventoryReceipt {
+        $order = $orders->approve($orders->create([
+            'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+            'currency_doc_num' => $fixture['currency']->doc_num,
+            'branch_store_uuid' => $fixture['store']->public_uuid,
+            'document_date' => $documentDate,
+            'exchange_rate' => 1,
+            'lines' => [[
+                'product_doc_num' => $fixture['raw']->doc_num,
+                'unit_doc_num' => $fixture['unit']->doc_num,
+                'ordered_quantity' => 10,
+                'unit_price' => 2,
+            ]],
+        ])['record']);
+
+        return $receiving->createReceipt($order, [
+            'document_date' => $documentDate,
+            'lines' => [[
+                'purchase_order_line_public_id' => $order->lines()->sole()->public_id,
+                'delivered_quantity' => 5,
+            ]],
+        ]);
+    };
+
+    $selectPeriod($historicalPeriod);
+    $historicalReceipt = $createReceipt('2025-06-01');
+    $selectPeriod($fixture['period']);
+    $currentReceipt = $createReceipt(now()->toDateString());
+    if ($currentReceipt->doc_num !== $historicalReceipt->doc_num) {
+        $currentReceipt->forceFill([
+            'doc_number' => $historicalReceipt->doc_number,
+            'doc_num' => $historicalReceipt->doc_num,
+        ])->save();
+    }
+    expect($currentReceipt->doc_num)->toBe($historicalReceipt->doc_num);
+
+    Permission::findOrCreate('purchases.goods_receipt_notes.view', 'web');
+    $fixture['user']->givePermissionTo('purchases.goods_receipt_notes.view');
+    $this->actingAs($fixture['user'])
+        ->get(route('admin.purchases.goods-receipt-notes.show', $historicalReceipt->doc_num))
+        ->assertOk()
+        ->assertViewHas('record', fn (UnpricedInventoryReceipt $record): bool => $record->is($currentReceipt));
+    $selectPeriod($historicalPeriod);
+    $this->get(route('admin.purchases.goods-receipt-notes.show', $historicalReceipt->doc_num))
+        ->assertOk()
+        ->assertViewHas('record', fn (UnpricedInventoryReceipt $record): bool => $record->is($historicalReceipt));
+});
+
 test('warehouse procurement acceptance completes ten thousand units through receipts invoice payments return and reversal', function (): void {
     $this->withoutExceptionHandling();
     Storage::fake('public');
@@ -2524,6 +2758,8 @@ test('procurement crosses closed source periods while each child posts in its ow
         ->and((float) InventoryTransaction::sum('quantity_in'))->toBe(10000.0);
     $this->get(route('admin.purchases.purchase-orders.show', $order->doc_num))->assertOk();
     $this->get(route('admin.purchases.goods-receipt-notes.show', $receipts->first()->doc_num))->assertOk();
+    $this->get(route('admin.purchases.procurement.print', ['goods-receipt', $receipts->first()->doc_num]))->assertOk();
+    $this->get(route('admin.purchases.purchase-returns.create', ['receipt' => $receipts->first()->doc_num]))->assertOk();
     expect(app(ProcurementCycleReport::class)->grniReconciliation($fixture['company']->id, $periods[10]->id)['difference'])->toBe('0.0000');
     $periods[10]->forceFill(['is_closed' => true])->save();
     $usePeriod($periods[11], '2026-11-01');

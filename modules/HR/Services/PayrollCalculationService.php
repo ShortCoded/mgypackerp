@@ -6,6 +6,7 @@ use DomainException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\Branch;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\NumericFormatService;
 use Modules\HR\Models\HrEmployee;
@@ -14,6 +15,7 @@ final class PayrollCalculationService
 {
     public function __construct(
         private readonly PayrollAttendanceEffectService $attendanceEffects,
+        private readonly PayrollAccrualService $accruals,
         private readonly NumericFormatService $numbers,
     ) {}
 
@@ -33,6 +35,7 @@ final class PayrollCalculationService
     public function calculate(int $companyId, array $data): array
     {
         return DB::transaction(function () use ($companyId, $data): array {
+            Company::query()->whereKey($companyId)->lockForUpdate()->firstOrFail();
             $branchId = $this->branchId($companyId, $data['branch_doc_num'] ?? null);
             $period = $this->period($companyId, $data['period_start'], $data['period_end']);
             $run = $this->run((int) $period->id, $branchId);
@@ -58,6 +61,9 @@ final class PayrollCalculationService
             DB::table('hr_payroll_run_employees')->where('payroll_run_id', $run->id)->delete();
 
             $adjustments = collect($data['adjustments'] ?? [])->keyBy('employee_doc_num');
+            if ($adjustments->keys()->diff($employees->pluck('doc_num'))->isNotEmpty()) {
+                throw new DomainException(__('hr_payroll.messages.adjustment_scope_invalid'));
+            }
             $grossTotal = '0.0000';
             $deductionTotal = '0.0000';
 
@@ -68,13 +74,22 @@ final class PayrollCalculationService
 
                 $assignment = $this->salaryAssignment($employee, $data['period_start'], $data['period_end']);
                 $components = $this->components($assignment->components);
+                if ($employee->pay_basis !== 'monthly_salary' && $components['items'] !== []) {
+                    throw new DomainException(__('hr_payroll.messages.accrual_components_unsupported', [
+                        'employee' => $employee->doc_num,
+                        'pay_basis' => $employee->pay_basis,
+                    ]));
+                }
+                $payRate = $this->accruals->rate($employee, $assignment, (string) $employee->pay_basis);
                 $effects = $this->attendanceEffects->calculate(
                     $employee,
                     $data['period_start'],
                     $data['period_end'],
-                    $assignment->basic_salary,
+                    $payRate,
                     $components['overtime_hourly_rate'] ?: $employee->hourly_wage,
+                    (string) $employee->pay_basis,
                 );
+                $accrual = $this->accruals->calculate($employee, $assignment, $data['period_start'], $data['period_end'], $effects);
                 $this->storeAttendanceSnapshot((int) $run->id, $employee, $effects);
                 $employeeAdjustments = $adjustments->get($employee->doc_num, []);
                 $payslipId = DB::table('hr_payslips')->insertGetId([
@@ -93,17 +108,22 @@ final class PayrollCalculationService
 
                 $gross = '0.0000';
                 $deductions = '0.0000';
-                $basic = $this->money($assignment->basic_salary);
+                $basic = $this->money($accrual['amount']);
                 $this->addItem($payslipId, 'BASIC', $basic, 'earning', $assignment->source_type, $assignment->source_id, [
                     'effective_from' => $assignment->effective_from,
                     'effective_to' => $assignment->effective_to,
-                    'basic_salary' => $basic,
+                    'pay_basis' => $employee->pay_basis,
+                    'base_rate' => $accrual['rate'],
+                    'accrual' => $accrual,
                 ]);
                 $gross = bcadd($gross, $basic, 4);
 
                 foreach ($components['items'] as $component) {
                     $direction = ($component['direction'] ?? 'earning') === 'deduction' ? 'deduction' : 'earning';
-                    $amount = $this->positiveMoney($component['amount'] ?? 0, __('hr_payroll.messages.component_amount_invalid'));
+                    $amount = $this->positiveMoney(
+                        bcmul((string) ($component['amount'] ?? 0), (string) $accrual['component_factor'], 4),
+                        __('hr_payroll.messages.component_amount_invalid'),
+                    );
                     $this->addItem(
                         $payslipId,
                         (string) ($component['payroll_item_code'] ?? ''),
@@ -233,6 +253,7 @@ final class PayrollCalculationService
                             'id' => $assignment->source_id,
                         ],
                         'salary_components' => $components,
+                        'accrual' => $accrual,
                         'approved_request_ids' => $effects['approved_request_ids'],
                         'canonical_leave_request_ids' => $effects['canonical_leave_request_ids'],
                         'payroll_attendance_effects' => [
@@ -300,6 +321,15 @@ final class PayrollCalculationService
             ->first();
 
         if ($period === null) {
+            if (DB::table('hr_payroll_periods')
+                ->where('company_id', $companyId)
+                ->whereNull('deleted_at')
+                ->whereDate('period_start', '<=', $end)
+                ->whereDate('period_end', '>=', $start)
+                ->exists()) {
+                throw new DomainException(__('hr_payroll.messages.overlapping_period'));
+            }
+
             $id = DB::table('hr_payroll_periods')->insertGetId([
                 'company_id' => $companyId,
                 'period_start' => $start,
@@ -348,41 +378,35 @@ final class PayrollCalculationService
         return HrEmployee::query()
             ->where('company_id', $companyId)
             ->when($branchId !== null, fn ($query) => $query->where('branch_id', $branchId))
-            ->where('status', 'active')
-            ->where(fn ($query) => $query->whereNull('hire_date')->orWhereDate('hire_date', '<=', $end))
-            ->where(fn ($query) => $query->whereNull('contract_start_date')->orWhereDate('contract_start_date', '<=', $end))
-            ->where(fn ($query) => $query->whereNull('contract_end_date')->orWhereDate('contract_end_date', '>=', $start))
+            ->eligibleForPayrollPeriod($start, $end)
             ->orderBy('doc_num')
             ->get();
     }
 
     private function salaryAssignment(HrEmployee $employee, string $start, string $end): object
     {
-        if ($employee->pay_basis !== 'monthly_salary') {
-            throw new DomainException(__('hr_payroll.messages.unsupported_pay_basis', [
-                'employee' => $employee->doc_num,
-                'pay_basis' => $employee->pay_basis,
-            ]));
-        }
-
-        if (($employee->hire_date?->toDateString() !== null && $employee->hire_date->toDateString() > $start)
-            || ($employee->contract_start_date?->toDateString() !== null && $employee->contract_start_date->toDateString() > $start)
-            || ($employee->contract_end_date?->toDateString() !== null && $employee->contract_end_date->toDateString() < $end)) {
-            throw new DomainException(__('hr_payroll.messages.partial_period_salary_requires_policy', ['employee' => $employee->doc_num]));
-        }
-
         $assignment = DB::table('hr_employee_salary_assignments')
             ->where('employee_id', $employee->getKey())
             ->whereDate('effective_from', '<=', $end)
-            ->where(fn ($query) => $query->whereNull('effective_to')->orWhereDate('effective_to', '>=', $end))
+            ->where(fn ($query) => $query->whereNull('effective_to')->orWhereDate('effective_to', '>=', $start))
             ->whereNull('deleted_at')
             ->orderByDesc('effective_from')
             ->orderByDesc('id')
             ->first();
 
         if ($assignment !== null) {
-            if ((string) $assignment->effective_from > $start) {
-                throw new DomainException(__('hr_payroll.messages.partial_period_salary_requires_policy', ['employee' => $employee->doc_num]));
+            $precedingAssignmentExists = (string) $assignment->effective_from > $start
+                && DB::table('hr_employee_salary_assignments')
+                    ->where('employee_id', $employee->getKey())
+                    ->where('id', '!=', $assignment->id)
+                    ->whereDate('effective_from', '<', $assignment->effective_from)
+                    ->where(fn ($query) => $query->whereNull('effective_to')->orWhereDate('effective_to', '>=', $start))
+                    ->whereNull('deleted_at')
+                    ->exists();
+            if ($precedingAssignmentExists) {
+                throw new DomainException(__('hr_payroll.messages.multiple_salary_assignments_require_split', [
+                    'employee' => $employee->doc_num,
+                ]));
             }
 
             $assignment->source_type = 'salary_assignment';

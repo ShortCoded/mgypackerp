@@ -19,6 +19,22 @@ class HrEmployee extends Model
 {
     use SoftDeletes;
 
+    /** @param Builder<self> $query */
+    public function scopeEligibleForPayrollPeriod(Builder $query, string $start, string $end): Builder
+    {
+        return $query
+            ->where(function (Builder $query) use ($start): void {
+                $query->where('status', 'active')
+                    ->orWhere(function (Builder $left) use ($start): void {
+                        $left->where('status', 'left')->whereDate('termination_date', '>=', $start);
+                    });
+            })
+            ->where(fn (Builder $query): Builder => $query->whereNull('hire_date')->orWhereDate('hire_date', '<=', $end))
+            ->where(fn (Builder $query): Builder => $query->whereNull('contract_start_date')->orWhereDate('contract_start_date', '<=', $end))
+            ->where(fn (Builder $query): Builder => $query->whereNull('contract_end_date')->orWhereDate('contract_end_date', '>=', $start))
+            ->where(fn (Builder $query): Builder => $query->whereNull('termination_date')->orWhereDate('termination_date', '>=', $start));
+    }
+
     protected $table = 'hr_employees';
 
     /**

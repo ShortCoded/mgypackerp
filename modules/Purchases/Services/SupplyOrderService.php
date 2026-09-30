@@ -66,7 +66,7 @@ class SupplyOrderService
             if (blank($reason)) {
                 throw new DomainException(__('Cancellation reason is required.'));
             }
-            if ($record->receipts()->where('approved', true)->whereNotIn('status', ['cancelled', 'reversed'])->exists()) {
+            if ($record->receipts()->withTrashed()->exists()) {
                 throw new DomainException(__('Reverse or cancel dependent receipts before cancelling this supply order.'));
             }
             if (! in_array($record->status, [SupplyOrder::StatusDraft, SupplyOrder::StatusIssued], true)) {

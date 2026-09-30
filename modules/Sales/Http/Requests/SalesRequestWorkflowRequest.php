@@ -33,6 +33,9 @@ class SalesRequestWorkflowRequest extends FormRequest
 
     public function rules(): array
     {
+        if ($this->routeIs('admin.sales.customer-requests.reopen')) {
+            return ['reason' => ['required', 'string', 'max:2000']];
+        }
         if ($this->routeIs('admin.sales.customer-requests.transition')) {
             return ['status' => ['required', Rule::in(['submitted', 'approved', 'rejected', 'cancelled', 'closed'])], 'reason' => ['nullable', 'string', 'max:2000']];
         }

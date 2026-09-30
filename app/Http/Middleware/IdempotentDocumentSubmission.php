@@ -35,6 +35,9 @@ class IdempotentDocumentSubmission
         if ($request->routeIs('admin.purchases.purchase-invoices.store')) {
             abort_unless($request->user()?->can($request->filled('clone_source_token') ? 'purchase_invoices.clone' : 'purchase_invoices.create'), 403);
         }
+        if ($request->routeIs('admin.production.material-requests.issue')) {
+            abort_unless((bool) $request->user()?->canAny(['production.material_requests.issue', 'inventory.documents.issue']), 403);
+        }
         $context = app(OperatingContextService::class)->snapshot($request);
         abort_unless($context['company_id'] && $request->user(), 403);
         $identity = ['company_id' => $context['company_id'], 'user_id' => $request->user()->getKey(),

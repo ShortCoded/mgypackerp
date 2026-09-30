@@ -43,7 +43,7 @@ Route::middleware('auth')
         Route::get('/material-requests/{productionMaterialRequest}/print', [ProductionMaterialRequestController::class, 'print'])->middleware('can:production.material_requests.print')->name('material-requests.print');
         Route::post('/material-requests/{productionMaterialRequest}/approve', [ProductionMaterialRequestController::class, 'approve'])->middleware(['can:production.material_requests.approve', IdempotentDocumentSubmission::class])->name('material-requests.approve');
         Route::post('/material-requests/{productionMaterialRequest}/allocate-shortage', [ProductionMaterialRequestController::class, 'allocateShortage'])->middleware(['can:production.material_requests.approve', IdempotentDocumentSubmission::class.':required'])->name('material-requests.allocate-shortage');
-        Route::post('/material-requests/{productionMaterialRequest}/issue', [ProductionMaterialRequestController::class, 'issue'])->middleware(['can:production.material_requests.issue', IdempotentDocumentSubmission::class.':required'])->name('material-requests.issue');
+        Route::post('/material-requests/{productionMaterialRequest}/issue', [ProductionMaterialRequestController::class, 'issue'])->middleware(IdempotentDocumentSubmission::class.':required')->name('material-requests.issue');
         Route::get('/material-requests/{productionMaterialRequest}', [ProductionMaterialRequestController::class, 'show'])->middleware('can:production.material_requests.view')->name('material-requests.show');
 
         Route::get('/expenses', [ProductionExpenseRequestController::class, 'index'])->middleware('can:production.expenses.view')->name('expenses.index');

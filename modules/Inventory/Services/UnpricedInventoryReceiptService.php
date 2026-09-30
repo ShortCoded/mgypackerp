@@ -52,23 +52,24 @@ class UnpricedInventoryReceiptService
     {
         return DB::transaction(function () use ($record, $data): array {
             $context = $this->currentContext();
-            $this->assertInCurrentContext($record, $context);
-            $this->assertEditable($record);
+            $locked = UnpricedInventoryReceipt::query()->lockForUpdate()->findOrFail($record->getKey());
+            $this->assertInCurrentContext($locked, $context);
+            $this->assertEditable($locked);
 
             $branch = $this->branchByDocNum($data['branch_doc_num'] ?? null);
-            $oldDocNumber = $record->doc_number === null ? null : (int) $record->doc_number;
-            $oldDocNum = $record->doc_num;
+            $oldDocNumber = $locked->doc_number === null ? null : (int) $locked->doc_number;
+            $oldDocNum = $locked->doc_num;
             $values = $this->values($data, $context, $branch);
 
             if (array_key_exists('doc_number', $data)) {
                 $values = [...$values, ...$this->document($data, $context)];
             }
 
-            $this->audit->saveUpdate($record, $values);
-            $this->syncLines($record->refresh(), $data['lines'] ?? [], $context, $branch);
+            $this->audit->saveUpdate($locked, $values);
+            $this->syncLines($locked->refresh(), $data['lines'] ?? [], $context, $branch);
 
             return [
-                'record' => $record->refresh()->load(['lines.product.unit', 'branch', 'branchHall', 'branchStore', 'supplier']),
+                'record' => $locked->refresh()->load(['lines.product.unit', 'branch', 'branchHall', 'branchStore', 'supplier']),
                 'old_doc_number' => $oldDocNumber,
                 'old_doc_num' => $oldDocNum,
             ];
@@ -78,11 +79,12 @@ class UnpricedInventoryReceiptService
     public function delete(UnpricedInventoryReceipt $record): void
     {
         DB::transaction(function () use ($record): void {
-            $this->assertInCurrentContext($record, $this->currentContext());
-            $this->assertDeletable($record);
-            $this->audit->softDelete($record);
+            $locked = UnpricedInventoryReceipt::query()->lockForUpdate()->findOrFail($record->getKey());
+            $this->assertInCurrentContext($locked, $this->currentContext());
+            $this->assertDeletable($locked);
+            $this->audit->softDelete($locked);
 
-            $record->refresh()->lines()->get()->each(function (UnpricedInventoryReceiptLine $line): void {
+            $locked->refresh()->lines()->get()->each(function (UnpricedInventoryReceiptLine $line): void {
                 $line->forceFill(['deleted_by' => auth()->id()])->save();
                 $line->delete();
             });
@@ -92,31 +94,31 @@ class UnpricedInventoryReceiptService
     public function restore(UnpricedInventoryReceipt $record): UnpricedInventoryReceipt
     {
         return DB::transaction(function () use ($record): UnpricedInventoryReceipt {
-            $this->assertInCurrentContext($record, $this->currentContext());
-            $deletedAt = $record->deleted_at;
+            $locked = UnpricedInventoryReceipt::withTrashed()->lockForUpdate()->findOrFail($record->getKey());
+            $this->assertInCurrentContext($locked, $this->currentContext());
+            $deletedAt = $locked->deleted_at;
 
-            $this->audit->restore($record, auth()->id());
-            $record->lines()
+            $this->audit->restore($locked, auth()->id());
+            $locked->lines()
                 ->withTrashed()
                 ->when($deletedAt, fn ($query) => $query->where('deleted_at', '>=', $deletedAt))
                 ->get()
                 ->each
                 ->restore();
 
-            return $record->refresh();
+            return $locked->refresh();
         });
     }
 
     public function approve(UnpricedInventoryReceipt $record): UnpricedInventoryReceipt
     {
         return DB::transaction(function () use ($record): UnpricedInventoryReceipt {
-            $this->assertInCurrentContext($record, $this->currentContext());
-
             /** @var UnpricedInventoryReceipt $locked */
             $locked = UnpricedInventoryReceipt::query()
                 ->with(['lines.product', 'lines.unit'])
                 ->lockForUpdate()
                 ->findOrFail($record->getKey());
+            $this->assertInCurrentContext($locked, $this->currentContext());
 
             if ($locked->purchase_order_id !== null || $locked->status === UnpricedInventoryReceipt::StatusReversed) {
                 throw new DomainException(__('Use the purchasing receipt workflow for purchase-linked documents.'));
@@ -165,10 +167,9 @@ class UnpricedInventoryReceiptService
     public function close(UnpricedInventoryReceipt $record): UnpricedInventoryReceipt
     {
         return DB::transaction(function () use ($record): UnpricedInventoryReceipt {
-            $this->assertInCurrentContext($record, $this->currentContext());
-
             /** @var UnpricedInventoryReceipt $locked */
             $locked = UnpricedInventoryReceipt::query()->lockForUpdate()->findOrFail($record->getKey());
+            $this->assertInCurrentContext($locked, $this->currentContext());
 
             if ($locked->purchase_order_id !== null || $locked->status === UnpricedInventoryReceipt::StatusReversed) {
                 throw new DomainException(__('Use the purchasing receipt workflow for purchase-linked documents.'));
@@ -205,10 +206,9 @@ class UnpricedInventoryReceiptService
     public function cancel(UnpricedInventoryReceipt $record): UnpricedInventoryReceipt
     {
         return DB::transaction(function () use ($record): UnpricedInventoryReceipt {
-            $this->assertInCurrentContext($record, $this->currentContext());
-
             /** @var UnpricedInventoryReceipt $locked */
             $locked = UnpricedInventoryReceipt::query()->with('lines')->lockForUpdate()->findOrFail($record->getKey());
+            $this->assertInCurrentContext($locked, $this->currentContext());
 
             if ($locked->purchase_order_id !== null || $locked->status === UnpricedInventoryReceipt::StatusReversed) {
                 throw new DomainException(__('Use the purchasing receipt workflow for purchase-linked documents.'));
@@ -224,6 +224,14 @@ class UnpricedInventoryReceiptService
 
             if ($locked->isCancelled()) {
                 throw new DomainException(__('inventory.unpriced_inventory_receipts.messages.already_cancelled'));
+            }
+
+            if ($locked->status !== UnpricedInventoryReceipt::StatusDraft
+                || $locked->approved || $locked->approved_at !== null
+                || $locked->posting_status !== 'unposted'
+                || $locked->posted_at !== null || $locked->reversed_at !== null
+                || $locked->grni_journal_entry_id !== null) {
+                throw new DomainException(__('inventory.unpriced_inventory_receipts.messages.approved_cancel_forbidden'));
             }
 
             $locked->forceFill([
@@ -513,7 +521,9 @@ class UnpricedInventoryReceiptService
         if ($record->purchase_order_id !== null || $record->status === UnpricedInventoryReceipt::StatusReversed) {
             throw new DomainException(__('Use the purchasing receipt workflow for purchase-linked documents.'));
         }
-        if ($record->isApproved()) {
+        if ($record->isApproved() || $record->approved_at !== null
+            || $record->posting_status !== 'unposted' || $record->posted_at !== null
+            || $record->reversed_at !== null || $record->grni_journal_entry_id !== null) {
             throw new DomainException(__('inventory.unpriced_inventory_receipts.messages.approved_edit_forbidden'));
         }
 
@@ -531,7 +541,9 @@ class UnpricedInventoryReceiptService
         if ($record->purchase_order_id !== null || $record->status === UnpricedInventoryReceipt::StatusReversed) {
             throw new DomainException(__('Use the purchasing receipt workflow for purchase-linked documents.'));
         }
-        if ($record->isApproved()) {
+        if ($record->isApproved() || $record->approved_at !== null
+            || $record->posting_status !== 'unposted' || $record->posted_at !== null
+            || $record->reversed_at !== null || $record->grni_journal_entry_id !== null) {
             throw new DomainException(__('inventory.unpriced_inventory_receipts.messages.approved_delete_forbidden'));
         }
 

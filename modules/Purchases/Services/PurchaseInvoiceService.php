@@ -238,7 +238,7 @@ class PurchaseInvoiceService
             if ($locked->reversal_journal_entry_id !== null) {
                 return $this->load($locked);
             }
-            if (! in_array($locked->status, [PurchaseInvoice::StatusApproved, PurchaseInvoice::StatusClosed], true)
+            if ($locked->status !== PurchaseInvoice::StatusApproved
                 || $locked->reversal_journal_entry_id !== null
                 || ! $locked->journalEntry) {
                 throw new DomainException(__('Only an unreversed posted purchase invoice can be reversed.'));

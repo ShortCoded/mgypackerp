@@ -561,7 +561,7 @@
                             @endforeach
 
                             {{-- @foreach (['hire_date', 'start_date', 'end_date', 'contract_start_date', 'contract_end_date', 'probation_end_date'] as $fieldName) --}}
-                            @foreach (['hire_date', 'contract_start_date', 'contract_end_date', 'probation_end_date'] as $fieldName)
+                            @foreach (['hire_date', 'contract_start_date', 'contract_end_date', 'termination_date', 'probation_end_date'] as $fieldName)
                                 @php $inputId = 'hr-employee-' . str_replace('_', '-', $fieldName); @endphp
                                 <div class="col-12 col-md-6 col-xl-4 col-xxl-3">
                                     <label class="form-label" for="{{ $inputId }}">{{ __('hr.employees.attributes.' . $fieldName) }}</label>

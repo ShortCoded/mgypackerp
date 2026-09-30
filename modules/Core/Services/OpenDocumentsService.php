@@ -6,9 +6,22 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Modules\Core\Models\FinancialPeriod;
 use Modules\Finance\Models\OpeningBalance;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Inventory\Models\OpeningStockPricing;
+use Modules\Production\Models\ProductionMaterialRequest;
+use Modules\Production\Services\ProductionMaterialRequestService;
+use Modules\Purchases\Models\PurchaseOrder;
+use Modules\Purchases\Models\PurchaseRequisition;
+use Modules\Purchases\Services\ProcurementSourcingService;
+use Modules\Purchases\Services\PurchaseOrderService;
+use Modules\Sales\Models\CustomerInvoice;
+use Modules\Sales\Models\SalesOrder;
+use Modules\Sales\Models\SalesRequest;
+use Modules\Sales\Services\CustomerInvoiceService;
+use Modules\Sales\Services\SalesOrderService;
+use Modules\Sales\Services\SalesRequestService;
 use Throwable;
 
 class OpenDocumentsService
@@ -19,6 +32,18 @@ class OpenDocumentsService
 
     public const OpeningStockPricings = 'opening_stock_pricings';
 
+    public const SalesOrders = 'sales_orders';
+
+    public const SalesRequests = 'sales_requests';
+
+    public const CustomerInvoices = 'customer_invoices';
+
+    public const PurchaseOrders = 'purchase_orders';
+
+    public const PurchaseRequisitions = 'purchase_requisitions';
+
+    public const ProductionMaterialRequests = 'production_material_requests';
+
     public function __construct(
         private readonly CrudAuditService $audit,
         private readonly ActivityLogger $activityLogger,
@@ -28,11 +53,45 @@ class OpenDocumentsService
     /**
      * @return array<string, string>
      */
-    public function documentTypes(): array
+    public function documentTypes(?Request $request = null): array
     {
         return collect($this->handlers())
+            ->filter(fn (array $handler): bool => isset($handler['workflow'])
+                ? (bool) $request?->user()?->can($handler['permission'])
+                : (bool) $request?->user()?->can('tools.open_documents.view'))
             ->mapWithKeys(fn (array $handler, string $key): array => [$key => __($handler['label'])])
             ->all();
+    }
+
+    public function canView(Request $request): bool
+    {
+        return (bool) $request->user()?->can('tools.open_documents.view')
+            || $this->hasWorkflowPermission($request);
+    }
+
+    public function canExecuteAny(Request $request): bool
+    {
+        return (bool) $request->user()?->can('tools.open_documents.execute')
+            || $this->hasWorkflowPermission($request);
+    }
+
+    public function canExecute(Request $request, string $documentType): bool
+    {
+        $handler = $this->handlers()[$documentType] ?? null;
+        if ($handler === null) {
+            return (bool) $request->user()?->can('tools.open_documents.execute');
+        }
+
+        return isset($handler['workflow'])
+            ? (bool) $request->user()?->can($handler['permission'])
+            : (bool) $request->user()?->can('tools.open_documents.execute');
+    }
+
+    private function hasWorkflowPermission(Request $request): bool
+    {
+        return collect($this->handlers())
+            ->contains(fn (array $handler): bool => isset($handler['workflow'])
+                && (bool) $request->user()?->can($handler['permission']));
     }
 
     /**
@@ -51,12 +110,25 @@ class OpenDocumentsService
      *     summary: array<string, int|string>
      * }
      */
-    public function reopen(string $documentType, int $fromNumber, int $toNumber, Request $request): array
+    public function reopen(string $documentType, int $fromNumber, int $toNumber, Request $request, ?string $reason = null): array
     {
         $handler = $this->handler($documentType);
         $context = $this->currentContext($request);
 
-        return DB::transaction(function () use ($handler, $context, $fromNumber, $toNumber, $request): array {
+        if (! $this->canExecute($request, $documentType)) {
+            abort(403);
+        }
+
+        return DB::transaction(function () use ($handler, $context, $fromNumber, $toNumber, $request, $reason): array {
+            $periodQuery = FinancialPeriod::query()->where('company_id', $context['company_id']);
+            if (! isset($handler['workflow'])) {
+                $periodQuery->lockForUpdate();
+            }
+            $period = $periodQuery->findOrFail($context['financial_period_id']);
+            if ($period->is_closed) {
+                throw new \DomainException(__('journal_entries.messages.period_closed'));
+            }
+
             $records = $this->recordsQuery($handler, $context, $fromNumber, $toNumber)
                 ->lockForUpdate()
                 ->orderBy('doc_number')
@@ -71,12 +143,34 @@ class OpenDocumentsService
                 'skipped_approved' => 0,
                 'skipped_already_open' => 0,
                 'skipped_deleted' => 0,
+                'skipped_blocked' => 0,
                 'not_found' => max(0, ($toNumber - $fromNumber + 1) - $records->count()),
             ];
 
             foreach ($records as $record) {
                 if ($record->trashed()) {
                     $summary['skipped_deleted']++;
+
+                    continue;
+                }
+
+                if (isset($handler['workflow'])) {
+                    if (in_array((string) $record->getAttribute('status'), ['draft', 'reopened'], true)) {
+                        $summary['skipped_already_open']++;
+
+                        continue;
+                    }
+
+                    if (! $record->canReopenSafely()) {
+                        $summary['skipped_blocked']++;
+
+                        continue;
+                    }
+
+                    $oldStatus = (string) $record->getAttribute('status');
+                    $this->reopenWorkflowDocument($handler['workflow'], $record, trim((string) $reason));
+                    $summary['opened']++;
+                    $this->logOpened($request, $record->refresh(), $handler, $context, $oldStatus, false);
 
                     continue;
                 }
@@ -114,7 +208,7 @@ class OpenDocumentsService
                 'messages' => $messages,
                 'summary' => $summary,
             ];
-        });
+        }, attempts: 3);
     }
 
     /**
@@ -129,7 +223,25 @@ class OpenDocumentsService
         return $model::withTrashed()
             ->where('company_id', $context['company_id'])
             ->where('financial_period_id', $context['financial_period_id'])
+            ->when(isset($handler['workflow']), fn (Builder $query): Builder => $query->where('branch_id', $context['branch_id']))
             ->whereBetween('doc_number', [$fromNumber, $toNumber]);
+    }
+
+    private function reopenWorkflowDocument(string $workflow, Model $record, string $reason): void
+    {
+        if ($reason === '') {
+            throw new \DomainException(__('open_documents.validation.reason_required'));
+        }
+
+        match ($workflow) {
+            self::SalesRequests => app(SalesRequestService::class)->reopen($record, $reason),
+            self::SalesOrders => app(SalesOrderService::class)->reopen($record, $reason),
+            self::CustomerInvoices => app(CustomerInvoiceService::class)->reopen($record, $reason),
+            self::PurchaseOrders => app(PurchaseOrderService::class)->reopen($record, $reason),
+            self::PurchaseRequisitions => app(ProcurementSourcingService::class)->reopenRequisition($record, $reason),
+            self::ProductionMaterialRequests => app(ProductionMaterialRequestService::class)->reopen($record, $reason),
+            default => throw new \DomainException(__('open_documents.validation.invalid_document_type')),
+        };
     }
 
     /**
@@ -202,6 +314,10 @@ class OpenDocumentsService
             $messages[] = __('open_documents.messages.skipped_deleted', ['count' => $summary['skipped_deleted']]);
         }
 
+        if ((int) $summary['skipped_blocked'] > 0) {
+            $messages[] = __('open_documents.messages.skipped_blocked', ['count' => $summary['skipped_blocked']]);
+        }
+
         if ((int) $summary['not_found'] > 0) {
             $messages[] = __('open_documents.messages.not_found', ['count' => $summary['not_found']]);
         }
@@ -240,19 +356,20 @@ class OpenDocumentsService
     }
 
     /**
-     * @return array{company_id: int, financial_period_id: int, company_doc_num: string|null, financial_period_doc_num: string|null}
+     * @return array{company_id: int, branch_id: int, financial_period_id: int, company_doc_num: string|null, financial_period_doc_num: string|null}
      */
     private function currentContext(Request $request): array
     {
         $this->operatingContext->current($request);
         $context = $this->operatingContext->snapshot($request);
 
-        if (! $context['company_id'] || ! $context['financial_period_id']) {
+        if (! $context['company_id'] || ! $context['branch_id'] || ! $context['financial_period_id']) {
             throw new \DomainException(__('operating_context.messages.required'));
         }
 
         return [
             'company_id' => (int) $context['company_id'],
+            'branch_id' => (int) $context['branch_id'],
             'financial_period_id' => (int) $context['financial_period_id'],
             'company_doc_num' => $context['company_doc_num'],
             'financial_period_doc_num' => $context['financial_period_doc_num'],
@@ -324,6 +441,54 @@ class OpenDocumentsService
                 'closed_status' => OpeningStockPricing::StatusClosed,
                 'approved_status' => null,
                 'blocked_statuses' => [],
+            ],
+            self::SalesOrders => [
+                'type' => self::SalesOrders,
+                'label' => 'open_documents.documents.sales_orders',
+                'model' => SalesOrder::class,
+                'open_status' => SalesOrder::StatusReopened,
+                'workflow' => self::SalesOrders,
+                'permission' => 'sales_orders.reopen',
+            ],
+            self::SalesRequests => [
+                'type' => self::SalesRequests,
+                'label' => 'open_documents.documents.sales_requests',
+                'model' => SalesRequest::class,
+                'open_status' => SalesRequest::StatusReopened,
+                'workflow' => self::SalesRequests,
+                'permission' => 'sales_requests.reopen',
+            ],
+            self::CustomerInvoices => [
+                'type' => self::CustomerInvoices,
+                'label' => 'open_documents.documents.customer_invoices',
+                'model' => CustomerInvoice::class,
+                'open_status' => CustomerInvoice::StatusReopened,
+                'workflow' => self::CustomerInvoices,
+                'permission' => 'customer_invoices.reopen',
+            ],
+            self::PurchaseOrders => [
+                'type' => self::PurchaseOrders,
+                'label' => 'open_documents.documents.purchase_orders',
+                'model' => PurchaseOrder::class,
+                'open_status' => PurchaseOrder::StatusDraft,
+                'workflow' => self::PurchaseOrders,
+                'permission' => 'purchase_orders.reopen',
+            ],
+            self::PurchaseRequisitions => [
+                'type' => self::PurchaseRequisitions,
+                'label' => 'open_documents.documents.purchase_requisitions',
+                'model' => PurchaseRequisition::class,
+                'open_status' => PurchaseRequisition::StatusDraft,
+                'workflow' => self::PurchaseRequisitions,
+                'permission' => 'purchases.purchase_requisitions.reopen',
+            ],
+            self::ProductionMaterialRequests => [
+                'type' => self::ProductionMaterialRequests,
+                'label' => 'open_documents.documents.production_material_requests',
+                'model' => ProductionMaterialRequest::class,
+                'open_status' => ProductionMaterialRequest::StatusSubmitted,
+                'workflow' => self::ProductionMaterialRequests,
+                'permission' => 'production.material_requests.reopen',
             ],
         ];
     }

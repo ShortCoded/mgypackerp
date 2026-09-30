@@ -3,7 +3,7 @@
     $canView = ! $isTrashed && auth()->user()?->can('production.material_requests.view');
     $canEdit = ! $isTrashed && $canChange && auth()->user()?->can('production.material_requests.edit');
     $canClone = ! $isTrashed && auth()->user()?->can('production.material_requests.clone');
-    $canDelete = ! $isTrashed && $canChange && auth()->user()?->can('production.material_requests.delete');
+    $canDelete = ! $isTrashed && $canChange && $record->approved_at === null && auth()->user()?->can('production.material_requests.delete');
     $canRestore = $isTrashed && auth()->user()?->can('production.material_requests.restore');
     $canPrint = ! $isTrashed && auth()->user()?->can('production.material_requests.print');
 @endphp
@@ -21,7 +21,7 @@
         @if(in_array($record->status, [\Modules\Production\Models\ProductionMaterialRequest::StatusShortage, \Modules\Production\Models\ProductionMaterialRequest::StatusPartiallyIssued], true) && $hasShortage && auth()->user()?->can('production.material_requests.approve'))
             <button class="dropdown-item text-warning" type="button" data-action="post" data-url="{{ route('admin.production.material-requests.allocate-shortage', $record) }}">{{ __('production_execution.actions.recheck_stock') }}</button>
         @endif
-        @if(in_array($record->status, [\Modules\Production\Models\ProductionMaterialRequest::StatusApproved, \Modules\Production\Models\ProductionMaterialRequest::StatusShortage, \Modules\Production\Models\ProductionMaterialRequest::StatusPartiallyIssued], true) && auth()->user()?->can('production.material_requests.issue'))
+        @if(in_array($record->status, [\Modules\Production\Models\ProductionMaterialRequest::StatusApproved, \Modules\Production\Models\ProductionMaterialRequest::StatusShortage, \Modules\Production\Models\ProductionMaterialRequest::StatusPartiallyIssued], true) && auth()->user()?->canAny(['production.material_requests.issue', 'inventory.documents.issue']))
             <a class="dropdown-item text-primary" href="{{ route('admin.production.material-requests.show', $record) }}#production-material-partial-issue">{{ __('production_execution.actions.issue') }}</a>
         @endif
         @if($canDelete)<div class="dropdown-divider"></div><button class="dropdown-item text-danger" type="button" data-action="delete" data-confirm="{{ __('production_execution.messages.confirm_delete') }}" data-url="{{ route('admin.production.material-requests.destroy', $record) }}">{{ __('common.actions.delete') }}</button>@endif

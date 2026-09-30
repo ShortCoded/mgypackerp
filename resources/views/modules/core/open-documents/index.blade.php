@@ -3,6 +3,11 @@
 @section('title', __('open_documents.title'))
 
 @section('content')
+    @php
+        $selectedDocumentType = old('document_type', request()->query('document_type'));
+        $selectedFromNumber = old('from_number', request()->integer('from_number') ?: null);
+        $selectedToNumber = old('to_number', request()->integer('to_number') ?: null);
+    @endphp
     <form class="js-open-documents-form" action="{{ route('admin.tools.open-documents.store') }}" method="POST" novalidate
           data-confirm-title="{{ __('open_documents.messages.confirm') }}"
           data-confirm-yes="{{ __('open_documents.actions.open') }}"
@@ -22,13 +27,13 @@
                             <span class="fas fa-arrow-left me-1"></span>{{ __('common.actions.back') }}
                         </a>
                     </div>
-                    @can('tools.open_documents.execute')
+                    @if($canExecute)
                         <div class="col-auto">
                             <button class="btn btn-primary js-open-documents-submit" type="submit">
                                 <span class="fas fa-unlock me-1"></span>{{ __('open_documents.actions.open') }}
                             </button>
                         </div>
-                    @endcan
+                    @endif
                 </div>
             </div>
 
@@ -41,25 +46,30 @@
                 <div class="row g-3">
                     <div class="col-lg-4">
                         <x-forms.label for="open-document-type" :label="__('open_documents.fields.document_type')" required />
-                        <x-forms.select id="open-document-type" name="document_type" class="form-select js-open-documents-type @error('document_type') is-invalid @enderror" data-placeholder="{{ __('common.placeholders.select') }}" required>
+                        <x-forms.select id="open-document-type" name="document_type" class="form-select js-open-documents-type" data-placeholder="{{ __('common.placeholders.select') }}" required>
                             <option value=""></option>
                             @foreach ($documentTypes as $key => $label)
-                                <option value="{{ $key }}" @selected(old('document_type') === $key)>{{ $label }}</option>
+                                <option value="{{ $key }}" @selected($selectedDocumentType === $key)>{{ $label }}</option>
                             @endforeach
                         </x-forms.select>
-                        <div class="invalid-feedback" data-error-for="document_type">@error('document_type'){{ $message }}@enderror</div>
+                        <div class="invalid-feedback" data-error-for="document_type"></div>
                     </div>
 
                     <div class="col-md-6 col-lg-4">
                         <x-forms.label for="open-document-from-number" :label="__('open_documents.fields.from_number')" required />
-                        <x-forms.input id="open-document-from-number" name="from_number" class="form-control text-center @error('from_number') is-invalid @enderror" type="number" min="1" step="1" value="{{ old('from_number') }}" required />
-                        <div class="invalid-feedback" data-error-for="from_number">@error('from_number'){{ $message }}@enderror</div>
+                        <x-forms.input id="open-document-from-number" name="from_number" class="form-control text-center" type="number" min="1" step="1" value="{{ $selectedFromNumber }}" required />
+                        <div class="invalid-feedback" data-error-for="from_number"></div>
                     </div>
 
                     <div class="col-md-6 col-lg-4">
                         <x-forms.label for="open-document-to-number" :label="__('open_documents.fields.to_number')" required />
-                        <x-forms.input id="open-document-to-number" name="to_number" class="form-control text-center @error('to_number') is-invalid @enderror" type="number" min="1" step="1" value="{{ old('to_number') }}" required />
-                        <div class="invalid-feedback" data-error-for="to_number">@error('to_number'){{ $message }}@enderror</div>
+                        <x-forms.input id="open-document-to-number" name="to_number" class="form-control text-center" type="number" min="1" step="1" value="{{ $selectedToNumber }}" required />
+                        <div class="invalid-feedback" data-error-for="to_number"></div>
+                    </div>
+                    <div class="col-12">
+                        <x-forms.label for="open-document-reason" :label="__('open_documents.fields.reason')" />
+                        <x-forms.textarea id="open-document-reason" name="reason" rows="2" maxlength="2000" data-required-types="sales_requests,sales_orders,customer_invoices,purchase_orders,purchase_requisitions,production_material_requests">{{ old('reason') }}</x-forms.textarea>
+                        <div class="invalid-feedback" data-error-for="reason"></div>
                     </div>
                 </div>
             </div>

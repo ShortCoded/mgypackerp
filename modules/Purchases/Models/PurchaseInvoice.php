@@ -234,7 +234,9 @@ class PurchaseInvoice extends Model
 
     public function isDeletable(): bool
     {
-        return $this->isDraft() || $this->isCancelled();
+        return ($this->isDraft() || $this->isCancelled())
+            && $this->journal_entry_id === null
+            && $this->reversal_journal_entry_id === null;
     }
 
     public function refreshPaymentTotals(): self

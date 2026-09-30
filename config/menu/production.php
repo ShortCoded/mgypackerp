@@ -114,6 +114,7 @@ return [
                     'view_trashed' => 'production.material_requests.view_trashed',
                     'restore' => 'production.material_requests.restore',
                     'approve' => 'production.material_requests.approve',
+                    'reopen' => 'production.material_requests.reopen',
                     'issue' => 'production.material_requests.issue',
                     'print' => 'production.material_requests.print',
                 ],

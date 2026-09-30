@@ -306,7 +306,7 @@ Route::middleware('auth')
                 Route::get('/{goodsReceiptNote}', 'showReceipt')->middleware('can:purchases.goods_receipt_notes.view')->name('show');
                 Route::post('/{goodsReceiptNote}/post', 'postReceipt')->middleware('can:purchases.goods_receipt_notes.post')->name('post');
                 Route::post('/{goodsReceiptNote}/reverse', 'reverseReceipt')->middleware('can:purchases.goods_receipt_notes.reverse')->name('reverse');
-                Route::post('/{goodsReceiptNote}/cancel', 'cancelReceipt')->middleware('can:purchases.goods_receipt_notes.edit')->name('cancel');
+                Route::post('/{goodsReceiptNote}/cancel', 'cancelReceipt')->middleware('can:purchases.goods_receipt_notes.cancel')->name('cancel');
             });
             Route::get('goods-receipt-lines', 'receiptLinesIndex')->middleware('can:purchases.goods_receipt_notes.view')->name('goods-receipt-lines.index');
             Route::prefix('goods-receipt-inspection')->name('goods-receipt-inspection.')->group(function (): void {

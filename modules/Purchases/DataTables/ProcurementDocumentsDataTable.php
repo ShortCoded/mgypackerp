@@ -137,7 +137,7 @@ class ProcurementDocumentsDataTable
                 'supplyOrder.supplier',
                 'supplyOrder.branchStore.branch',
             ],
-            'goods_receipts' => ['supplier', 'purchaseOrder', 'inspection', 'sourceInspection'],
+            'goods_receipts' => ['supplier', 'purchaseOrder', 'sourceInspection', 'inspection' => fn ($query) => $query->withTrashed()],
             default => ['supplier', 'receipt'],
         };
         $query->with($relations);
@@ -216,6 +216,7 @@ class ProcurementDocumentsDataTable
     {
         $editableDraft = $record->status === 'draft'
             && ($screen !== 'goods_receipts' || ($record->posting_status === 'unposted'
+                && ! $record->isLockedForEditing()
                 && (in_array($record->qc_status, ['pending_inspection', 'not_required'], true) || $record->sourceInspection !== null)
                 && $record->inspection === null));
 

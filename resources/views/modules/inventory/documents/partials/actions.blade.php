@@ -8,7 +8,7 @@
         @else
         <a class="dropdown-item" href="{{ route('admin.inventory.documents.show', $record) }}">{{ __('common.actions.view') }}</a>
         @can('inventory.documents.clone')<a class="dropdown-item" href="{{ route('admin.inventory.documents.clone', $record) }}">{{ __('common.actions.clone') }}</a>@endcan
-        @if($record->status === \Modules\Inventory\Models\InventoryDocument::StatusDraft)
+        @if($record->isUntouchedDraft())
             @can('inventory.documents.edit')
                 <a class="dropdown-item" href="{{ route('admin.inventory.documents.edit', $record) }}">{{ __('inventory.movements.actions.edit') }}</a>
             @endcan

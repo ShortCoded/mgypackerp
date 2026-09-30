@@ -117,7 +117,9 @@ class UnpricedInventoryReceipt extends Model
 
     public function isLockedForEditing(): bool
     {
-        return $this->isApproved() || $this->isClosed() || $this->isCancelled() || $this->status === self::StatusReversed;
+        return $this->isApproved() || $this->approved_at !== null || $this->isClosed() || $this->isCancelled()
+            || $this->status === self::StatusReversed || $this->posting_status !== 'unposted'
+            || $this->posted_at !== null || $this->reversed_at !== null || $this->grni_journal_entry_id !== null;
     }
 
     public function isApproved(): bool
@@ -127,7 +129,7 @@ class UnpricedInventoryReceipt extends Model
 
     public function isClosed(): bool
     {
-        return ! $this->isCancelled() && ((bool) $this->is_closed || $this->status === self::StatusClosed);
+        return ! $this->isCancelled() && ((bool) $this->is_closed || $this->status === self::StatusClosed || $this->closed_at !== null);
     }
 
     public function isCancelled(): bool
@@ -192,7 +194,7 @@ class UnpricedInventoryReceipt extends Model
 
     public function hasBlockingInspection(): bool
     {
-        $inspection = $this->inspection();
+        $inspection = $this->inspection()->withTrashed();
 
         if ($this->goods_receipt_inspection_id !== null) {
             $inspection->whereKeyNot($this->goods_receipt_inspection_id);

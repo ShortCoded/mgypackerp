@@ -3,9 +3,12 @@
 namespace Modules\Production\Services;
 
 use DomainException;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Services\InventoryAvailabilityService;
@@ -26,6 +29,7 @@ class ProductionMaterialRequestService
         private readonly InventoryReservationService $reservations,
         private readonly ProductionCycleService $cycle,
         private readonly ProcurementSourcingService $procurement,
+        private readonly ActivityLogger $activityLogger,
     ) {}
 
     /** @param array<int, string|int|float> $quantitiesByRequirementId */
@@ -182,7 +186,8 @@ class ProductionMaterialRequestService
             $locked = ProductionMaterialRequest::query()->lockForUpdate()->findOrFail($request->getKey());
             $this->assertContext($locked, $context);
 
-            if ($locked->status !== ProductionMaterialRequest::StatusSubmitted || $locked->inventoryDocuments()->exists()) {
+            if ($locked->status !== ProductionMaterialRequest::StatusSubmitted
+                || $locked->approved_at !== null || $locked->inventoryDocuments()->exists()) {
                 throw new DomainException(__('production_execution.messages.material_request_submitted_edit_only'));
             }
 
@@ -267,6 +272,65 @@ class ProductionMaterialRequestService
 
             return $locked->refresh()->load(['lines.product', 'purchaseRequisition']);
         });
+    }
+
+    public function reopen(ProductionMaterialRequest $request, string $reason): ProductionMaterialRequest
+    {
+        return DB::transaction(function () use ($request, $reason): ProductionMaterialRequest {
+            $context = $this->requiredContext();
+            $locked = ProductionMaterialRequest::query()->with('lines')->lockForUpdate()->findOrFail($request->getKey());
+            $this->assertContext($locked, $context);
+            if (blank($reason)) {
+                throw new DomainException(__('open_documents.validation.reason_required'));
+            }
+
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate(
+                $context['company_id'],
+                $locked->request_date,
+                $context['financial_period_id'],
+                lockForUpdate: true,
+            );
+            ProductionRun::query()->lockForUpdate()->findOrFail($locked->production_run_id);
+            if ($locked->trashed() || ! $locked->canReopenSafely()) {
+                throw new DomainException(__('open_documents.messages.skipped_blocked', ['count' => 1]));
+            }
+
+            $approvedSnapshot = [
+                'header' => Arr::only($locked->attributesToArray(), [
+                    'doc_num', 'request_date', 'required_by_date', 'production_run_id',
+                    'branch_store_id', 'request_type', 'status', 'approved_by', 'approved_at',
+                ]),
+                'lines' => $locked->lines->map(fn (ProductionMaterialRequestLine $line): array => Arr::only(
+                    $line->attributesToArray(),
+                    ['public_id', 'line_number', 'production_material_requirement_id', 'product_id',
+                        'requested_quantity', 'approved_quantity', 'reserved_quantity', 'shortage_quantity'],
+                ))->all(),
+            ];
+            foreach ($locked->lines as $line) {
+                $this->reservations->releaseForMaterialRequestLine($line, $reason);
+                $line->forceFill([
+                    'approved_quantity' => 0,
+                    'reserved_quantity' => 0,
+                    'shortage_quantity' => 0,
+                ])->save();
+            }
+            $locked->forceFill([
+                'status' => ProductionMaterialRequest::StatusSubmitted,
+                'updated_by' => auth()->id(),
+            ])->save();
+            $this->activityLogger->log(request(), 'production', 'production_material_request.reopened', 'success', [
+                'subject' => $locked,
+                'company_id' => $locked->company_id,
+                'properties_only' => true,
+                'properties' => [
+                    'doc_num' => $locked->doc_num,
+                    'reason' => trim($reason),
+                    'approved_snapshot' => $approvedSnapshot,
+                ],
+            ]);
+
+            return $locked->refresh()->load('lines');
+        }, 3);
     }
 
     /** @param array<int, string|int|float> $quantitiesByRequestLineId */

@@ -27,6 +27,7 @@ final class PayrollAttendanceEffectService
         string $end,
         mixed $basicSalary,
         mixed $overtimeHourlyRate,
+        string $payBasis = 'monthly_salary',
     ): array {
         $records = $this->attendanceRecords($employee, $start, $end);
         $finalized = $records->filter(fn (object $record): bool => $record->status === 'present' && $record->check_out_at !== null);
@@ -50,7 +51,7 @@ final class PayrollAttendanceEffectService
             if ($record->status === 'absent' && ! $coveredByLeave) {
                 $summary['absence_days']++;
                 if ($policy?->deduct_absence) {
-                    $this->addDeduction($deductions, $policy, 'absence', $this->dayAmount($basicSalary, $policy), [
+                    $this->addDeduction($deductions, $policy, 'absence', $this->dayAmount($basicSalary, $policy, $payBasis), [
                         'attendance_record_ids' => [(int) $record->id],
                         'dates' => [(string) $record->work_date],
                         'units' => 1,
@@ -68,14 +69,14 @@ final class PayrollAttendanceEffectService
             $summary['early_leave_minutes'] += $earlyMinutes;
 
             if ($lateMinutes > 0 && $policy?->deduct_late) {
-                $this->addDeduction($deductions, $policy, 'late', $this->minuteAmount($basicSalary, $policy, $lateMinutes), [
+                $this->addDeduction($deductions, $policy, 'late', $this->minuteAmount($basicSalary, $policy, $lateMinutes, $payBasis), [
                     'attendance_record_ids' => [(int) $record->id],
                     'dates' => [(string) $record->work_date],
                     'minutes' => $lateMinutes,
                 ]);
             }
             if ($earlyMinutes > 0 && $policy?->deduct_early_leave) {
-                $this->addDeduction($deductions, $policy, 'early_leave', $this->minuteAmount($basicSalary, $policy, $earlyMinutes), [
+                $this->addDeduction($deductions, $policy, 'early_leave', $this->minuteAmount($basicSalary, $policy, $earlyMinutes, $payBasis), [
                     'attendance_record_ids' => [(int) $record->id],
                     'dates' => [(string) $record->work_date],
                     'minutes' => $earlyMinutes,
@@ -102,7 +103,7 @@ final class PayrollAttendanceEffectService
                 $deductions,
                 $policy,
                 'unpaid_leave',
-                bcmul($this->dayAmount($basicSalary, $policy), $unpaidFraction, 8),
+                bcmul($this->dayAmount($basicSalary, $policy, $payBasis), $unpaidFraction, 8),
                 [
                     'leave_request_ids' => $dateLeaveDays->pluck('leave_request_id')->map(fn (mixed $id): int => (int) $id)->unique()->values()->all(),
                     'leave_day_ids' => $dateLeaveDays->pluck('leave_day_id')->map(fn (mixed $id): int => (int) $id)->unique()->values()->all(),
@@ -131,6 +132,13 @@ final class PayrollAttendanceEffectService
                 'late_minutes' => (int) $finalized->sum('late_minutes'),
                 'early_leave_minutes' => (int) $finalized->sum('early_leave_minutes'),
                 'recorded_overtime_minutes' => (int) $finalized->sum('overtime_minutes'),
+                'finalized_records' => $finalized->map(fn (object $record): array => [
+                    'id' => (int) $record->id,
+                    'work_date' => (string) $record->work_date,
+                    'worked_minutes' => (int) $record->worked_minutes,
+                    'overtime_minutes' => (int) $record->overtime_minutes,
+                    'shift_id' => $record->shift_id === null ? null : (int) $record->shift_id,
+                ])->values()->all(),
             ],
             'approved_request_ids' => $serviceRequests->pluck('id')->map(fn (mixed $id): int => (int) $id)->all(),
             'canonical_leave_request_ids' => $leaveDays->pluck('leave_request_id')->map(fn (mixed $id): int => (int) $id)->unique()->values()->all(),
@@ -164,7 +172,7 @@ final class PayrollAttendanceEffectService
             ->where(fn ($query) => $query->whereNull('company_id')->orWhere('company_id', $employee->company_id))
             ->when($employee->branch_id !== null, fn ($query) => $query->where(fn ($branch) => $branch->whereNull('branch_id')->orWhere('branch_id', $employee->branch_id)))
             ->orderBy('work_date')
-            ->get(['id', 'work_date', 'check_out_at', 'worked_minutes', 'late_minutes', 'early_leave_minutes', 'overtime_minutes', 'status']);
+            ->get(['id', 'shift_id', 'work_date', 'check_out_at', 'worked_minutes', 'late_minutes', 'early_leave_minutes', 'overtime_minutes', 'status']);
     }
 
     /** @return Collection<int, HrEmployeeServiceRequest> */
@@ -285,22 +293,37 @@ final class PayrollAttendanceEffectService
             'deduct_late' => $policy->deduct_late,
             'deduct_early_leave' => $policy->deduct_early_leave,
             'deduct_unpaid_leave' => $policy->deduct_unpaid_leave,
+            'monthly_partial_method' => $policy->monthly_partial_method,
+            'weekly_accrual_method' => $policy->weekly_accrual_method,
+            'daily_accrual_method' => $policy->daily_accrual_method,
+            'hourly_accrual_method' => $policy->hourly_accrual_method,
+            'shift_accrual_method' => $policy->shift_accrual_method,
+            'piece_accrual_method' => $policy->piece_accrual_method,
             'salary_day_divisor' => $policy->salary_day_divisor,
             'standard_day_minutes' => $policy->standard_day_minutes,
             'deduction_payroll_item_code' => $policy->deduction_payroll_item_code,
         ];
     }
 
-    private function dayAmount(mixed $basicSalary, HrPayrollAttendancePolicy $policy): string
+    private function dayAmount(mixed $basicSalary, HrPayrollAttendancePolicy $policy, string $payBasis): string
     {
-        return bcdiv($this->money($basicSalary), (string) $policy->salary_day_divisor, 8);
+        return match ($payBasis) {
+            'monthly_salary' => bcdiv($this->money($basicSalary), (string) $policy->salary_day_divisor, 8),
+            'weekly_wage' => bcdiv($this->money($basicSalary), '7', 8),
+            default => '0.00000000',
+        };
     }
 
-    private function minuteAmount(mixed $basicSalary, HrPayrollAttendancePolicy $policy, int $minutes): string
+    private function minuteAmount(mixed $basicSalary, HrPayrollAttendancePolicy $policy, int $minutes, string $payBasis): string
     {
+        $dayAmount = $this->dayAmount($basicSalary, $policy, $payBasis);
+        if (bccomp($dayAmount, '0.00000000', 8) === 0) {
+            return '0.00000000';
+        }
+
         return bcmul(
             bcdiv(
-                bcdiv($this->money($basicSalary), (string) $policy->salary_day_divisor, 12),
+                $dayAmount,
                 (string) $policy->standard_day_minutes,
                 12,
             ),

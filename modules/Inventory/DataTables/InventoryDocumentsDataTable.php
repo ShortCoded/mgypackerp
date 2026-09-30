@@ -62,7 +62,7 @@ class InventoryDocumentsDataTable
                 }
             })
             ->editColumn('doc_num', function (InventoryDocument $record) use ($request): string {
-                $url = ! $record->trashed() && $record->status === InventoryDocument::StatusDraft && $request->user()?->can('inventory.documents.edit')
+                $url = $record->isUntouchedDraft() && $request->user()?->can('inventory.documents.edit')
                     ? route('admin.inventory.documents.edit', $record)
                     : ($record->trashed() ? '#' : route('admin.inventory.documents.show', $record));
 
