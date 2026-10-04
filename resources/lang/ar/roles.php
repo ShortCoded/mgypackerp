@@ -77,6 +77,7 @@ return [
         'authorize' => 'تصريح',
         'cancel' => 'إلغاء',
         'close' => 'إغلاق',
+        'close_remainder' => 'إلغاء الكمية المتبقية المرفوضة',
         'complete' => 'إتمام',
         'companies_document_number_control' => 'التحكم في رقم المستند',
         'companies_document_number_settings_update' => 'تحديث إعدادات رقم مستند الشركة',

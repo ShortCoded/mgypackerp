@@ -18,7 +18,7 @@ class SalesIssueOrderService
 
     public function ensureForPostedInvoice(CustomerInvoice $invoice): ?SalesIssueOrder
     {
-        $invoice->loadMissing(['lines', 'order', 'deliveries.lines']);
+        $invoice->loadMissing(['lines', 'order', 'deliveries.lines', 'creditNotes.lines']);
         if ($invoice->document_type !== CustomerInvoice::TypeInvoice || $invoice->posting_status !== CustomerInvoice::StatusPosted || $invoice->hasApprovedCorrection()) {
             throw new DomainException(__('sales_issue.messages.posted_invoice_required'));
         }
@@ -46,7 +46,7 @@ class SalesIssueOrderService
     /** @return list<array{line: CustomerInvoiceLine, remaining: string}> */
     public function remainingLines(CustomerInvoice $invoice): array
     {
-        $invoice->loadMissing(['lines', 'deliveries.lines']);
+        $invoice->loadMissing(['lines', 'deliveries.lines', 'creditNotes.lines']);
         if ($invoice->hasApprovedCorrection()) {
             return [];
         }
@@ -58,6 +58,7 @@ class SalesIssueOrderService
             $key = $documentLine->source_line_type.':'.$documentLine->source_line_id;
             $deliveredBySource[$key] = bcadd($deliveredBySource[$key] ?? '0', (string) $documentLine->transaction_quantity, 8);
         }
+        $creditedByLine = $invoice->remainderCreditedQuantitiesByLine();
         $remaining = [];
 
         foreach ($invoice->lines as $line) {
@@ -67,9 +68,15 @@ class SalesIssueOrderService
             $sourceType = $line->sales_order_line_id ? SalesOrderLine::class : CustomerInvoiceLine::class;
             $sourceId = $line->sales_order_line_id ?: $line->getKey();
             $key = $sourceType.':'.$sourceId;
+            $netQuantity = bcsub(
+                (string) $line->quantity,
+                $creditedByLine[$line->public_id] ?? '0.00000000',
+                8,
+            );
+            $netQuantity = bccomp($netQuantity, '0', 8) > 0 ? $netQuantity : '0.00000000';
             $issued = $deliveredBySource[$key] ?? '0';
-            $consumed = bccomp($issued, (string) $line->quantity, 8) > 0 ? (string) $line->quantity : $issued;
-            $quantity = bcsub((string) $line->quantity, $consumed, 8);
+            $consumed = bccomp($issued, $netQuantity, 8) > 0 ? $netQuantity : $issued;
+            $quantity = bcsub($netQuantity, $consumed, 8);
             $deliveredBySource[$key] = bcsub($issued, $consumed, 8);
             if (bccomp($quantity, '0', 8) > 0) {
                 $remaining[] = ['line' => $line, 'remaining' => $quantity];
@@ -84,7 +91,7 @@ class SalesIssueOrderService
         return DB::transaction(function () use ($order, $store, $documentDate, $selectedLayersByInvoiceLineId): InventoryDocument {
             Company::query()->whereKey($order->company_id)->lockForUpdate()->firstOrFail();
             $locked = SalesIssueOrder::query()->lockForUpdate()->findOrFail($order->getKey());
-            $invoice = CustomerInvoice::query()->with(['lines', 'order', 'deliveries.lines'])->lockForUpdate()->findOrFail($locked->customer_invoice_id);
+            $invoice = CustomerInvoice::query()->with(['lines', 'order', 'deliveries.lines', 'creditNotes.lines'])->lockForUpdate()->findOrFail($locked->customer_invoice_id);
             $store = BranchStore::query()->with('branch')->lockForUpdate()->findOrFail($store->getKey());
 
             if ($locked->status !== SalesIssueOrder::StatusPending

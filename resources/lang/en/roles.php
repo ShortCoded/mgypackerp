@@ -98,6 +98,7 @@ return [
         'approve' => 'Approve',
         'cancel' => 'Cancel',
         'close' => 'Close',
+        'close_remainder' => 'Close declined remainder',
         'complete' => 'Complete',
         'companies_document_number_control' => 'Control Document Number',
         'companies_document_number_settings_update' => 'Update Company Document Number Settings',

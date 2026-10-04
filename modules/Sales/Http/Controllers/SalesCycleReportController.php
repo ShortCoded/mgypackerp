@@ -267,12 +267,16 @@ class SalesCycleReportController extends Controller
                 'count(*) as invoice_count, coalesce(sum(total_amount), 0) as gross_sales, coalesce(sum(paid_amount), 0) as collections, coalesce(sum(remaining_amount), 0) as outstanding'
             )->first();
             $creditNotesRow = (clone $financialCreditQuery)->reorder()->selectRaw('coalesce(sum(total_amount), 0) as credit_notes_total')->first();
+            $returnCreditNotesRow = (clone $financialCreditQuery)->reorder()->whereNotNull('customer_invoices.sales_return_id')
+                ->selectRaw('coalesce(sum(total_amount), 0) as credit_notes_total')->first();
             $overdueRow = (clone $financialInvoiceQuery)->reorder()
                 ->where('customer_invoices.remaining_amount', '>', 0)
                 ->whereDate('customer_invoices.due_date', '<', $asOf)
                 ->selectRaw('coalesce(sum(customer_invoices.remaining_amount), 0) as overdue_outstanding')->first();
             $grossSales = $money($invoiceTotals?->gross_sales);
-            $creditNotesTotal = bcsub($money($creditNotesRow?->credit_notes_total), $money((clone $creditReversalQuery)->sum('customer_invoices.total_amount')), 4);
+            $creditReversalsTotal = $money((clone $creditReversalQuery)->sum('customer_invoices.total_amount'));
+            $creditNotesTotal = bcsub($money($creditNotesRow?->credit_notes_total), $creditReversalsTotal, 4);
+            $returnCreditNotesTotal = bcsub($money($returnCreditNotesRow?->credit_notes_total), $creditReversalsTotal, 4);
             $collections = $money($invoiceTotals?->collections);
             $netSales = bcsub($grossSales, $creditNotesTotal, 4);
             $financialSummary = [
@@ -284,7 +288,7 @@ class SalesCycleReportController extends Controller
                 'outstanding' => $money($invoiceTotals?->outstanding),
                 'overdue_outstanding' => $money($overdueRow?->overdue_outstanding),
                 'collection_rate' => $rate($collections, $netSales),
-                'return_rate' => $rate($creditNotesTotal, $grossSales),
+                'return_rate' => $rate($returnCreditNotesTotal, $grossSales),
             ];
         }
 
@@ -305,14 +309,42 @@ class SalesCycleReportController extends Controller
         $openOrdersQuery = $applyOrderFilters(SalesOrder::query()->with(['customer', 'lines'])->where('company_id', $companyId)->where('financial_period_id', $periodId));
         $filters['operational_focus'] === 'pending_sales_actions'
             ? $openOrdersQuery->operationallyOpen()
-            : $openOrdersQuery->whereIn('status', [SalesOrder::StatusApproved, SalesOrder::StatusPartiallyFulfilled, SalesOrder::StatusHeldCredit]);
+            : $openOrdersQuery->where(function (Builder $orders): void {
+                $orders->whereIn('status', [SalesOrder::StatusApproved, SalesOrder::StatusPartiallyFulfilled, SalesOrder::StatusHeldCredit])
+                    ->orWhere(function (Builder $declined): void {
+                        $declined->where('status', SalesOrder::StatusClosed)
+                            ->whereHas('lines', fn (Builder $lines) => $lines->where('declined_quantity', '>', 0));
+                    });
+            });
         $openOrders = $openOrdersQuery
             ->when($from, fn ($query) => $query->whereDate('order_date', '>=', $from))->when($to, fn ($query) => $query->whereDate('order_date', '<=', $to))
             ->withSum('lines as ordered_quantity', 'quantity')->withSum('lines as delivered_quantity', 'delivered_quantity')
+            ->withSum('lines as declined_quantity', 'declined_quantity')->withSum('lines as invoiced_quantity', 'invoiced_quantity')
+            ->withSum('lines as remainder_credited_quantity', 'remainder_credited_quantity')
             ->withSum('lines as reserved_quantity', 'reserved_quantity')->withSum('lines as produced_quantity', 'produced_quantity')
             ->withSum('lines as production_requested_quantity', 'production_requested_quantity')->orderBy('expected_delivery_date')->when(! $fullReport, fn ($query) => $query->limit(100))->get();
 
-        $salesRequests = SalesRequest::query()
+        $requestLines = static fn ($lines) => $lines
+            ->with(['product', 'unit'])
+            ->withSum('orderLines as downstream_declined_quantity', 'declined_quantity');
+        $annotateRequestQuantities = static function (SalesRequest $salesRequest): void {
+            $requested = '0.00000000';
+            $converted = '0.00000000';
+            $declined = '0.00000000';
+            foreach ($salesRequest->lines as $line) {
+                $requested = bcadd($requested, (string) $line->quantity, 8);
+                $converted = bcadd($converted, (string) $line->converted_quantity, 8);
+                $declined = bcadd($declined, (string) ($line->downstream_declined_quantity ?? 0), 8);
+            }
+            $netConverted = bcsub($converted, $declined, 8);
+            $remaining = bcsub($requested, $converted, 8);
+            $salesRequest->setAttribute('requested_quantity', $requested);
+            $salesRequest->setAttribute('converted_quantity', $converted);
+            $salesRequest->setAttribute('downstream_declined_quantity', $declined);
+            $salesRequest->setAttribute('net_converted_quantity', bccomp($netConverted, '0', 8) < 0 ? '0.00000000' : $netConverted);
+            $salesRequest->setAttribute('remaining_quantity', bccomp($remaining, '0', 8) < 0 ? '0.00000000' : $remaining);
+        };
+        $salesRequestQuery = SalesRequest::query()
             ->where('company_id', $companyId)
             ->where('financial_period_id', $periodId)
             ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
@@ -320,20 +352,27 @@ class SalesCycleReportController extends Controller
             ->when($salesPersonId, fn ($query) => $query->where('business_employee_id', $salesPersonId))
             ->when($productId, fn ($query) => $query->whereHas('lines', fn ($lineQuery) => $lineQuery->where('product_id', $productId)))
             ->when($from, fn ($query) => $query->whereDate('request_date', '>=', $from))
-            ->when($to, fn ($query) => $query->whereDate('request_date', '<=', $to))
+            ->when($to, fn ($query) => $query->whereDate('request_date', '<=', $to));
+        $salesRequests = (clone $salesRequestQuery)
             ->operationallyOpen()
-            ->with(['branch', 'customer', 'lines.product', 'lines.unit'])
+            ->with(['branch', 'customer', 'lines' => $requestLines])
             ->latest('request_date')
             ->when(! $fullReport, fn ($query) => $query->limit(100))
             ->get()
-            ->each(function (SalesRequest $salesRequest): void {
-                $remaining = $salesRequest->lines->reduce(
-                    fn (string $total, $line): string => bcadd($total, bcsub((string) $line->quantity, (string) $line->converted_quantity, 8), 8),
-                    '0.00000000',
-                );
-                $salesRequest->setAttribute('remaining_quantity', $remaining);
-            });
-        $salesActionCount = $salesRequests->count() + $quotations->count() + $openOrders->count();
+            ->each($annotateRequestQuantities);
+        $declinedSalesRequests = (clone $salesRequestQuery)
+            ->whereHas('lines.orderLines', fn (Builder $lines) => $lines->where('declined_quantity', '>', 0))
+            ->with(['branch', 'customer', 'lines' => $requestLines])
+            ->latest('request_date')
+            ->when(! $fullReport, fn ($query) => $query->limit(100))
+            ->get()
+            ->each($annotateRequestQuantities);
+        $actionableOrderStatuses = [
+            SalesOrder::StatusPendingApproval, SalesOrder::StatusHeldCredit, SalesOrder::StatusApproved,
+            SalesOrder::StatusPartiallyFulfilled, SalesOrder::StatusReopened,
+        ];
+        $salesActionCount = $salesRequests->count() + $quotations->count()
+            + $openOrders->whereIn('status', $actionableOrderStatuses)->count();
 
         $salesByCustomer = $applyInvoiceFilters($invoiceQuery()->join('customers', 'customers.id', '=', 'customer_invoices.customer_id'))
             ->where('customer_invoices.company_id', $companyId)->where('customer_invoices.financial_period_id', $periodId)
@@ -734,7 +773,7 @@ class SalesCycleReportController extends Controller
             'area' => $areaId && $areaId > 0 ? HrArea::query()->find($areaId) : null,
         ];
 
-        return view('modules.sales.cycle.report', compact('reportType', 'allowedReportTypes', 'currencies', 'reportCurrency', 'financialSummary', 'ledgerSummary', 'customerSummary', 'productSummary', 'customerProductSummary', 'periodSummary', 'outstandingSummary', 'installmentSummary', 'agingTotals', 'collectionSummary', 'upcomingSummary', 'returnsSummary', 'returnAnalysisSummary', 'costOfSalesSummary', 'costOfSalesRows', 'creditMovements', 'returnCutoff', 'filterOptions', 'salesLedger', 'salesRequests', 'salesActionCount', 'quotations', 'openOrders', 'salesByCustomer', 'salesByItem', 'salesByCustomerItem', 'salesByPeriod', 'invoiceOutstanding', 'installments', 'upcomingCollections', 'customerReceipts', 'aging', 'returns', 'returnAnalysis', 'unpricedProducts', 'customersWithoutPriceLists', 'customerProductPricingGaps', 'pricingDate', 'from', 'to', 'filters', 'orderStatuses', 'returnReasons'));
+        return view('modules.sales.cycle.report', compact('reportType', 'allowedReportTypes', 'currencies', 'reportCurrency', 'financialSummary', 'ledgerSummary', 'customerSummary', 'productSummary', 'customerProductSummary', 'periodSummary', 'outstandingSummary', 'installmentSummary', 'agingTotals', 'collectionSummary', 'upcomingSummary', 'returnsSummary', 'returnAnalysisSummary', 'costOfSalesSummary', 'costOfSalesRows', 'creditMovements', 'returnCutoff', 'filterOptions', 'salesLedger', 'salesRequests', 'declinedSalesRequests', 'salesActionCount', 'quotations', 'openOrders', 'salesByCustomer', 'salesByItem', 'salesByCustomerItem', 'salesByPeriod', 'invoiceOutstanding', 'installments', 'upcomingCollections', 'customerReceipts', 'aging', 'returns', 'returnAnalysis', 'unpricedProducts', 'customersWithoutPriceLists', 'customerProductPricingGaps', 'pricingDate', 'from', 'to', 'filters', 'orderStatuses', 'returnReasons'));
     }
 
     public function print(Request $request, ReportPdfService $pdf, CompanyPrintIdentityService $printIdentity): Response

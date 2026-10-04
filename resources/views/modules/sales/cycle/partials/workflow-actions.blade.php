@@ -30,23 +30,32 @@
     @if(($stockStatus ?? collect())->isNotEmpty())
         <div class="card mb-3">
             <div class="card-header"><h6 class="mb-0">{{ __('Stock, reservation, and production status') }}</h6></div>
-            <div class="table-responsive"><table class="table table-sm table-bordered align-middle mb-0" style="min-width:1050px"><thead><tr><th>{{ __('Product') }}</th><th>{{ __('Unit') }}</th><th class="text-end">{{ __('Ordered') }}</th><th class="text-end">{{ __('On hand') }}</th><th class="text-end">{{ __('Available to this order') }}</th><th class="text-end">{{ __('Reserved') }}</th><th class="text-end">{{ __('Shortage') }}</th><th class="text-end">{{ __('Production requested') }}</th><th class="text-end">{{ __('Produced') }}</th><th class="text-end">{{ __('Delivered') }}</th><th class="text-end">{{ __('Remaining') }}</th></tr></thead><tbody>
+            <div class="table-responsive"><table class="table table-sm table-bordered align-middle mb-0" style="min-width:1200px"><thead><tr><th>{{ __('Product') }}</th><th>{{ __('Unit') }}</th><th class="text-end">{{ __('Ordered') }}</th><th class="text-end">{{ __('sales_ui.remainder.declined') }}</th><th class="text-end">{{ __('sales_ui.remainder.effective') }}</th><th class="text-end">{{ __('On hand') }}</th><th class="text-end">{{ __('Available to this order') }}</th><th class="text-end">{{ __('Reserved') }}</th><th class="text-end">{{ __('Shortage') }}</th><th class="text-end">{{ __('Production requested') }}</th><th class="text-end">{{ __('Produced') }}</th><th class="text-end">{{ __('Delivered') }}</th><th class="text-end">{{ __('Remaining') }}</th></tr></thead><tbody>
                 @foreach($record->lines->reject->isService() as $line)
                     @php $stock = $stockStatus->get($line->getKey()); @endphp
-                    <tr><td>{{ $line->product?->doc_num }} / {{ $line->product?->name }}</td><td>{{ $line->unit?->name }}</td><td class="text-end">{{ $numbers->format($line->quantity) }}</td><td class="text-end">{{ $numbers->format($stock['on_hand']) }}</td><td class="text-end">{{ $numbers->format($stock['available']) }}</td><td class="text-end">{{ $numbers->format($stock['reserved']) }}</td><td class="text-end">{{ $numbers->format($stock['shortage']) }}</td><td class="text-end">{{ $numbers->format($line->production_requested_quantity) }}</td><td class="text-end">{{ $numbers->format($line->produced_quantity) }}</td><td class="text-end">{{ $numbers->format($line->delivered_quantity) }}</td><td class="text-end">{{ $numbers->format($line->remainingDeliveryQuantity()) }}</td></tr>
+                    <tr><td>{{ $line->product?->doc_num }} / {{ $line->product?->name }}</td><td>{{ $line->unit?->name }}</td><td class="text-end">{{ $numbers->format($line->quantity) }}</td><td class="text-end">{{ $numbers->format($line->declined_quantity) }}</td><td class="text-end">{{ $numbers->format($line->effectiveQuantity()) }}</td><td class="text-end">{{ $numbers->format($stock['on_hand']) }}</td><td class="text-end">{{ $numbers->format($stock['available']) }}</td><td class="text-end">{{ $numbers->format($stock['reserved']) }}</td><td class="text-end">{{ $numbers->format($stock['shortage']) }}</td><td class="text-end">{{ $numbers->format($line->production_requested_quantity) }}</td><td class="text-end">{{ $numbers->format($line->produced_quantity) }}</td><td class="text-end">{{ $numbers->format($line->delivered_quantity) }}</td><td class="text-end">{{ $numbers->format($line->remainingDeliveryQuantity()) }}</td></tr>
                 @endforeach
             </tbody></table></div>
         </div>
     @endif
 
     @php
-        $canReopenOrder = $record->canReopenSafely();
+        $reviewableOrderStatuses = ['approved', 'rejected', 'closed', 'partially_fulfilled', 'fulfilled'];
+        $canReviewReopenOrder = in_array($record->status, $reviewableOrderStatuses, true);
         $canCancelOrder = $record->canCancelSafely();
+        $closeableRemainderLines = $record->lines
+            ->reject->isService()
+            ->filter(fn ($line) => bccomp($line->remainingDeliveryQuantity(), '0', 8) > 0)
+            ->values();
+        $canCloseRemainder = in_array($record->status, ['approved', 'partially_fulfilled', 'fulfilled'], true)
+            && $closeableRemainderLines->isNotEmpty()
+            && auth()->user()?->can('sales_orders.close_remainder');
         $hasOrderActions = ($record->isEditable() && auth()->user()?->can('sales_orders.edit'))
             || (in_array($record->status, ['draft', 'pending_approval', 'held_credit'], true) && auth()->user()?->can('sales_orders.approve'))
             || ($record->status === 'held_credit' && auth()->user()?->can('sales_orders.credit_override'))
             || (in_array($record->status, ['draft', 'pending_approval', 'held_credit'], true) && auth()->user()?->can('sales_orders.reject'))
-            || ($canReopenOrder && auth()->user()?->can('sales_orders.reopen'))
+            || ($canReviewReopenOrder && auth()->user()?->can('sales_orders.reopen'))
+            || $canCloseRemainder
             || ($canCancelOrder && auth()->user()?->can('sales_orders.cancel'));
     @endphp
     @if($hasOrderActions)
@@ -61,26 +70,117 @@
             <div class="row g-3">
                 @if($record->status === 'held_credit') @can('sales_orders.credit_override')<div class="col-lg-4"><form data-sales-ui class="js-sales-cycle-action border rounded p-3" action="{{ route('admin.sales.sales-orders.credit-override', $record) }}" method="POST">@csrf<x-forms.line-item-cards :line-label="__('sales_ui.line')" /><label class="form-label">{{ __('Credit override reason') }}</label><x-forms.textarea class="form-control form-control-sm mb-2" name="reason" required></x-forms.textarea><button class="btn btn-warning btn-sm" type="submit">{{ __('Override Hold') }}</button></form></div>@endcan @endif
                 @if(in_array($record->status, ['draft', 'pending_approval', 'held_credit'], true)) @can('sales_orders.reject')<div class="col-lg-4"><form data-sales-ui class="js-sales-cycle-action border rounded p-3" action="{{ route('admin.sales.sales-orders.reject', $record) }}" method="POST">@csrf<x-forms.line-item-cards :line-label="__('sales_ui.line')" /><label class="form-label">{{ __('Rejection reason') }}</label><x-forms.textarea class="form-control form-control-sm mb-2" name="reason" required></x-forms.textarea><button class="btn btn-danger btn-sm" type="submit">{{ __('Reject') }}</button></form></div>@endcan @endif
-                @if($canReopenOrder) @can('sales_orders.reopen')<div class="col-lg-4"><a class="btn btn-falcon-warning btn-sm" href="{{ route('admin.tools.open-documents.index', ['document_type' => 'sales_orders', 'from_number' => $record->doc_number, 'to_number' => $record->doc_number]) }}">{{ __('open_documents.title') }}</a></div>@endcan @endif
+                @if($canReviewReopenOrder) @can('sales_orders.reopen')<div class="col-lg-4"><a class="btn btn-falcon-warning btn-sm" href="{{ route('admin.tools.open-documents.index', ['document_type' => 'sales_orders', 'from_number' => $record->doc_number, 'to_number' => $record->doc_number]) }}">{{ __('open_documents.actions.review_edit_reopen') }}</a></div>@endcan @endif
                 @if($canCancelOrder) @can('sales_orders.cancel')<div class="col-lg-4"><form data-sales-ui class="js-sales-cycle-action border rounded p-3" action="{{ route('admin.sales.sales-orders.cancel', $record) }}" method="POST">@csrf<x-forms.line-item-cards :line-label="__('sales_ui.line')" /><label class="form-label">{{ __('Cancellation reason') }}</label><x-forms.textarea class="form-control form-control-sm mb-2" name="reason" required></x-forms.textarea><button class="btn btn-outline-danger btn-sm" type="submit">{{ __('Cancel') }}</button></form></div>@endcan @endif
+                @if($canCloseRemainder)
+                    @can('sales_orders.close_remainder')
+                        <div class="col-12">
+                            <form data-sales-ui class="js-sales-cycle-action border border-warning rounded p-3" action="{{ route('admin.sales.sales-orders.close-remainder', $record) }}" method="POST">
+                                @csrf
+                                <x-forms.line-item-cards :line-label="__('sales_ui.line')" />
+                                <h6>{{ __('sales_ui.remainder.title') }}</h6>
+                                <p class="small text-600">{{ __('sales_ui.remainder.description') }}</p>
+                                <div class="table-responsive mb-3">
+                                    <table class="table table-sm table-bordered align-middle mb-0">
+                                        <thead><tr><th>{{ __('Product') }}</th><th>{{ __('Unit') }}</th><th class="text-end">{{ __('Ordered') }}</th><th class="text-end">{{ __('Delivered') }}</th><th class="text-end">{{ __('sales_ui.remainder.previously_declined') }}</th><th class="text-end">{{ __('sales_ui.remainder.effective_before_close') }}</th><th class="text-end">{{ __('sales_ui.remainder.quantity_to_decline') }}</th></tr></thead>
+                                        <tbody>
+                                            @foreach($closeableRemainderLines as $remainderIndex => $orderLine)
+                                                <tr>
+                                                    <td>{{ $orderLine->product?->doc_num }} / {{ $orderLine->product?->name }}</td>
+                                                    <td>{{ $orderLine->unit?->name }}</td>
+                                                    <td class="text-end" dir="ltr">{{ $numbers->format($orderLine->quantity) }}</td>
+                                                    <td class="text-end" dir="ltr">{{ $numbers->format($orderLine->delivered_quantity) }}</td>
+                                                    <td class="text-end" dir="ltr">{{ $numbers->format($orderLine->declined_quantity) }}</td>
+                                                    <td class="text-end" dir="ltr">{{ $numbers->format($orderLine->effectiveQuantity()) }}</td>
+                                                    <td class="text-end fw-semibold" dir="ltr">
+                                                        {{ $numbers->format($orderLine->remainingDeliveryQuantity()) }}
+                                                        <input type="hidden" name="lines[{{ $remainderIndex }}][sales_order_line_public_id]" value="{{ $orderLine->public_id }}">
+                                                        <input type="hidden" name="lines[{{ $remainderIndex }}][expected_remaining_quantity]" value="{{ $orderLine->remainingDeliveryQuantity() }}">
+                                                    </td>
+                                                </tr>
+                                            @endforeach
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="row g-3 align-items-end">
+                                    <div class="col-md-3"><label class="form-label">{{ __('sales_ui.remainder.closure_date') }}</label><x-forms.date-input name="closure_date" :value="$today" required /></div>
+                                    <div class="col-md-7"><label class="form-label">{{ __('sales_ui.remainder.decline_reason') }}</label><x-forms.textarea class="form-control form-control-sm" name="reason" required></x-forms.textarea></div>
+                                    <div class="col-md-2"><button class="btn btn-warning btn-sm w-100" type="submit">{{ __('sales_ui.remainder.close_displayed') }}</button></div>
+                                </div>
+                            </form>
+                        </div>
+                    @endcan
+                @endif
             </div>
         </div>
     </div>
     @endif
 
-    @if($record->isApprovedForFulfillment() || $record->status === 'fulfilled')
+    @php
+        $closedDeclinedOrderHasDeliveredToInvoice = $record->status === 'closed'
+            && $record->lines->contains(fn ($line) => bccomp((string) $line->declined_quantity, '0', 8) > 0)
+            && $record->lines->contains(fn ($line) => bccomp((string) $line->delivered_quantity, $line->netInvoicedQuantity(), 8) > 0);
+    @endphp
+    @if($record->isApprovedForFulfillment() || $record->status === 'fulfilled' || $closedDeclinedOrderHasDeliveredToInvoice)
         @php
             $invoiceableLines = $record->lines->filter(fn ($line) => bccomp($line->remainingInvoiceQuantity(), '0', 8) > 0);
-            $invoiceableTotal = $invoiceableLines->reduce(
-                fn (string $total, $line): string => bcadd($total, bcmul((string) $line->line_total, bcdiv($line->remainingInvoiceQuantity(), (string) $line->quantity, 12), 4), 4),
+            $invoiceRows = $invoiceableLines->map(fn ($line): array => [
+                'order_line' => $line,
+                'quantity' => $line->remainingInvoiceQuantity(),
+                'delivery' => null,
+                'delivery_line' => null,
+            ])->values();
+            if ($closedDeclinedOrderHasDeliveredToInvoice) {
+                $invoicedByDeliveryLine = $record->invoices
+                    ->where('document_type', 'invoice')
+                    ->flatMap->lines
+                    ->filter(fn ($invoiceLine) => $invoiceLine->delivery_line_id !== null)
+                    ->groupBy('delivery_line_id')
+                    ->map(fn ($invoiceLines): string => $invoiceLines->reduce(
+                        fn (string $total, $invoiceLine): string => bcadd($total, (string) $invoiceLine->quantity, 8),
+                        '0.00000000',
+                    ));
+                $remainingByOrderLine = $invoiceableLines->mapWithKeys(
+                    fn ($line): array => [$line->getKey() => $line->remainingInvoiceQuantity()],
+                );
+                $invoiceRows = collect();
+                foreach ($record->deliveries->where('document_type', 'sales_delivery')->where('status', 'posted') as $delivery) {
+                    foreach ($delivery->lines as $deliveryLine) {
+                        if ($deliveryLine->source_line_type !== \Modules\Sales\Models\SalesOrderLine::class) {
+                            continue;
+                        }
+                        $orderLine = $invoiceableLines->firstWhere('id', $deliveryLine->source_line_id);
+                        $orderRemaining = (string) $remainingByOrderLine->get($deliveryLine->source_line_id, '0.00000000');
+                        $deliveryRemaining = bcsub(
+                            (string) $deliveryLine->transaction_quantity,
+                            (string) $invoicedByDeliveryLine->get($deliveryLine->getKey(), '0.00000000'),
+                            8,
+                        );
+                        if ($orderLine === null || bccomp($orderRemaining, '0', 8) <= 0 || bccomp($deliveryRemaining, '0', 8) <= 0) {
+                            continue;
+                        }
+                        $quantity = bccomp($orderRemaining, $deliveryRemaining, 8) <= 0 ? $orderRemaining : $deliveryRemaining;
+                        $invoiceRows->push([
+                            'order_line' => $orderLine,
+                            'quantity' => $quantity,
+                            'delivery' => $delivery,
+                            'delivery_line' => $deliveryLine,
+                        ]);
+                        $remainingByOrderLine->put($orderLine->getKey(), bcsub($orderRemaining, $quantity, 8));
+                    }
+                }
+            }
+            $invoiceableTotal = $invoiceRows->reduce(
+                fn (string $total, array $row): string => bcadd($total, bcmul((string) $row['order_line']->line_total, bcdiv($row['quantity'], (string) $row['order_line']->quantity, 12), 4), 4),
                 '0.0000',
             );
         @endphp
-        @if($invoiceableLines->isNotEmpty() && auth()->user()?->can('sales_orders.invoice') && auth()->user()?->can('customer_invoices.create'))
-        <div class="card mb-3" id="sales-order-invoice"><div class="card-header"><h6 class="mb-0">{{ __('Create Sales Invoice from approved order quantities') }}</h6></div><div class="card-body"><form data-sales-ui data-sales-invoice-from-order class="js-sales-cycle-action" action="{{ route('admin.sales.sales-orders.invoices.store', $record) }}" method="POST">@csrf<x-forms.line-item-cards :line-label="__('sales_ui.line')" />
-            <div class="table-responsive mb-3"><table class="table table-sm table-bordered align-middle mb-0"><thead><tr><th>{{ __('Product') }}</th><th>{{ __('Ordered') }}</th><th>{{ __('Previously invoiced') }}</th><th>{{ __('Invoice quantity') }}</th></tr></thead><tbody>
-                @foreach($invoiceableLines->values() as $invoiceIndex => $orderLine)
-                    <tr data-invoice-source-line data-source-quantity="{{ $orderLine->quantity }}" data-source-total="{{ $orderLine->line_total }}"><td>{{ $orderLine->product?->name }}<x-forms.input type="hidden" name="lines[{{ $invoiceIndex }}][sales_order_line_public_id]" value="{{ $orderLine->public_id }}" /></td><td>{{ $numbers->format($orderLine->quantity) }} {{ $orderLine->unit?->name }}</td><td>{{ $numbers->format($orderLine->invoiced_quantity) }}</td><td><x-forms.input class="form-control form-control-sm text-end js-invoice-quantity" name="lines[{{ $invoiceIndex }}][quantity]" value="{{ $numbers->formatForInput($orderLine->remainingInvoiceQuantity()) }}" inputmode="decimal" max="{{ $orderLine->remainingInvoiceQuantity() }}" required /></td></tr>
+        @if($invoiceRows->isNotEmpty() && auth()->user()?->can('sales_orders.invoice') && auth()->user()?->can('customer_invoices.create'))
+        <div class="card mb-3" id="sales-order-invoice"><div class="card-header"><h6 class="mb-0">{{ __('sales_ui.remainder.create_invoice_title') }}</h6></div><div class="card-body"><form data-sales-ui data-sales-invoice-from-order class="js-sales-cycle-action" action="{{ route('admin.sales.sales-orders.invoices.store', $record) }}" method="POST">@csrf<x-forms.line-item-cards :line-label="__('sales_ui.line')" />
+            <div class="table-responsive mb-3"><table class="table table-sm table-bordered align-middle mb-0"><thead><tr><th>{{ __('Product') }}</th><th>{{ __('sales_ui.remainder.source_delivery') }}</th><th>{{ __('sales_ui.remainder.ordered_effective') }}</th><th>{{ __('sales_ui.remainder.invoiced_net') }}</th><th>{{ __('Invoice quantity') }}</th></tr></thead><tbody>
+                @foreach($invoiceRows as $invoiceIndex => $invoiceRow)
+                    @php $orderLine = $invoiceRow['order_line']; @endphp
+                    <tr data-invoice-source-line data-source-quantity="{{ $orderLine->quantity }}" data-source-total="{{ $orderLine->line_total }}"><td>{{ $orderLine->product?->name }}<x-forms.input type="hidden" name="lines[{{ $invoiceIndex }}][sales_order_line_public_id]" value="{{ $orderLine->public_id }}" />@if($invoiceRow['delivery_line'])<x-forms.input type="hidden" name="lines[{{ $invoiceIndex }}][delivery_line_public_id]" value="{{ $invoiceRow['delivery_line']->public_id }}" />@endif</td><td>{{ $invoiceRow['delivery']?->doc_num ?? '—' }}</td><td>{{ $numbers->format($orderLine->quantity) }} / {{ $numbers->format($orderLine->effectiveQuantity()) }} {{ $orderLine->unit?->name }}</td><td>{{ $numbers->format($orderLine->invoiced_quantity) }} / {{ $numbers->format($orderLine->netInvoicedQuantity()) }}</td><td><x-forms.input class="form-control form-control-sm text-end js-invoice-quantity" name="lines[{{ $invoiceIndex }}][quantity]" value="{{ $numbers->formatForInput($invoiceRow['quantity']) }}" inputmode="decimal" max="{{ $invoiceRow['quantity'] }}" required /></td></tr>
                 @endforeach
             </tbody></table></div>
             <div class="row g-3 mb-3"><div class="col-md-4"><label class="form-label">{{ __('Invoice date') }}</label><x-forms.date-input name="invoice_date" :value="$today" required /></div><div class="col-md-4"><label class="form-label">{{ __('Due date') }}</label><x-forms.date-input name="payment_schedules[0][due_date]" :value="$today" required /></div><div class="col-md-4"><label class="form-label">{{ __('Invoice total') }}</label><x-forms.input class="form-control text-end" data-invoice-schedule-total name="payment_schedules[0][amount]" value="{{ $numbers->formatForInput($invoiceableTotal) }}" inputmode="decimal" required readonly /></div></div>
@@ -135,9 +235,9 @@
                 </div>
             </div>
         @endif
-        @if($record->canReopenSafely()) @can('customer_invoices.reopen')
-            <div class="card mb-3" data-invoice-action-panel><div class="card-body py-3"><a class="btn btn-falcon-warning btn-sm" href="{{ route('admin.tools.open-documents.index', ['document_type' => 'customer_invoices', 'from_number' => $record->doc_number, 'to_number' => $record->doc_number]) }}">{{ __('open_documents.title') }}</a></div></div>
-        @endcan @endif
+        @can('customer_invoices.reopen')
+            <div class="card mb-3" data-invoice-action-panel><div class="card-body py-3"><a class="btn btn-falcon-warning btn-sm" href="{{ route('admin.tools.open-documents.index', ['document_type' => 'customer_invoices', 'from_number' => $record->doc_number, 'to_number' => $record->doc_number]) }}">{{ __('open_documents.actions.review_edit_reopen') }}</a></div></div>
+        @endcan
         @can('sales_returns.create')
             <details class="card mb-3" data-invoice-action-panel>
                 <summary class="card-header py-2 fw-semibold">{{ __('sales_ui.create_return_from_invoice') }}</summary>

@@ -211,7 +211,9 @@ class SalesFulfillmentService
                 throw new DomainException(__('Select each invoice line once and enter its delivery quantity.'));
             }
 
-            $lockedInvoice = CustomerInvoice::query()->with(['order', 'lines.orderLine', 'lines.product', 'deliveries.lines'])
+            $lockedInvoice = CustomerInvoice::query()->with([
+                'order', 'lines.orderLine', 'lines.product', 'deliveries.lines', 'creditNotes.lines',
+            ])
                 ->lockForUpdate()->findOrFail($invoice->getKey());
             $lockedInvoice->setRelation('deliveries', $lockedInvoice->deliveries->where('status', InventoryDocument::StatusPosted));
             if ($lockedInvoice->document_type !== CustomerInvoice::TypeInvoice || $lockedInvoice->posting_status !== CustomerInvoice::StatusPosted || $lockedInvoice->hasApprovedCorrection()) {
@@ -237,15 +239,22 @@ class SalesFulfillmentService
                 $sourceId = (int) $documentLine->source_line_id;
                 $deliveredByOrderLine[$sourceId] = bcadd($deliveredByOrderLine[$sourceId] ?? '0', (string) $documentLine->transaction_quantity, 8);
             }
+            $creditedByInvoiceLine = $lockedInvoice->remainderCreditedQuantitiesByLine();
             $remainingByInvoiceLine = [];
             foreach ($lockedInvoice->lines as $invoiceLine) {
                 if ($invoiceLine->is_service || $invoiceLine->sales_order_line_id === null) {
                     continue;
                 }
                 $sourceId = (int) $invoiceLine->sales_order_line_id;
+                $netQuantity = bcsub(
+                    (string) $invoiceLine->quantity,
+                    $creditedByInvoiceLine[$invoiceLine->public_id] ?? '0.00000000',
+                    8,
+                );
+                $netQuantity = bccomp($netQuantity, '0', 8) > 0 ? $netQuantity : '0.00000000';
                 $delivered = $deliveredByOrderLine[$sourceId] ?? '0';
-                $consumed = bccomp($delivered, (string) $invoiceLine->quantity, 8) > 0 ? (string) $invoiceLine->quantity : $delivered;
-                $remainingByInvoiceLine[$invoiceLine->getKey()] = bcsub((string) $invoiceLine->quantity, $consumed, 8);
+                $consumed = bccomp($delivered, $netQuantity, 8) > 0 ? $netQuantity : $delivered;
+                $remainingByInvoiceLine[$invoiceLine->getKey()] = bcsub($netQuantity, $consumed, 8);
                 $deliveredByOrderLine[$sourceId] = bcsub($delivered, $consumed, 8);
             }
             $deliveryQuantities = [];
@@ -619,7 +628,14 @@ class SalesFulfillmentService
             return;
         }
         $hasDelivery = $physical->contains(fn (SalesOrderLine $line): bool => $this->amounts->compare($line->delivered_quantity, '0', 8) > 0);
-        $complete = $physical->every(fn (SalesOrderLine $line): bool => $this->amounts->compare($line->delivered_quantity, $line->quantity, 8) >= 0);
-        $order->update(['status' => $complete ? SalesOrder::StatusFulfilled : ($hasDelivery ? SalesOrder::StatusPartiallyFulfilled : SalesOrder::StatusApproved)]);
+        $hasDecline = $lines->contains(fn (SalesOrderLine $line): bool => $this->amounts->compare($line->declined_quantity, '0', 8) > 0);
+        $complete = $physical->every(fn (SalesOrderLine $line): bool => $this->amounts->compare(
+            bcadd((string) $line->delivered_quantity, (string) $line->declined_quantity, 8),
+            $line->quantity,
+            8,
+        ) >= 0);
+        $order->update(['status' => $complete
+            ? ($hasDecline ? SalesOrder::StatusClosed : SalesOrder::StatusFulfilled)
+            : ($hasDelivery ? SalesOrder::StatusPartiallyFulfilled : SalesOrder::StatusApproved)]);
     }
 }

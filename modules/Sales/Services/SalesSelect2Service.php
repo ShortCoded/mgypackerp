@@ -23,6 +23,7 @@ use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerInvoiceLine;
+use Modules\Sales\Models\SalesIssueOrder;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesOrderLine;
 use Modules\Sales\Models\SalesRequest;
@@ -46,8 +47,14 @@ class SalesSelect2Service
         $query = SalesOrder::query()->with('customer')
             ->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
             ->where('financial_period_id', $context['financial_period_id'])
-            ->whereIn('status', ['approved', 'partially_fulfilled', 'fulfilled'])
-            ->whereHas('lines', fn ($lines) => $lines->whereColumn('invoiced_quantity', '<', 'quantity'))
+            ->where(function (Builder $eligible): void {
+                $eligible->whereIn('status', [SalesOrder::StatusApproved, SalesOrder::StatusPartiallyFulfilled, SalesOrder::StatusFulfilled])
+                    ->orWhere(fn (Builder $closed) => $closed->where('status', SalesOrder::StatusClosed)
+                        ->whereHas('lines', fn (Builder $line) => $line->where('declined_quantity', '>', 0)));
+            })
+            ->whereHas('lines', fn ($lines) => $lines->whereRaw(
+                'invoiced_quantity - remainder_credited_quantity < quantity - declined_quantity'
+            ))
             ->orderByDesc('id');
         $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q', $request->input('term'))), ['text' => ['doc_num']]);
 
@@ -159,6 +166,7 @@ class SalesSelect2Service
             ->where('branch_id', $context['branch_id'])
             ->where('document_type', CustomerInvoice::TypeInvoice)
             ->where('posting_status', CustomerInvoice::StatusPosted)
+            ->whereDoesntHave('issueOrder', fn (Builder $issueOrder) => $issueOrder->where('status', SalesIssueOrder::StatusShortClosed))
             ->whereHas('lines', fn (Builder $lines) => $lines
                 ->where('is_service', false)
                 ->whereRaw('customer_invoice_lines.quantity > (select coalesce(sum(inventory_document_lines.transaction_quantity), 0) from inventory_document_lines inner join customer_invoice_deliveries on customer_invoice_deliveries.inventory_document_id = inventory_document_lines.inventory_document_id inner join inventory_documents on inventory_documents.id = inventory_document_lines.inventory_document_id where customer_invoice_deliveries.customer_invoice_id = customer_invoice_lines.customer_invoice_id and inventory_document_lines.source_line_type = case when customer_invoice_lines.sales_order_line_id is null then ? else ? end and inventory_document_lines.source_line_id = coalesce(customer_invoice_lines.sales_order_line_id, customer_invoice_lines.id) and inventory_documents.status = ? and inventory_documents.deleted_at is null)', [CustomerInvoiceLine::class, SalesOrderLine::class, InventoryDocument::StatusPosted]))

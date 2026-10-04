@@ -4,6 +4,7 @@ namespace Modules\Sales\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
@@ -40,5 +41,10 @@ class SalesRequestLine extends Model
     public function unit(): BelongsTo
     {
         return $this->belongsTo(ItemUnit::class)->withTrashed();
+    }
+
+    public function orderLines(): HasMany
+    {
+        return $this->hasMany(SalesOrderLine::class);
     }
 }

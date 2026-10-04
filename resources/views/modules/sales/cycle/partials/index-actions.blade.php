@@ -44,9 +44,7 @@
         if (in_array($record->status, ['pending_approval', 'held_credit'])) {
             $workflow[] = ['url' => route($prefix.'.reject', $record), 'permission' => 'sales_orders.reject', 'label' => __('Reject'), 'reason' => true];
         }
-        if (in_array($record->status, ['approved', 'rejected', 'closed'], true) && ! $record->has_amendment_quantities
-            && ! $record->has_production_orders && ! $record->has_invoices
-            && ! $record->has_deliveries && ! $record->has_receipts && ! $record->has_returns) {
+        if (in_array($record->status, ['approved', 'partially_fulfilled', 'fulfilled', 'rejected', 'closed'], true)) {
             $openDocumentType = 'sales_orders';
         }
         if (! in_array($record->status, ['cancelled', 'closed'], true) && $record->reopened_at === null
@@ -58,6 +56,9 @@
     }
     if (!$trashed && $kind === 'customer_invoices' && in_array($record->status, ['draft', 'reopened']) && !$record->is_closed) {
         $workflow[] = ['url' => route($prefix.'.post', $record), 'permission' => 'customer_invoices.post', 'label' => __('Post')];
+    }
+    if (!$trashed && $kind === 'customer_invoices' && $record->document_type === 'invoice' && $record->posting_status === 'posted') {
+        $openDocumentType = 'customer_invoices';
     }
     if (!$trashed && $kind === 'sales_returns') {
         if ($record->status === 'pending_authorization') {
@@ -102,7 +103,7 @@
             @foreach($workflow as $action)
                 @can($action['permission'])<button class="dropdown-item js-sales-index-action" type="button" data-url="{{ $action['url'] }}" data-status="{{ $action['status'] ?? '' }}" data-reason="{{ ($action['reason'] ?? false) ? '1' : '0' }}">{{ $action['label'] }}</button>@endcan
             @endforeach
-            @if($openDocumentType) @can($kind.'.reopen')<a class="dropdown-item" href="{{ route('admin.tools.open-documents.index', ['document_type' => $openDocumentType, 'from_number' => $record->doc_number, 'to_number' => $record->doc_number]) }}">{{ __('open_documents.title') }}</a>@endcan @endif
+            @if($openDocumentType) @can($kind.'.reopen')<a class="dropdown-item" href="{{ route('admin.tools.open-documents.index', ['document_type' => $openDocumentType, 'from_number' => $record->doc_number, 'to_number' => $record->doc_number]) }}">{{ __('open_documents.actions.review_edit_reopen') }}</a>@endcan @endif
             @if($deletable)@can($kind.'.delete')<button class="dropdown-item text-danger js-sales-index-action" type="button" data-url="{{ route($prefix.'.destroy', $record) }}" data-method="DELETE">{{ __('common.actions.delete') }}</button>@endcan @endif
         @elseif(in_array($kind, ['sales_requests', 'sales_orders']) && $record->status === 'draft')
             @can($kind.'.restore')<button class="dropdown-item text-success js-sales-index-action" type="button" data-url="{{ route($prefix.'.restore', $record->doc_num) }}" data-method="PATCH">{{ __('common.actions.restore') }}</button>@endcan

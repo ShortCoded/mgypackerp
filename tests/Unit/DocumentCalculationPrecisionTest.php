@@ -183,12 +183,16 @@ test('sales fulfillment export preserves the final eight-place quantity without 
 
     expect($row[2])->toBe('')
         ->and((string) $row[4])->toBe('1000000000000.00000001')
-        ->and((string) $row[5])->toBe('0.00000003')
-        ->and((string) $row[6])->toBe('1000000000000.00000000')
-        ->and((string) $row[7])->toBe('0.00000001');
+        ->and((string) $row[5])->toBe('0.00000000')
+        ->and((string) $row[6])->toBe('1000000000000.00000001')
+        ->and((string) $row[7])->toBe('0.00000003')
+        ->and((string) $row[8])->toBe('0.00000000')
+        ->and((string) $row[9])->toBe('0.00000003')
+        ->and((string) $row[10])->toBe('1000000000000.00000000')
+        ->and((string) $row[11])->toBe('0.00000001');
 
-    $cell = (new Spreadsheet)->getActiveSheet()->getCell('H2');
-    $sheet->bindValue($cell, $row[7]);
+    $cell = (new Spreadsheet)->getActiveSheet()->getCell('L2');
+    $sheet->bindValue($cell, $row[11]);
     expect($cell->getDataType())->toBe(DataType::TYPE_STRING)
         ->and($cell->getValue())->toBe('0.00000001');
 });

@@ -103,6 +103,13 @@ class SalesCycleReportExport implements WithMultipleSheets
         $creditMovementRows = collect($this->report['creditMovements'] ?? [])->map(fn (array $row): array => [$row['document'], $row['customer'], $dateValue($row['posting_date']), __('sales_balance_report.'.$row['kind']), $row['signed_amount']]);
         $creditMovementTotal = $creditMovementRows->reduce(fn (string $total, array $row): string => bcadd($total, $row[4], 4), '0.0000');
         $creditMovementRows->push([$totalLabel, '', '', '', $creditMovementTotal]);
+        $requestRow = fn ($row): array => [
+            $row->doc_num, $dateValue($row->request_date), $row->customer?->name, $this->enumLabel($row->status),
+            $row->requested_quantity, $row->converted_quantity, $row->downstream_declined_quantity,
+            $row->net_converted_quantity, $row->remaining_quantity,
+        ];
+        $requestRows = collect($this->report['salesRequests'] ?? [])->map($requestRow);
+        $declinedRequestRows = collect($this->report['declinedSalesRequests'] ?? [])->map($requestRow);
         $sheets = [
             'credit_movements' => $this->sheet(__('sales_balance_report.sheet'), [__('Document'), __('Customer'), __('Date'), __('Type'), __('sales_balance_report.signed_amount')], $creditMovementRows, ['E']),
             'summary' => $this->sheet($this->label('sheets.summary'), $this->headings(['metric', 'value']), collect([
@@ -112,10 +119,12 @@ class SalesCycleReportExport implements WithMultipleSheets
                 [$this->label('metrics.overdue_outstanding'), $summary['overdue_outstanding'] ?? 0], [$this->label('metrics.collection_rate'), $summary['collection_rate'] ?? 0],
                 [$this->label('metrics.return_rate'), $summary['return_rate'] ?? 0],
             ]), ['B']),
-            'ledger' => $this->sheet($this->label('sheets.ledger'), $this->headings(['invoice_date', 'customer', 'invoice', 'order', 'deliveries', 'currency', 'gross', 'discount', 'tax', 'net_invoice', 'returns', 'net_sales', 'collected', 'outstanding']), $ledgerRows, range('G', 'N')),
+            'ledger' => $this->sheet($this->label('sheets.ledger'), $this->headings(['invoice_date', 'customer', 'invoice', 'order', 'deliveries', 'currency', 'gross', 'discount', 'tax', 'net_invoice', 'credit_notes_returns', 'net_sales', 'collected', 'outstanding']), $ledgerRows, range('G', 'N')),
             'invoice_lines' => $this->sheet($this->label('sheets.invoice_lines'), $this->headings(['invoice', 'customer', 'item', 'category', 'quantity', 'price', 'discount', 'tax', 'value', 'returned', 'net_sold']), $invoiceLineRows, range('E', 'K')),
             'quotations' => $this->sheet($this->label('sheets.quotations'), $this->headings(['quotation', 'customer', 'date', 'valid_until', 'status', 'revision', 'total']), collect($this->report['quotations'] ?? [])->map(fn ($row): array => [$row->doc_num, $row->customer?->name, $dateValue($row->quotation_date), $dateValue($row->valid_until), __('quotations.statuses.'.$row->status), $row->currentRevision?->revision_code, $row->currentRevision?->total]), ['G']),
-            'orders' => $this->sheet($this->label('sheets.orders'), $this->headings(['order', 'customer', 'required_date', 'status', 'ordered', 'invoiced', 'delivered', 'remaining_delivery']), collect($this->report['openOrders'] ?? [])->map(fn ($row): array => $this->fulfillmentRow($row)), ['E', 'F', 'G', 'H']),
+            'requests' => $this->sheet($this->label('sheets.requests'), $this->headings(['document', 'date', 'customer', 'status', 'requested', 'converted', 'downstream_declined', 'net_converted', 'remaining']), $requestRows, range('E', 'I')),
+            'request_declines' => $this->sheet($this->label('sheets.request_declines'), $this->headings(['document', 'date', 'customer', 'status', 'requested', 'converted', 'downstream_declined', 'net_converted', 'remaining']), $declinedRequestRows, range('E', 'I')),
+            'orders' => $this->sheet($this->label('sheets.orders'), $this->headings(['order', 'customer', 'required_date', 'status', 'ordered', 'declined', 'effective', 'invoiced', 'credited', 'net_invoiced', 'delivered', 'remaining_delivery']), collect($this->report['openOrders'] ?? [])->map(fn ($row): array => $this->fulfillmentRow($row)), range('E', 'L')),
             'customers' => $this->sheet($this->label('sheets.customers'), $this->headings(['customer_code', 'customer', 'sales', 'outstanding']), $customerRows, ['C', 'D']),
             'products' => $this->sheet($this->label('sheets.products'), $this->headings(['product_code', 'product', 'quantity', 'sales']), $productRows, ['C', 'D']),
             'customer_products' => $this->sheet($this->label('sheets.customer_products'), $this->headings(['customer_code', 'customer', 'product_code', 'product', 'quantity', 'sales']), $customerProductRows, ['E', 'F']),
@@ -143,7 +152,7 @@ class SalesCycleReportExport implements WithMultipleSheets
             return [$this->sheet($this->label('sheets.ledger'), $this->headings([
                 'row_type', 'invoice', 'customer', 'invoice_date', 'order', 'currency', 'item', 'category',
                 'quantity', 'price', 'discount', 'tax', 'value', 'returned', 'net_sold',
-                'net_invoice', 'returns', 'net_sales', 'collected', 'outstanding',
+                'net_invoice', 'credit_notes_returns', 'net_sales', 'collected', 'outstanding',
             ]), $invoiceCsvRows, $this->csvTextColumns(20))];
         }
 
@@ -172,7 +181,7 @@ class SalesCycleReportExport implements WithMultipleSheets
             'fulfillment' => ['orders'],
             'pricing' => ['unpriced_products', 'customers_without_prices', 'customer_price_gaps'],
             'cost_of_sales' => ['cost_of_sales_summary', 'cost_of_sales'],
-            default => ['summary', 'quotations', 'orders', 'ledger', 'credit_movements'],
+            default => ['summary', 'requests', 'request_declines', 'quotations', 'orders', 'ledger', 'credit_movements'],
         };
 
         if ($this->forCsv && count($keys) > 1) {
@@ -223,7 +232,11 @@ class SalesCycleReportExport implements WithMultipleSheets
             app(DateFormatService::class)->formatDate($order->expected_delivery_date, ''),
             $this->enumLabel($order->status),
             $quantities['ordered'],
+            $quantities['declined'],
+            $quantities['effective'],
             $quantities['invoiced'],
+            $quantities['credited'],
+            $quantities['net_invoiced'],
             $quantities['delivered'],
             $quantities['remaining'],
         ];

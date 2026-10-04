@@ -92,7 +92,7 @@ test('request index offers valid workflow and print actions and supports draft r
     $this->postJson(route('admin.sales.customer-requests.transition', $record), ['status' => 'approved'])->assertOk();
     expect($record->fresh()->status)->toBe('approved');
     expect($this->getJson($url)->json('data.0.actions'))
-        ->toContain('data-status="closed"', 'tools/open-documents', 'document_type=sales_requests', 'data-reason="1"')
+        ->toContain('data-status="closed"', 'tools/open-documents', 'document_type=sales_requests', __('open_documents.actions.review_edit_reopen'), 'data-reason="1"')
         ->not->toContain('data-status="approved"', 'data-status="cancelled"', 'data-method="DELETE"');
     $this->deleteJson(route('admin.sales.customer-requests.destroy', $record))->assertConflict();
 });
@@ -218,7 +218,7 @@ test('order draft recovery preserves lines and rejects non draft deletion', func
     expect(fn () => $service->delete($restored))->toThrow(DomainException::class);
 });
 
-test('sales order row hides cancel and reopen after a historical production document', function () {
+test('sales order row offers controlled edit review but hides cancellation after a historical production document', function () {
     $fixture = salesIndexFixture();
     $fixture['user']->givePermissionTo([
         Permission::findOrCreate('sales_orders.cancel', 'web'),
@@ -244,5 +244,26 @@ test('sales order row hides cancel and reopen after a historical production docu
     ])->delete();
 
     expect($this->getJson($url)->assertOk()->json('data.0.actions'))
-        ->not->toContain('document_type=sales_orders', '/cancel');
+        ->toContain('document_type=sales_orders', __('open_documents.actions.review_edit_reopen'))
+        ->not->toContain('/cancel');
+});
+
+test('posted invoice row exposes its controlled edit review without changing draft actions', function () {
+    $fixture = salesIndexFixture();
+    foreach (['customer_invoices.view', 'customer_invoices.reopen'] as $permission) {
+        $fixture['user']->givePermissionTo(Permission::findOrCreate($permission, 'web'));
+    }
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    $invoice = salesPostedServiceInvoice($fixture, '100');
+
+    $url = route('admin.sales.sales-invoices.index', ['draw' => 1, 'document' => $invoice->doc_num]);
+    $actions = $this->getJson($url)->assertOk()->json('data.0.actions');
+
+    expect($actions)
+        ->toContain('document_type=customer_invoices', __('open_documents.actions.review_edit_reopen'))
+        ->not->toContain('/edit', '/post');
+
+    $fixture['user']->revokePermissionTo('customer_invoices.reopen');
+    expect($this->getJson($url)->assertOk()->json('data.0.actions'))
+        ->not->toContain('document_type=customer_invoices');
 });

@@ -118,7 +118,8 @@ class SalesOrder extends Model
                 'expected_delivery_date', 'total_amount', 'notes', 'internal_notes', 'updated_at', 'reopened_at']),
             $this->lines()->orderBy('id')->get()->map->only(['id', 'public_id', 'product_id', 'unit_id',
                 'quantity', 'base_quantity', 'unit_price', 'discount_amount', 'tax_amount', 'line_total',
-                'reserved_quantity', 'production_requested_quantity', 'produced_quantity', 'delivered_quantity', 'invoiced_quantity'])->all(),
+                'reserved_quantity', 'production_requested_quantity', 'produced_quantity', 'delivered_quantity',
+                'declined_quantity', 'invoiced_quantity', 'remainder_credited_quantity'])->all(),
             $this->paymentSchedules()->orderBy('id')->get()->map->only(['id', 'title', 'due_date', 'amount', 'collected_amount', 'remaining_amount'])->all(),
         ], JSON_THROW_ON_ERROR));
     }
@@ -137,6 +138,10 @@ class SalesOrder extends Model
 
     public function canReopenSafely(): bool
     {
+        if ($this->lines()->where('declined_quantity', '>', 0)->exists()) {
+            return false;
+        }
+
         if (! in_array($this->status, [self::StatusApproved, self::StatusRejected, self::StatusClosed, self::StatusPartiallyFulfilled, self::StatusFulfilled], true)) {
             return false;
         }
@@ -249,6 +254,11 @@ class SalesOrder extends Model
     public function statusHistory(): HasMany
     {
         return $this->hasMany(SalesOrderStatusHistory::class)->orderBy('changed_at');
+    }
+
+    public function remainderClosures(): HasMany
+    {
+        return $this->hasMany(SalesOrderRemainderClosure::class)->orderByDesc('id');
     }
 
     public function creditOverrides(): HasMany

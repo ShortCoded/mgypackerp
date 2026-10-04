@@ -13,24 +13,32 @@ use Modules\Sales\Models\SalesOrderLine;
 
 class SalesCycleReadService
 {
-    /** @return array{ordered: string, invoiced: string, delivered: string, remaining: string} */
+    /** @return array{ordered: string, declined: string, effective: string, invoiced: string, credited: string, net_invoiced: string, delivered: string, remaining: string} */
     public function fulfillmentQuantities(object $order): array
     {
         $ordered = $this->reportQuantity($order->ordered_quantity);
         $delivered = $this->reportQuantity($order->delivered_quantity);
+        $declined = '0.00000000';
         $invoiced = '0.00000000';
+        $credited = '0.00000000';
 
         foreach ($order->lines as $line) {
+            $declined = bcadd($declined, $this->reportQuantity($line->declined_quantity ?? 0), 8);
             $invoiced = bcadd($invoiced, $this->reportQuantity($line->invoiced_quantity), 8);
+            $credited = bcadd($credited, $this->reportQuantity($line->remainder_credited_quantity ?? 0), 8);
         }
+        $effective = $this->nonnegative(bcsub($ordered, $declined, 8));
+        $netInvoiced = $this->nonnegative(bcsub($invoiced, $credited, 8));
 
         return [
             'ordered' => $ordered,
+            'declined' => $declined,
+            'effective' => $effective,
             'invoiced' => $invoiced,
+            'credited' => $credited,
+            'net_invoiced' => $netInvoiced,
             'delivered' => $delivered,
-            'remaining' => bccomp($ordered, $delivered, 8) > 0
-                ? bcsub($ordered, $delivered, 8)
-                : '0.00000000',
+            'remaining' => $this->nonnegative(bcsub($effective, $delivered, 8)),
         ];
     }
 
@@ -55,7 +63,7 @@ class SalesCycleReadService
                 ->when(($filters['overdue_state'] ?? null) === 'overdue', fn ($query) => $query->whereDate('expected_delivery_date', '<', today()))
                 ->when(($filters['overdue_state'] ?? null) === 'not_overdue', fn ($query) => $query->whereDate('expected_delivery_date', '>=', today())))
             ->whereHas('product', fn (Builder $query) => $query->nonService()->when($filters['category_id'] ?? null, fn ($query, $id) => $query->where('item_category_id', $id)))
-            ->whereColumn('delivered_quantity', '<', 'quantity')
+            ->whereRaw('delivered_quantity + declined_quantity < quantity')
             ->when($filters['product_id'] ?? null, fn ($query, $id) => $query->where('product_id', $id))
             ->orderBy('sales_order_id')->orderBy('line_number')->get();
         $products = $rows->pluck('product_id')->unique();
@@ -79,7 +87,11 @@ class SalesCycleReadService
             $shortage = $this->nonnegative(bcsub($need, $freeShare, 8));
             $planned = $this->nonnegative(bcsub((string) $line->production_requested_base_quantity, (string) $line->produced_base_quantity, 8));
 
-            return ['line' => $line, 'on_hand' => bcdiv($onHand, (string) $line->conversion_factor, 8),
+            return ['line' => $line,
+                'declined' => (string) $line->declined_quantity,
+                'effective' => $line->effectiveQuantity(),
+                'net_invoiced' => $line->netInvoicedQuantity(),
+                'on_hand' => bcdiv($onHand, (string) $line->conversion_factor, 8),
                 'reserved' => bcdiv($reserved, (string) $line->conversion_factor, 8),
                 'available' => bcdiv(bcadd($reserved, $freeShare, 8), (string) $line->conversion_factor, 8),
                 'shortage' => bcdiv($shortage, (string) $line->conversion_factor, 8),

@@ -1,6 +1,7 @@
 <?php
 
 use Dom\HTMLDocument;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Core\Models\Branch;
@@ -178,11 +179,31 @@ test('procurement report lookups are paginated, branch scoped, and hydrate the s
         'purchase_requisition_doc_num' => $requisition->doc_num,
     ];
 
-    $this->get(route('admin.purchases.procurement-cycle-report.index', $query))
-        ->assertOk()
-        ->assertSee('id="procurement-pr"', false)
-        ->assertSee('js-select2-ajax', false)
-        ->assertSee('value="'.$requisition->doc_num.'" selected', false);
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+    try {
+        $this->get(route('admin.purchases.procurement-cycle-report.index', $query))
+            ->assertOk()
+            ->assertSee('id="procurement-pr"', false)
+            ->assertSee('js-select2-ajax', false)
+            ->assertSee('value="'.$requisition->doc_num.'" selected', false);
+
+        $emptyWarehouseUuidBindings = collect(DB::getQueryLog())
+            ->filter(fn (array $entry): bool => str_contains($entry['query'], 'public_uuid'))
+            ->flatMap(fn (array $entry): array => $entry['bindings'])
+            ->filter(fn ($binding): bool => $binding === '');
+    } finally {
+        DB::disableQueryLog();
+        DB::flushQueryLog();
+    }
+
+    expect($emptyWarehouseUuidBindings)->toBeEmpty();
+
+    $this->get(route('admin.purchases.procurement-cycle-report.index', [
+        ...$query,
+        'warehouse_uuid' => $fixture['store']->public_uuid,
+    ]))->assertOk()
+        ->assertSee('value="'.$fixture['store']->public_uuid.'" selected', false);
 
     $this->getJson(route('admin.purchases.procurement-cycle-report.select2', [
         'kind' => 'requisitions',
@@ -428,6 +449,154 @@ test('purchase invoices allow an optional order and preserve deliberately unlink
     $fixture['user']->revokePermissionTo('purchases.prices.view');
     $this->get(route('admin.purchases.purchase-invoices.show', $directInvoice))
         ->assertForbidden();
+});
+
+test('purchase invoice requests preserve localized and plain high precision numbers with optional blanks', function (): void {
+    $fixture = procurementUiFixture();
+    procurementUseBranch($fixture, procurementAdministrativeBranch($fixture));
+
+    $createPayload = [
+        'financial_period_doc_num' => $fixture['period']->doc_num,
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'exchange_rate' => '١',
+        'invoice_date' => now()->toDateString(),
+        'payment_type' => PurchaseInvoice::PaymentTypeCredit,
+        'header_discount_value' => '',
+        'freight_amount' => null,
+        'freight_tax_rate' => '',
+        'lines' => [[
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'quantity' => '٠٫٠٠٠٠٠٠٠١',
+            'unit_price' => '١٢٠٬٠٠٠٫١٢٣٤٥٦٧٨',
+            'discount_value' => '',
+            'tax_rate' => null,
+        ]],
+    ];
+
+    $created = $this->postJson(route('admin.purchases.purchase-invoices.store'), $createPayload)
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $invoice = PurchaseInvoice::query()->where('doc_num', $created->json('data.doc_num'))->sole();
+    $line = $invoice->lines()->sole();
+
+    expect($invoice->exchange_rate)->toBe('1.000000')
+        ->and($invoice->header_discount_value)->toBe('0.0000')
+        ->and($invoice->freight_amount)->toBe('0.0000')
+        ->and($invoice->freight_tax_rate)->toBe('0.0000')
+        ->and($line->quantity)->toBe('0.00000001')
+        ->and($line->unit_price)->toBe('120000.12345678')
+        ->and($line->discount_value)->toBe('0.0000')
+        ->and($line->tax_rate)->toBe('0.0000');
+
+    $updatePayload = [
+        ...$createPayload,
+        'exchange_rate' => '1.000000',
+        'header_discount_value' => null,
+        'freight_amount' => '',
+        'freight_tax_rate' => null,
+        'notes' => 'Plain numeric update.',
+        'lines' => [[
+            'public_id' => $line->public_id,
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'quantity' => '1.23456789',
+            'unit_price' => '1,234.56789012',
+            'discount_value' => null,
+            'tax_rate' => '',
+        ]],
+    ];
+
+    $this->putJson(route('admin.purchases.purchase-invoices.update', $invoice), $updatePayload)
+        ->assertOk()
+        ->assertJsonPath('success', true);
+
+    $updatedLine = $invoice->fresh()->lines()->sole();
+    expect($updatedLine->quantity)->toBe('1.23456789')
+        ->and($updatedLine->unit_price)->toBe('1234.56789012')
+        ->and($updatedLine->discount_value)->toBe('0.0000')
+        ->and($updatedLine->tax_rate)->toBe('0.0000')
+        ->and($invoice->fresh()->notes)->toBe('Plain numeric update.');
+});
+
+test('invalid purchase invoice numbers return field validation errors without mutating records', function (): void {
+    $fixture = procurementUiFixture();
+    procurementUseBranch($fixture, procurementAdministrativeBranch($fixture));
+
+    $basePayload = [
+        'financial_period_doc_num' => $fixture['period']->doc_num,
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'exchange_rate' => '1',
+        'invoice_date' => now()->toDateString(),
+        'payment_type' => PurchaseInvoice::PaymentTypeCredit,
+        'header_discount_value' => '0',
+        'freight_amount' => '0',
+        'freight_tax_rate' => '0',
+        'notes' => 'Original invoice notes.',
+        'lines' => [[
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'quantity' => '1.00000001',
+            'unit_price' => '10.12345678',
+            'discount_value' => '0',
+            'tax_rate' => '0',
+        ]],
+    ];
+    $invoiceCount = PurchaseInvoice::query()->count();
+
+    foreach ([
+        ['lines.0.discount_value', '1,2,3'],
+        ['lines.0.discount_value', '0.00001'],
+        ['lines.0.quantity', '1,00.00000001'],
+        ['lines.0.unit_price', '1.000000001'],
+        ['lines.0.unit_price', '100000000000000'],
+        ['lines.0.tax_rate', '1.2.3'],
+        ['header_discount_value', '1,2,3'],
+    ] as [$attribute, $value]) {
+        $invalidPayload = $basePayload;
+        data_set($invalidPayload, $attribute, $value);
+
+        $this->postJson(route('admin.purchases.purchase-invoices.store'), $invalidPayload)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors($attribute);
+
+        expect(PurchaseInvoice::query()->count())->toBe($invoiceCount);
+    }
+
+    $created = $this->postJson(route('admin.purchases.purchase-invoices.store'), $basePayload)
+        ->assertOk()
+        ->assertJsonPath('success', true);
+    $invoice = PurchaseInvoice::query()->where('doc_num', $created->json('data.doc_num'))->sole();
+    $line = $invoice->lines()->sole();
+    $invoiceSnapshot = $invoice->getRawOriginal();
+    $lineSnapshot = $line->getRawOriginal();
+
+    $invalidUpdate = $basePayload;
+    $invalidUpdate['header_discount_value'] = '1,2,3';
+    $invalidUpdate['notes'] = 'This must not be saved.';
+    $invalidUpdate['lines'][0] = [
+        ...$invalidUpdate['lines'][0],
+        'public_id' => $line->public_id,
+        'quantity' => '2.00000001',
+        'unit_price' => '20.12345678',
+        'discount_value' => '0.00001',
+        'tax_rate' => '1.2.3',
+    ];
+
+    $this->putJson(route('admin.purchases.purchase-invoices.update', $invoice), $invalidUpdate)
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors([
+            'header_discount_value',
+            'lines.0.discount_value',
+            'lines.0.tax_rate',
+        ]);
+
+    expect($invoice->fresh()->getRawOriginal())->toBe($invoiceSnapshot)
+        ->and($invoice->fresh()->lines()->count())->toBe(1)
+        ->and($invoice->fresh()->lines()->sole()->getRawOriginal())->toBe($lineSnapshot);
 });
 
 test('supplier invoice schedule uses one date and an explicit cashbox or bank source', function (): void {

@@ -6,6 +6,7 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Sales\Models\CustomerCreditApplicationEvidence;
 use Modules\Sales\Models\CustomerReceipt;
+use Modules\Sales\Models\SalesOrderRemainderClosure;
 use Modules\Sales\Models\SalesReturn;
 use Modules\Sales\Services\CustomerCreditApplicationEvidenceService;
 use Modules\Sales\Services\CustomerCreditService;
@@ -13,6 +14,35 @@ use Modules\Sales\Services\CustomerReceiptService;
 use Modules\Sales\Services\SalesReturnService;
 
 require_once __DIR__.'/CreditApplicationEvidenceSupport.php';
+
+test('financial only remainder credits do not expose sales return application evidence', function (): void {
+    $f = historicalCreditEvidenceFixture();
+    $credit = $f['credit'];
+    $credit->forceFill([
+        'sales_return_id' => null,
+        'source_type' => SalesOrderRemainderClosure::class,
+        'source_id' => 987654,
+        'credit_application_snapshot' => [
+            'original_invoice_id' => (int) $f['invoice']->getKey(),
+            'applied_to_original' => '50.0000',
+            'schedules' => [[
+                'schedule_id' => (int) $f['invoice']->paymentSchedules->sole()->getKey(),
+                'amount' => '50.0000',
+            ]],
+            'sales_order_remainder_closure_id' => 987654,
+        ],
+    ])->save();
+
+    $evidenceUrl = route('admin.sales.sales-invoices.application-evidence.index', $credit);
+    $this->get(route('admin.sales.sales-invoices.show', $credit))
+        ->assertOk()
+        ->assertDontSee($evidenceUrl, false);
+    $this->get($evidenceUrl)->assertNotFound();
+    $this->postJson(route('admin.sales.sales-invoices.application-evidence.store', $credit), $f['payload'])->assertNotFound();
+    $this->postJson(route('admin.sales.sales-invoices.application-evidence.approve', [$credit, 1]), [
+        'approval_reason' => 'SYNTHETIC unsupported source',
+    ])->assertNotFound();
+});
 
 test('historical application requires independent approval and then executes the actual closed return correction', function (): void {
     $f = historicalCreditEvidenceFixture();

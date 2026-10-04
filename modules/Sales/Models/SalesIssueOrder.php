@@ -17,11 +17,13 @@ class SalesIssueOrder extends Model
 
     public const StatusCorrected = 'corrected';
 
+    public const StatusShortClosed = 'short_closed';
+
     protected $guarded = ['id'];
 
     protected function casts(): array
     {
-        return ['issued_at' => 'datetime'];
+        return ['issued_at' => 'datetime', 'short_closed_at' => 'datetime'];
     }
 
     public function getRouteKeyName(): string

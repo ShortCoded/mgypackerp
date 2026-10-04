@@ -35,6 +35,7 @@ use Modules\Production\Services\SalesProductionDemandService;
 use Modules\Sales\DataTables\SalesCycleDataTable;
 use Modules\Sales\Http\Requests\AllocateCustomerCreditRequest;
 use Modules\Sales\Http\Requests\AmendCustomerInvoiceRequest;
+use Modules\Sales\Http\Requests\CloseSalesOrderRemainderRequest;
 use Modules\Sales\Http\Requests\CreateDeliveryRequest;
 use Modules\Sales\Http\Requests\CreateProductionDemandRequest;
 use Modules\Sales\Http\Requests\InspectSalesReturnRequest;
@@ -70,6 +71,7 @@ use Modules\Sales\Services\ElectronicInvoiceService;
 use Modules\Sales\Services\PriceListPricingService;
 use Modules\Sales\Services\SalesFulfillmentService;
 use Modules\Sales\Services\SalesIssueOrderService;
+use Modules\Sales\Services\SalesOrderRemainderClosureService;
 use Modules\Sales\Services\SalesOrderService;
 use Modules\Sales\Services\SalesRequestService;
 use Modules\Sales\Services\SalesReturnService;
@@ -222,7 +224,7 @@ class SalesCycleController extends Controller
             'lines.reservations', 'lines.productionLines.order', 'paymentSchedules', 'statusHistory.changedBy',
             'deliveries.lines.product', 'deliveries.lines.transactionUnit', 'productionOrders.lines.product',
             'invoices.lines', 'invoices.paymentSchedules', 'creditOverrides',
-            'receipts', 'returns.creditNote',
+            'receipts', 'returns.creditNote', 'remainderClosures.lines',
         ]);
         $canViewCredit = (bool) $request->user()?->can('sales_orders.approve')
             || (bool) $request->user()?->can('sales_orders.credit_override');
@@ -276,7 +278,11 @@ class SalesCycleController extends Controller
             abort_unless($request->user()?->can('sales_orders.view') && $request->user()?->can('sales_orders.invoice'), 403);
             $order = SalesOrder::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
                 ->where('financial_period_id', $context['financial_period_id'])->where('doc_num', $request->string('sales_order_doc_num')->toString())
-                ->whereIn('status', ['approved', 'partially_fulfilled', 'fulfilled'])->firstOrFail();
+                ->where(function ($eligible): void {
+                    $eligible->whereIn('status', [SalesOrder::StatusApproved, SalesOrder::StatusPartiallyFulfilled, SalesOrder::StatusFulfilled])
+                        ->orWhere(fn ($closed) => $closed->where('status', SalesOrder::StatusClosed)
+                            ->whereHas('lines', fn ($line) => $line->where('declined_quantity', '>', 0)));
+                })->firstOrFail();
 
             return redirect()->to(route('admin.sales.sales-orders.show', $order).'#sales-order-invoice');
         }
@@ -608,6 +614,34 @@ class SalesCycleController extends Controller
     public function cancelOrder(SalesOrderActionRequest $request, SalesOrder $salesOrder, SalesOrderService $service): JsonResponse
     {
         return response()->json(['data' => $service->cancel($salesOrder, (string) $request->validated('reason'))]);
+    }
+
+    public function closeOrderRemainder(
+        CloseSalesOrderRemainderRequest $request,
+        SalesOrder $salesOrder,
+        SalesOrderRemainderClosureService $service,
+    ): JsonResponse {
+        $context = $this->requiredContext($request);
+        abort_unless((int) $salesOrder->company_id === $context['company_id']
+            && (int) $salesOrder->branch_id === $context['branch_id'], 404);
+
+        try {
+            $closure = $service->close(
+                $salesOrder,
+                $request->validated('lines'),
+                (string) $request->validated('reason'),
+                (string) $request->validated('closure_date'),
+                (string) $request->validated('_submission_token'),
+                $context['financial_period_id'],
+            );
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
+        return response()->json(['data' => [
+            'doc_num' => $closure->doc_num,
+            'url' => route('admin.sales.sales-orders.show', $salesOrder),
+        ], 'message' => __('sales_ui.remainder.messages.success', ['document' => $closure->doc_num])]);
     }
 
     public function deliverInvoice(CreateDeliveryRequest $request, CustomerInvoice $customerInvoice, SalesFulfillmentService $service): JsonResponse
@@ -959,15 +993,15 @@ class SalesCycleController extends Controller
                     ->orWhere('name', 'like', '%'.trim($request->string('salesman')->toString()).'%')))
                 ->when($request->string('fulfillment')->toString() === 'open', fn ($query) => $query->whereHas('lines', fn ($line) => $line
                     ->where('product_classification_snapshot', '<>', Product::ClassificationService)
-                    ->whereColumn('delivered_quantity', '<', 'quantity')))
+                    ->whereRaw('delivered_quantity + declined_quantity < quantity')))
                 ->when($request->string('fulfillment')->toString() === 'partial', fn ($query) => $query
                     ->whereHas('lines', fn ($line) => $line->where('delivered_quantity', '>', 0))
                     ->whereHas('lines', fn ($line) => $line
                         ->where('product_classification_snapshot', '<>', Product::ClassificationService)
-                        ->whereColumn('delivered_quantity', '<', 'quantity')))
+                        ->whereRaw('delivered_quantity + declined_quantity < quantity')))
                 ->when($request->string('fulfillment')->toString() === 'complete', fn ($query) => $query->whereDoesntHave('lines', fn ($line) => $line
                     ->where('product_classification_snapshot', '<>', Product::ClassificationService)
-                    ->whereColumn('delivered_quantity', '<', 'quantity')));
+                    ->whereRaw('delivered_quantity + declined_quantity < quantity')));
         }
 
         $query->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('financial_period_id', $context['financial_period_id']);

@@ -1064,6 +1064,17 @@ class ProcurementWorkflowController extends Controller
             unset($metrics['quantity']);
         }
 
+        $warehouses = collect();
+        if (filled($filters['warehouse_uuid'] ?? null)) {
+            $warehouses = BranchStore::query()
+                ->whereIn('branch_id', $allowedBranchIds)
+                ->whereHas('branch', fn ($query) => $query->where('company_id', $context['company_id'])
+                    ->when(! $isAdministrativeBranch, fn ($query) => $query->whereKey($context['branch_id'])))
+                ->whereNull('deleted_at')
+                ->where('public_uuid', $filters['warehouse_uuid'])
+                ->get();
+        }
+
         return view('modules.purchases.procurement.report', [
             'metrics' => $metrics,
             'rows' => $rows,
@@ -1082,7 +1093,7 @@ class ProcurementWorkflowController extends Controller
             'requisitions' => PurchaseRequisition::query()->where('company_id', $context['company_id'])->whereIn('branch_id', $allowedBranchIds)->when(! $isAdministrativeBranch, fn ($query) => $query->where('branch_id', $context['branch_id']))->where('doc_num', $filters['purchase_requisition_doc_num'] ?? '')->get(),
             'orders' => PurchaseOrder::query()->forCompany($context['company_id'])->whereIn('branch_id', $allowedBranchIds)->when(! $isAdministrativeBranch, fn ($query) => $query->where('branch_id', $context['branch_id']))->where('doc_num', $filters['purchase_order_doc_num'] ?? '')->get(),
             'branches' => $this->operatingContext->allowedBranchQueryForCurrentCompany($request)->when(! $isAdministrativeBranch, fn ($query) => $query->whereKey($context['branch_id']))->whereKey($filters['branch_id'] ?? 0)->get(),
-            'warehouses' => BranchStore::query()->whereIn('branch_id', $allowedBranchIds)->whereHas('branch', fn ($query) => $query->where('company_id', $context['company_id'])->when(! $isAdministrativeBranch, fn ($query) => $query->whereKey($context['branch_id'])))->whereNull('deleted_at')->where('public_uuid', $filters['warehouse_uuid'] ?? '')->get(),
+            'warehouses' => $warehouses,
             'locationFilters' => [
                 'country' => HrCountry::query()->where('doc_num', $filters['country_doc_num'] ?? '')->first(),
                 'governorate' => HrGovernorate::query()->where('doc_num', $filters['governorate_doc_num'] ?? '')->first(),

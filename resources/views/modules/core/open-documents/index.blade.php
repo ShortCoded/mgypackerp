@@ -145,5 +145,5 @@
         window.openDocumentsMessages = @json($openDocumentsMessages);
     </script>
     <script src="{{ asset('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
-    <script src="{{ asset('assets/js/modules/Core/open-documents.js') }}"></script>
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Core/open-documents.js') }}"></script>
 @endpush

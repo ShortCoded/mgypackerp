@@ -151,8 +151,19 @@
     showToast(response.success ? 'success' : 'warning', response.message || '');
   }
 
-  function showFailure($form, message) {
+  function showFailure($form, message, errors) {
     const $alert = resultAlert($form);
+    const $list = $alert.find('.js-open-documents-result-list').first();
+    const validationMessages = [];
+
+    Object.keys(errors || {}).forEach(function (field) {
+      const values = $.isArray(errors[field]) ? errors[field] : [errors[field]];
+      values.filter(Boolean).forEach(function (value) {
+        if (validationMessages.indexOf(value) === -1) {
+          validationMessages.push(value);
+        }
+      });
+    });
 
     $alert
       .removeClass('d-none alert-success alert-warning')
@@ -161,7 +172,10 @@
       .first()
       .text(message || messages.unexpectedError || '');
 
-    $alert.find('.js-open-documents-result-list').empty();
+    $list.empty();
+    validationMessages.forEach(function (validationMessage) {
+      $('<li></li>').text(validationMessage).appendTo($list);
+    });
   }
 
   function selectionKey($form) {
@@ -283,10 +297,11 @@
     }).done(function (response) {
       showPreview($form, response || {});
     }).fail(function (xhr) {
-      if (xhr.status === 422 && xhr.responseJSON && xhr.responseJSON.errors) {
-        showErrors($form, xhr.responseJSON.errors);
+      const errors = xhr.responseJSON && xhr.responseJSON.errors;
+      if (xhr.status === 422 && errors) {
+        showErrors($form, errors);
       }
-      showFailure($form, (xhr.responseJSON && xhr.responseJSON.message) || $form.data('error-message') || messages.unexpectedError || '');
+      showFailure($form, (xhr.responseJSON && xhr.responseJSON.message) || $form.data('error-message') || messages.unexpectedError || '', errors);
     }).always(function () {
       $buttons.prop('disabled', false);
     });
@@ -306,9 +321,13 @@
       showResult($form, response || {});
       clearPreview($form);
     }).fail(function (xhr) {
-      if (xhr.status === 422 && xhr.responseJSON && xhr.responseJSON.errors) {
-        showErrors($form, xhr.responseJSON.errors);
-        showFailure($form, xhr.responseJSON.message || $form.data('validation-message') || messages.validationFailed || '');
+      const errors = xhr.responseJSON && xhr.responseJSON.errors;
+      if (xhr.status === 422 && errors) {
+        if (errors.preview_token) {
+          clearPreview($form);
+        }
+        showErrors($form, errors);
+        showFailure($form, xhr.responseJSON.message || $form.data('validation-message') || messages.validationFailed || '', errors);
         return;
       }
 

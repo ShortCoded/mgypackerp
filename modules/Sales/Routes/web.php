@@ -76,6 +76,9 @@ Route::middleware('auth')
             Route::post('/sales-orders/{salesOrder}/credit-override', 'overrideOrder')->middleware('can:sales_orders.credit_override')->name('sales-orders.credit-override');
             Route::post('/sales-orders/{salesOrder}/reopen', 'reopenOrder')->middleware('can:sales_orders.reopen')->name('sales-orders.reopen');
             Route::post('/sales-orders/{salesOrder}/cancel', 'cancelOrder')->middleware('can:sales_orders.cancel')->name('sales-orders.cancel');
+            Route::post('/sales-orders/{salesOrder}/close-remainder', 'closeOrderRemainder')
+                ->middleware(['can:sales_orders.close_remainder', IdempotentDocumentSubmission::class.':required'])
+                ->name('sales-orders.close-remainder');
             Route::post('/sales-orders/{salesOrder}/reservations', 'reserveOrder')->middleware('can:sales_orders.reserve')->middleware(IdempotentDocumentSubmission::class)->name('sales-orders.reservations.store');
             Route::post('/sales-orders/{salesOrder}/reservations/release', 'releaseReservation')->middleware('can:sales_orders.reserve')->name('sales-orders.reservations.release');
             Route::post('/sales-orders/{salesOrder}/production-requests', 'produceOrder')->middleware('can:sales_orders.production')->middleware(IdempotentDocumentSubmission::class)->name('sales-orders.production-requests.store');

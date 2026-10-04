@@ -10,6 +10,7 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\Core\Services\AssetVersionService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\MenuService;
 use Modules\Core\Services\OperatingContextService;
@@ -231,12 +232,43 @@ test('Open Document menu appears under Tools with permission', function (): void
 
     expect($openDocuments)->not->toBeNull()
         ->and($openDocuments['route'])->toBe('admin.tools.open-documents.index')
-        ->and($openDocuments['permission'])->toContain('tools.open_documents.view', 'sales_orders.reopen')
+        ->and($openDocuments['permission'])->toContain(
+            'tools.open_documents.view',
+            'sales_orders.reopen',
+            'inventory.opening_stock_cost_corrections.prepare',
+            'inventory.opening_stock_quantity_corrections.prepare',
+            'production.runs.correct',
+            'sales_returns.correct_receipt',
+        )
         ->and(Permission::query()->where('name', 'tools.open_documents.view')->exists())->toBeTrue()
         ->and(Permission::query()->where('name', 'tools.open_documents.execute')->exists())->toBeTrue()
         ->and(Permission::query()->where('name', 'purchase_orders.reopen')->exists())->toBeTrue()
         ->and(Permission::query()->where('name', 'purchases.purchase_requisitions.reopen')->exists())->toBeTrue()
         ->and(Permission::query()->where('name', 'production.material_requests.reopen')->exists())->toBeTrue();
+});
+
+test('Open Document menu remains visible for every correction-only workflow permission', function (): void {
+    foreach ([
+        'inventory.opening_stock_cost_corrections.prepare',
+        'inventory.opening_stock_cost_corrections.approve',
+        'inventory.opening_stock_quantity_corrections.prepare',
+        'inventory.opening_stock_quantity_corrections.approve',
+        'production.runs.correct',
+        'production.runs.correct_approve',
+        'sales_returns.correct_receipt',
+        'sales_returns.correct_disposition',
+        'sales_returns.correct_closed',
+        'sales_returns.correct_prepare',
+        'sales_returns.correct_approve',
+    ] as $permission) {
+        $actor = openDocumentsActor([$permission]);
+        $menu = app(MenuService::class)->getMenu($actor);
+        $tools = collect($menu)->firstWhere('label', 'tools');
+        $filesAndDocuments = collect($tools['children'] ?? [])->firstWhere('label', 'files_documents');
+        $openDocuments = collect($filesAndDocuments['children'] ?? [])->firstWhere('label', 'open_documents');
+
+        expect($openDocuments)->not->toBeNull("Open Document menu is missing for [{$permission}].");
+    }
 });
 
 test('Open Document reviews and reverses a posted purchase receipt through its purchasing workflow', function (): void {
@@ -852,6 +884,41 @@ test('Open Document previews a scoped sales order and refuses a stale confirmati
         'preview_token' => $currentPreview['preview_token'],
     ])->assertOk()->assertJsonPath('summary.opened', 1);
     expect($order->fresh()->status)->toBe(SalesOrder::StatusReopened);
+});
+
+test('Open Document versions its workflow client and explains a missing review token', function (): void {
+    $fixture = salesCycleFixture();
+    $actor = $fixture['user'];
+    foreach (['tools.open_documents.view', 'tools.open_documents.execute', 'sales_orders.reopen'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $actor->givePermissionTo(['tools.open_documents.view', 'tools.open_documents.execute', 'sales_orders.reopen']);
+    $this->actingAs($actor)->withSession(salesCycleSession($fixture));
+    $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture)));
+
+    $versionedScript = app(AssetVersionService::class)
+        ->url('assets/js/modules/Core/open-documents.js');
+    expect($versionedScript)->toMatch('/[?&]v=/');
+    $this->get(route('admin.tools.open-documents.index', [
+        'document_type' => 'sales_orders',
+        'from_number' => $order->doc_number,
+        'to_number' => $order->doc_number,
+    ]))->assertOk()->assertSee($versionedScript, false);
+
+    $this->postJson(route('admin.tools.open-documents.store'), [
+        'document_type' => 'sales_orders',
+        'from_number' => $order->doc_number,
+        'to_number' => $order->doc_number,
+        'reason' => 'Correct the approved quantity.',
+    ])->assertUnprocessable()
+        ->assertJsonValidationErrors('preview_token')
+        ->assertJsonPath('errors.preview_token.0', __('open_documents.validation.preview_required'));
+
+    $workflowClient = file_get_contents(public_path('assets/js/modules/Core/open-documents.js'));
+    expect($workflowClient)
+        ->toContain("url: \$form.data('preview-url')")
+        ->toContain('validationMessages')
+        ->toContain('errors.preview_token');
 });
 
 test('Open Document cannot reopen a sales order in a closed financial period', function (): void {

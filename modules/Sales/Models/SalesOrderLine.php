@@ -31,8 +31,10 @@ class SalesOrderLine extends Model
             'reserved_base_quantity' => 'decimal:8',
             'production_requested_quantity' => 'decimal:8', 'produced_quantity' => 'decimal:8',
             'production_requested_base_quantity' => 'decimal:8', 'produced_base_quantity' => 'decimal:8',
-            'delivered_quantity' => 'decimal:8', 'invoiced_quantity' => 'decimal:8',
-            'delivered_base_quantity' => 'decimal:8', 'invoiced_base_quantity' => 'decimal:8',
+            'delivered_quantity' => 'decimal:8', 'declined_quantity' => 'decimal:8', 'invoiced_quantity' => 'decimal:8',
+            'remainder_credited_quantity' => 'decimal:8',
+            'delivered_base_quantity' => 'decimal:8', 'declined_base_quantity' => 'decimal:8', 'invoiced_base_quantity' => 'decimal:8',
+            'remainder_credited_base_quantity' => 'decimal:8',
             'returned_quantity' => 'decimal:8', 'requested_date' => 'date', 'specifications' => 'array',
             'returned_base_quantity' => 'decimal:8',
             'allowed_discount_value' => 'decimal:4',
@@ -46,7 +48,14 @@ class SalesOrderLine extends Model
 
     public function remainingDeliveryQuantity(): string
     {
-        $remaining = bcsub((string) $this->quantity, (string) $this->delivered_quantity, 8);
+        $remaining = bcsub($this->effectiveQuantity(), (string) $this->delivered_quantity, 8);
+
+        return bccomp($remaining, '0', 8) < 0 ? '0.00000000' : $remaining;
+    }
+
+    public function remainingDeliveryBaseQuantity(): string
+    {
+        $remaining = bcsub($this->effectiveBaseQuantity(), (string) $this->delivered_base_quantity, 8);
 
         return bccomp($remaining, '0', 8) < 0 ? '0.00000000' : $remaining;
     }
@@ -54,7 +63,7 @@ class SalesOrderLine extends Model
     public function remainingProductionDemandBaseQuantity(): string
     {
         $remaining = bcsub(
-            bcsub((string) $this->base_quantity, (string) $this->delivered_base_quantity, 8),
+            bcsub($this->effectiveBaseQuantity(), (string) $this->delivered_base_quantity, 8),
             (string) $this->production_requested_base_quantity,
             8,
         );
@@ -85,9 +94,30 @@ class SalesOrderLine extends Model
 
     public function remainingInvoiceQuantity(): string
     {
-        $remaining = bcsub((string) $this->quantity, (string) $this->invoiced_quantity, 8);
+        $remaining = bcsub($this->effectiveQuantity(), $this->netInvoicedQuantity(), 8);
 
         return bccomp($remaining, '0', 8) < 0 ? '0.00000000' : $remaining;
+    }
+
+    public function effectiveQuantity(): string
+    {
+        $effective = bcsub((string) $this->quantity, (string) $this->declined_quantity, 8);
+
+        return bccomp($effective, '0', 8) < 0 ? '0.00000000' : $effective;
+    }
+
+    public function effectiveBaseQuantity(): string
+    {
+        $effective = bcsub((string) $this->base_quantity, (string) $this->declined_base_quantity, 8);
+
+        return bccomp($effective, '0', 8) < 0 ? '0.00000000' : $effective;
+    }
+
+    public function netInvoicedQuantity(): string
+    {
+        $net = bcsub((string) $this->invoiced_quantity, (string) $this->remainder_credited_quantity, 8);
+
+        return bccomp($net, '0', 8) < 0 ? '0.00000000' : $net;
     }
 
     public function order(): BelongsTo
@@ -98,6 +128,11 @@ class SalesOrderLine extends Model
     public function quotationRevisionLine(): BelongsTo
     {
         return $this->belongsTo(QuotationRevisionLine::class);
+    }
+
+    public function salesRequestLine(): BelongsTo
+    {
+        return $this->belongsTo(SalesRequestLine::class);
     }
 
     public function priceListLine(): BelongsTo

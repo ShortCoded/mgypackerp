@@ -196,7 +196,10 @@ class CustomerInvoiceService
             $invoiceDate ??= now()->toDateString();
             $salesOrder = SalesOrder::query()->lockForUpdate()->findOrFail($order->getKey());
             $period = app(FinancialPeriodService::class)->resolveOpenForPostingDate((int) $salesOrder->company_id, $invoiceDate, lockForUpdate: true);
-            if (! in_array($salesOrder->status, [SalesOrder::StatusApproved, SalesOrder::StatusPartiallyFulfilled, SalesOrder::StatusFulfilled], true)) {
+            $isDeclinedRemainderClosure = $salesOrder->status === SalesOrder::StatusClosed
+                && $salesOrder->lines()->where('declined_quantity', '>', 0)->exists();
+            if (! in_array($salesOrder->status, [SalesOrder::StatusApproved, SalesOrder::StatusPartiallyFulfilled, SalesOrder::StatusFulfilled], true)
+                && ! $isDeclinedRemainderClosure) {
                 throw new DomainException(__('The sales order is not eligible for invoicing.'));
             }
             if ($delivery && ($delivery->document_type !== InventoryDocument::TypeSalesDelivery || $delivery->status !== InventoryDocument::StatusPosted || $delivery->source_document_id !== $salesOrder->getKey())) {

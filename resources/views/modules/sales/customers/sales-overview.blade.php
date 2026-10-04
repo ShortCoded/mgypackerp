@@ -7,7 +7,7 @@
         @can('customer_invoices.view')
         @foreach($salesOverview['balances'] as $balance)
         <div class="row g-3 mb-3">
-            <div class="col-12 col-md-4">{{ __('Net Sales') }} · {{ $balance->currency?->code }}<div class="fw-bold">{{ $numbers->format(bcsub((string) $balance->sales, (string) ($salesOverview['credits']->get($balance->currency_id)?->returned ?? 0), 4)) }}</div></div>
+            <div class="col-12 col-md-4">{{ __('Net Sales') }} · {{ $balance->currency?->code }}<div class="fw-bold">{{ $numbers->format(bcsub((string) $balance->sales, (string) ($salesOverview['credits']->get($balance->currency_id)?->credited ?? 0), 4)) }}</div></div>
             <div class="col-12 col-md-4">{{ __('Outstanding balance') }} · {{ $balance->currency?->code }}<div class="fw-bold">{{ $numbers->format($balance->outstanding) }}</div></div>
             <div class="col-12 col-md-4">{{ __('Available Customer Credit') }} · {{ $balance->currency?->code }}<div class="fw-bold">{{ $numbers->format($salesOverview['credits']->get($balance->currency_id)?->available ?? 0) }}</div></div>
             <div class="col-12 col-md-4">{{ __('Overdue') }}<div class="fw-bold">{{ $numbers->format($balance->overdue) }}</div></div>

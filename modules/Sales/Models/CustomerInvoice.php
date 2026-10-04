@@ -103,6 +103,42 @@ class CustomerInvoice extends Model
         return $this->creditNotes()->where('source_type', CustomerInvoiceCorrection::class)->where('posting_status', 'posted')->exists();
     }
 
+    /** @return array<string, string> */
+    public function remainderCreditedQuantitiesByLine(): array
+    {
+        $this->loadMissing('creditNotes.lines');
+        $quantities = [];
+
+        foreach ($this->creditNotes as $creditNote) {
+            if ($creditNote->document_type !== self::TypeCreditNote
+                || $creditNote->posting_status !== 'posted'
+                || $creditNote->source_type !== SalesOrderRemainderClosure::class) {
+                continue;
+            }
+
+            foreach ($creditNote->lines as $line) {
+                $originalLinePublicId = (string) ($line->source_snapshot['original_invoice_line_public_id'] ?? '');
+                if ($originalLinePublicId === '') {
+                    continue;
+                }
+
+                $quantities[$originalLinePublicId] = bcadd(
+                    $quantities[$originalLinePublicId] ?? '0.00000000',
+                    (string) $line->quantity,
+                    8,
+                );
+            }
+        }
+
+        return $quantities;
+    }
+
+    public function supportsCreditApplicationEvidence(): bool
+    {
+        return $this->document_type === self::TypeCreditNote
+            && $this->sales_return_id !== null;
+    }
+
     public function canDeleteDraft(): bool
     {
         return self::allowsFullCrud()

@@ -19,6 +19,8 @@ final class CustomerCreditApplicationEvidenceController
 
     public function index(CustomerInvoice $customerInvoice): View
     {
+        abort_unless($customerInvoice->supportsCreditApplicationEvidence(), 404);
+
         try {
             $source = $this->evidence->preview($customerInvoice);
         } catch (DomainException $exception) {
@@ -31,6 +33,8 @@ final class CustomerCreditApplicationEvidenceController
 
     public function store(StoreCustomerCreditApplicationEvidenceRequest $request, CustomerInvoice $customerInvoice): JsonResponse|RedirectResponse
     {
+        abort_unless($customerInvoice->supportsCreditApplicationEvidence(), 404);
+
         try {
             $evidence = $this->evidence->prepare($customerInvoice, $request->validated());
         } catch (DomainException $exception) {
@@ -42,6 +46,8 @@ final class CustomerCreditApplicationEvidenceController
 
     public function approve(Request $request, CustomerInvoice $customerInvoice, int $evidence): JsonResponse|RedirectResponse
     {
+        abort_unless($customerInvoice->supportsCreditApplicationEvidence(), 404);
+
         $data = $request->validate(['approval_reason' => ['required', 'string', 'max:3000']]);
         try {
             $approved = $this->evidence->approve($customerInvoice, $evidence, $data['approval_reason']);

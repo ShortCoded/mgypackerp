@@ -15,6 +15,11 @@
             <div class="col-md-4"><strong>{{ __('sales_issue.customer') }}</strong><div>{{ $order->invoice?->customer?->name }}</div></div>
             <div class="col-md-4"><strong>{{ __('sales_issue.store') }}</strong><div>{{ $order->branchStore?->name ?: __('sales_issue.store_unassigned') }}</div></div>
         </div>
+        @if($order->status === \Modules\Sales\Models\SalesIssueOrder::StatusShortClosed)
+            <div class="alert alert-info py-2">
+                <strong>{{ __('sales_issue.short_close_reason') }}:</strong> {{ $order->short_close_reason }}
+            </div>
+        @endif
         <div class="table-responsive"><table class="table table-sm table-bordered align-middle mb-0"><thead><tr><th>{{ __('sales_issue.product') }}</th><th>{{ __('sales_issue.required_quantity') }}</th><th>{{ __('sales_issue.unit') }}</th></tr></thead><tbody>
             @foreach($lines as $row)<tr><td>{{ $row['line']->product?->doc_num }} — {{ $row['line']->product?->name }}</td><td>{{ $numbers->format($row['remaining']) }}</td><td>{{ $row['line']->unit?->name }}</td></tr>@endforeach
             @if($lines === [])<tr><td colspan="3" class="text-center text-600">{{ __('sales_issue.no_remaining_lines') }}</td></tr>@endif

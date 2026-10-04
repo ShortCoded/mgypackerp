@@ -13,9 +13,11 @@ use Modules\Sales\Exports\SalesCycleReportExport;
 use Modules\Sales\Http\Controllers\SalesCycleReportController;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerReceipt;
+use Modules\Sales\Models\SalesOrderRemainderClosure;
 use Modules\Sales\Models\SalesReturn;
 use Modules\Sales\Services\CustomerInvoiceService;
 use Modules\Sales\Services\CustomerReceiptService;
+use Modules\Sales\Services\CustomerSalesOverviewService;
 use Modules\Sales\Services\SalesCycleReadService;
 use Modules\Sales\Services\SalesFulfillmentService;
 use Modules\Sales\Services\SalesOrderService;
@@ -130,6 +132,36 @@ function salesReportControllerData(array $fixture, array $session, array $params
     return $report->index($request)->getData();
 }
 
+test('financial only remainder credits reduce net sales without inflating return metrics', function () {
+    $fixture = salesCycleFixture();
+    salesReportTotalsPermissions($fixture);
+    $session = salesCycleSession($fixture);
+    $invoice = salesReportTotalsInvoice($fixture, 'INV-REMAINDER-CREDIT', '100.0000');
+    salesReportTotalsCredit($fixture, 'CN-REMAINDER-CREDIT', '20.0000', $invoice->getKey(), [
+        'source_type' => SalesOrderRemainderClosure::class,
+        'source_id' => 987654,
+        'credit_available_amount' => '0.0000',
+    ]);
+
+    $overview = app(CustomerSalesOverviewService::class)->forCustomer($fixture['customer'], $fixture['branch']->getKey());
+    $overviewCredit = $overview['credits']->get($fixture['currency']->getKey());
+    expect(bccomp((string) $overviewCredit->credited, '20', 4))->toBe(0)
+        ->and(bccomp((string) $overviewCredit->returned, '0', 4))->toBe(0)
+        ->and(bcsub((string) $overview['balances']->sole()->sales, (string) $overviewCredit->credited, 4))->toBe('80.0000');
+
+    $financial = salesReportControllerData($fixture, $session, ['report' => 'financial']);
+    expect(bccomp((string) $financial['financialSummary']['gross_sales'], '100', 4))->toBe(0)
+        ->and(bccomp((string) $financial['financialSummary']['credit_notes'], '20', 4))->toBe(0)
+        ->and(bccomp((string) $financial['financialSummary']['net_sales'], '80', 4))->toBe(0)
+        ->and($financial['financialSummary']['return_rate'])->toBe('0.00');
+
+    $invoices = salesReportControllerData($fixture, $session);
+    $invoices['salesLedger'] = collect($invoices['salesLedger']->items());
+    $ledgerSheet = (new SalesCycleReportExport($invoices))->sheets()[0];
+    expect($ledgerSheet->headings()[10])->toBe(__('sales_ui.reports.export.headings.credit_notes_returns'))
+        ->and(bccomp((string) $ledgerSheet->array()[0][10], '20', 4))->toBe(0);
+});
+
 test('sales ledger summary uses exact decimal strings and matches screen export parity', function () {
     $fixture = salesCycleFixture();
     salesReportTotalsPermissions($fixture);
@@ -226,7 +258,7 @@ test('fulfillment remaining quantity agrees across screen pdf xlsx and csv', fun
     $xlsx = $this->actingAs($fixture['user'])->withSession($session)
         ->get(route('admin.reports.sales.sales-orders.export', [...$params, 'format' => 'xlsx']))
         ->assertOk()->assertDownload();
-    $cell = IOFactory::load($xlsx->baseResponse->getFile()->getPathname())->getActiveSheet()->getCell('H2');
+    $cell = IOFactory::load($xlsx->baseResponse->getFile()->getPathname())->getActiveSheet()->getCell('L2');
     expect($cell->getDataType())->toBe(DataType::TYPE_STRING)
         ->and($cell->getValue())->toBe('0.00000001');
 

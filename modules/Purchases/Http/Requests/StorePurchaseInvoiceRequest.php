@@ -5,6 +5,7 @@ namespace Modules\Purchases\Http\Requests;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
+use InvalidArgumentException;
 use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\FinancialPeriod;
@@ -237,12 +238,60 @@ class StorePurchaseInvoiceRequest extends FormRequest
     public function after(): array
     {
         return [function (Validator $validator): void {
+            $this->validateStrictNumericInputs($validator);
             $this->validatePeriod($validator);
             $this->validateLines($validator, $this->currentRecord());
             $this->validateDiscountsAndSchedule($validator);
             $this->validatePaymentSources($validator);
             $this->validateDirectProcurementOverride($validator);
         }];
+    }
+
+    private function validateStrictNumericInputs(Validator $validator): void
+    {
+        foreach ([
+            ['exchange_rate', 6, __('purchase_invoices.attributes.exchange_rate')],
+            ['header_discount_value', 4, __('purchase_invoices.attributes.header_discount_value')],
+            ['freight_amount', 4, __('purchase_invoices.attributes.freight_amount')],
+            ['freight_tax_rate', 4, __('purchase_invoices.attributes.freight_tax_rate')],
+        ] as [$attribute, $scale, $label]) {
+            $this->validatedNumber($validator, $attribute, $this->input($attribute), $scale, $label);
+        }
+
+        foreach ($this->input('lines', []) as $index => $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+
+            foreach ([
+                ['quantity', 8, __('purchase_invoices.attributes.quantity')],
+                ['unit_price', 8, __('purchase_invoices.attributes.unit_price')],
+                ['discount_value', 4, __('purchase_invoices.attributes.line_discount_value')],
+                ['tax_rate', 4, __('purchase_invoices.attributes.tax_rate')],
+            ] as [$field, $scale, $label]) {
+                $this->validatedNumber(
+                    $validator,
+                    "lines.{$index}.{$field}",
+                    $line[$field] ?? null,
+                    $scale,
+                    $label,
+                );
+            }
+        }
+
+        foreach ($this->input('payment_schedules', []) as $index => $schedule) {
+            if (! is_array($schedule)) {
+                continue;
+            }
+
+            $this->validatedNumber(
+                $validator,
+                "payment_schedules.{$index}.amount",
+                $schedule['amount'] ?? null,
+                4,
+                __('purchase_invoices.attributes.payment_amount'),
+            );
+        }
     }
 
     public function validated($key = null, $default = null): mixed
@@ -306,19 +355,19 @@ class StorePurchaseInvoiceRequest extends FormRequest
                 continue;
             }
 
-            if ($validator->errors()->has("lines.{$index}.quantity")
-                || $validator->errors()->has("lines.{$index}.unit_price")
-                || $validator->errors()->has("lines.{$index}.discount_value")) {
+            if ($validator->errors()->has("lines.{$index}.*")) {
                 continue;
             }
 
-            $numbers = app(NumericFormatService::class);
-            $subtotal = bcmul(
-                $numbers->normalizeToScale($line['quantity'] ?? 0, 8),
-                $numbers->normalizeToScale($line['unit_price'] ?? 0, 8),
-                16,
-            );
-            $discountValue = app(PurchaseInvoiceCalculationService::class)->number($line['discount_value'] ?? 0);
+            $quantity = $this->validatedLineNumber($validator, $line, $index, 'quantity', 8);
+            $unitPrice = $this->validatedLineNumber($validator, $line, $index, 'unit_price', 8);
+            $discountValue = $this->validatedLineNumber($validator, $line, $index, 'discount_value', 4);
+
+            if ($quantity === null || $unitPrice === null || $discountValue === null) {
+                continue;
+            }
+
+            $subtotal = bcmul($quantity, $unitPrice, 16);
             $discountType = $line['discount_type'] ?? null;
 
             if ($discountType === 'percentage' && bccomp($discountValue, '100', 4) > 0) {
@@ -370,6 +419,49 @@ class StorePurchaseInvoiceRequest extends FormRequest
             if ($product?->isService() && empty($line['cost_center_doc_num'])) {
                 $validator->errors()->add("lines.{$index}.cost_center_doc_num", __('A cost center is required for service and non-stock purchase lines.'));
             }
+        }
+    }
+
+    /** @param array<string, mixed> $line */
+    private function validatedLineNumber(
+        Validator $validator,
+        array $line,
+        int|string $index,
+        string $field,
+        int $scale,
+    ): ?string {
+        $label = match ($field) {
+            'quantity' => __('purchase_invoices.attributes.quantity'),
+            'unit_price' => __('purchase_invoices.attributes.unit_price'),
+            default => __('purchase_invoices.attributes.line_discount_value'),
+        };
+
+        return $this->validatedNumber(
+            $validator,
+            "lines.{$index}.{$field}",
+            $line[$field] ?? null,
+            $scale,
+            $label,
+        );
+    }
+
+    private function validatedNumber(
+        Validator $validator,
+        string $attribute,
+        mixed $value,
+        int $scale,
+        string $label,
+    ): ?string {
+        if ($validator->errors()->has($attribute)) {
+            return null;
+        }
+
+        try {
+            return app(NumericFormatService::class)->normalizeToScale($value ?? 0, $scale) ?? '0';
+        } catch (InvalidArgumentException) {
+            $validator->errors()->add($attribute, __('validation.numeric', ['attribute' => $label]));
+
+            return null;
         }
     }
 

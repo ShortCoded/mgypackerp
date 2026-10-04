@@ -492,6 +492,13 @@ return [
         'number_column' => 'doc_number',
         'scope' => 'company_period',
     ],
+    'sales_order_remainder_closures' => [
+        'prefix' => 'SORC-',
+        'padding' => 6,
+        'column' => 'doc_num',
+        'number_column' => 'doc_number',
+        'scope' => 'company',
+    ],
     'price_lists' => [
         'prefix' => 'PL-',
         'padding' => 5,

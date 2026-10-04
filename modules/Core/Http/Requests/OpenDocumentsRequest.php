@@ -99,6 +99,19 @@ class OpenDocumentsRequest extends FormRequest
             'to_number' => __('open_documents.fields.to_number'),
             'reason' => __('open_documents.fields.reason'),
             'source_period_doc_num' => __('open_documents.fields.source_period'),
+            'preview_token' => __('open_documents.fields.preview_token'),
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'preview_token.required' => __('open_documents.validation.preview_required'),
+            'preview_token.size' => __('open_documents.validation.preview_required'),
+            'preview_token.regex' => __('open_documents.validation.preview_required'),
         ];
     }
 }

@@ -60,7 +60,12 @@ class SalesRequestController extends Controller
     {
         $this->assertBranch($request, $salesRequest);
 
-        return view('modules.sales.requests.show', ['record' => $salesRequest->load(['company', 'branch', 'branchStore', 'customer', 'currency', 'lines.product.color', 'lines.unit', 'quotations', 'orders']),
+        return view('modules.sales.requests.show', ['record' => $salesRequest->load([
+            'company', 'branch', 'branchStore', 'customer', 'currency', 'quotations', 'orders',
+            'lines' => fn ($lines) => $lines
+                ->with(['product.color', 'unit'])
+                ->withSum('orderLines as downstream_declined_quantity', 'declined_quantity'),
+        ]),
             'customers' => collect([$salesRequest->customer])->filter(),
             'currencies' => Currency::query()->forCompany($salesRequest->company_id)->active()->where('is_main', true)->get(),
             'stores' => collect([$salesRequest->branchStore])->filter()]);

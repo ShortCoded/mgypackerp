@@ -9,6 +9,7 @@ return [
         'reason' => 'Reason for opening or correction',
         'preview' => 'Review documents before action',
         'source_period' => 'Original document period',
+        'preview_token' => 'Document review token',
         'current_period_default' => 'Leave blank to use the active period',
     ],
     'correction_steps' => [
@@ -26,6 +27,7 @@ return [
         'open' => 'Open',
         'confirm_open' => 'Confirm action',
         'review_correction' => 'Review correction',
+        'review_edit_reopen' => 'Review edit / reopen',
         'correct_purchase_voucher' => 'Correct scheduled purchase payment',
     ],
     'documents' => [
@@ -153,5 +155,6 @@ return [
         'range_too_large' => 'You can reopen at most :count documents at a time.',
         'reopen_context_or_reason' => 'Select the document branch and provide a reopening reason.',
         'preview_stale' => 'A document changed after the preview. Review the list again before opening.',
+        'preview_required' => 'The document review is missing or expired. Review the documents again before confirming the action.',
     ],
 ];

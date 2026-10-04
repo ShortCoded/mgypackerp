@@ -165,9 +165,35 @@
     @isset($relatedDocuments)<x-related-documents :documents="$relatedDocuments" />@endisset
 
     @if($lines->isNotEmpty())
-        <div class="card mb-3"><div class="card-header"><h6 class="mb-0">{{ __('Lines and source traceability') }}</h6></div><div class="table-responsive"><table class="table table-sm table-bordered align-middle mb-0"><thead><tr><th>#</th><th>{{ __('Item') }}</th><th>{{ __('Source line') }}</th>@if($isCommercialLineView)<th>{{ __('Unit') }}</th>@endif<th class="text-end">{{ __('Quantity') }}</th>@unless($isCommercialLineView)<th class="text-end">{{ __('Delivered') }}</th><th class="text-end">{{ __('Invoiced') }}</th>@endunless @if($showLinePrices)<th class="text-end">{{ __('Unit price') }}</th><th class="text-end">{{ __('Discount') }}</th><th class="text-end">{{ __('Tax') }}</th><th class="text-end">{{ __('Total') }}</th>@endif @unless($isCommercialLineView)<th>{{ __('Quality disposition') }}</th>@endunless</tr></thead><tbody>
-            @foreach($lines as $line)<tr><td>{{ $line->line_number }}</td><td>{{ $lineItemLabel($line) }}@if($visibleLineSpecifications($line)->isNotEmpty())<br><small>{{ $visibleLineSpecifications($line)->map(fn ($value, $key) => __(str($key)->replace('_', ' ')->title()->toString()).': '.$value)->join(' · ') }}</small>@endif @if($kind === 'production_request' && ($line->warehouse_notes ?? null))<br><small>{{ __('Warehouse') }}: {{ $line->warehouse_notes }}</small>@endif @if($kind === 'production_request' && ($line->production_notes ?? null))<br><small>{{ __('Production') }}: {{ $line->production_notes }}</small>@endif</td><td><small>@if(method_exists($line, 'orderLine') && $line->orderLine){{ $line->orderLine->order?->doc_num }} · {{ __('Line') }} {{ $line->orderLine->line_number }}@elseif(method_exists($line, 'quotationRevisionLine') && $line->quotationRevisionLine){{ $record->quotation?->doc_num }} · {{ __('Line') }} {{ $line->quotationRevisionLine->line_number }}@else—@endif</small></td>@if($isCommercialLineView)<td>{{ $line->unit?->name ?? '—' }}</td>@endif<td class="text-end" dir="ltr">{{ $numbers->format($line->quantity) }}@if($kind === 'sales_order')<div class="small text-muted" dir="auto">{{ __('Delivered') }}: {{ $numbers->format($line->delivered_quantity ?? 0) }} · {{ __('Invoiced') }}: {{ $numbers->format($line->invoiced_quantity ?? 0) }}</div>@endif</td>@unless($isCommercialLineView)<td class="text-end" dir="ltr">{{ isset($line->delivered_quantity) ? $numbers->format($line->delivered_quantity) : '—' }}</td><td class="text-end" dir="ltr">{{ isset($line->invoiced_quantity) ? $numbers->format($line->invoiced_quantity) : '—' }}</td>@endunless @if($showLinePrices)<td class="text-end" dir="ltr">{{ $numbers->format($line->unit_price ?? 0) }}</td><td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->discount_amount ?? 0, 2) }}</td><td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->tax_amount ?? 0, 2) }}</td><td class="text-end fw-semibold" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->line_total ?? 0, 2) }}</td>@endif @unless($isCommercialLineView)<td>{{ $line->quality_disposition ? $qualityDispositionLabel($line->quality_disposition) : '—' }}</td>@endunless</tr>@endforeach
-        </tbody></table></div>
+        <div class="card mb-3">
+            <div class="card-header"><h6 class="mb-0">{{ __('Lines and source traceability') }}</h6></div>
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle mb-0">
+                    <thead><tr><th>#</th><th>{{ __('Item') }}</th><th>{{ __('Source line') }}</th>@if($isCommercialLineView)<th>{{ __('Unit') }}</th>@endif<th class="text-end">{{ __('Quantity') }}</th>@unless($isCommercialLineView)<th class="text-end">{{ __('Delivered') }}</th><th class="text-end">{{ __('Invoiced') }}</th>@endunless @if($showLinePrices)<th class="text-end">{{ __('Unit price') }}</th><th class="text-end">{{ __('Discount') }}</th><th class="text-end">{{ __('Tax') }}</th><th class="text-end">{{ __('Total') }}</th>@endif @unless($isCommercialLineView)<th>{{ __('Quality disposition') }}</th>@endunless</tr></thead>
+                    <tbody>
+                        @foreach($lines as $line)
+                            <tr>
+                                <td>{{ $line->line_number }}</td>
+                                <td>{{ $lineItemLabel($line) }}@if($visibleLineSpecifications($line)->isNotEmpty())<br><small>{{ $visibleLineSpecifications($line)->map(fn ($value, $key) => __(str($key)->replace('_', ' ')->title()->toString()).': '.$value)->join(' · ') }}</small>@endif @if($kind === 'production_request' && ($line->warehouse_notes ?? null))<br><small>{{ __('Warehouse') }}: {{ $line->warehouse_notes }}</small>@endif @if($kind === 'production_request' && ($line->production_notes ?? null))<br><small>{{ __('Production') }}: {{ $line->production_notes }}</small>@endif</td>
+                                <td><small>@if(method_exists($line, 'orderLine') && $line->orderLine){{ $line->orderLine->order?->doc_num }} · {{ __('Line') }} {{ $line->orderLine->line_number }}@elseif(method_exists($line, 'quotationRevisionLine') && $line->quotationRevisionLine){{ $record->quotation?->doc_num }} · {{ __('Line') }} {{ $line->quotationRevisionLine->line_number }}@else—@endif</small></td>
+                                @if($isCommercialLineView)<td>{{ $line->unit?->name ?? '—' }}</td>@endif
+                                <td class="text-end" dir="ltr">
+                                    {{ $numbers->format($line->quantity) }}
+                                    @if($kind === 'sales_order')
+                                        <div class="small text-muted" dir="auto">{{ __('sales_ui.remainder.effective') }}: {{ $numbers->format($line->effectiveQuantity()) }}</div>
+                                        <div class="small text-muted" dir="auto">{{ __('Delivered') }}: {{ $numbers->format($line->delivered_quantity) }} · {{ __('sales_ui.remainder.declined') }}: {{ $numbers->format($line->declined_quantity) }}</div>
+                                        <div class="small text-muted" dir="auto">{{ __('Invoiced') }}: {{ $numbers->format($line->invoiced_quantity) }} · {{ __('sales_ui.remainder.net_invoiced') }}: {{ $numbers->format($line->netInvoicedQuantity()) }}</div>
+                                        <div class="small text-muted" dir="auto">{{ __('sales_ui.remainder.remaining_delivery') }}: {{ $numbers->format($line->remainingDeliveryQuantity()) }}</div>
+                                    @endif
+                                </td>
+                                @unless($isCommercialLineView)<td class="text-end" dir="ltr">{{ isset($line->delivered_quantity) ? $numbers->format($line->delivered_quantity) : '—' }}</td><td class="text-end" dir="ltr">{{ isset($line->invoiced_quantity) ? $numbers->format($line->invoiced_quantity) : '—' }}</td>@endunless
+                                @if($showLinePrices)<td class="text-end" dir="ltr">{{ $numbers->format($line->unit_price ?? 0) }}</td><td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->discount_amount ?? 0, 2) }}</td><td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->tax_amount ?? 0, 2) }}</td><td class="text-end fw-semibold" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->line_total ?? 0, 2) }}</td>@endif
+                                @unless($isCommercialLineView)<td>{{ $line->quality_disposition ? $qualityDispositionLabel($line->quality_disposition) : '—' }}</td>@endunless
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
             @if($showLinePrices && isset($record->total_amount))
                 <div class="card-footer d-flex flex-wrap justify-content-end gap-3">
                     @if(isset($record->subtotal_amount))<span>{{ __('Subtotal') }}: <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->subtotal_amount, 2) }}</strong></span>@endif
@@ -176,6 +202,41 @@
                     <span>{{ __('Grand total') }}: <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->total_amount, 2) }}</strong></span>
                 </div>
             @endif
+        </div>
+    @endif
+
+    @if($kind === 'sales_order' && $record->relationLoaded('remainderClosures') && $record->remainderClosures->isNotEmpty())
+        <div class="card mb-3">
+            <div class="card-header"><h6 class="mb-0">{{ __('sales_ui.remainder.history') }}</h6></div>
+            <div class="card-body">
+                @foreach($record->remainderClosures as $closure)
+                    <div class="border rounded p-3 {{ $loop->last ? '' : 'mb-3' }}">
+                        <div class="d-flex flex-wrap justify-content-between gap-2 mb-2">
+                            <div><strong dir="ltr">{{ $closure->doc_num }}</strong> · {{ $dates->formatDate($closure->closure_date, '—') }}</div>
+                            <span class="badge bg-success">{{ __(str($closure->status)->replace('_', ' ')->title()->toString()) }}</span>
+                        </div>
+                        <div class="mb-2"><strong>{{ __('Reason') }}:</strong> {{ $closure->reason }}</div>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered align-middle mb-0">
+                                <thead><tr><th>{{ __('sales_ui.remainder.line_product') }}</th><th class="text-end">{{ __('sales_ui.remainder.delivered_at_close') }}</th><th class="text-end">{{ __('sales_ui.remainder.declined') }}</th><th class="text-end">{{ __('sales_ui.remainder.reservation_released') }}</th><th class="text-end">{{ __('sales_ui.remainder.production_demand_released') }}</th><th class="text-end">{{ __('sales_ui.remainder.credited_remainder') }}</th></tr></thead>
+                                <tbody>
+                                    @foreach($closure->lines as $closureLine)
+                                        @php $historyOrderLine = $lines->firstWhere('id', $closureLine->sales_order_line_id); @endphp
+                                        <tr>
+                                            <td>{{ __('Line') }} {{ $historyOrderLine?->line_number ?? '—' }} · {{ $historyOrderLine?->product?->doc_num }} / {{ $historyOrderLine?->product?->name }}</td>
+                                            <td class="text-end" dir="ltr">{{ $numbers->format($closureLine->delivered_quantity_snapshot) }}</td>
+                                            <td class="text-end fw-semibold" dir="ltr">{{ $numbers->format($closureLine->declined_quantity) }}</td>
+                                            <td class="text-end" dir="ltr">{{ $numbers->format($closureLine->released_reservation_quantity) }}</td>
+                                            <td class="text-end" dir="ltr">{{ $numbers->format($closureLine->released_production_quantity) }}</td>
+                                            <td class="text-end" dir="ltr">{{ $numbers->format($closureLine->credited_remainder_quantity) }}</td>
+                                        </tr>
+                                    @endforeach
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                @endforeach
+            </div>
         </div>
     @endif
 
@@ -240,7 +301,7 @@
             @if($kind === 'credit_note')
                 <div class="row g-3 mb-3"><div class="col-md-4"><strong>{{ __('Credit created') }}</strong><div dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->total_amount, 2) }}</div></div><div class="col-md-4"><strong>{{ __('Available Customer Credit') }}</strong><div dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->credit_available_amount, 2) }}</div></div><div class="col-md-4"><strong>{{ __('Allocated / refunded') }}</strong><div dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->credit_allocated_amount, 2) }} / {{ $numbers->formatWithMinimumDecimals($record->credit_refunded_amount, 2) }}</div></div></div>
                 @canany(['customer_credits.prepare_application_evidence', 'customer_credits.approve_application_evidence'])
-                @if($record->posting_status === 'posted' || ($record->posting_status === 'reversed' && $record->credit_application_snapshot !== null))
+                @if($record->supportsCreditApplicationEvidence() && ($record->posting_status === 'posted' || ($record->posting_status === 'reversed' && $record->credit_application_snapshot !== null)))
                 <a class="btn btn-falcon-default btn-sm mb-3" href="{{ route('admin.sales.sales-invoices.application-evidence.index', $record) }}">{{ __('credit_application_evidence.title') }}</a>
                 @endif
                 @endcanany

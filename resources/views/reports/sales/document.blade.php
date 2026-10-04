@@ -113,7 +113,7 @@
 
     @if($lines->isNotEmpty())
         <table dir="{{ $direction ?? 'ltr' }}" class="report-table sales-document-lines" autosize="1">
-            <thead><tr><th>#</th><th>{{ __('Item / Description') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th>@if($kind === 'sales_order')<th>{{ __('Delivered') }}</th>@endif @if($showPrices)<th>{{ __('Unit price') }}</th><th>{{ __('Discount') }}</th><th>{{ __('Tax') }}</th><th>{{ __('Total') }}</th>@endif @if(in_array($kind, ['sales_return', 'quality_disposition'], true))<th>{{ __('Quality disposition') }}</th>@endif</tr></thead>
+            <thead><tr><th>#</th><th>{{ __('Item / Description') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th>@if($kind === 'sales_order')<th>{{ __('sales_ui.remainder.fulfillment_net_quantities') }}</th>@endif @if($showPrices)<th>{{ __('Unit price') }}</th><th>{{ __('Discount') }}</th><th>{{ __('Tax') }}</th><th>{{ __('Total') }}</th>@endif @if(in_array($kind, ['sales_return', 'quality_disposition'], true))<th>{{ __('Quality disposition') }}</th>@endif</tr></thead>
             <tbody>
                 @foreach($lines as $line)
                     @php
@@ -125,7 +125,15 @@
                         <td>@include('reports.partials.item-details', ['line' => $line, 'showPacking' => false, 'showClassification' => false])</td>
                         <td>{{ $printUnit?->name }}</td>
                         <td dir="ltr">{{ $numbers->format($printQuantity) }}</td>
-                        @if($kind === 'sales_order')<td dir="ltr">{{ $numbers->format($line->delivered_quantity) }}</td>@endif
+                        @if($kind === 'sales_order')
+                            <td>
+                                <span dir="ltr">{{ __('Delivered') }}: {{ $numbers->format($line->delivered_quantity) }}</span><br>
+                                <span dir="ltr">{{ __('sales_ui.remainder.declined') }}: {{ $numbers->format($line->declined_quantity) }}</span><br>
+                                <span dir="ltr">{{ __('sales_ui.remainder.effective') }}: {{ $numbers->format($line->effectiveQuantity()) }}</span><br>
+                                <span dir="ltr">{{ __('sales_ui.remainder.net_invoiced') }}: {{ $numbers->format($line->netInvoicedQuantity()) }}</span><br>
+                                <span dir="ltr">{{ __('sales_ui.remainder.remaining_delivery') }}: {{ $numbers->format($line->remainingDeliveryQuantity()) }}</span>
+                            </td>
+                        @endif
                         @if($showPrices)<td dir="ltr">{{ $numbers->format($line->unit_price ?? 0) }}</td><td dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->discount_amount ?? 0, 2) }}</td><td dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->tax_amount ?? 0, 2) }}</td><td dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->line_total ?? 0, 2) }}</td>@endif
                         @if(in_array($kind, ['sales_return', 'quality_disposition'], true))<td>{{ $line->quality_disposition ? $qualityDispositionLabel($line->quality_disposition) : __('Pending inspection') }}<br>{{ __('Saleable') }}: {{ $numbers->format($line->saleable_quantity) }} · {{ __('Quarantine') }}: {{ $numbers->format($line->quarantine_quantity) }} · {{ __('Rework') }}: {{ $numbers->format($line->rework_quantity) }} · {{ __('Scrap') }}: {{ $numbers->format($line->scrap_quantity) }}</td>@endif
                     </tr>
