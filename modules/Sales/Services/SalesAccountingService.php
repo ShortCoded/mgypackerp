@@ -3,6 +3,7 @@
 namespace Modules\Sales\Services;
 
 use App\Services\PostingAccountResolver;
+use Carbon\Carbon;
 use DomainException;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\JournalEntry;
@@ -17,6 +18,7 @@ use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerReceipt;
 use Modules\Sales\Models\SalesReturn;
+use Modules\Sales\Models\SalesReturnLine;
 
 class SalesAccountingService
 {
@@ -27,6 +29,18 @@ class SalesAccountingService
     ) {}
 
     public function postInvoice(CustomerInvoice $invoice): JournalEntry
+    {
+        $lines = $this->invoicePostingLines($invoice);
+
+        $sourceType = (int) $invoice->posting_revision === 0
+            ? 'customer_invoice'
+            : 'customer_invoice_post_'.$invoice->posting_revision;
+
+        return $this->journals->createPostedFromSource($this->header($invoice, $sourceType, 'Sales invoice '.$invoice->doc_num), $lines);
+    }
+
+    /** @return list<array<string,mixed>> */
+    private function invoicePostingLines(CustomerInvoice $invoice): array
     {
         $invoice->loadMissing(['customer', 'lines']);
         if (! $invoice->customer?->account_id) {
@@ -51,11 +65,7 @@ class SalesAccountingService
             $lines[] = $this->creditLine($this->account($invoice->company_id, PostingAccountResolver::OutputVatPayable), (string) $invoice->tax_amount, 'Output tax');
         }
 
-        $sourceType = (int) $invoice->posting_revision === 0
-            ? 'customer_invoice'
-            : 'customer_invoice_post_'.$invoice->posting_revision;
-
-        return $this->journals->createPostedFromSource($this->header($invoice, $sourceType, 'Sales invoice '.$invoice->doc_num), $lines);
+        return $lines;
     }
 
     public function reverseInvoice(CustomerInvoice $invoice, string $reason, int $revision): JournalEntry
@@ -91,7 +101,8 @@ class SalesAccountingService
         ]);
     }
 
-    public function postDeliveryCost(InventoryDocument $delivery): JournalEntry
+    /** @return list<array<string,mixed>> */
+    private function deliveryPostingLines(InventoryDocument $delivery): array
     {
         $delivery->loadMissing('lines.product');
         $unvaluedLine = $delivery->lines->first(fn (InventoryDocumentLine $line): bool => $line->unit_cost === null || $line->total_cost === null);
@@ -118,6 +129,13 @@ class SalesAccountingService
             }
         }
 
+        return $lines;
+    }
+
+    public function postDeliveryCost(InventoryDocument $delivery): JournalEntry
+    {
+        $lines = $this->deliveryPostingLines($delivery);
+
         return $this->journals->createPostedFromSource($this->header($delivery, 'sales_delivery_cogs', 'Cost of sales '.$delivery->doc_num), $lines);
     }
 
@@ -137,6 +155,68 @@ class SalesAccountingService
         $lines[] = ['account_id' => (int) $creditNote->customer->account_id, 'debit_amount' => 0, 'credit_amount' => $creditNote->total_amount, 'description' => 'Customer credit', 'customer_id' => $creditNote->customer_id];
 
         return $this->journals->createPostedFromSource($this->header($creditNote, 'customer_credit_note', 'Sales credit note '.$creditNote->doc_num), $lines);
+    }
+
+    public function reverseCreditNote(CustomerInvoice $creditNote, JournalEntry $original, string $reason, ?int $correctionId = null): JournalEntry
+    {
+        if ($creditNote->document_type !== CustomerInvoice::TypeCreditNote
+            || $original->source_type !== 'customer_credit_note'
+            || (int) $original->source_id !== (int) $creditNote->getKey()
+            || (int) $original->getKey() !== (int) $creditNote->journal_entry_id
+            || $original->reversed_entry_id !== null) {
+            throw new DomainException(__('sales_return_correction.closed_credit_mismatch'));
+        }
+
+        if (JournalEntry::query()->withTrashed()
+            ->where('company_id', $creditNote->company_id)
+            ->where('source_type', 'customer_credit_note_correction')
+            ->where('source_id', $creditNote->getKey())
+            ->lockForUpdate()->exists()) {
+            throw new DomainException(__('sales_return_correction.closed_credit_mismatch'));
+        }
+
+        $proposal = $correctionId === null ? null : app(SalesReturnCorrectionService::class)->execution($correctionId, 'return', (int) $creditNote->sales_return_id);
+        $header = [
+            ...$this->header($creditNote, 'customer_credit_note_correction', __('sales_return_correction.credit_journal_description', ['credit' => $creditNote->doc_num])),
+            'entry_date' => $proposal?->posting_date->toDateString() ?? $original->entry_date,
+            'financial_period_id' => $proposal?->posting_financial_period_id ?? $original->financial_period_id,
+            'branch_id' => $original->branch_id,
+            'currency_id' => $original->currency_id,
+            'exchange_rate' => $original->exchange_rate,
+            'notes' => trim($reason),
+        ];
+        $reversal = $this->journals->createPostedReversalFromSource($original, $header);
+        $original->loadMissing('lines');
+        $reversal->load('lines');
+        $originalLines = $original->lines->sortBy('line_no')->values();
+        $reversalLines = $reversal->lines->sortBy('line_no')->values();
+        if ($reversal->trashed() || ! $reversal->is_posted || $reversal->status !== JournalEntry::StatusPosted
+            || $reversal->source_type !== $header['source_type']
+            || (int) $reversal->source_id !== (int) $header['source_id']
+            || $reversal->source_doc_num !== $header['source_doc_num']
+            || (int) $reversal->company_id !== (int) $header['company_id']
+            || (int) $reversal->financial_period_id !== (int) $header['financial_period_id']
+            || (int) $reversal->branch_id !== (int) $header['branch_id']
+            || (int) $reversal->currency_id !== (int) $header['currency_id']
+            || $reversal->entry_date?->toDateString() !== Carbon::parse($header['entry_date'])->toDateString()
+            || $this->amounts->compare($reversal->exchange_rate, $original->exchange_rate, 6) !== 0
+            || $originalLines->count() !== $reversalLines->count()) {
+            throw new DomainException(__('sales_return_correction.closed_credit_mismatch'));
+        }
+        foreach ($originalLines as $index => $line) {
+            $inverse = $reversalLines->get($index);
+            foreach (['account_id', 'customer_id', 'supplier_id', 'employee_id', 'bank_account_id', 'cost_center_id', 'department_id', 'branch_id'] as $field) {
+                if ($line->{$field} !== $inverse->{$field}) {
+                    throw new DomainException(__('sales_return_correction.closed_credit_mismatch'));
+                }
+            }
+            if ($this->amounts->compare($line->debit_amount, $inverse->credit_amount) !== 0
+                || $this->amounts->compare($line->credit_amount, $inverse->debit_amount) !== 0) {
+                throw new DomainException(__('sales_return_correction.closed_credit_mismatch'));
+            }
+        }
+
+        return $reversal;
     }
 
     public function postSaleableReturnCost(SalesReturn $return): ?JournalEntry
@@ -185,7 +265,9 @@ class SalesAccountingService
     {
         $return->loadMissing('lines.product');
         $cost = $this->amounts->sum($return->lines->where('is_service', false)
-            ->map(fn ($line): string => $this->amounts->multiply($line->base_quantity, $line->original_unit_cost, 4)));
+            ->map(fn ($line): string => isset($line->source_snapshot['receipt_total_cost'])
+                ? $this->amounts->round($line->source_snapshot['receipt_total_cost'], 4)
+                : $this->amounts->multiply($line->base_quantity, $line->original_unit_cost, 4)));
         if ($this->amounts->compare($cost, '0') <= 0) {
             return null;
         }
@@ -200,6 +282,50 @@ class SalesAccountingService
             ['account_id' => $quarantine->getKey(), 'debit_amount' => $cost, 'credit_amount' => 0, 'description' => 'Returned goods quarantine'],
             ['account_id' => $this->account($return->company_id, PostingAccountResolver::CostOfGoodsSold)->getKey(), 'debit_amount' => 0, 'credit_amount' => $cost, 'description' => 'Cost of sales reversal'],
         ]);
+    }
+
+    public function reverseReturnedGoodsFromQuarantine(SalesReturn $return, JournalEntry $original, ?int $correctionId = null): JournalEntry
+    {
+        if ($original->source_type !== 'sales_return_quarantine_receipt'
+            || (int) $original->source_id !== (int) $return->getKey()
+            || (int) $original->company_id !== (int) $return->company_id) {
+            throw new DomainException(__('sales_return_correction.invalid_journal'));
+        }
+
+        $proposal = $correctionId === null ? null : app(SalesReturnCorrectionService::class)->execution($correctionId, 'return', (int) $return->id);
+        $header = $this->header($return, 'sales_return_quarantine_reversal', __('sales_return_correction.journal_description', ['return' => $return->doc_num]));
+        $header['entry_date'] = $proposal?->posting_date->toDateString() ?? $original->entry_date;
+        $header['financial_period_id'] = $proposal?->posting_financial_period_id ?? $original->financial_period_id;
+        $header['branch_id'] = $original->branch_id;
+        $header['currency_id'] = $original->currency_id;
+        $header['exchange_rate'] = $original->exchange_rate;
+        $inverse = $this->journals->createPostedReversalFromSource($original, $header);
+        app(SalesReturnCorrectionService::class)->assertInverse($original, $inverse, (int) $header['financial_period_id'],
+            Carbon::parse($header['entry_date'])->toDateString());
+
+        return $inverse;
+    }
+
+    public function reverseReturnDisposition(SalesReturn $return, JournalEntry $original, ?int $correctionId = null): JournalEntry
+    {
+        if ($original->source_type !== 'sales_return_financial_disposition'
+            || (int) $original->source_id !== (int) $return->getKey()
+            || (int) $original->company_id !== (int) $return->company_id) {
+            throw new DomainException(__('sales_return_correction.invalid_disposition_journal'));
+        }
+
+        $proposal = $correctionId === null ? null : app(SalesReturnCorrectionService::class)->execution($correctionId, 'return', (int) $return->id);
+        $header = $this->header($return, 'sales_return_disposition_reversal', __('sales_return_correction.disposition_journal_description', ['return' => $return->doc_num]));
+        $header['entry_date'] = $proposal?->posting_date->toDateString() ?? $original->entry_date;
+        $header['financial_period_id'] = $proposal?->posting_financial_period_id ?? $original->financial_period_id;
+        $header['branch_id'] = $original->branch_id;
+        $header['currency_id'] = $original->currency_id;
+        $header['exchange_rate'] = $original->exchange_rate;
+        $inverse = $this->journals->createPostedReversalFromSource($original, $header);
+        app(SalesReturnCorrectionService::class)->assertInverse($original, $inverse, (int) $header['financial_period_id'],
+            Carbon::parse($header['entry_date'])->toDateString());
+
+        return $inverse;
     }
 
     public function postReturnDisposition(SalesReturn $return): ?JournalEntry
@@ -220,7 +346,7 @@ class SalesAccountingService
                 'scrap_base_quantity' => $this->accounts->resolve((int) $return->company_id, PostingAccountResolver::WarehouseDamageLoss, __('Sales Return Disposition')),
             ];
             foreach ($profiles as $quantityField => $account) {
-                $amount = $this->amounts->multiply($line->{$quantityField}, $line->original_unit_cost, 4);
+                $amount = $this->returnDispositionCost($line, $quantityField);
                 if ($this->amounts->compare($amount, '0') <= 0) {
                     continue;
                 }
@@ -248,6 +374,15 @@ class SalesAccountingService
         return $this->journals->createPostedFromSource($this->header($return, 'sales_return_financial_disposition', 'Returned goods disposition '.$return->doc_num), $lines);
     }
 
+    public function returnDispositionCost(SalesReturnLine $line, string $quantityField, int $scale = 4): string
+    {
+        $frozen = data_get($line->source_snapshot, 'disposition_costs.'.$quantityField);
+
+        return $frozen !== null
+            ? $this->amounts->round((string) $frozen, $scale)
+            : $this->amounts->multiply($line->{$quantityField}, $line->original_unit_cost, $scale);
+    }
+
     private function account(int $companyId, string $classification): Account
     {
         return $this->accounts->resolveFirst($companyId, $classification, __('Sales accounting'));
@@ -270,6 +405,65 @@ class SalesAccountingService
     }
 
     /** @return array<string, mixed> */
+    public function assertInvoiceCorrectionSource(CustomerInvoice $invoice): void
+    {
+        $invoice->load('customer', 'lines', 'journalEntry.lines');
+        $this->assertCorrectionPosting($invoice->journalEntry, $this->invoicePostingLines($invoice), $invoice,
+            (int) $invoice->posting_revision === 0 ? 'customer_invoice' : 'customer_invoice_post_'.$invoice->posting_revision,
+            $invoice->invoice_date->toDateString());
+    }
+
+    public function assertDeliveryCorrectionSource(InventoryDocument $delivery): void
+    {
+        $delivery->load('lines.product', 'journalEntry.lines');
+        $this->assertCorrectionPosting($delivery->journalEntry, $this->deliveryPostingLines($delivery), $delivery,
+            'sales_delivery_cogs', $delivery->document_date->toDateString());
+    }
+
+    /** @param list<array<string,mixed>> $expected */
+    private function assertCorrectionPosting(?JournalEntry $journal, array $expected, object $document, string $sourceType, string $date): void
+    {
+        $header = $this->header($document, $sourceType, '');
+        if ($journal === null || ! $journal->is_posted || $journal->status !== JournalEntry::StatusPosted || $journal->trashed()
+            || $journal->reversed_entry_id !== null || $journal->entry_date->toDateString() !== $date
+            || JournalEntry::query()->where('reversed_entry_id', $journal->id)->exists()) {
+            throw new DomainException(__('invoice_correction.source_invalid'));
+        }
+        foreach (['company_id', 'branch_id', 'financial_period_id', 'currency_id', 'source_id', 'source_type', 'source_doc_num'] as $key) {
+            if ((string) $journal->{$key} !== (string) $header[$key]) {
+                throw new DomainException(__('invoice_correction.source_invalid'));
+            }
+        }
+        if (bccomp($journal->exchange_rate, (string) $header['exchange_rate'], 6) !== 0) {
+            throw new DomainException(__('invoice_correction.source_invalid'));
+        }
+        $group = function (iterable $rows) use ($journal): array {
+            $result = [];
+            foreach ($rows as $row) {
+                $key = [];
+                foreach (['account_id', 'branch_id', 'cost_center_id', 'customer_id', 'supplier_id', 'employee_id', 'bank_account_id', 'department_id'] as $dimension) {
+                    $key[] = data_get($row, $dimension) ?? ($dimension === 'branch_id' ? $journal->branch_id : 'none');
+                }
+                $key = implode(':', $key);
+                $result[$key] ??= ['debit' => '0.0000', 'credit' => '0.0000'];
+                foreach (['debit', 'credit'] as $side) {
+                    $amount = (string) (data_get($row, $side.'_amount') ?? '0');
+                    if (bccomp($amount, '0', 4) < 0) {
+                        throw new DomainException(__('invoice_correction.source_invalid'));
+                    }
+                    $result[$key][$side] = bcadd($result[$key][$side], $amount, 4);
+                }
+            }
+            ksort($result);
+
+            return $result;
+        };
+        if ($group($expected) !== $group($journal->lines)) {
+            throw new DomainException(__('invoice_correction.source_invalid'));
+        }
+        $this->journals->assertNoPostedCostAllocations((int) $journal->id);
+    }
+
     private function header(object $document, string $sourceType, string $description): array
     {
         $currencyId = $document->currency_id ?? Currency::query()

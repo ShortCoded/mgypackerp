@@ -18,6 +18,10 @@ class OpeningStockPricing extends Model
 {
     use SoftDeletes;
 
+    public const BasisDocumented = 'documented';
+
+    public const BasisEstimate = 'estimate';
+
     public const StatusDraft = 'draft';
 
     public const StatusClosed = 'closed';
@@ -37,6 +41,15 @@ class OpeningStockPricing extends Model
         'exchange_rate',
         'total_amount',
         'notes',
+        'pricing_basis',
+        'source_reference',
+        'estimate_basis_note',
+        'approval_reference',
+        'approved_by',
+        'approved_at',
+        'source_file_path',
+        'source_file_sha256',
+        'source_file_name',
         'is_closed',
         'status',
         'created_by',
@@ -51,6 +64,7 @@ class OpeningStockPricing extends Model
         'total_amount' => 0,
         'is_closed' => true,
         'status' => self::StatusClosed,
+        'pricing_basis' => self::BasisDocumented,
     ];
 
     protected function casts(): array
@@ -64,6 +78,7 @@ class OpeningStockPricing extends Model
             'updated_at' => 'datetime',
             'deleted_at' => 'datetime',
             'restored_at' => 'datetime',
+            'approved_at' => 'datetime',
         ];
     }
 
@@ -120,6 +135,11 @@ class OpeningStockPricing extends Model
     public function createdBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function approvedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'approved_by');
     }
 
     public function updatedBy(): BelongsTo

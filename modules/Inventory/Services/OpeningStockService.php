@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Company;
+use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
@@ -111,6 +113,8 @@ class OpeningStockService
     {
         return DB::transaction(function () use ($record): OpeningStock {
             $this->assertInCurrentContext($record, $this->currentContext());
+            Company::query()->whereKey($record->company_id)->lockForUpdate()->firstOrFail();
+            FinancialPeriod::query()->whereKey($record->financial_period_id)->lockForUpdate()->firstOrFail();
 
             /** @var OpeningStock $locked */
             $locked = OpeningStock::query()
@@ -248,6 +252,10 @@ class OpeningStockService
             }
 
             $snapshot = $this->lineProductSnapshot($existingLine, $product);
+            if (array_key_exists('serial_numbers', $line)) {
+                $snapshot['serial_numbers'] = app(InventorySerialService::class)->receiptNumbers($product,
+                    $this->numbers->normalizeToScale($line['quantity'] ?? 0, 4) ?? '0', $line['serial_numbers']);
+            }
             $lineValues = [
                 'company_id' => $context['company_id'],
                 'financial_period_id' => $context['financial_period_id'],
@@ -335,6 +343,7 @@ class OpeningStockService
                 'products.item_classification',
                 'products.status',
                 'products.item_unit_id',
+                'products.tracks_serials',
                 'item_units.doc_num as unit_doc_num',
                 'item_units.name as unit_name',
                 'item_categories.name as category_name',

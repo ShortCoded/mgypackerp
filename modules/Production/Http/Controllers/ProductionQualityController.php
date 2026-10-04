@@ -38,6 +38,7 @@ use Modules\Production\Models\ProductionQualityInspection;
 use Modules\Production\Models\ProductionQualityInspectionReport;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Models\QualityInspectionType;
+use Modules\Production\Services\ProductionCorrectionContextService;
 use Modules\Production\Services\ProductionQualityWorkflowService;
 use Modules\Production\Services\ProductionReportService;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
@@ -215,7 +216,7 @@ class ProductionQualityController extends Controller
         $selectedInspectionTypeId = (int) old('quality_inspection_type_id', $record?->quality_inspection_type_id);
         $runs = ProductionRun::query()
             ->where('company_id', $context['company_id'])
-            ->where('financial_period_id', $context['financial_period_id'])
+            ->tap(fn ($query) => app(ProductionCorrectionContextService::class)->scopeRunsForPeriod($query, (int) $context['financial_period_id']))
             ->where('branch_id', $context['branch_id'])
             ->where(fn ($query) => $query->whereIn('status', [ProductionRun::StatusRunning, ProductionRun::StatusHeld])->orWhere('id', $selectedRunId))
             ->whereKey($selectedRunId ?: -1)
@@ -255,7 +256,7 @@ class ProductionQualityController extends Controller
             'runs' => response()->json($select2->paginated(
                 tap(ProductionRun::query()
                     ->where('company_id', $context['company_id'])
-                    ->where('financial_period_id', $context['financial_period_id'])
+                    ->tap(fn ($query) => app(ProductionCorrectionContextService::class)->scopeRunsForPeriod($query, (int) $context['financial_period_id']))
                     ->where('branch_id', $context['branch_id'])
                     ->whereIn('status', [ProductionRun::StatusRunning, ProductionRun::StatusHeld])
                     ->with(['product', 'stageSnapshot'])
@@ -666,7 +667,7 @@ class ProductionQualityController extends Controller
 
         return ProductionRun::query()
             ->where('company_id', $context['company_id'])
-            ->where('financial_period_id', $context['financial_period_id'])
+            ->tap(fn ($query) => app(ProductionCorrectionContextService::class)->scopeRunsForPeriod($query, (int) $context['financial_period_id']))
             ->where('branch_id', $context['branch_id'])
             ->findOrFail($run);
     }

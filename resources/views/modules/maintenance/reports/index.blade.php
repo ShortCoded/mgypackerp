@@ -4,6 +4,11 @@
 
 @php
     $dates = app(\Modules\Core\Services\DateFormatService::class);
+    $exportOptions = [
+        ['url' => route('admin.maintenance.reports.export', request()->query()), 'label' => __('Export Excel'), 'icon' => 'file-excel'],
+        ['url' => route('admin.maintenance.reports.export.csv', request()->query()), 'label' => __('Export CSV'), 'icon' => 'file-csv'],
+        ['url' => route('admin.maintenance.reports.print', request()->query()), 'label' => __('Print / PDF'), 'icon' => 'file-pdf', 'newTab' => true],
+    ];
 @endphp
 
 @section('content')
@@ -14,10 +19,7 @@
             <div class="text-muted">{{ __('maintenance.reports.description') }}</div>
         </div>
         @can('maintenance.reports.export')
-            <div class="d-flex flex-wrap gap-2">
-                <a class="btn btn-outline-success" href="{{ route('admin.maintenance.reports.export', request()->query()) }}">{{ __('maintenance.actions.export_excel') }}</a>
-                <a class="btn btn-outline-secondary" target="_blank" href="{{ route('admin.maintenance.reports.print', request()->query()) }}">{{ __('maintenance.actions.print_pdf') }}</a>
-            </div>
+            <x-admin.report.actions-toolbar :export-options="$exportOptions" :show-filters="false" :show-refresh="false" />
         @endcan
     </div>
 
@@ -73,6 +75,18 @@
         </div>
     </div>
 
+    @if($materialQuantityTotals->isNotEmpty())
+        <div class="card mb-3">
+            <div class="card-header"><h5 class="mb-0">{{ __('maintenance.reports.material_quantities_by_unit') }}</h5></div>
+            <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead><tr><th>{{ __('Unit') }}</th><th class="text-end">{{ __('maintenance.reports.requested_material_quantity') }}</th><th class="text-end">{{ __('maintenance.reports.issued_material_quantity') }}</th><th class="text-end">{{ __('maintenance.reports.consumed_material_quantity') }}</th><th class="text-end">{{ __('maintenance.reports.returned_material_quantity') }}</th><th class="text-end">{{ __('maintenance.reports.net_material_quantity') }}</th></tr></thead>
+                    <tbody>@foreach($materialQuantityTotals as $total)<tr><td>{{ $total['unit'] }}</td><td class="text-end">{{ $numbers->format($total['requested']) }}</td><td class="text-end">{{ $numbers->format($total['issued']) }}</td><td class="text-end">{{ $numbers->format($total['consumed']) }}</td><td class="text-end">{{ $numbers->format($total['returned']) }}</td><td class="text-end">{{ $numbers->format($total['net']) }}</td></tr>@endforeach</tbody>
+                </table>
+            </div>
+        </div>
+    @endif
+
     <div class="card mb-3">
         <div class="card-header"><h5 class="mb-0">{{ __('maintenance.reports.orders_table') }}</h5></div>
         <div class="table-responsive">
@@ -89,7 +103,7 @@
                             $returnedMaterialQuantity = $materialLines->reduce(fn (string $carry, $line): string => bcadd($carry, (string) $line->returned_quantity, 8), '0.00000000');
                             $netMaterialQuantity = $materialLines->reduce(fn (string $carry, $line): string => bcadd($carry, bcsub((string) $line->issued_quantity, (string) $line->returned_quantity, 8), 8), '0.00000000');
                             $displayMaterialQuantity = fn (string $quantity): string => rtrim(rtrim($quantity, '0'), '.') ?: '0';
-                            $expenseSummary = $order->expenses->groupBy(fn ($expense) => $expense->currency?->code ?: '—')->map(fn ($rows, $currency) => $currency.': '.$rows->sum('amount'))->implode(' | ');
+                            $expenseSummary = $order->expenses->groupBy(fn ($expense) => $expense->currency?->code ?: '—')->map(fn ($rows, $currency): string => $currency.': '.$rows->reduce(fn (string $carry, $expense): string => bcadd($carry, (string) $expense->amount, 4), '0.0000'))->implode(' | ');
                         @endphp
                         <tr>
                             <td><a href="{{ route('admin.maintenance.orders.show', $order) }}">{{ $order->doc_num }}</a></td>

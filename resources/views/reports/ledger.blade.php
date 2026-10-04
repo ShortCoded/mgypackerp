@@ -28,7 +28,7 @@
                             <td>{{ $movement['source_doc_num'] ?: $movement['doc_num'] }}</td>
                             <td>{{ $movement['reference_no'] ?: '—' }}</td>
                             <td>{{ $movement['description'] }}</td>
-                            @if($showCollectionDetails)<td>{{ $movement['collector'] ?: '—' }}</td><td>{{ $movement['collection_source'] ?: '—' }}</td>@endif
+                            @if($showCollectionDetails)<td>{!! nl2br(e(str_replace(' / ', "\n", $movement['collector'] ?: '—'))) !!}</td><td>{{ $movement['collection_source'] ?: '—' }}</td>@endif
                             <td>{{ $numbers->format($movement['debit']) }}</td>
                             <td>{{ $numbers->format($movement['credit']) }}</td>
                             <td>{{ $numbers->format((float) $movement['running_credit'] !== 0.0 ? $movement['running_credit'] : $movement['running_debit']) }} {{ __('ledger_reports.balance.'.((float) $movement['running_credit'] !== 0.0 ? 'credit' : 'debit')) }}</td>
@@ -63,7 +63,7 @@
                         <td>{{ $movement['source_doc_num'] ?: $movement['doc_num'] }}</td>
                         <td>{{ $movement['reference_no'] ?: '—' }}</td>
                         <td>{{ $movement['description'] }}</td>
-                        @if($showCollectionDetails)<td>{{ $movement['collector'] ?: '—' }}</td><td>{{ $movement['collection_source'] ?: '—' }}</td>@endif
+                        @if($showCollectionDetails)<td>{!! nl2br(e(str_replace(' / ', "\n", $movement['collector'] ?: '—'))) !!}</td><td>{{ $movement['collection_source'] ?: '—' }}</td>@endif
                         <td>{{ $numbers->format($movement['debit']) }}</td>
                         <td>{{ $numbers->format($movement['credit']) }}</td>
                         <td>{{ $numbers->format((float) $movement['running_credit'] !== 0.0 ? $movement['running_credit'] : $movement['running_debit']) }} {{ __('ledger_reports.balance.'.((float) $movement['running_credit'] !== 0.0 ? 'credit' : 'debit')) }}</td>
@@ -81,6 +81,10 @@
             </tfoot>
         </table>
     @else
+    @php($movementChunks = array_chunk($result['movements'], 20))
+    @php($movementChunks = $movementChunks === [] ? [[]] : $movementChunks)
+    @foreach($movementChunks as $chunkIndex => $chunk)
+    @if($chunkIndex > 0)<pagebreak />@endif
     <table dir="{{ $direction ?? 'ltr' }}" class="report-table ledger-report-table">
         <thead>
             <tr>
@@ -90,6 +94,7 @@
             </tr>
         </thead>
         <tbody>
+            @if($chunkIndex === 0)
             <tr>
                 <td>{{ $dates->formatDate(data_get($result, 'filters.from_date'), '') }}</td>
                 <td>{{ __('ledger_reports.summary.opening') }}</td>
@@ -99,7 +104,8 @@
                 <td>{{ $numbers->format($result['opening']['debit']) }}</td>
                 <td>{{ $numbers->format($result['opening']['credit']) }}</td>
             </tr>
-            @foreach($result['movements'] as $movement)
+            @endif
+            @foreach($chunk as $movement)
                 <tr>
                     <td>{{ $dates->formatDate($movement['entry_date'], $movement['entry_date']) }}</td>
                     <td>{{ app(\Modules\Accounting\Services\JournalSourceLabelService::class)->label($movement['source_type']) }}</td>
@@ -115,6 +121,7 @@
                 </tr>
             @endforeach
         </tbody>
+        @if($loop->last)
         <tfoot>
             <tr>
                 <td>{{ $dates->formatDate(data_get($result, 'filters.to_date'), '') }}</td>
@@ -126,15 +133,17 @@
                 <td>{{ $numbers->format($result['ending']['credit']) }}</td>
             </tr>
         </tfoot>
+        @endif
     </table>
+    @endforeach
     @endif
 
     <style>
         .report-filter-summary { background: #f8fafc; border: 1px solid #d8e2ef; margin-bottom: 8px; padding: 6px 8px; }
         .ledger-report-table { table-layout: fixed; }
-        .ledger-report-table th, .ledger-report-table td { font-size: 6.7px; line-height: 1.25; overflow-wrap: break-word; }
+        .ledger-report-table th, .ledger-report-table td { font-size: 12px; line-height: 1.3; overflow-wrap: break-word; }
         .partner-statement-table { table-layout: fixed; }
-        .partner-statement-table th, .partner-statement-table td { font-size: 7.6px; line-height: 1.3; overflow-wrap: anywhere; word-break: break-word; }
+        .partner-statement-table th, .partner-statement-table td { font-size: 12px; line-height: 1.3; overflow-wrap: anywhere; word-break: break-word; }
         .partner-statement-table th { white-space: normal; }
         .partner-statement-table td:nth-last-child(-n+3) { white-space: nowrap; }
     </style>

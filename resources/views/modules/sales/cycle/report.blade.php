@@ -2,6 +2,7 @@
 
 @php
     $numbers = app(\Modules\Core\Services\NumericFormatService::class);
+    $fulfillmentNumbers = app(\Modules\Sales\Services\SalesCycleReadService::class);
     $dates = app(\Modules\Core\Services\DateFormatService::class);
     $reportTypes = $allowedReportTypes;
     $reportPermissionPrefix = 'reports.sales.'.$reportType;
@@ -195,6 +196,15 @@
             </div>
         @endif
 
+        @if(in_array($reportType, ['financial', 'invoices', 'operational'], true) && $creditMovements->isNotEmpty())
+            <p class="text-muted small">{{ __('sales_balance_report.cutoff', ['date' => $dateValue($returnCutoff)]) }}</p>
+            <x-admin.report.table-card :title="__('sales_balance_report.movements')" table-id="sales-credit-movements" class="mb-3">
+                <thead><tr><th>{{ __('Document') }}</th><th>{{ __('Customer') }}</th><th>{{ __('Date') }}</th><th>{{ __('Type') }}</th><th>{{ __('sales_balance_report.signed_amount') }}</th></tr></thead>
+                <tbody>@foreach($creditMovements as $movement)<tr><td>{{ $movement['document'] }}</td><td>{{ $movement['customer'] }}</td><td>{{ $dateValue($movement['posting_date']) }}</td><td>{{ __('sales_balance_report.'.$movement['kind']) }}</td><td dir="ltr" class="text-end">{{ $numbers->format($movement['signed_amount']) }}</td></tr>@endforeach</tbody>
+                <tfoot><tr class="fw-bold"><td colspan="4">{{ __('Totals') }}</td><td dir="ltr" class="text-end" data-credit-movement-total="net_sales">{{ $numbers->format($creditMovements->reduce(fn (string $total, array $row): string => bcadd($total, $row['signed_amount'], 4), '0.0000')) }}</td></tr></tfoot>
+            </x-admin.report.table-card>
+        @endif
+
         @if(in_array($reportType, ['customers', 'financial'], true))
             <x-admin.report.table-card :title="__('Sales / Outstanding by Customer')" table-id="sales-by-customer" class="mb-3"><thead><tr><th>{{ __('Customer') }}</th><th class="text-end">{{ __('Sales') }}</th><th class="text-end">{{ __('Outstanding') }}</th></tr></thead><tbody>@forelse($salesByCustomer as $row)<tr><td>{{ $row->doc_num }} / {{ $row->name }}</td><td class="text-end">{{ $numbers->format($row->sales_value) }}</td><td class="text-end">{{ $numbers->format($row->outstanding) }}</td></tr>@empty{!! $emptyRow(3) !!}@endforelse</tbody><tfoot><tr class="fw-bold"><td class="text-end">{{ __('Totals') }} ({{ $customerSummary['customer_count'] ?? 0 }})</td><td class="text-end" data-customer-total="sales_value">{{ $numbers->format($customerSummary['sales_value'] ?? 0) }}</td><td class="text-end" data-customer-total="outstanding">{{ $numbers->format($customerSummary['outstanding'] ?? 0) }}</td></tr></tfoot></x-admin.report.table-card>
         @endif
@@ -231,7 +241,7 @@
         @endif
 
         @if(in_array($reportType, ['fulfillment', 'operational'], true))
-            <x-admin.report.table-card :title="__('Invoice to Delivery Fulfillment')" table-id="sales-fulfillment" class="mb-3"><thead><tr><th>{{ __('Order') }}</th><th>{{ __('Customer') }}</th><th>{{ __('Required date') }}</th><th>{{ __('Status') }}</th><th class="text-end">{{ __('Ordered') }}</th><th class="text-end">{{ __('Invoiced') }}</th><th class="text-end">{{ __('Delivered') }}</th><th class="text-end">{{ __('Remaining Delivery') }}</th></tr></thead><tbody>@forelse($openOrders as $order)<tr><td><a href="{{ route('admin.sales.sales-orders.show', $order) }}">{{ $order->doc_num }}</a></td><td>{{ $order->customer?->name }}</td><td>{{ $dateValue($order->expected_delivery_date) }}</td><td>{{ __(str($order->status)->replace('_', ' ')->title()->toString()) }}</td><td class="text-end">{{ $numbers->format($order->ordered_quantity) }}</td><td class="text-end">{{ $numbers->format($order->lines->sum('invoiced_quantity')) }}</td><td class="text-end">{{ $numbers->format($order->delivered_quantity) }}</td><td class="text-end">{{ $numbers->format(max(0, (float) $order->ordered_quantity - (float) $order->delivered_quantity)) }}</td></tr>@empty{!! $emptyRow(8) !!}@endforelse</tbody></x-admin.report.table-card>
+            <x-admin.report.table-card :title="__('Invoice to Delivery Fulfillment')" table-id="sales-fulfillment" class="mb-3"><thead><tr><th>{{ __('Order') }}</th><th>{{ __('Customer') }}</th><th>{{ __('Required date') }}</th><th>{{ __('Status') }}</th><th class="text-end">{{ __('Ordered') }}</th><th class="text-end">{{ __('Invoiced') }}</th><th class="text-end">{{ __('Delivered') }}</th><th class="text-end">{{ __('Remaining Delivery') }}</th></tr></thead><tbody>@forelse($openOrders as $order)@php($fulfillmentRow = $fulfillmentNumbers->fulfillmentQuantities($order))<tr><td><a href="{{ route('admin.sales.sales-orders.show', $order) }}">{{ $order->doc_num }}</a></td><td>{{ $order->customer?->name }}</td><td>{{ $dateValue($order->expected_delivery_date) }}</td><td>{{ __(str($order->status)->replace('_', ' ')->title()->toString()) }}</td><td class="text-end">{{ $numbers->format($fulfillmentRow['ordered']) }}</td><td class="text-end">{{ $numbers->format($fulfillmentRow['invoiced']) }}</td><td class="text-end">{{ $numbers->format($fulfillmentRow['delivered']) }}</td><td class="text-end">{{ $numbers->format($fulfillmentRow['remaining']) }}</td></tr>@empty{!! $emptyRow(8) !!}@endforelse</tbody></x-admin.report.table-card>
         @endif
 
         @if($reportType === 'returns')

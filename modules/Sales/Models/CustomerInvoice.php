@@ -44,7 +44,7 @@ class CustomerInvoice extends Model
             'paid_amount' => 'decimal:4', 'credited_amount' => 'decimal:4', 'remaining_amount' => 'decimal:4',
             'credit_available_amount' => 'decimal:4', 'credit_allocated_amount' => 'decimal:4',
             'credit_refunded_amount' => 'decimal:4',
-            'payment_terms_snapshot' => 'array', 'is_closed' => 'boolean', 'issued_at' => 'datetime',
+            'payment_terms_snapshot' => 'array', 'credit_application_snapshot' => 'array', 'is_closed' => 'boolean', 'issued_at' => 'datetime',
             'posting_revision' => 'integer',
             'cancelled_at' => 'datetime', 'reopened_at' => 'datetime',
             'print_identity_snapshot' => 'array', 'electronic_invoice_response' => 'array',
@@ -66,7 +66,24 @@ class CustomerInvoice extends Model
 
     public function isEditable(): bool
     {
-        return in_array($this->status, [self::StatusDraft, self::StatusReopened], true) && ! $this->is_closed;
+        if ($this->is_closed) {
+            return false;
+        }
+
+        if ($this->status === self::StatusDraft) {
+            return $this->posting_status === 'unposted'
+                && (int) $this->posting_revision === 0
+                && $this->reopened_at === null
+                && $this->journal_entry_id === null
+                && $this->reversal_journal_entry_id === null;
+        }
+
+        return $this->status === self::StatusReopened
+            && $this->posting_status === 'reopen_pending_repost'
+            && (int) $this->posting_revision > 0
+            && $this->reopened_at !== null
+            && $this->journal_entry_id !== null
+            && $this->reversal_journal_entry_id !== null;
     }
 
     public static function allowsFullCrud(): bool
@@ -81,14 +98,18 @@ class CustomerInvoice extends Model
             && $this->isEditable();
     }
 
+    public function hasApprovedCorrection(): bool
+    {
+        return $this->creditNotes()->where('source_type', CustomerInvoiceCorrection::class)->where('posting_status', 'posted')->exists();
+    }
+
     public function canDeleteDraft(): bool
     {
         return self::allowsFullCrud()
             && $this->document_type === self::TypeInvoice
             && $this->source_type !== 'fixed_asset_disposal'
             && $this->status === self::StatusDraft
-            && $this->posting_status === 'unposted'
-            && ! $this->is_closed;
+            && $this->isEditable();
     }
 
     public function canReopenSafely(): bool

@@ -2,10 +2,13 @@
 
 namespace Modules\Sales\Services;
 
+use Modules\Core\Services\NumericFormatService;
 use Modules\Sales\Models\PriceList;
 
 class PriceListReportData
 {
+    public function __construct(private readonly NumericFormatService $numbers) {}
+
     /**
      * @return array{header: array<string, mixed>, lines: list<array<string, mixed>>, export_headings: list<string>, export_rows: list<list<mixed>>}
      */
@@ -38,7 +41,7 @@ class PriceListReportData
             'line_number' => (int) $line->line_number,
             'product_code' => (string) ($line->product?->doc_num ?? $empty),
             'product_name' => (string) ($line->product?->name ?? $empty),
-            'unit_price' => (string) $line->unit_price,
+            'unit_price' => $this->numbers->normalize((string) $line->unit_price),
             'discount_type' => $line->allowed_discount_type
                 ? __('price_lists.'.$line->allowed_discount_type)
                 : __('price_lists.no_discount'),

@@ -6,11 +6,15 @@
     $currentType = old('document_type', $record?->document_type);
     $currentSourceStoreUuid = old('branch_store_uuid', $record?->branchStore?->public_uuid);
     $currentDestinationStoreUuid = old('destination_branch_store_uuid', $record?->destinationBranchStore?->public_uuid);
+    $record?->loadMissing(['lines.selectedReceiptLayer.receiptTransaction', 'lines.serialIdentity']);
     $recordLines = $record?->lines?->map(fn ($line) => [
         'product_doc_num' => $line->product?->doc_num,
         'product_text' => trim(($line->product?->doc_num ?? '').' — '.($line->product?->name ?? '')),
         'quantity' => $line->quantity,
+        'selected_receipt_layer_id' => $line->selected_receipt_layer_id,
+        'selected_receipt_layer_text' => $line->selectedReceiptLayer?->receiptTransaction?->source_doc_num.' — '.$line->batch_lot,
         'batch_lot' => $line->batch_lot,
+        'serial_numbers' => $line->selected_receipt_layer_id === null ? ($line->serialIdentity?->serial_number ?? '') : '',
         'manufacture_date' => $line->manufacture_date?->toDateString(),
         'expiry_date' => $line->expiry_date?->toDateString(),
         'notes' => $line->notes,
@@ -75,9 +79,12 @@
                                 data-production-run-batch
                                 :data-extra-params="json_encode(['document_type' => '#inventory-document-type'])"
                                 data-details-url="{{ route('admin.inventory.documents.production-batches.details', ['publicId' => '__BATCH_ID__']) }}"
-                            />
+                            >
+                                @if($batchLayerSelectionData['batch'] ?? null)<option value="{{ $batchLayerSelectionData['batch']['id'] }}" selected>{{ $batchLayerSelectionData['batch']['text'] }}</option>@endif
+                            </x-forms.select>
                             <div class="form-text" data-production-run-batch-help></div>
                             <div class="alert alert-info mt-3 mb-0" data-production-run-batch-preview hidden aria-live="polite"></div>
+                            <div data-inventory-batch-material-selections></div>
                         </div>
                     @endif
                 @endif
@@ -97,6 +104,8 @@
                         <x-forms.select variant="ajax" id="inventory-source-store" name="branch_store_uuid" :url="route('admin.inventory.documents.select2.stores')" :placeholder="__('inventory.movements.placeholders.select_store')" required>
                             @if($record?->branchStore && $currentSourceStoreUuid === $record->branchStore->public_uuid)
                                 <option value="{{ $record->branchStore->public_uuid }}" selected>{{ $record->branchStore->name }}</option>
+                            @elseif($batchLayerSelectionData['store'] ?? null)
+                                <option value="{{ $batchLayerSelectionData['store']['id'] }}" selected>{{ $batchLayerSelectionData['store']['text'] }}</option>
                             @endif
                         </x-forms.select>
                         <div class="invalid-feedback d-block" data-error-for="branch_store_uuid"></div>
@@ -159,7 +168,9 @@
                                     <th class="text-center erp-entry-line-number">#</th>
                                     <th class="erp-entry-line-item">{{ __('inventory.movements.fields.product') }}</th>
                                     <th class="erp-entry-line-quantity">{{ __('inventory.movements.fields.quantity') }}</th>
+                                    <th class="erp-entry-line-item">{{ __('inventory_cost_policy.selected_layer') }}</th>
                                     <th class="erp-entry-line-batch">{{ __('inventory.movements.fields.batch_lot') }}</th>
+                                    <th class="erp-entry-line-text">{{ __('inventory_serial.numbers') }}</th>
                                     <th class="erp-entry-line-date">{{ __('inventory.movements.fields.manufacture_date') }}</th>
                                     <th class="erp-entry-line-date">{{ __('inventory.movements.fields.expiry_date') }}</th>
                                     <th class="erp-entry-line-text">{{ __('inventory.movements.fields.notes') }}</th>
@@ -200,7 +211,13 @@
                 <x-forms.numeric-input :scale="8" step="0.00000001" arrow-step="1" min="0.00000001" name="lines[__INDEX__][quantity]" required />
             </td>
             <td class="erp-entry-line-batch">
+                <x-forms.select variant="ajax" name="lines[__INDEX__][selected_receipt_layer_id]" :url="route('admin.inventory.documents.select2.receipt-layers')" :placeholder="__('inventory_cost_policy.selected_layer')" data-selected-receipt-layer></x-forms.select>
+            </td>
+            <td class="erp-entry-line-batch">
                 <x-forms.input name="lines[__INDEX__][batch_lot]" maxlength="100" />
+            </td>
+            <td class="erp-entry-line-text">
+                <x-forms.textarea name="lines[__INDEX__][serial_numbers]" rows="2" :placeholder="__('inventory_serial.input_help')" />
             </td>
             <td class="erp-entry-line-date">
                 <x-forms.date-input name="lines[__INDEX__][manufacture_date]" />
@@ -224,7 +241,30 @@
         </tr>
     </template>
 
+    <template data-inventory-batch-material-template>
+        <div class="border rounded p-3 mt-3" data-material-layer-selections data-line-index="__LINE__" data-next-slice="1">
+            <h6 data-batch-material-label></h6>
+            <p class="small text-muted">{{ __('inventory_cost_policy.batch_selection_help') }}</p>
+            <x-forms.input type="hidden" name="batch_material_selections[__LINE__][requirement_id]" data-batch-requirement-id />
+            <div data-material-layer-rows>
+                <div class="row g-2 mb-2" data-material-layer-row>
+                    <div class="col-7"><x-forms.select variant="ajax" name="batch_material_selections[__LINE__][receipt_layers][0][layer_id]" :placeholder="__('inventory_cost_policy.selected_layer')" data-batch-receipt-layer data-depends-on="#inventory-source-store" data-dependent-param="branch_store_uuid" data-disable-when-dependency-empty="true" /></div>
+                    <div class="col-4"><x-forms.numeric-input name="batch_material_selections[__LINE__][receipt_layers][0][quantity]" :scale="8" /></div>
+                    <div class="col-1"><button type="button" class="btn btn-link text-danger" data-remove-material-layer aria-label="{{ __('inventory_cost_policy.remove_selection') }}">×</button></div>
+                </div>
+            </div>
+            <template data-material-layer-template><div class="row g-2 mb-2" data-material-layer-row>
+                <div class="col-7"><x-forms.select variant="ajax" name="batch_material_selections[__LINE__][receipt_layers][__SLICE__][layer_id]" :placeholder="__('inventory_cost_policy.selected_layer')" data-batch-receipt-layer data-depends-on="#inventory-source-store" data-dependent-param="branch_store_uuid" data-disable-when-dependency-empty="true" /></div>
+                <div class="col-4"><x-forms.numeric-input name="batch_material_selections[__LINE__][receipt_layers][__SLICE__][quantity]" :scale="8" /></div>
+                <div class="col-1"><button type="button" class="btn btn-link text-danger" data-remove-material-layer aria-label="{{ __('inventory_cost_policy.remove_selection') }}">×</button></div>
+            </div></template>
+            <button type="button" class="btn btn-falcon-default btn-sm" data-add-material-layer>{{ __('inventory_cost_policy.add_selection') }}</button>
+        </div>
+    </template>
     <script type="application/json" data-inventory-movement-ui>{!! \Illuminate\Support\Js::encode([
+        'receiptLayersUrl' => route('admin.inventory.documents.select2.receipt-layers'),
+        'oldBatchSelections' => $batchLayerSelectionData['selections'] ?? [],
+        'oldBatchId' => $batchLayerSelectionData['batch']['id'] ?? null,
         'store' => __('inventory.movements.fields.store'),
         'sourceStore' => __('inventory.movements.fields.source_store'),
         'batchLoading' => __('inventory.movements.messages.production_run_batch_loading'),
@@ -247,5 +287,6 @@
 @endsection
 
 @push('scripts')
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Production/material-layer-selection.js') }}"></script>
     <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Inventory/inventory-movements.js') }}"></script>
 @endpush

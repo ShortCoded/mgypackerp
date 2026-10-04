@@ -8,6 +8,8 @@
     @include('reports.partials.company-identity')
     @php
         $showLot = $record->lines->contains(fn ($line) => filled($line->batch_lot));
+        $record->loadMissing('lines.serialIdentity');
+        $showSerial = $record->lines->contains(fn ($line) => $line->inventory_serial_identity_id !== null);
         $showLineSource = $record->lines->contains(fn ($line) => filled($line->source_line_public_id));
         $showCost = $record->lines->contains(fn ($line) => $line->unit_cost !== null);
         $costCorrection = data_get($record->lines->first()?->product_snapshot, 'cost_correction');
@@ -24,11 +26,11 @@
         @if($record->productionMaterialRequest)
             <tr><th>{{ __('inventory.movements.production_material_request') }}</th><td dir="ltr" colspan="3">{{ $record->productionMaterialRequest->doc_num }}</td></tr>
         @endif
-        <tr><th>{{ __('Reason') }}</th><td colspan="3">{{ $record->movement_reason ?: $record->purpose ?: '—' }}</td></tr>
+        <tr><th>{{ __('Reason') }}</th><td colspan="3">{{ $record->movementReasonText() }}</td></tr>
     </tbody></table>
 
     <table dir="{{ $direction ?? 'ltr' }}" class="report-table inventory-document-lines">
-        <thead><tr><th>#</th><th>{{ __('Product') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th>@if($showCost)<th>{{ __('inventory.movements.fields.unit_cost') }}</th><th>{{ __('inventory.movements.receipt_pricing_total') }}</th>@endif @if($showLot)<th>{{ __('Batch / lot') }}</th>@endif @if($showLineSource)<th>{{ __('Source line') }}</th>@endif</tr></thead>
+        <thead><tr><th>#</th><th>{{ __('Product') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th>@if($showCost)<th>{{ __('inventory.movements.fields.unit_cost') }}</th><th>{{ __('inventory.movements.receipt_pricing_total') }}</th>@endif @if($showLot)<th>{{ __('Batch / lot') }}</th>@endif @if($showSerial)<th>{{ __('inventory_serial.number') }}</th>@endif @if($showLineSource)<th>{{ __('Source line') }}</th>@endif</tr></thead>
         <tbody>@foreach($record->lines as $line)<tr>
             <td>{{ $line->line_number }}</td>
             <td>@include('reports.partials.item-details', ['line' => $line])</td>
@@ -36,6 +38,7 @@
             <td dir="ltr">{{ $numbers->format($line->transaction_quantity ?: $line->quantity) }}</td>
             @if($showCost)<td dir="ltr">{{ $line->unit_cost === null ? '—' : $numbers->format($line->unit_cost, 8) }}</td><td dir="ltr">{{ $line->total_cost === null ? '—' : $numbers->format($line->total_cost) }}</td>@endif
             @if($showLot)<td dir="ltr">{{ $line->batch_lot }}</td>@endif
+            @if($showSerial)<td dir="ltr">{{ $line->serialIdentity?->serial_number }}</td>@endif
             @if($showLineSource)<td dir="ltr">{{ $line->source_line_public_id }}</td>@endif
         </tr>@endforeach</tbody>
     </table>

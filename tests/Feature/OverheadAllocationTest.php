@@ -1,20 +1,24 @@
 <?php
 
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Models\OverheadAllocationRule;
 use Modules\Accounting\Models\OverheadAllocationRun;
+use Modules\Accounting\Services\AccountClassificationRegistry;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Accounting\Services\OverheadAllocationService;
 use Modules\Accounting\Services\PeriodClosePreflightService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryDocumentLine;
+use Modules\Production\Models\ProductionExpenseRequest;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionOrderLine;
 use Modules\Production\Models\ProductionProgressEntry;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Services\ProductionCostService;
+use Modules\Production\Services\ProductionExpenseRequestService;
 use Spatie\Permission\Models\Permission;
 
 require_once dirname(__DIR__).'/SalesCycleSupport.php';
@@ -238,6 +242,70 @@ test('variable overhead allocates 30000 by recorded 60 40 machine hours and post
         ->and(app(ProductionCostService::class)->runPosition($runA)['allocated_overhead'])->toBe('18000.00000000')
         ->and(app(ProductionCostService::class)->runPosition($runB)['allocated_overhead'])->toBe('12000.00000000')
         ->and(app(ProductionCostService::class)->receiptCost($runA, '100.00000000'))->toBe('18000.00000000');
+});
+
+test('labor-hours cost allocation reverses before its source and never reallocates the reversed source', function (): void {
+    $fixture = overheadAllocationFixture();
+    $source = overheadSourceJournal($fixture, '300');
+    $runA = overheadProductionRun($fixture, $fixture['targetCenterA'], 1, null, [3]);
+    $runB = overheadProductionRun($fixture, $fixture['targetCenterB'], 2, null, [7]);
+    $rule = overheadRule($fixture, ['basis' => OverheadAllocationRule::BasisLaborHours, 'fallback_basis' => null]);
+    $service = app(OverheadAllocationService::class);
+    $preview = $service->preview($rule, $fixture['period'], $fixture['branch']->id,
+        $fixture['period']->from_date->toDateString(), $fixture['period']->to_date->toDateString());
+    $posted = $service->approve($preview);
+    expect(app(ProductionCostService::class)->receiptCost($runA, '100'))->toBe('90.00000000')
+        ->and(app(ProductionCostService::class)->receiptCost($runB, '100'))->toBe('210.00000000');
+    $header = ['entry_date' => $fixture['period']->to_date->toDateString(), 'company_id' => $fixture['company']->id,
+        'financial_period_id' => $fixture['period']->id, 'branch_id' => $fixture['branch']->id,
+        'currency_id' => $fixture['currency']->id, 'exchange_rate' => 1, 'description' => 'SYNTHETIC cost source correction',
+        'source_type' => 'synthetic_cost_source_reversal', 'source_id' => $source->id, 'source_doc_num' => $source->doc_num];
+    expect(fn () => app(JournalEntryService::class)->createPostedReversalFromSource($source, $header))->toThrow(DomainException::class)
+        ->and($source->refresh()->reversed_entry_id)->toBeNull();
+    $service->reverse($posted, 'SYNTHETIC source correction prerequisite');
+    expect(app(ProductionCostService::class)->runPosition($runA)['wip'])->toBe('0.00000000');
+    $reversal = app(JournalEntryService::class)->createPostedReversalFromSource($source, $header);
+    expect($source->refresh()->reversed_entry_id)->toBe($reversal->id);
+    $runCount = OverheadAllocationRun::query()->count();
+    expect(fn () => $service->preview($rule, $fixture['period'], $fixture['branch']->id,
+        $fixture['period']->from_date->toDateString(), $fixture['period']->to_date->toDateString()))
+        ->toThrow(DomainException::class, __('overhead_allocations.messages.no_eligible_cost'))
+        ->and(OverheadAllocationRun::query()->count())->toBe($runCount)
+        ->and(JournalEntry::query()->where('source_type', 'overhead_allocation')->count())->toBe(1);
+});
+
+test('canonical paid production expense is capitalized once even when its account and center also match an allocation rule', function (): void {
+    $fixture = overheadAllocationFixture();
+    $this->travelTo($fixture['period']->from_date->copy()->addDays(15));
+    request()->setLaravelSession(app('session.store'));
+    request()->session()->put(salesCycleSession($fixture));
+    $run = overheadProductionRun($fixture, $fixture['sourceCenter'], 1, 10);
+    $expenses = app(ProductionExpenseRequestService::class);
+    $paid = $expenses->pay($expenses->approve($expenses->create($run, [
+        'amount' => '50', 'currency_id' => $fixture['currency']->id, 'cashbox_id' => $fixture['cashbox']->id,
+        'expense_account_id' => $fixture['sourceAccount']->id, 'reason' => 'SYNTHETIC direct production expense',
+    ])));
+    expect($paid->status)->toBe(ProductionExpenseRequest::StatusPaid);
+    $rule = overheadRule($fixture, ['target_cost_center_ids' => [$fixture['sourceCenter']->id]]);
+    $service = app(OverheadAllocationService::class);
+    expect(fn () => $service->preview($rule, $fixture['period'], $fixture['branch']->id,
+        $fixture['period']->from_date->toDateString(), $fixture['period']->to_date->toDateString()))
+        ->toThrow(DomainException::class, __('overhead_allocations.messages.no_eligible_cost'))
+        ->and(OverheadAllocationRun::query()->count())->toBe(0);
+    $position = app(ProductionCostService::class)->runPosition($run);
+    expect($position['other_direct_cost'])->toBe('50.00000000')->and($position['allocated_overhead'])->toBe('0.00000000')
+        ->and($position['capitalizable'])->toBe('50.00000000')->and(app(ProductionCostService::class)->receiptCost($run, '100'))->toBe('50.00000000');
+    $poolSource = overheadSourceJournal($fixture, '10');
+    $preview = $service->preview($rule, $fixture['period'], $fixture['branch']->id,
+        $fixture['period']->from_date->toDateString(), $fixture['period']->to_date->toDateString());
+    expect($preview->eligible_cost)->toBe('10.0000')->and($preview->sources)->toHaveCount(1)
+        ->and($preview->sources->first()->journalEntryLine->journal_entry_id)->toBe($poolSource->id);
+    $posted = $service->approve($preview);
+    expect(app(ProductionCostService::class)->receiptCost($run, '100'))->toBe('60.00000000');
+    $expenses->reverse($paid, 'SYNTHETIC direct expense reversal');
+    expect(app(ProductionCostService::class)->runPosition($run)['capitalizable'])->toBe('10.00000000');
+    $service->reverse($posted, 'SYNTHETIC pool reversal');
+    expect(app(ProductionCostService::class)->runPosition($run)['capitalizable'])->toBe('0.00000000');
 });
 
 test('an incomplete hours group falls back as a whole to net direct material cost', function (): void {
@@ -497,4 +565,21 @@ test('overhead allocation sources retain soft deleted historical accounts', func
 
     expect($source->fresh()?->account)->toBeInstanceOf(Account::class)
         ->and($source->fresh()?->account?->trashed())->toBeTrue();
+});
+
+test('future direct payroll costing rule does not retroactively block prior completed labor dates', function (): void {
+    $fixture = overheadAllocationFixture();
+    $run = overheadProductionRun($fixture, $fixture['targetCenterA'], 1, 60, [4]);
+    $laborEnd = $run->progressEntries->sole()->recorded_at;
+    app(AccountClassificationRegistry::class)->synchronize();
+    $account = $fixture['sourceAccount'];
+    $account->update(['account_classification_id' => AccountClassification::query()->where('code', 'direct_labor_cost')->sole()->id]);
+    $fixture['sourceCenter']->accounts()->sync([$account->id]);
+    $rule = overheadRule($fixture, ['source_account_ids' => [$account->id], 'basis' => OverheadAllocationRule::BasisDirectPayrollHours,
+        'fallback_basis' => null, 'effective_from' => $laborEnd->copy()->addDay()->toDateString()]);
+    expect(app(ProductionCostService::class)->runPosition($run)['labor_valuation_complete'])->toBeTrue();
+    $rule->update(['effective_from' => $run->actual_start_at->toDateString()]);
+    expect(app(ProductionCostService::class)->runPosition($run)['labor_valuation_complete'])->toBeFalse();
+    $rule->update(['effective_to' => $run->actual_start_at->copy()->subDay()->toDateString()]);
+    expect(app(ProductionCostService::class)->runPosition($run)['labor_valuation_complete'])->toBeTrue();
 });

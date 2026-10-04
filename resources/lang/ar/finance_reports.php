@@ -54,7 +54,7 @@ return [
         'customer_receipt' => 'تحصيل عميل', 'supplier_payment' => 'سداد مورد', 'cheque' => 'شيك', 'opening_balance' => 'رصيد افتتاحي',
         'customer' => 'عميل', 'supplier' => 'مورد', 'received' => 'مستلم', 'issued' => 'محرر', 'deposited' => 'مودع',
         'collected' => 'محصل', 'delivered' => 'مسلم', 'cleared' => 'مصروف / مسوى', 'clearing_reversed' => 'عكس التسوية',
-        'returned' => 'مرتد', 'cancelled' => 'ملغي', 'draft' => 'مسودة', 'approved' => 'معتمد', 'reversed' => 'معكوس',
+        'returned' => 'مرتد', 'cancelled' => 'ملغي', 'draft' => 'مسودة', 'approved' => 'معتمد', 'posted' => 'مُرحّل', 'reversed' => 'معكوس',
         'overdue' => 'متأخر', 'due_today' => 'مستحق اليوم', 'upcoming' => 'قادم', 'current' => 'غير مستحق',
         'days_1_30' => '1–30 يومًا', 'days_31_60' => '31–60 يومًا', 'days_61_90' => '61–90 يومًا', 'days_over_90' => 'أكثر من 90 يومًا',
     ],

@@ -309,6 +309,10 @@ class PurchaseOrderService
                 throw new DomainException(__('purchase_orders.messages.closed_cancel_forbidden'));
             }
 
+            if ($locked->status === PurchaseOrder::StatusDraft && $locked->approved_at !== null) {
+                throw new DomainException(__('purchase_orders.messages.reopened_cancel_forbidden'));
+            }
+
             if ($locked->isCancelled()) {
                 return $this->load($locked);
             }
@@ -669,9 +673,17 @@ class PurchaseOrderService
                     throw new DomainException(__('Purchase order item and unit must match the approved purchase request line.'));
                 }
             }
-            $otherOrders = (float) $source->purchaseOrderLines()->where('purchase_order_id', '<>', $order->getKey())
-                ->whereHas('purchaseOrder', fn ($query) => $query->whereNotIn('status', [PurchaseOrder::StatusCancelled, 'rejected']))->sum('ordered_quantity');
-            if ($otherOrders + $inputs->sum(fn (array $input): float => (float) $input['ordered_quantity']) > (float) $source->approved_quantity + 0.00000001) {
+            $otherOrders = $this->numbers->normalizeScientificNotation((string) $source->purchaseOrderLines()
+                ->where('purchase_order_id', '<>', $order->getKey())
+                ->whereHas('purchaseOrder', fn ($query) => $query->whereNotIn('status', [PurchaseOrder::StatusCancelled, 'rejected']))
+                ->sum('ordered_quantity')) ?? '0';
+            $incoming = $inputs->reduce(fn (string $sum, array $input): string => bcadd(
+                $sum,
+                $this->numbers->normalizeToScale($input['ordered_quantity'], 8)
+                    ?? throw new DomainException(__('Ordered quantities exceed the approved purchase request quantity.')),
+                8,
+            ), '0');
+            if (bccomp(bcadd($otherOrders, $incoming, 8), (string) $source->approved_quantity, 8) > 0) {
                 throw new DomainException(__('Ordered quantities exceed the approved purchase request quantity.'));
             }
         }

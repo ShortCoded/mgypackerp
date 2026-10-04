@@ -110,7 +110,7 @@
 
         @if($isView && $record && $issuableLines->isNotEmpty() && in_array($record->status, [\Modules\Production\Models\ProductionMaterialRequest::StatusApproved, \Modules\Production\Models\ProductionMaterialRequest::StatusShortage, \Modules\Production\Models\ProductionMaterialRequest::StatusPartiallyIssued], true))
             @canany(['production.material_requests.issue', 'inventory.documents.issue'])
-                <form method="POST" action="{{ route('admin.production.material-requests.issue', $record) }}">
+                <form method="POST" action="{{ route('admin.production.material-requests.issue', $record) }}" novalidate>
                     @csrf
                     <div class="card mb-3" id="production-material-partial-issue">
                         <div class="card-header py-2 d-flex flex-wrap align-items-center justify-content-between gap-2">
@@ -128,6 +128,7 @@
                                             <div class="small text-700 mb-2">{{ __('production_execution.material_requests.remaining_reserved') }}: <span dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($remainingReserved) }} {{ $line->unit?->name }}</span></div>
                                             <x-forms.label :for="'production-material-issue-'.$line->id" :label="__('production_execution.fields.quantity')" required />
                                             <x-forms.numeric-input :id="'production-material-issue-'.$line->id" name="lines[{{ $index }}][quantity]" :value="$remainingReserved" :scale="8" min="0" :max="$remainingReserved" step="0.00000001" arrow-step="1" required />
+                                            @include('modules.production.material-requests.receipt-layer-selection', ['materialRequest' => $record])
                                         </div>
                                     </div>
                                 @endforeach

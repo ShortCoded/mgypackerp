@@ -35,7 +35,7 @@
                     </x-forms.select>
                 </div>
                 <div class="col-6 col-lg-2"><x-forms.label for="run_id" :label="__('hr_payroll_reports.columns.run')" /><x-forms.input id="run_id" name="run_id" type="number" min="1" :value="$filters['run_id'] ?? null" /></div>
-                <div class="col-6 col-lg-2"><x-forms.label for="status" :label="__('hr_payroll_reports.columns.status')" /><x-forms.select id="status" name="status" variant="local"><option value="">{{ __('hr_workforce_reports.filters.all') }}</option>@foreach($isPayroll ? ['draft', 'calculated', 'under_review', 'approved', 'posted'] : ['draft', 'approved', 'cancelled'] as $status)<option value="{{ $status }}" @selected(($filters['status'] ?? null) === $status)>{{ __('hr_payroll.status.'.$status) }}</option>@endforeach</x-forms.select></div>
+                <div class="col-6 col-lg-2"><x-forms.label for="status" :label="__('hr_payroll_reports.columns.status')" /><x-forms.select id="status" name="status" variant="local"><option value="">{{ __('hr_workforce_reports.filters.all') }}</option>@foreach($isPayroll ? ['draft', 'calculated', 'under_review', 'approved', 'posted', 'reversed'] : ['draft', 'approved', 'cancelled'] as $status)<option value="{{ $status }}" @selected(($filters['status'] ?? null) === $status)>{{ __('hr_payroll.status.'.$status) }}</option>@endforeach</x-forms.select></div>
                 <div class="col-12 col-lg-3"><x-forms.label for="employee" :label="__('hr_payroll_reports.columns.employee')" /><x-forms.input id="employee" name="employee" :value="$filters['employee'] ?? null" /></div>
             </x-admin.report.filter-panel>
 

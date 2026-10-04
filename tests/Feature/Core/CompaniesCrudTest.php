@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -1344,4 +1345,26 @@ test('operational print identity defaults off and toggles independently without 
     expect($company->fresh()->show_company_identity_on_prints)->toBeFalse()
         ->and($identity->forCompany($company->fresh())['name'])->toBe($company->name);
     $this->travelBack();
+});
+
+test('sqlite company indexes retain active predicates after later table migrations', function (): void {
+    if (DB::getDriverName() !== 'sqlite') {
+        $this->markTestSkipped('SQLite-specific partial-index repair.');
+    }
+
+    $indexes = collect(DB::select("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'companies'"))->keyBy('name');
+    foreach (['companies_one_active_main_unique', 'companies_doc_num_unique_active', 'companies_name_unique_active'] as $name) {
+        expect(strtolower((string) $indexes->get($name)?->sql))->toContain(' where ');
+    }
+
+    Company::factory()->count(3)->create();
+    $main = Company::factory()->main()->create();
+    expect(fn () => Company::factory()->main()->create())->toThrow(QueryException::class);
+
+    $retired = Company::factory()->create();
+    $docNum = $retired->doc_num;
+    $retired->delete();
+    Company::factory()->create(['doc_num' => $docNum]);
+    expect(Company::query()->where('doc_num', $docNum)->count())->toBe(1)
+        ->and($main->fresh()->is_main)->toBeTrue();
 });

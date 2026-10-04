@@ -80,6 +80,7 @@
                 const $error = $(this);
                 $error.attr('data-error-for', String($error.attr('data-error-for')).replace(/lines\.\d+\./, 'lines.' + index + '.'));
             });
+            $row.find('.js-cash-voucher-cost-center').data('extra-params', {account: '[name="lines[' + index + '][account_doc_num]"]'});
         });
     }
 
@@ -89,6 +90,8 @@
         const accountValue = rowValues.account_doc_num || '';
         const accountLabel = rowValues.account_label || accountValue;
         const accountOption = accountValue !== '' ? '<option value="' + escapeHtml(accountValue) + '" selected>' + escapeHtml(accountLabel) + '</option>' : '';
+        const centerValue = rowValues.cost_center_doc_num || '';
+        const centerOption = centerValue !== '' ? '<option value="' + escapeHtml(centerValue) + '" selected>' + escapeHtml(rowValues.cost_center_label || centerValue) + '</option>' : '';
         const amount = rowValues.amount == null ? '' : String(rowValues.amount);
         const description = rowValues.description == null ? '' : String(rowValues.description);
         const notes = rowValues.notes == null ? '' : String(rowValues.notes);
@@ -96,6 +99,7 @@
         return [
             '<tr class="js-cash-voucher-line" data-index="' + index + '">',
             '<td><select class="form-select js-select2-ajax js-cash-voucher-account" name="lines[' + index + '][account_doc_num]" data-url="' + escapeHtml($form.data('account-url') || '') + '" data-placeholder="' + escapeHtml(trans('select_account', 'Select Account')) + '" data-allow-clear="true" data-extra-params=\'{"exclude":"#cashbox_account_doc_num_filter"}\' required>' + accountOption + '</select><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.account_doc_num"></div></td>',
+            '<td><select class="form-select js-select2-ajax js-cash-voucher-cost-center" name="lines[' + index + '][cost_center_doc_num]" data-url="' + escapeHtml($form.data('cost-center-url') || '') + '" data-allow-clear="true" data-placeholder="' + escapeHtml(trans('select_cost_center', 'Select Cost Center')) + '">' + centerOption + '</select><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.cost_center_doc_num"></div></td>',
             '<td><input class="form-control text-end js-cash-voucher-line-amount" name="lines[' + index + '][amount]" type="text" inputmode="decimal" min="0.0001" step="0.0001" value="' + escapeHtml(amount) + '" dir="ltr" data-numeric-input data-numeric-scale="4" data-numeric-min="0.0001" required><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.amount"></div></td>',
             '<td><input class="form-control" name="lines[' + index + '][description]" value="' + escapeHtml(description) + '"><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.description"></div></td>',
             '<td><input class="form-control" name="lines[' + index + '][notes]" value="' + escapeHtml(notes) + '"><div class="invalid-feedback d-block" data-error-for="lines.' + index + '.notes"></div></td>',
@@ -110,6 +114,8 @@
         return {
             account_doc_num: $account.val() || '',
             account_label: $account.find('option:selected').text() || '',
+            cost_center_doc_num: $row.find('.js-cash-voucher-cost-center').val() || '',
+            cost_center_label: $row.find('.js-cash-voucher-cost-center option:selected').text() || '',
             amount: $row.find('.js-cash-voucher-line-amount').val() || '',
             description: $row.find('input[name$="[description]"]').val() || '',
             notes: $row.find('input[name$="[notes]"]').val() || ''
@@ -117,6 +123,10 @@
     }
 
     function calculateTotals($form) {
+        if ($form.attr('data-readonly') === '1') {
+            return true;
+        }
+
         const voucherAmount = parseAmount($form.find('[name="amount"]').val());
         let distributed = 0;
 
@@ -157,6 +167,7 @@
 
     function clearRow($form, $row) {
         $row.find('.js-cash-voucher-account').val(null).trigger('change');
+        $row.find('.js-cash-voucher-cost-center').val(null).trigger('change');
         $row.find('.js-cash-voucher-line-amount').val('');
         $row.find('input[name$="[description]"], input[name$="[notes]"]').val('');
         renumberLines($form);
@@ -268,6 +279,10 @@
             });
 
         $(document)
+            .off('change.cashVoucherLineAccount', '.js-cash-voucher-account')
+            .on('change.cashVoucherLineAccount', '.js-cash-voucher-account', function () {
+                $(this).closest('.js-cash-voucher-line').find('.js-cash-voucher-cost-center').val(null).trigger('change');
+            })
             .off('click.cashVoucherAddLine', '.js-cash-voucher-add-line')
             .on('click.cashVoucherAddLine', '.js-cash-voucher-add-line', function () {
                 addLineAfter($(this).closest('.js-cash-voucher-form'), null, null);
@@ -365,13 +380,13 @@
             const url = $button.data('url');
             const confirmRequest = window.Swal
                 ? window.Swal.fire({
-                    title: trans('cancel_confirm_title', 'Cancel voucher?'),
-                    text: trans('cancel_confirm_text', 'Enter a cancellation reason.'),
+                    title: $button.data('confirm-title') || trans('cancel_confirm_title', 'Cancel voucher?'),
+                    text: $button.data('confirm-text') || trans('cancel_confirm_text', 'Enter a cancellation reason.'),
                     input: 'textarea',
                     inputPlaceholder: trans('cancel_reason_placeholder', 'Cancellation reason'),
                     icon: 'warning',
                     showCancelButton: true,
-                    confirmButtonText: trans('cancel_confirm_yes', 'Cancel Voucher'),
+                    confirmButtonText: $button.data('confirm-yes') || trans('cancel_confirm_yes', 'Cancel Voucher'),
                     cancelButtonText: trans('cancel', 'Cancel'),
                     inputValidator: function (value) {
                         if (!value || $.trim(value) === '') {

@@ -5,6 +5,7 @@ namespace Modules\FixedAssets\Http\Controllers;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Maatwebsite\Excel\Excel as ExcelWriter;
 use Maatwebsite\Excel\Facades\Excel;
 use Modules\Core\Models\Company;
 use Modules\Core\Services\BreadcrumbService;
@@ -49,6 +50,13 @@ class FixedAssetReportController extends Controller
     public function pdf(Request $request, FixedAssetPdfService $pdf): Response
     {
         return $this->streamPdf($request, $pdf);
+    }
+
+    public function csv(Request $request): BinaryFileResponse
+    {
+        $report = $this->reports->report($this->reports->filters($request));
+
+        return Excel::download(new FixedAssetReportExport($report), 'fixed-assets-'.$report['type'].'.csv', ExcelWriter::CSV);
     }
 
     private function streamPdf(Request $request, FixedAssetPdfService $pdf): Response

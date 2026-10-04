@@ -91,13 +91,14 @@ class OperationalNotificationService
 
         $candidateIds = $ids;
 
-        $permissionExists = is_string($permission)
-            && $permission !== ''
-            && Permission::query()->where('name', $permission)->where('guard_name', 'web')->exists();
+        $recipientPermission = is_string($permission) && $permission !== ''
+            ? Permission::query()->where('name', $permission)->where('guard_name', 'web')->first()
+            : null;
+        $permissionExists = $recipientPermission !== null;
 
         if ($permissionExists) {
             $candidateIds = $candidateIds
-                ->merge(User::permission($permission)->pluck('users.id')->map(fn (mixed $id): int => (int) $id))
+                ->merge(User::permission($recipientPermission)->pluck('users.id')->map(fn (mixed $id): int => (int) $id))
                 ->unique();
         }
 

@@ -230,6 +230,8 @@ final class HrEnterpriseFoundationDefinitions
                     ['name' => 'tax_year', 'type' => 'number', 'rules' => ['required', 'integer', 'min:2000', 'max:2200'], 'scale' => 0, 'min' => 2000, 'max' => 2200, 'step' => '1'],
                     ['name' => 'effective_from', 'type' => 'date', 'rules' => ['required', 'date_format:Y-m-d']],
                     ['name' => 'effective_to', 'type' => 'date', 'rules' => ['nullable', 'date_format:Y-m-d', 'after_or_equal:effective_from']],
+                    ['name' => 'taxable_basis', 'type' => 'select', 'rules' => ['nullable', 'string', 'in:gross,gross_after_employee_insurance'], 'options' => ['gross', 'gross_after_employee_insurance']],
+                    ['name' => 'annualization_method', 'type' => 'select', 'rules' => ['nullable', 'string', 'in:calendar_days,twelve_equal_periods'], 'options' => ['calendar_days', 'twelve_equal_periods']],
                     ['name' => 'annual_exemption_amount', 'type' => 'decimal', 'rules' => ['required', 'numeric', 'min:0', 'regex:/^(?:\d{1,13}|\d{0,13}\.\d{1,2})$/D'], 'default' => '0', 'scale' => 2, 'min' => 0, 'step' => '0.01'],
                     ['name' => 'rounding_rule', 'type' => 'select', 'rules' => ['required', 'string', 'in:nearest,down,up,none'], 'options' => ['nearest', 'down', 'up', 'none'], 'default' => 'nearest'],
                 ],

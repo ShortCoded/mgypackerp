@@ -10,10 +10,11 @@ class PostingAccountConfigurationAudit
     /**
      * @return array{
      *     ok: bool,
-     *     rows: list<array{code: string, classification: string, status: string, accounts: string}>,
+     *     rows: list<array{code: string, classification: string, status: string, accounts: string, incompatible_accounts: string}>,
      *     valid_count: int,
      *     missing_count: int,
-     *     ambiguous_count: int
+     *     ambiguous_count: int,
+     *     incompatible_count: int
      * }
      */
     public function forCompany(int $companyId): array
@@ -25,14 +26,24 @@ class PostingAccountConfigurationAudit
             ->keyBy('code');
         $accounts = Account::query()
             ->forCompany($companyId)
-            ->eligibleForDirectPosting()
+            ->eligibleForClassifiedPosting()
             ->whereHas('classification', fn ($query) => $query->whereIn('code', $codes)->where('status', 'active'))
             ->with('classification:id,code')
             ->ordered()
             ->get(['id', 'doc_num', 'account_code', 'name', 'name_en', 'account_classification_id'])
             ->groupBy(fn (Account $account): string => (string) $account->classification?->code);
 
-        $rows = collect($codes)->map(function (string $code) use ($accounts, $classifications): array {
+        $incompatible = Account::query()
+            ->forCompany($companyId)
+            ->eligibleForDirectPosting()
+            ->whereHas('classification', fn ($query) => $query->whereIn('code', $codes)->active())
+            ->whereNotIn('id', Account::query()->eligibleForClassifiedPosting()->select('id'))
+            ->with('classification:id,code')
+            ->ordered()
+            ->get(['id', 'doc_num', 'account_code', 'name', 'name_en', 'account_classification_id'])
+            ->groupBy(fn (Account $account): string => (string) $account->classification?->code);
+
+        $rows = collect($codes)->map(function (string $code) use ($accounts, $classifications, $incompatible): array {
             $classification = $classifications->get($code);
             $matchingAccounts = $accounts->get($code, collect());
             $status = match (true) {
@@ -47,6 +58,7 @@ class PostingAccountConfigurationAudit
                 'classification' => $classification?->displayName() ?: $code,
                 'status' => $status,
                 'accounts' => $matchingAccounts->map->codeNameLabel()->implode(' | '),
+                'incompatible_accounts' => $incompatible->get($code, collect())->map->codeNameLabel()->implode(' | '),
             ];
         })->values();
 
@@ -56,6 +68,7 @@ class PostingAccountConfigurationAudit
             'valid_count' => $rows->where('status', 'ready')->count(),
             'missing_count' => $rows->whereIn('status', ['classification_missing', 'account_missing'])->count(),
             'ambiguous_count' => $rows->where('status', 'ambiguous')->count(),
+            'incompatible_count' => $incompatible->sum(fn ($accounts): int => $accounts->count()),
         ];
     }
 }

@@ -2,7 +2,8 @@
 
 @php
     $isEdit = $mode === 'edit';
-    $lockedQuotationOrder = $isEdit && (bool) $record->quotation_id;
+    $appendOnlyProductionAmendment = $isEdit && $record->canAppendProductionAmendment();
+    $lockedQuotationOrder = $isEdit && (bool) $record->quotation_id && ! $appendOnlyProductionAmendment;
     $sourceLineRows = $sourceRequest?->lines
         ->filter(fn ($line) => bccomp($line->remainingQuantity(), '0', 8) > 0)
         ->map(fn ($line) => [
@@ -18,6 +19,7 @@
             'specifications' => $line->specifications,
         ])->values()->all() ?? [];
     $lineRows = old('lines', $isEdit ? $record->lines->map(fn ($line) => [
+        'public_id' => $line->public_id,
         'product_doc_num' => $line->product?->doc_num,
         'unit_doc_num' => $line->unit?->doc_num,
         'description' => $line->description,
@@ -30,7 +32,8 @@
         'warehouse_notes' => $line->warehouse_notes,
         'production_notes' => $line->production_notes,
         'price_locked' => true,
-        'locked_source_line' => (bool) $record->quotation_id,
+        'locked_source_line' => (bool) $record->quotation_id && ! $appendOnlyProductionAmendment,
+        'linked_existing_line' => $appendOnlyProductionAmendment,
     ])->all() : ($sourceLineRows ?: [[]]));
     $scheduleRows = old('payment_schedules', $isEdit ? $record->paymentSchedules->map(fn ($schedule) => [
         'title' => $schedule->title,
@@ -45,8 +48,10 @@
 
 @section('content')
 @if($record?->sales_employee_id && !$record?->business_employee_id)<div class="alert alert-subtle-warning">{{ __('sales_ui.employee_unresolved') }}</div>@endif
+@if($appendOnlyProductionAmendment)<div class="alert alert-subtle-info">{{ __('sales_ui.production_amendment_help') }}</div>@endif
 <form class="js-sales-cycle-form" data-sales-ui data-sales-document-summary data-index-url="{{ route('admin.sales.sales-orders.index') }}" data-create-url="{{ route('admin.sales.sales-orders.create') }}" data-edit-url="{{ route('admin.sales.sales-orders.edit', '__DOCUMENT__') }}" action="{{ $action }}" method="POST" novalidate>
     @csrf
+    @if($isEdit)<x-forms.input type="hidden" name="amendment_token" value="{{ $record->amendmentToken() }}" />@endif
         <x-forms.line-item-cards :line-label="__('sales_ui.line')" />
     @if($method !== 'POST') @method($method) @endif
     <div class="alert alert-danger d-none js-sales-form-alert"></div>
@@ -84,7 +89,7 @@
                 </div>
                 <div class="col-md-2">
                     <label class="form-label" for="order_date">{{ __('Order date') }}</label>
-                    <x-forms.date-input class="form-control js-date-picker" id="order_date" name="order_date" value="{{ old('order_date', app(\Modules\Core\Services\DateFormatService::class)->formatDate($record?->order_date?->toDateString() ?? now()->toDateString())) }}" autocomplete="off" required />
+                    <x-forms.date-input class="form-control js-date-picker" id="order_date" name="order_date" value="{{ old('order_date', app(\Modules\Core\Services\DateFormatService::class)->formatDate($record?->order_date?->toDateString() ?? now()->toDateString())) }}" autocomplete="off" :readonly="$appendOnlyProductionAmendment" required />
                     <div class="invalid-feedback d-block" data-error-for="order_date"></div>
                 </div>
                 <div class="col-md-2">

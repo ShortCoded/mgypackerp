@@ -6,6 +6,7 @@ use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Modules\Core\Models\Branch;
+use Modules\Core\Services\DateFormatService;
 use Modules\HR\Models\HrAttendanceDailyRecord;
 use Modules\HR\Models\HrAttendanceSession;
 use Modules\HR\Models\HrEmployee;
@@ -13,21 +14,26 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class HrAttendanceReportService
 {
+    private const SummaryLabels = [
+        'session_count' => 'sessions',
+        'employee_count' => 'employees',
+        'open_count' => 'open',
+        'worked_minutes' => 'worked',
+        'break_minutes' => 'breaks',
+        'late_minutes' => 'late',
+        'early_leave_minutes' => 'early',
+        'overtime_minutes' => 'overtime',
+    ];
+
+    public function __construct(private readonly DateFormatService $dates) {}
+
     /**
      * @param  array<string, mixed>  $filters
      * @return LengthAwarePaginator<int, HrAttendanceSession>
      */
     public function paginate(int $companyId, array $filters, ?array $branchIds, int $perPage = 30): LengthAwarePaginator
     {
-        return $this->sessionQuery($companyId, $filters, $branchIds)
-            ->with([
-                'employee:id,doc_num,full_name',
-                'assignedBranch:id,doc_num,name',
-                'shift:id,doc_num,name',
-                'events:id,session_id,event_type,occurred_at,geofence_status,distance_meters',
-            ])
-            ->latest('started_at')
-            ->latest('id')
+        return $this->exportQuery($companyId, $filters, $branchIds)
             ->paginate($perPage)
             ->withQueryString();
     }
@@ -71,7 +77,41 @@ class HrAttendanceReportService
      */
     public function exportCsv(int $companyId, array $filters, ?array $branchIds): StreamedResponse
     {
-        $sessions = $this->sessionQuery($companyId, $filters, $branchIds)
+        $sessions = $this->exportQuery($companyId, $filters, $branchIds);
+
+        $summaryRows = $this->summaryRows($this->summary($companyId, $filters, $branchIds));
+
+        return response()->streamDownload(function () use ($sessions, $summaryRows): void {
+            $stream = fopen('php://output', 'wb');
+
+            if ($stream === false) {
+                return;
+            }
+
+            fwrite($stream, "\xEF\xBB\xBF");
+            fputcsv($stream, $this->headings(), ',', '"', '\\');
+
+            foreach ($sessions->lazy(200) as $session) {
+                fputcsv($stream, array_map(fn (mixed $value): mixed => is_string($value) ? $this->csvSafe($value) : $value, $this->row($session)), ',', '"', '\\');
+            }
+
+            if ($summaryRows !== []) {
+                fputcsv($stream, [], ',', '"', '\\');
+                foreach ($summaryRows as $summaryRow) {
+                    fputcsv($stream, $summaryRow, ',', '"', '\\');
+                }
+            }
+
+            fclose($stream);
+        }, 'employee-attendance-'.now()->format('Ymd-His').'.csv', [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
+    }
+
+    /** @param array<string, mixed> $filters @return Builder<HrAttendanceSession> */
+    public function exportQuery(int $companyId, array $filters, ?array $branchIds): Builder
+    {
+        return $this->sessionQuery($companyId, $filters, $branchIds)
             ->with([
                 'employee:id,doc_num,full_name',
                 'assignedBranch:id,doc_num,name',
@@ -80,58 +120,65 @@ class HrAttendanceReportService
             ])
             ->latest('started_at')
             ->latest('id');
+    }
 
-        return response()->streamDownload(function () use ($sessions): void {
-            $stream = fopen('php://output', 'wb');
+    /** @return list<string> */
+    public function headings(): array
+    {
+        return [
+            __('hr_attendance.report.columns.work_date'),
+            __('hr_attendance.report.columns.employee_code'),
+            __('hr_attendance.report.columns.employee'),
+            __('hr_attendance.report.columns.branch'),
+            __('hr_attendance.report.columns.shift'),
+            __('hr_attendance.report.columns.status'),
+            __('hr_attendance.report.columns.check_in'),
+            __('hr_attendance.report.columns.check_out'),
+            __('hr_attendance.report.columns.worked_minutes'),
+            __('hr_attendance.report.columns.break_minutes'),
+            __('hr_attendance.report.columns.events'),
+            __('hr_attendance.report.columns.location_result'),
+        ];
+    }
 
-            if ($stream === false) {
-                return;
+    /** @return list<mixed> */
+    public function row(HrAttendanceSession $session): array
+    {
+        $locationResults = $session->events
+            ->pluck('geofence_status')
+            ->filter()
+            ->unique()
+            ->map(fn (string $status): string => __('hr_attendance.geofence.'.$status))
+            ->implode(' | ');
+
+        return [
+            $this->dates->formatDate($session->work_date, '—'),
+            $session->employee?->doc_num ?: '',
+            $session->employee?->full_name ?: '',
+            $session->assignedBranch?->name ?: '',
+            $session->shift?->name ?: '',
+            __('hr_attendance.session_status.'.$session->status),
+            $this->dates->formatDateTime($session->started_at, '—'),
+            $this->dates->formatDateTime($session->ended_at, '—'),
+            $session->worked_minutes,
+            $session->total_break_minutes,
+            $session->events->map(fn ($event): string => __('hr_attendance.actions.'.$event->event_type).' '.$this->dates->formatDateTime($event->occurred_at, '—'))->implode(' | '),
+            $locationResults,
+        ];
+    }
+
+    /** @param array<string, int> $summary @return list<array{string, int}> */
+    public function summaryRows(array $summary): array
+    {
+        $rows = [];
+        foreach (self::SummaryLabels as $key => $label) {
+            $value = (int) ($summary[$key] ?? 0);
+            if ($value !== 0) {
+                $rows[] = [__('hr_attendance.report.summary.'.$label), $value];
             }
+        }
 
-            fwrite($stream, "\xEF\xBB\xBF");
-            fputcsv($stream, [
-                __('hr_attendance.report.columns.work_date'),
-                __('hr_attendance.report.columns.employee_code'),
-                __('hr_attendance.report.columns.employee'),
-                __('hr_attendance.report.columns.branch'),
-                __('hr_attendance.report.columns.shift'),
-                __('hr_attendance.report.columns.status'),
-                __('hr_attendance.report.columns.check_in'),
-                __('hr_attendance.report.columns.check_out'),
-                __('hr_attendance.report.columns.worked_minutes'),
-                __('hr_attendance.report.columns.break_minutes'),
-                __('hr_attendance.report.columns.events'),
-                __('hr_attendance.report.columns.location_result'),
-            ], ',', '"', '\\');
-
-            foreach ($sessions->lazy(200) as $session) {
-                $locationResults = $session->events
-                    ->pluck('geofence_status')
-                    ->filter()
-                    ->unique()
-                    ->map(fn (string $status): string => __('hr_attendance.geofence.'.$status))
-                    ->implode(' | ');
-
-                fputcsv($stream, [
-                    $session->work_date?->toDateString(),
-                    $this->csvSafe($session->employee?->doc_num),
-                    $this->csvSafe($session->employee?->full_name),
-                    $this->csvSafe($session->assignedBranch?->name),
-                    $this->csvSafe($session->shift?->name),
-                    __('hr_attendance.session_status.'.$session->status),
-                    $session->started_at?->toDateTimeString(),
-                    $session->ended_at?->toDateTimeString(),
-                    $session->worked_minutes,
-                    $session->total_break_minutes,
-                    $session->events->map(fn ($event): string => __('hr_attendance.actions.'.$event->event_type).' '.$event->occurred_at?->toDateTimeString())->implode(' | '),
-                    $locationResults,
-                ], ',', '"', '\\');
-            }
-
-            fclose($stream);
-        }, 'employee-attendance-'.now()->format('Ymd-His').'.csv', [
-            'Content-Type' => 'text/csv; charset=UTF-8',
-        ]);
+        return $rows;
     }
 
     /**

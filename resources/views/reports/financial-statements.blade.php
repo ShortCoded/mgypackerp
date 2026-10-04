@@ -61,9 +61,10 @@
     </table>
 
     @if(in_array($result['statement_type'], ['cash_flow_direct', 'cash_flow_indirect'], true))
-        <h4>{{ __('financial_statements.messages.cash_components') }}</h4>
         <table dir="{{ $direction ?? 'ltr' }}" class="report-table financial-statement-table">
-            <thead><tr>
+            <thead>
+            <tr><th colspan="4" style="text-align:{{ ($direction ?? 'ltr') === 'rtl' ? 'right' : 'left' }};background:#fff;padding-top:10px">{{ __('financial_statements.messages.cash_components') }}</th></tr>
+            <tr>
                 <th>{{ __('financial_statements.columns.account') }}</th>
                 <th>{{ __('financial_statements.columns.opening') }}</th>
                 <th>{{ __('financial_statements.columns.ending') }}</th>
@@ -86,7 +87,7 @@
         .report-filter-summary, .report-warning { border: 1px solid #d8e2ef; margin-bottom: 8px; padding: 6px 8px; }
         .report-filter-summary { background: #f8fafc; }
         .report-warning { background: #fff8e1; }
-        .financial-statement-table th, .financial-statement-table td { font-size: 8px; }
+        .financial-statement-table th, .financial-statement-table td { font-size: 12px; }
         .financial-statement-table th:not(:first-child), .financial-statement-table td:not(:first-child) { text-align: right; white-space: nowrap; }
         .financial-statement-table .row-account td:first-child { padding-inline-start: 18px; }
         .financial-statement-table .row-total td, .financial-statement-table .row-grand_total td { font-weight: bold; background: #f1f5f9; }

@@ -236,6 +236,88 @@
         });
         calculateTotals($form);
         let $lastFocusedRow = $();
+        const valuationUrl = $form.attr('data-inventory-valuation-url');
+        let valuationVersion = 0;
+        let valuationPending = 0;
+        let valuationError = '';
+        const $hint = $form.find('.js-opening-inventory-hint');
+        const $fingerprint = $('<input type="hidden" name="inventory_source_fingerprint">').appendTo($form);
+
+        function unlockInventoryFields() {
+            $form.find('.js-inventory-fixed-value').prop('readonly', false).removeClass('js-inventory-fixed-value');
+            $form.find('.js-inventory-fixed-select').prop('disabled', false).removeClass('js-inventory-fixed-select');
+            $form.find('.js-inventory-fixed-hidden').remove();
+            $fingerprint.val('');
+        }
+
+        function fixedSelect($select, value) {
+            $select.val(value).trigger('change').prop('disabled', true).addClass('js-inventory-fixed-select');
+            $('<input type="hidden" class="js-inventory-fixed-hidden">')
+                .attr('name', $select.attr('name')).val(value).insertAfter($select);
+        }
+
+        function syncInventoryValues() {
+            if (!valuationUrl || $form.find('.js-opening-balance-account:enabled').length === 0) {
+                return;
+            }
+            const version = ++valuationVersion;
+            valuationError = '';
+            valuationPending = 0;
+            unlockInventoryFields();
+            $hint.prop('hidden', true);
+            const $accounts = $form.find('.js-opening-balance-account').filter(function () { return !!$(this).val(); });
+            valuationPending = $accounts.length;
+            const previews = [];
+            $accounts.each(function () {
+                const $account = $(this);
+                $.ajax({url: valuationUrl, data: {account_doc_num: $account.val()}, headers: headers()})
+                    .done(function (response) {
+                        if (version === valuationVersion && response.data && response.data.applicable) {
+                            previews.push({row: $account.closest('.js-opening-balance-line'), data: response.data});
+                        }
+                    }).fail(function (response) {
+                        if (version !== valuationVersion) { return; }
+                        valuationError = response.responseJSON && response.responseJSON.message
+                            ? response.responseJSON.message : trans('inventory_load_failed', 'Unable to load priced inventory.');
+                    }).always(function () {
+                        if (version !== valuationVersion) { return; }
+                        valuationPending--;
+                        if (valuationPending > 0) { return; }
+                        if (valuationError) { $hint.text(valuationError).prop('hidden', false); return; }
+                        if (previews.length === 0) { return; }
+                        const preview = previews[0];
+                        if (previews.length !== 1 || !preview.data.can_post) {
+                            valuationError = trans('inventory_already_posted', 'This inventory opening has already been posted.');
+                        } else {
+                            let $rows = $form.find('.js-opening-balance-line');
+                            if ($rows.length === 1) {
+                                addLineAfter(preview.row, null, 'none');
+                                $rows = $form.find('.js-opening-balance-line');
+                            }
+                            if ($rows.length !== 2) {
+                                valuationError = trans('inventory_counterpart_required', 'Select one counterpart account.');
+                            } else {
+                                $rows.each(function () {
+                                    const $row = $(this);
+                                    const side = $row.is(preview.row) ? 'debit' : 'credit';
+                                    $row.find('.js-opening-balance-amount').val(window.AppNumbers.format(preview.data.amount))
+                                        .prop('readonly', true).addClass('js-inventory-fixed-value');
+                                    fixedSelect($row.find('.js-opening-balance-type'), side);
+                                });
+                                fixedSelect($form.find('[name="currency_doc_num"]'), preview.data.currency_doc_num);
+                                $form.find('[name="exchange_rate"]').val('1').prop('readonly', true);
+                                $fingerprint.val(preview.data.source_fingerprint);
+                                calculateTotals($form);
+                            }
+                        }
+                        $hint.text(valuationError || trans('inventory_loaded', 'Priced inventory loaded; select its counterpart.')).prop('hidden', false);
+                    });
+            });
+            if (valuationPending > 0) {
+                $hint.text(trans('inventory_loading', 'Loading priced inventory…')).prop('hidden', false);
+            }
+        }
+
 
         function focusAccountField($row) {
             const $account = $row.find('.js-opening-balance-account');
@@ -294,10 +376,11 @@
             calculateTotals($form);
             if (focusMode === 'account') {
                 focusAccountField($row);
-            } else {
+            } else if (focusMode !== 'none') {
                 focusUsefulField($row);
             }
 
+            if (focusMode !== 'none') { syncInventoryValues(); }
             return $row;
         }
 
@@ -336,6 +419,7 @@
             const previousRow = $row.prev('.js-opening-balance-line');
             $row.remove();
             renumberLines($form);
+            syncInventoryValues();
             calculateTotals($form);
             focusUsefulField(nextRow.length > 0 ? nextRow : previousRow);
         }
@@ -468,9 +552,18 @@
             }
         });
 
+        $form.on('change.openingInventorySource', '.js-opening-balance-account', syncInventoryValues);
+        syncInventoryValues();
+
         if (!$form.data('opening-balance-submit-guard')) {
             $form.data('opening-balance-submit-guard', true);
             $form.get(0).addEventListener('submit', function (event) {
+                if (valuationPending > 0 || valuationError) {
+                    event.preventDefault();
+                    event.stopImmediatePropagation();
+                    $form.find('[data-error-for="lines"]').text(valuationError || trans('inventory_loading', 'Loading priced inventory…'));
+                    return;
+                }
                 const isBalanced = calculateTotals($form);
                 if (!isBalanced) {
                     event.preventDefault();

@@ -30,8 +30,10 @@ use Modules\Purchases\Models\PurchaseInvoicePaymentSchedule;
 use Modules\Purchases\Models\Supplier;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
+use Symfony\Component\Process\Process;
 
 /** @return array<string, mixed> */
 function financeReportFixture(object $test): array
@@ -567,6 +569,56 @@ test('finance PDF view renders criteria currency totals and cashbox statement ro
     ]))->assertOk()->assertHeader('content-type', 'application/pdf');
 });
 
+test('finance actual Excel CSV and bilingual PDF preserve the filtered statement and independent closing balance', function (): void {
+    $fixture = financeReportFixture($this);
+    $actor = financeReportActor();
+    $this->actingAs($actor);
+    $query = ['type' => FinanceReportService::CashboxStatement, 'from_date' => '2026-09-01',
+        'to_date' => '2026-09-30', 'cashbox_doc_num' => $fixture['cashboxOne']->doc_num];
+    foreach (['en', 'ar'] as $locale) {
+        $actor->forceFill(['locale' => $locale])->save();
+        app()->setLocale($locale);
+        $screen = $this->withSession(['locale' => $locale])->get(route('admin.reports.finance.index', $query))->assertOk();
+        $report = $screen->viewData('report');
+        expect($report['rows']->where('document', 'CRV-9701')->sole()['receipt'])->toBe('100.0000')
+            ->and($report['rows']->where('document', 'CRV-9701')->sole()['status'])->toBe(__('finance_reports.values.posted'))
+            ->and($report['rows']->where('document', 'TRF-9701')->sole()['payment'])->toBe('20.0000')
+            ->and($report['currency_totals']['EGP'][__('finance_reports.columns.balance')])->toBe('80.0000');
+        $export = new FinanceReportExport($report);
+        $normalize = fn (array $row): array => array_map(fn ($value): string => $value === null ? '' : (string) $value, $row);
+        $expected = [$normalize($export->headings()), ...$export->collection()->map(fn ($row): array => $normalize($export->map($row)))->all()];
+        $excel = $this->get(route('admin.reports.finance.export.excel', $query))->assertOk();
+        $book = IOFactory::load($excel->baseResponse->getFile()->getPathname());
+        expect(array_map($normalize, $book->getActiveSheet()->toArray()))->toBe($expected);
+        $book->disconnectWorksheets();
+        $csv = $this->get(route('admin.reports.finance.export.csv', $query))->assertOk();
+        $handle = fopen($csv->baseResponse->getFile()->getPathname(), 'rb');
+        try {
+            $csvRows = [];
+            while (($row = fgetcsv($handle, separator: ',', enclosure: '"', escape: '')) !== false) {
+                $csvRows[] = $normalize($row);
+            }
+            $csvRows[0][0] = ltrim($csvRows[0][0], "\xEF\xBB\xBF");
+            expect($csvRows)->toBe($expected);
+        } finally {
+            fclose($handle);
+        }
+        $pdf = $this->get(route('admin.reports.finance.export.pdf', $query))->assertOk()->assertHeader('content-type', 'application/pdf');
+        $path = tempnam(sys_get_temp_dir(), 'synthetic-finance-print-');
+        try {
+            file_put_contents($path, $pdf->getContent());
+            $text = new Process(['pdftotext', '-layout', $path, '-']);
+            $text->mustRun();
+            expect($text->getOutput())->toContain('CRV-9701', 'TRF-9701', '80', 'EGP')->not->toContain('CRV-9702-DRAFT');
+            if ($directory = getenv('MGYPACK_REPORT_PRINT_SAMPLES')) {
+                file_put_contents($directory.'/finance-statement-'.$locale.'.pdf', $pdf->getContent());
+            }
+        } finally {
+            @unlink($path);
+        }
+    }
+});
+
 test('legacy finance report route renders the actual unified report and unsupported guarantee navigation is absent', function (): void {
     financeReportFixture($this);
     $actor = financeReportActor();
@@ -696,16 +748,35 @@ test('each named finance report honors its own generated permission', function (
     $actor = User::factory()->create();
     $actor->givePermissionTo(Permission::findOrCreate($permission, 'web'));
 
-    $this->actingAs($actor)
+    $screen = $this->actingAs($actor)
         ->get(route($routeName, ['from_date' => '2026-01-01']))
         ->assertOk()
         ->assertSee(__($titleKey))
         ->assertSee('action="'.route($routeName).'"', false);
+    $dataRoute = str_replace('.index', '.data', $routeName);
+    $data = $this->actingAs($actor)->getJson(route($dataRoute, ['from_date' => '2026-01-01', 'draw' => 7, 'type' => 'guarantee_cheques']))
+        ->assertOk()->assertJsonPath('draw', 7);
+    expect($data->json('data'))->toBe($screen->viewData('report')['rows']->values()->all())
+        ->and($data->json('recordsFiltered'))->toBe($screen->viewData('report')['rows']->count());
+    $actor->revokePermissionTo($permission);
+    $this->actingAs($actor)->getJson(route($dataRoute))->assertForbidden();
+    $this->actingAs($actor)->get(route($routeName))->assertForbidden();
 })->with([
+    ['admin.reports.finance.cashbox-balances.index', 'reports.finance.cashbox_balances.view', 'finance_reports.types.cashbox_balances.title'],
+    ['admin.reports.finance.cashbox-statement.index', 'reports.finance.cashbox_statement.view', 'finance_reports.types.cashbox_statement.title'],
+    ['admin.reports.finance.bank-account-balances.index', 'reports.finance.bank_account_balances.view', 'finance_reports.types.bank_account_balances.title'],
+    ['admin.reports.finance.bank-account-statement.index', 'reports.finance.bank_account_statement.view', 'finance_reports.types.bank_account_statement.title'],
     ['admin.reports.finance.cash-vouchers.index', 'reports.finance.cash_vouchers.view', 'finance_reports.types.cash_vouchers.title'],
+    ['admin.reports.finance.treasury-transfers.index', 'reports.finance.treasury_transfers.view', 'finance_reports.types.fund_transfers.title'],
+    ['admin.reports.finance.cheque-transit.index', 'reports.finance.cheque_transit.view', 'finance_reports.types.due_cheques.title'],
     ['admin.reports.finance.bank-reconciliation.index', 'reports.finance.bank_reconciliation.view', 'finance_reports.types.bank_reconciliation.title'],
     ['admin.reports.finance.received-cheques.index', 'reports.finance.received_cheques.view', 'finance_reports.types.received_cheques.title'],
+    ['admin.reports.finance.issued-cheques.index', 'reports.finance.issued_cheques.view', 'finance_reports.types.issued_cheques.title'],
     ['admin.reports.finance.cleared-cheques.index', 'reports.finance.cleared_cheques.view', 'finance_reports.types.cleared_cheques.title'],
+    ['admin.reports.finance.returned-cheques.index', 'reports.finance.returned_cheques.view', 'finance_reports.types.returned_cheques.title'],
+    ['admin.reports.finance.cancelled-cheques.index', 'reports.finance.cancelled_cheques.view', 'finance_reports.types.cancelled_cheques.title'],
+    ['admin.reports.finance.customer-aging.index', 'reports.finance.customer_aging.view', 'finance_reports.types.customer_aging.title'],
+    ['admin.reports.finance.supplier-aging.index', 'reports.finance.supplier_aging.view', 'finance_reports.types.supplier_aging.title'],
     ['admin.reports.finance.advances-allocations.index', 'reports.finance.advances_allocations.view', 'finance_reports.types.advances_allocations.title'],
     ['admin.reports.finance.unapproved-documents.index', 'reports.finance.unapproved_documents.view', 'finance_reports.types.unapproved_documents.title'],
 ]);

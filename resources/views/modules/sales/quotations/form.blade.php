@@ -75,6 +75,7 @@
         <x-forms.input type="hidden" name="submit_action" value="save" />
         @if ($cloneSourceToken)
             <x-forms.input type="hidden" name="clone_source_token" value="{{ $cloneSourceToken }}" />
+            <x-forms.input type="hidden" name="clone_source_doc_num" value="{{ $record?->doc_num }}" />
         @endif
 
         <div class="card mb-3">
@@ -110,7 +111,7 @@
                 @if($isView && $record)
                     <div class="row g-3 mb-3">
                         <div class="col-md-4"><h5 dir="ltr">{{ $record->doc_num }} · R{{ str_pad((string) $revision->revision_number, 2, '0', STR_PAD_LEFT) }}</h5><div>{{ $record->customer?->name }}</div></div>
-                        <div class="col-md-4">@include('modules.sales.quotations.partials.status', ['status' => $record->status])<div>{{ __('quotations.attributes.total') }}: {{ app(\Modules\Core\Services\NumericFormatService::class)->format($revision->total) }} {{ $record->currency?->code }}</div></div>
+                        <div class="col-md-4">@include('modules.sales.quotations.partials.status', ['status' => $record->status])<div>{{ __('quotations.attributes.total') }}: {{ app(\Modules\Core\Services\NumericFormatService::class)->formatWithMinimumDecimals($revision->total, 2) }} {{ $record->currency?->code }}</div></div>
                         <div class="col-md-4">{{ __('quotations.attributes.valid_until') }}: {{ app(\Modules\Core\Services\DateFormatService::class)->formatDate($record->valid_until, '') }}
                         @if($record->sent_at)<div>{{ __('sales_ui.mark_sent') }}: {{ app(\Modules\Core\Services\DateFormatService::class)->formatDate($record->sent_at, '') }} · {{ $record->sentBy?->name }}</div>@endif</div>
                     </div>
@@ -354,8 +355,9 @@
                                 </thead>
                                 <tbody>
                                     @foreach ($lines as $index => $line)
-                                        <tr class="js-quotation-line" data-index="{{ $index }}">
+                                        <tr class="js-quotation-line" data-index="{{ $index }}" @if(! $isReadonly && ! empty($line['source_line_public_uuid'])) data-price-locked="1" @endif>
                                             <td>
+                                                @if(! $isReadonly && ! empty($line['source_line_public_uuid']))<x-forms.input type="hidden" name="lines[{{ $index }}][source_line_public_uuid]" value="{{ $line['source_line_public_uuid'] }}" />@endif
                                                 @if(! empty($line['source_request_line_public_id']))<x-forms.input type="hidden" name="lines[{{ $index }}][source_request_line_public_id]" value="{{ $line['source_request_line_public_id'] }}" />@endif
                                                 @if ($isReadonly)
                                                     <div class="form-control-plaintext">{{ $line['product_label'] ?? __('common.empty_value') }}</div>
@@ -409,7 +411,7 @@
                                                 @if ($isReadonly)
                                                     <div class="form-control-plaintext">
                                                         <div>{{ $line['discount_type'] ? __('quotations.discount_types.'.$line['discount_type']).' '.$numbers->format($line['discount_value']) : __('common.empty_value') }}</div>
-                                                        <small class="text-600">{{ __('quotations.attributes.discount_amount') }}: <span class="js-quotation-line-discount-amount" dir="ltr">{{ $numbers->format($line['discount_amount'] ?? 0) }}</span></small>
+                                                        <small class="text-600">{{ __('quotations.attributes.discount_amount') }}: <span class="js-quotation-line-discount-amount" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line['discount_amount'] ?? 0, 2) }}</span></small>
                                                     </div>
                                                 @else
                                                     <div class="input-group input-group-sm">
@@ -420,22 +422,22 @@
                                                         </x-forms.select>
                                                     <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][discount_value]'" :value="$line['discount_value'] ?? 0" :scale="4" min="0" step="0.0001" :disabled="blank($line['discount_type'] ?? null)" />
                                                     </div>
-                                                    <small class="text-600">{{ __('quotations.attributes.discount_amount') }}: <span class="js-quotation-line-discount-amount" dir="ltr">{{ $numbers->format($line['discount_amount'] ?? 0) }}</span></small>
+                                                    <small class="text-600">{{ __('quotations.attributes.discount_amount') }}: <span class="js-quotation-line-discount-amount" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line['discount_amount'] ?? 0, 2) }}</span></small>
                                                 @endif
                                             </td>
                                             <td>
                                                 @if ($isReadonly)
                                                     <div class="form-control-plaintext text-center" dir="ltr">
                                                         <div>{{ $numbers->format($line['tax_rate'] ?? 0) }}%</div>
-                                                        <small class="text-600 js-quotation-line-tax-amount">{{ $numbers->format($line['tax_amount'] ?? 0) }}</small>
+                                                        <small class="text-600 js-quotation-line-tax-amount">{{ $numbers->formatWithMinimumDecimals($line['tax_amount'] ?? 0, 2) }}</small>
                                                     </div>
                                                 @else
                                                     <x-forms.numeric-input class="text-center js-quotation-calc" :name="'lines['.$index.'][tax_rate]'" :value="$line['tax_rate'] ?? 0" :scale="4" min="0" max="100" step="0.0001" />
-                                                    <small class="d-block text-center text-600 js-quotation-line-tax-amount" dir="ltr">{{ $numbers->format($line['tax_amount'] ?? 0) }}</small>
+                                                    <small class="d-block text-center text-600 js-quotation-line-tax-amount" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line['tax_amount'] ?? 0, 2) }}</small>
                                                 @endif
                                             </td>
                                             <td class="text-center">
-                                                <span class="js-quotation-line-total" data-line-card-total dir="ltr">{{ $numbers->format($line['line_total'] ?? 0) }}</span>
+                                                <span class="js-quotation-line-total" data-line-card-total dir="ltr">{{ $numbers->formatWithMinimumDecimals($line['line_total'] ?? 0, 2) }}</span>
                                             </td>
                                             <td>
                                                 @if ($isReadonly)
@@ -483,13 +485,13 @@
                                     @endif
                                 </div>
                                 <div class="col-5 text-700">{{ __('quotations.attributes.subtotal') }}</div>
-                                <div class="col-7 text-end js-quotation-subtotal" dir="ltr">{{ $numbers->format($currentRevision?->subtotal ?? 0) }}</div>
+                                <div class="col-7 text-end js-quotation-subtotal" dir="ltr">{{ $numbers->formatWithMinimumDecimals($currentRevision?->subtotal ?? 0, 2) }}</div>
                                 <div class="col-5 text-700">{{ __('quotations.attributes.discount_amount') }}</div>
-                                <div class="col-7 text-end js-quotation-discount" dir="ltr">{{ $numbers->format($currentRevision?->discount_amount ?? 0) }}</div>
+                                <div class="col-7 text-end js-quotation-discount" dir="ltr">{{ $numbers->formatWithMinimumDecimals($currentRevision?->discount_amount ?? 0, 2) }}</div>
                                 <div class="col-5 text-700">{{ __('quotations.attributes.tax_amount') }}</div>
-                                <div class="col-7 text-end js-quotation-tax" dir="ltr">{{ $numbers->format($currentRevision?->tax_amount ?? 0) }}</div>
+                                <div class="col-7 text-end js-quotation-tax" dir="ltr">{{ $numbers->formatWithMinimumDecimals($currentRevision?->tax_amount ?? 0, 2) }}</div>
                                 <div class="col-5 fw-bold">{{ __('quotations.attributes.total') }}</div>
-                                <div class="col-7 text-end fw-bold js-quotation-total" dir="ltr">{{ $numbers->format($currentRevision?->total ?? 0) }}</div>
+                                <div class="col-7 text-end fw-bold js-quotation-total" dir="ltr">{{ $numbers->formatWithMinimumDecimals($currentRevision?->total ?? 0, 2) }}</div>
                             </div>
                         </div>
                     </div>
@@ -701,7 +703,7 @@
                                                 <td dir="ltr" class="fw-semibold">R{{ str_pad((string) $history->revision_number, 2, '0', STR_PAD_LEFT) }}</td>
                                                 <td dir="ltr">{{ $plainDate($history->revision_date) }}</td>
                                                 <td>@include('modules.sales.quotations.partials.status', ['status' => $history->status])</td>
-                                                <td dir="ltr">{{ $numbers->format($history->total) }}</td>
+                                                <td dir="ltr">{{ $numbers->formatWithMinimumDecimals($history->total, 2) }}</td>
                                                 <td>{{ $history->createdBy ? trim(implode(' / ', array_filter([$history->createdBy->name, $history->createdBy->doc_num]))) : __('common.empty_value') }}</td>
                                                 <td>{{ $history->change_reason ?: __('common.empty_value') }}</td>
                                                 <td class="text-end white-space-nowrap">

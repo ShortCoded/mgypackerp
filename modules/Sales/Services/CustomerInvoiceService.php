@@ -15,6 +15,7 @@ use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
+use Modules\Sales\Models\CustomerInvoiceCorrection;
 use Modules\Sales\Models\CustomerInvoiceLine;
 use Modules\Sales\Models\SalesIssueOrder;
 use Modules\Sales\Models\SalesOrder;
@@ -107,7 +108,7 @@ class CustomerInvoiceService
                 if ($sourceLine && bccomp($quantity, $sourceLine->remainingQuantity(), 8) > 0) {
                     throw new DomainException(__('Invoice quantity exceeds the remaining request quantity.'));
                 }
-                $gross = $this->amounts->multiply($quantity, $unitPrice);
+                $gross = $this->amounts->unitPriceTotal($quantity, $unitPrice);
                 $this->amounts->assertNotGreaterThan($discount, $gross, __('Line discount cannot exceed its gross amount.'));
                 $this->amounts->assertNotGreaterThan($discount, $price['maximum_discount_amount'], __('price_lists.messages.discount_exceeded', ['product' => $product->doc_num.' / '.$product->name, 'maximum' => $price['maximum_discount_amount']]));
                 $conversion = $this->unitConversions->snapshot($product, $unit->getKey(), $quantity);
@@ -168,6 +169,7 @@ class CustomerInvoiceService
                     'source_snapshot' => array_filter([
                         'source_type' => $source ? 'sales_request' : 'direct',
                         'sales_request' => $source?->doc_num,
+                        'sales_request_line_id' => $row['source_line']?->getKey(),
                         'sales_request_line_public_id' => $row['source_line']?->public_id,
                     ]),
                 ]);
@@ -362,6 +364,7 @@ class CustomerInvoiceService
     {
         return DB::transaction(function () use ($invoice, $lines, $schedules): CustomerInvoice {
             $locked = CustomerInvoice::query()->with(['lines', 'paymentSchedules'])->lockForUpdate()->findOrFail($invoice->getKey());
+            $this->assertReopenContext($locked);
 
             if ($locked->document_type !== CustomerInvoice::TypeInvoice || $locked->source_type === 'fixed_asset_disposal' || ! $locked->isEditable()) {
                 throw new DomainException(__('Only a draft or safely reopened invoice may be amended.'));
@@ -372,10 +375,16 @@ class CustomerInvoiceService
                 throw new DomainException(__('Every existing invoice line must be included in the correction.'));
             }
 
+            $sourceRequest = null;
+            if ($locked->source_type === 'sales_request') {
+                $sourceRequest = SalesRequest::query()->with('lines')->lockForUpdate()->findOrFail($locked->source_id);
+            }
             $prepared = [];
             $allocatedAmounts = [];
             $correctedByDelivery = [];
             $correctedByOrder = [];
+            $correctedRequestLineIds = [];
+            $requestLineChanges = [];
             foreach ($locked->lines as $invoiceLine) {
                 $input = $inputByPublicId->get($invoiceLine->public_id);
                 if (! is_array($input)) {
@@ -386,14 +395,46 @@ class CustomerInvoiceService
                 $this->amounts->assertPositive($quantity, __('Invoice quantity must be greater than zero.'));
 
                 if ($invoiceLine->sales_order_line_id === null) {
+                    $requestLine = null;
+                    if ($sourceRequest !== null) {
+                        $sourceLinePublicId = $invoiceLine->source_snapshot['sales_request_line_public_id'] ?? null;
+                        $requestLine = $sourceRequest->lines->firstWhere('public_id', $sourceLinePublicId);
+                        if (! $requestLine instanceof SalesRequestLine
+                            || (isset($invoiceLine->source_snapshot['sales_request_line_id'])
+                                && (int) $invoiceLine->source_snapshot['sales_request_line_id'] !== (int) $requestLine->getKey())
+                            || (int) $requestLine->product_id !== (int) $invoiceLine->product_id
+                            || (int) $requestLine->unit_id !== (int) $invoiceLine->unit_id
+                            || (! isset($invoiceLine->source_snapshot['sales_request_line_id'])
+                                && $sourceRequest->lines->where('product_id', $invoiceLine->product_id)
+                                    ->where('unit_id', $invoiceLine->unit_id)->count() !== 1)
+                            || in_array($requestLine->getKey(), $correctedRequestLineIds, true)) {
+                            throw new DomainException(__('The sales request source line for this invoice is missing or invalid.'));
+                        }
+                        $correctedRequestLineIds[] = $requestLine->getKey();
+                        $correctedConverted = bcadd(
+                            (string) $requestLine->converted_quantity,
+                            bcsub($quantity, (string) $invoiceLine->quantity, 8),
+                            8,
+                        );
+                        if (bccomp($correctedConverted, '0', 8) < 0
+                            || bccomp($correctedConverted, (string) $requestLine->quantity, 8) > 0) {
+                            throw new DomainException(__('Invoice quantity exceeds the remaining request quantity.'));
+                        }
+                        if (bccomp($correctedConverted, (string) $requestLine->converted_quantity, 8) !== 0) {
+                            $requestLineChanges[] = [
+                                'line' => $requestLine,
+                                'converted_before' => (string) $requestLine->converted_quantity,
+                                'converted_after' => $correctedConverted,
+                            ];
+                        }
+                    }
                     $ratio = bcdiv($quantity, (string) $invoiceLine->quantity, 12);
-                    $gross = $this->amounts->multiply(
-                        $this->amounts->multiply((string) $invoiceLine->unit_price, (string) $invoiceLine->quantity),
-                        $ratio,
-                    );
+                    $bookedGross = bcsub(bcadd((string) $invoiceLine->line_total, (string) $invoiceLine->discount_amount, 4), (string) $invoiceLine->tax_amount, 4);
+                    $gross = $this->amounts->round($this->amounts->multiply($bookedGross, $ratio, 16));
                     $prepared[] = [
                         'invoiceLine' => $invoiceLine,
                         'orderLine' => null,
+                        'requestLine' => $requestLine,
                         'quantity' => $quantity,
                         'baseQuantity' => bcmul($quantity, (string) $invoiceLine->conversion_factor, 8),
                         'discount' => $this->amounts->multiply((string) $invoiceLine->discount_amount, $ratio),
@@ -438,15 +479,72 @@ class CustomerInvoiceService
                 throw new DomainException(__('Corrected payment schedules must equal the corrected invoice total.'));
             }
 
+            $orderLineChanges = [];
             foreach ($prepared as $row) {
                 $quantityDelta = $this->amounts->subtract($row['quantity'], $row['invoiceLine']->quantity, 8);
                 $baseDelta = $this->amounts->subtract($row['baseQuantity'], $row['invoiceLine']->base_quantity, 8);
-                $row['orderLine']?->increment('invoiced_quantity', $quantityDelta);
-                $row['orderLine']?->increment('invoiced_base_quantity', $baseDelta);
+                if ($row['orderLine'] !== null) {
+                    $orderLineId = (int) $row['orderLine']->getKey();
+                    $orderLineChanges[$orderLineId] ??= ['line' => $row['orderLine'], 'quantity_delta' => '0', 'base_delta' => '0'];
+                    $orderLineChanges[$orderLineId]['quantity_delta'] = bcadd($orderLineChanges[$orderLineId]['quantity_delta'], $quantityDelta, 8);
+                    $orderLineChanges[$orderLineId]['base_delta'] = bcadd($orderLineChanges[$orderLineId]['base_delta'], $baseDelta, 8);
+                }
                 $row['invoiceLine']->update([
                     'quantity' => $row['quantity'], 'base_quantity' => $row['baseQuantity'],
                     'discount_amount' => $row['discount'], 'tax_amount' => $row['tax'],
                     'line_total' => $this->amounts->add($this->amounts->subtract($row['gross'], $row['discount']), $row['tax']),
+                ]);
+            }
+            foreach ($orderLineChanges as $change) {
+                $correctedInvoiced = bcadd((string) $change['line']->invoiced_quantity, $change['quantity_delta'], 8);
+                $correctedBaseInvoiced = bcadd((string) $change['line']->invoiced_base_quantity, $change['base_delta'], 8);
+                if (bccomp($correctedInvoiced, '0', 8) < 0 || bccomp($correctedBaseInvoiced, '0', 8) < 0) {
+                    throw new DomainException(__('The sales order invoiced quantity is less than the invoice quantity.'));
+                }
+                $change['line']->forceFill([
+                    'invoiced_quantity' => $correctedInvoiced,
+                    'invoiced_base_quantity' => $correctedBaseInvoiced,
+                ])->save();
+            }
+            if ($sourceRequest !== null && $requestLineChanges !== []) {
+                foreach ($requestLineChanges as $change) {
+                    $change['line']->forceFill(['converted_quantity' => $change['converted_after']])->save();
+                }
+                $previousStatus = (string) $sourceRequest->status;
+                $nextStatus = $previousStatus;
+                if (in_array($previousStatus, [SalesRequest::StatusApproved, 'partially_converted', 'converted'], true)) {
+                    $hasConverted = $sourceRequest->lines()->where('converted_quantity', '>', 0)->exists();
+                    $hasRemaining = $sourceRequest->lines()->whereColumn('converted_quantity', '<', 'quantity')->exists();
+                    $nextStatus = ! $hasConverted ? SalesRequest::StatusApproved : ($hasRemaining ? 'partially_converted' : 'converted');
+                }
+                $sourceRequest->forceFill([
+                    'status' => $nextStatus,
+                    'status_history' => [
+                        ...($sourceRequest->status_history ?? []),
+                        [
+                            'event' => 'conversion_amended',
+                            'from' => $previousStatus,
+                            'to' => $nextStatus,
+                            'at' => now()->toIso8601String(),
+                            'by' => auth()->id(),
+                            'invoice' => $locked->doc_num,
+                            'lines' => collect($requestLineChanges)->map(fn (array $change): array => [
+                                'source_line_public_id' => $change['line']->public_id,
+                                'converted_before' => $change['converted_before'],
+                                'converted_after' => $change['converted_after'],
+                            ])->all(),
+                        ],
+                    ],
+                ])->save();
+                $this->audit->record($sourceRequest, 'sales_request.conversion_amended', [
+                    'invoice' => $locked->doc_num,
+                    'from' => $previousStatus,
+                    'to' => $nextStatus,
+                    'lines' => collect($requestLineChanges)->map(fn (array $change): array => [
+                        'source_line_public_id' => $change['line']->public_id,
+                        'converted_before' => $change['converted_before'],
+                        'converted_after' => $change['converted_after'],
+                    ])->all(),
                 ]);
             }
 
@@ -473,6 +571,7 @@ class CustomerInvoiceService
                 ->with(['lines', 'deliveries', 'allocations', 'returns', 'creditNotes'])
                 ->lockForUpdate()
                 ->findOrFail($invoice->getKey());
+            $this->assertReopenContext($locked);
 
             if (! $locked->canDeleteDraft()
                 || $locked->journal_entry_id !== null
@@ -486,29 +585,86 @@ class CustomerInvoiceService
             foreach ($locked->lines as $line) {
                 if ($line->sales_order_line_id !== null) {
                     $orderLine = SalesOrderLine::query()->lockForUpdate()->findOrFail($line->sales_order_line_id);
-                    $orderLine->decrement('invoiced_quantity', $line->quantity);
-                    $orderLine->decrement('invoiced_base_quantity', $line->base_quantity);
+                    $remainingQuantity = bcsub((string) $orderLine->invoiced_quantity, (string) $line->quantity, 8);
+                    $remainingBaseQuantity = bcsub((string) $orderLine->invoiced_base_quantity, (string) $line->base_quantity, 8);
+                    if (bccomp($remainingQuantity, '0', 8) < 0 || bccomp($remainingBaseQuantity, '0', 8) < 0) {
+                        throw new DomainException(__('The sales order invoiced quantity is less than the invoice quantity.'));
+                    }
+                    $orderLine->forceFill([
+                        'invoiced_quantity' => $remainingQuantity,
+                        'invoiced_base_quantity' => $remainingBaseQuantity,
+                    ])->save();
                 }
             }
 
             if ($locked->source_type === 'sales_request' && $locked->source_id !== null) {
-                $source = SalesRequest::query()->with('lines')->lockForUpdate()->find($locked->source_id);
-                if ($source instanceof SalesRequest) {
-                    foreach ($locked->lines as $line) {
-                        $sourceLinePublicId = $line->source_snapshot['sales_request_line_public_id'] ?? null;
-                        $sourceLine = $source->lines->firstWhere('public_id', $sourceLinePublicId);
-                        if ($sourceLine instanceof SalesRequestLine) {
-                            $remainingConverted = bcsub((string) $sourceLine->converted_quantity, (string) $line->quantity, 8);
-                            if (bccomp($remainingConverted, '0', 8) < 0) {
-                                $remainingConverted = '0.00000000';
-                            }
-                            $sourceLine->forceFill(['converted_quantity' => $remainingConverted])->save();
-                        }
-                    }
-                    $source->forceFill([
-                        'status' => $source->lines()->where('converted_quantity', '>', 0)->exists() ? 'partially_converted' : 'approved',
-                    ])->save();
+                $source = SalesRequest::withTrashed()->with('lines')->lockForUpdate()->find($locked->source_id);
+                if (! $source instanceof SalesRequest) {
+                    throw new DomainException(__('The sales request source for this invoice is missing.'));
                 }
+
+                $previousStatus = (string) $source->status;
+                $previousClosedAt = $source->closed_at?->toIso8601String();
+                $reversedLines = [];
+                $seenSourceLineIds = [];
+                foreach ($locked->lines as $line) {
+                    $sourceLinePublicId = $line->source_snapshot['sales_request_line_public_id'] ?? null;
+                    $sourceLine = $source->lines->firstWhere('public_id', $sourceLinePublicId);
+                    if (! $sourceLine instanceof SalesRequestLine
+                        || (isset($line->source_snapshot['sales_request_line_id'])
+                            && (int) $line->source_snapshot['sales_request_line_id'] !== (int) $sourceLine->getKey())
+                        || (int) $sourceLine->product_id !== (int) $line->product_id
+                        || (int) $sourceLine->unit_id !== (int) $line->unit_id
+                        || (! isset($line->source_snapshot['sales_request_line_id'])
+                            && $source->lines->where('product_id', $line->product_id)
+                                ->where('unit_id', $line->unit_id)->count() !== 1)
+                        || in_array($sourceLine->getKey(), $seenSourceLineIds, true)) {
+                        throw new DomainException(__('The sales request source line for this invoice is missing or invalid.'));
+                    }
+                    $seenSourceLineIds[] = $sourceLine->getKey();
+
+                    $remainingConverted = bcsub((string) $sourceLine->converted_quantity, (string) $line->quantity, 8);
+                    if (bccomp($remainingConverted, '0', 8) < 0) {
+                        throw new DomainException(__('The sales request converted quantity is less than the invoice quantity.'));
+                    }
+                    $reversedLines[] = [
+                        'source_line_public_id' => $sourceLine->public_id,
+                        'quantity' => (string) $line->quantity,
+                        'converted_before' => (string) $sourceLine->converted_quantity,
+                        'converted_after' => $remainingConverted,
+                    ];
+                    $sourceLine->forceFill(['converted_quantity' => $remainingConverted])->save();
+                }
+
+                $nextStatus = $previousStatus;
+                if (in_array($previousStatus, [SalesRequest::StatusApproved, 'partially_converted', 'converted'], true)) {
+                    $hasConverted = $source->lines()->where('converted_quantity', '>', 0)->exists();
+                    $hasRemaining = $source->lines()->whereColumn('converted_quantity', '<', 'quantity')->exists();
+                    $nextStatus = ! $hasConverted ? SalesRequest::StatusApproved : ($hasRemaining ? 'partially_converted' : 'converted');
+                }
+                $source->forceFill([
+                    'status' => $nextStatus,
+                    'status_history' => [
+                        ...($source->status_history ?? []),
+                        [
+                            'event' => 'conversion_reversed',
+                            'from' => $previousStatus,
+                            'to' => $nextStatus,
+                            'at' => now()->toIso8601String(),
+                            'by' => auth()->id(),
+                            'invoice' => $locked->doc_num,
+                            'lines' => $reversedLines,
+                        ],
+                    ],
+                ])->save();
+                $this->audit->record($source, 'sales_request.conversion_reversed', [
+                    'invoice' => $locked->doc_num,
+                    'from' => $previousStatus,
+                    'to' => $nextStatus,
+                    'closed_at_before' => $previousClosedAt,
+                    'closed_at_after' => $source->closed_at?->toIso8601String(),
+                    'lines' => $reversedLines,
+                ]);
             }
 
             $locked->forceFill(['deleted_by' => auth()->id()])->saveQuietly();
@@ -599,7 +755,8 @@ class CustomerInvoiceService
         if (! isset($allocated[$line->id])) {
             $prior = CustomerInvoiceLine::query()->where('sales_order_line_id', $line->id)
                 ->when($exceptInvoiceId, fn ($query) => $query->where('customer_invoice_id', '<>', $exceptInvoiceId))
-                ->whereHas('invoice', fn ($query) => $query->where('document_type', CustomerInvoice::TypeInvoice))->get();
+                ->whereHas('invoice', fn ($query) => $query->where('document_type', CustomerInvoice::TypeInvoice)
+                    ->whereDoesntHave('creditNotes', fn ($credit) => $credit->where('source_type', CustomerInvoiceCorrection::class)->where('posting_status', 'posted')))->get();
             $allocated[$line->id] = ['quantity' => $prior->reduce(fn ($sum, $row) => bcadd($sum, $row->quantity, 8), '0'),
                 'discount' => $this->amounts->sum($prior->pluck('discount_amount')), 'tax' => $this->amounts->sum($prior->pluck('tax_amount')),
                 'gross' => $prior->reduce(fn ($sum, $row) => bcadd($sum, bcsub(bcadd($row->line_total, $row->discount_amount, 4), $row->tax_amount, 4), 4), '0')];
@@ -608,10 +765,10 @@ class CustomerInvoiceService
         $newQuantity = bcadd($state['quantity'], $quantity, 8);
         $final = bccomp($newQuantity, $line->quantity, 8) === 0;
         $ratio = bcdiv($quantity, $line->quantity, 16);
-        $totals = ['discount' => $line->discount_amount, 'tax' => $line->tax_amount, 'gross' => $this->amounts->multiply($line->quantity, $line->unit_price)];
+        $totals = ['discount' => $line->discount_amount, 'tax' => $line->tax_amount, 'gross' => $this->amounts->unitPriceTotal($line->quantity, $line->unit_price)];
         $result = [];
         foreach ($totals as $key => $total) {
-            $result[$key] = $final ? bcsub($total, $state[$key], 4) : ($key === 'gross' ? $this->amounts->multiply($quantity, $line->unit_price) : $this->amounts->multiply($total, $ratio));
+            $result[$key] = $final ? bcsub($total, $state[$key], 4) : ($key === 'gross' ? $this->amounts->unitPriceTotal($quantity, $line->unit_price) : $this->amounts->multiply($total, $ratio));
             $state[$key] = bcadd($state[$key], $result[$key], 4);
         }
         $state['quantity'] = $newQuantity;

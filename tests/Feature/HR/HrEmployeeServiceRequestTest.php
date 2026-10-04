@@ -146,6 +146,64 @@ test('authorized hr reviewer can approve a submitted request', function (): void
         ->and($activity->properties->toArray())->not->toHaveKeys(['details', 'resolution_notes', 'notes']);
 });
 
+test('leave approval remains pending when the employee payroll period is already posted', function (): void {
+    $fixture = employeeRequestFixture();
+    $periodId = DB::table('hr_payroll_periods')->insertGetId([
+        'company_id' => $fixture['company']->getKey(),
+        'period_start' => '2026-09-01',
+        'period_end' => '2026-09-30',
+        'status' => 'closed',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $runId = DB::table('hr_payroll_runs')->insertGetId([
+        'payroll_period_id' => $periodId,
+        'branch_id' => $fixture['branch']->getKey(),
+        'status' => 'posted',
+        'posted_at' => now(),
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    DB::table('hr_payslips')->insert([
+        'payroll_run_id' => $runId,
+        'employee_id' => $fixture['employee']->getKey(),
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'status' => 'posted',
+        'created_at' => now(),
+        'updated_at' => now(),
+    ]);
+    $leaveType = HrLeaveType::query()->where('code', 'ANNUAL')->sole();
+    $request = HrEmployeeServiceRequest::query()->create([
+        'employee_id' => $fixture['employee']->getKey(),
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'request_type' => 'leave',
+        'details' => 'Synthetic after payroll',
+        'requested_from' => '2026-09-10',
+        'requested_to' => '2026-09-10',
+        'payload' => [
+            'leave_type_id' => $leaveType->getKey(),
+            'chargeable_dates' => ['2026-09-10'],
+            'payment_status' => 'paid',
+            'requires_balance' => false,
+        ],
+        'status' => 'submitted',
+        'submitted_at' => now(),
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+    $reviewer = User::factory()->create();
+    $role = Role::query()->create(['name' => 'Posted Payroll Reviewer '.Str::random(5), 'guard_name' => 'web']);
+    $reviewer->assignRole($role);
+    $role->companyAccessCompanies()->attach($fixture['company']->getKey());
+
+    expect(fn () => app(HrEmployeeRequestService::class)->review($request, $reviewer, 'approved', null))
+        ->toThrow(DomainException::class, __('hr_requests.messages.leave_posted_payroll_requires_correction'));
+    expect($request->refresh()->status)->toBe('submitted')
+        ->and(DB::table('hr_leave_requests')->count())->toBe(0)
+        ->and(DB::table('hr_leave_balance_ledger')->count())->toBe(0);
+});
+
 test('rejection requires a resolution note', function (): void {
     $fixture = employeeRequestFixture();
     $request = HrEmployeeServiceRequest::query()->create([

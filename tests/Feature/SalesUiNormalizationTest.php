@@ -33,11 +33,13 @@ test('sales report workbook headings and sheet titles follow the active locale',
         'aging' => collect(),
     ]))->sheets();
 
-    expect($sheets)->toHaveCount(4)
+    expect($sheets)->toHaveCount(5)
         ->and($sheets[0]->title())->toBe('الملخص المالي')
         ->and($sheets[0]->headings())->toBe(['المؤشر', 'القيمة'])
         ->and($sheets[1]->title())->toBe('المبيعات حسب العميل')
-        ->and($sheets[1]->headings())->toContain('العميل', 'المبيعات', 'المستحق');
+        ->and($sheets[1]->headings())->toContain('العميل', 'المبيعات', 'المستحق')
+        ->and($sheets[4]->title())->toBe('حركة إشعارات الخصم')
+        ->and($sheets[4]->headings())->toBe(['المستند', 'العميل', 'التاريخ', 'النوع', 'الأثر على صافي المبيعات']);
 });
 
 function salesUiFixture(): array
@@ -509,7 +511,8 @@ test('delivery creation starts from a posted deliverable invoice and uses delive
         ->assertDontSee(__('Reverse and Reopen'));
     $order = $order->fresh();
     expect($order->canCancelSafely())->toBeFalse()
-        ->and($order->canReopenSafely())->toBeFalse();
+        ->and($order->canReopenSafely())->toBeTrue()
+        ->and($order->canAppendProductionAmendment())->toBeTrue();
     $this->get(route('admin.sales.sales-orders.show', $order))->assertOk()
         ->assertDontSee(__('Cancellation reason'))
         ->assertDontSee(__('Reopen for Amendment'));

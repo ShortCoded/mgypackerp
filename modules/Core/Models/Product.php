@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Modules\Inventory\Models\InventoryTransaction;
 
 class Product extends Model
 {
@@ -63,6 +64,7 @@ class Product extends Model
         'cost_as_inventory',
         'is_displayable',
         'tracks_expiry',
+        'tracks_serials',
         'default_shelf_life_days',
         'status',
         'notes',
@@ -81,6 +83,7 @@ class Product extends Model
         'cost_as_inventory' => true,
         'is_displayable' => true,
         'tracks_expiry' => false,
+        'tracks_serials' => false,
         'status' => 'active',
     ];
 
@@ -254,12 +257,23 @@ class Product extends Model
             'cost_as_inventory' => 'boolean',
             'is_displayable' => 'boolean',
             'tracks_expiry' => 'boolean',
+            'tracks_serials' => 'boolean',
             'default_shelf_life_days' => 'integer',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
             'deleted_at' => 'datetime',
             'restored_at' => 'datetime',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        static::updating(function (self $product): void {
+            if ($product->isDirty('tracks_serials') && InventoryTransaction::query()
+                ->where('company_id', $product->company_id)->where('product_id', $product->id)->exists()) {
+                throw new \DomainException(__('inventory_serial.tracking_history'));
+            }
+        });
     }
 
     public function getRouteKeyName(): string

@@ -25,34 +25,23 @@ class CurrencySeeder extends Seeder
                         ->where('code', 'EGP')
                         ->first();
 
-                    if (! $currency) {
-                        $document = $documentNumbers->nextForCompany('currencies', Currency::class, (int) $company->getKey());
-                        $currency = new Currency($document);
+                    if ($currency instanceof Currency) {
+                        return;
                     }
 
-                    if ($currency->trashed()) {
-                        $currency->restore();
-                    }
-
-                    $currency->fill([
+                    Currency::query()->create([
+                        ...$documentNumbers->nextForCompany('currencies', Currency::class, (int) $company->getKey()),
                         'company_id' => $company->getKey(),
                         'name' => 'الجنيه المصري',
                         'code' => 'EGP',
                         'minor_unit_name' => 'قرش',
                         'minor_unit_factor' => 100,
-                        'is_main' => true,
+                        'is_main' => ! Currency::query()
+                            ->where('company_id', $company->getKey())
+                            ->where('is_main', true)
+                            ->exists(),
                         'status' => 'active',
-                        'notes' => null,
-                        'deleted_at' => null,
-                        'deleted_by' => null,
                     ]);
-                    $currency->save();
-
-                    Currency::query()
-                        ->where('company_id', $company->getKey())
-                        ->whereKeyNot($currency->getKey())
-                        ->where('is_main', true)
-                        ->update(['is_main' => false]);
                 });
         });
     }

@@ -2,6 +2,7 @@
 
 use App\Models\User;
 use Database\Seeders\HrFullCycleBrowserE2eSeeder;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Auth\Models\Role;
@@ -64,7 +65,13 @@ test('marker-scoped employee-to-payroll cycle reconciles exactly and retries wit
     $sentinelPermission = Permission::findOrCreate('existing.admin.sentinel', 'web');
     $adminRole->syncPermissions([$sentinelPermission]);
 
-    $this->seed(HrFullCycleBrowserE2eSeeder::class);
+    $previousTestTime = Carbon::getTestNow();
+    try {
+        Carbon::setTestNow('2026-10-01 12:00:00');
+        $this->seed(HrFullCycleBrowserE2eSeeder::class);
+    } finally {
+        Carbon::setTestNow($previousTestTime);
+    }
 
     $company = Company::query()->where('doc_num', 'Company-'.HrFullCycleBrowserE2eSeeder::Marker)->firstOrFail();
     $branch = Branch::query()->where('doc_num', 'Branch-'.HrFullCycleBrowserE2eSeeder::Marker)->firstOrFail();
@@ -155,6 +162,7 @@ test('marker-scoped employee-to-payroll cycle reconciles exactly and retries wit
         ->where('source_id', $run->id)
         ->firstOrFail();
     $payment = DB::table('hr_payroll_payments')->where('payroll_run_id', $run->id)->firstOrFail();
+    expect(substr((string) $payment->approved_at, 0, 10))->toBe('2026-10-01');
     $voucher = CashVoucher::query()->findOrFail($payment->cash_voucher_id);
     $paymentJournal = JournalEntry::query()->with('lines')
         ->where('source_type', 'hr_payroll_payment')

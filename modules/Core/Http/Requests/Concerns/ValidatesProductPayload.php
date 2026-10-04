@@ -72,6 +72,7 @@ trait ValidatesProductPayload
             'cost_as_inventory' => ['nullable', 'boolean'],
             'is_displayable' => ['nullable', 'boolean'],
             'tracks_expiry' => ['nullable', 'boolean'],
+            'tracks_serials' => ['nullable', 'boolean'],
             'default_shelf_life_days' => ['nullable', 'integer', 'min:1', 'max:36500', Rule::requiredIf(fn (): bool => $this->boolean('tracks_expiry'))],
             'status' => ['required', 'string', Rule::in(['active', 'inactive'])],
             'notes' => ['nullable', 'string'],

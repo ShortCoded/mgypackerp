@@ -1,0 +1,32 @@
+<?php
+
+return [
+    'field' => 'Field',
+    'title' => 'Periodic inventory cost close',
+    'help' => 'Issues use a provisional moving average during the period. Prepare the dated warehouse calculation, review its sources and independently approve the final cost differences. Original documents and quantities remain unchanged.',
+    'prepare' => 'Prepare calculation', 'approve' => 'Approve and post differences', 'reject' => 'Reject calculation',
+    'prepared' => 'The period calculation is awaiting independent approval.', 'finalized' => 'The period costs and accounting differences were finalized.',
+    'from' => 'Period starts', 'to' => 'Period ends', 'posting_date' => 'Difference posting date',
+    'clearing' => 'Approved cost difference clearing account', 'reference' => 'Approval reference', 'reason' => 'Calculation / correction reason',
+    'rejection_reason' => 'Rejection reason', 'inputs' => 'Period inputs by warehouse and item', 'outflows' => 'Provisional and final issues',
+    'effects' => 'Stock and accounting differences', 'opening_quantity' => 'Opening quantity', 'opening_value' => 'Opening value',
+    'receipt_quantity' => 'Net receipts', 'receipt_value' => 'Receipt value', 'average' => 'Final weighted average',
+    'closing_quantity' => 'Closing quantity', 'provisional' => 'Provisional cost', 'final' => 'Final cost', 'difference' => 'Difference',
+    'statuses' => ['prepared' => 'Prepared for review', 'finalized' => 'Finalized', 'rejected' => 'Rejected'],
+    'precision' => 'Source accounting rounding differences',
+    'booked' => 'Original booked amount',
+    'rounded' => 'Correct rounded amount',
+    'errors' => [
+        'precision_source' => 'The source journal does not match its document lines and accounting dimensions. Review and correct that source before approving precision differences.',
+        'dates' => 'Choose a valid calculation range in one source financial period, and a posting date on or after its end.',
+        'scope' => 'The company, branch, warehouse or posting period is outside the authorized operating scope.',
+        'policy' => 'Each selected warehouse must use one dated periodic cost policy throughout the calculation range.',
+        'unpriced' => 'Complete and approve missing receipt costs or reconcile invalid quantities before finalizing this period.',
+        'overlap' => 'A pending or later finalized calculation already covers a selected warehouse. Reject the stale preview or select the next period.',
+        'duplicate' => 'This calculation is already finalized and has no new cost differences.',
+        'approval' => 'Another authorized user must approve a pending calculation once, with an approval reference.',
+        'stale' => 'The stock, cost, policy or source inputs changed after preparation. Reject this preview and prepare it again.',
+        'finalized' => 'This warehouse cost period is finalized. Record the correction through an approved cost adjustment in an open period.',
+        'immutable' => 'The saved calculation, sources and completed decision cannot be changed or deleted.',
+    ],
+];

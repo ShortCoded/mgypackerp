@@ -12,6 +12,7 @@ use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesReturn;
 use Modules\Sales\Models\SalesReturnLine;
+use Modules\Sales\Services\SalesReturnCorrectionService;
 
 /**
  * Read-only service for the Cost of Sales report.
@@ -77,6 +78,7 @@ class SalesCostReportService
                 'invoice',
                 'order',
                 'quarantineJournalEntry.lines',
+                'quarantineJournalEntry.reversedEntry.lines', 'corrections',
             ])
             ->get();
 
@@ -177,7 +179,8 @@ class SalesCostReportService
         // ── Return rows ──────────────────────────────────────────────
         foreach ($returns as $return) {
             $inventoryDoc = $return->returnInventoryDocument;
-            if (! $inventoryDoc || $inventoryDoc->status !== InventoryDocument::StatusPosted) {
+            $correction = $return->corrections->where('operation', 'return')->where('status', 'approved')->first();
+            if (! $inventoryDoc || ($inventoryDoc->status !== InventoryDocument::StatusPosted && $correction === null)) {
                 continue;
             }
 
@@ -196,6 +199,27 @@ class SalesCostReportService
             $quarantineJournal = $return->quarantineJournalEntry;
             $journalReconciled = ! $fullSourceHasNull
                 && $this->reconcileReturnJournal($quarantineJournal, $cogsAccountId, $fullAggregateCost, $return, $inventoryDoc);
+            $events = [];
+            if ($this->matchesPostingWindow((int) $inventoryDoc->financial_period_id, $inventoryDoc->document_date->toDateString(), $periodId, $from, $to)) {
+                $events[] = ['kind' => 'return', 'sign' => '-1', 'date' => $inventoryDoc->document_date, 'period' => $inventoryDoc->financial_period_id,
+                    'journal' => $quarantineJournal?->doc_num, 'reconciled' => $journalReconciled];
+            }
+            if ($correction !== null && $this->matchesPostingWindow((int) $correction->posting_financial_period_id, $correction->posting_date->toDateString(), $periodId, $from, $to)) {
+                $inverseReconciled = $journalReconciled;
+                try {
+                    $proof = app(SalesReturnCorrectionService::class);
+                    $proof->assertApproved($correction);
+                    if ($quarantineJournal === null || $quarantineJournal->reversedEntry === null) {
+                        $inverseReconciled = false;
+                    } else {
+                        $proof->assertInverse($quarantineJournal, $quarantineJournal->reversedEntry, (int) $correction->posting_financial_period_id, $correction->posting_date->toDateString());
+                    }
+                } catch (\DomainException) {
+                    $inverseReconciled = false;
+                }
+                $events[] = ['kind' => 'return_correction', 'sign' => '1', 'date' => $correction->posting_date, 'period' => $correction->posting_financial_period_id,
+                    'journal' => $quarantineJournal?->reversedEntry?->doc_num, 'reconciled' => $inverseReconciled];
+            }
 
             // Filter emitted lines to selected product (if any)
             $emittedLines = $productId
@@ -206,49 +230,51 @@ class SalesCostReportService
                 continue;
             }
 
-            foreach ($emittedLines as $line) {
-                // Exact return line via source_line_type / source_line_id only
-                $returnLine = $this->resolveExactReturnLine($return, $line);
-                $hasExactLineage = $returnLine !== null;
+            foreach ($events as $event) {
+                foreach ($emittedLines as $line) {
+                    // Exact return line via source_line_type / source_line_id only
+                    $returnLine = $this->resolveExactReturnLine($return, $line);
+                    $hasExactLineage = $returnLine !== null;
 
-                $unitCost = $hasExactLineage
-                    ? $this->toNullableDecimal($returnLine->original_unit_cost, 8)
-                    : $this->toNullableDecimal($line->unit_cost, 8);
+                    $unitCost = $hasExactLineage
+                        ? $this->toNullableDecimal($returnLine->original_unit_cost, 8)
+                        : $this->toNullableDecimal($line->unit_cost, 8);
 
-                $quantity = $this->toDecimal($line->quantity, 8);
+                    $quantity = $this->toDecimal($line->quantity, 8);
 
-                // Negative COGS
-                $signedTotalCost = $line->total_cost !== null
-                    ? bcmul($this->toDecimal($line->total_cost, 4), '-1', 4)
-                    : null;
+                    // Negative COGS
+                    $signedTotalCost = $line->total_cost !== null
+                        ? bcmul($this->toDecimal($line->total_cost, 4), $event['sign'], 4)
+                        : null;
 
-                $rows->push([
-                    'movement_kind' => 'return',
-                    'document' => $return->doc_num,
-                    'return_document' => $inventoryDoc->doc_num,
-                    'order' => $return->order?->doc_num,
-                    'invoice' => $return->invoice?->doc_num,
-                    'customer' => $return->customer?->name,
-                    'product' => $line->product?->name,
-                    'unit' => $line->unit?->name,
-                    'quantity' => bcmul($quantity, '-1', 8),
-                    'unit_cost' => $unitCost,
-                    'signed_total_cost' => $signedTotalCost,
-                    'posting_date' => $inventoryDoc->document_date,
-                    'branch_id' => $inventoryDoc->branch_id,
-                    'financial_period_id' => $inventoryDoc->financial_period_id,
-                    'journal_entry' => $quarantineJournal?->doc_num,
-                    'reconciliation_status' => ($unitCost !== null && $signedTotalCost !== null && $journalReconciled && $hasExactLineage)
-                        ? 'reconciled'
-                        : 'unreconciled',
-                ]);
+                    $rows->push([
+                        'movement_kind' => $event['kind'],
+                        'document' => $return->doc_num,
+                        'return_document' => $inventoryDoc->doc_num,
+                        'order' => $return->order?->doc_num,
+                        'invoice' => $return->invoice?->doc_num,
+                        'customer' => $return->customer?->name,
+                        'product' => $line->product?->name,
+                        'unit' => $line->unit?->name,
+                        'quantity' => bcmul($quantity, $event['sign'], 8),
+                        'unit_cost' => $unitCost,
+                        'signed_total_cost' => $signedTotalCost,
+                        'posting_date' => $event['date'],
+                        'branch_id' => $inventoryDoc->branch_id,
+                        'financial_period_id' => $event['period'],
+                        'journal_entry' => $event['journal'],
+                        'reconciliation_status' => ($unitCost !== null && $signedTotalCost !== null && $event['reconciled'] && $hasExactLineage)
+                            ? 'reconciled'
+                            : 'unreconciled',
+                    ]);
 
-                if ($signedTotalCost !== null) {
-                    $returnCost = bcadd($returnCost, $signedTotalCost, 4);
+                    if ($signedTotalCost !== null) {
+                        $returnCost = bcadd($returnCost, $signedTotalCost, 4);
+                    }
                 }
-            }
 
-            $returnCount++;
+                $returnCount++;
+            }
         }
 
         // Compute unreconciled_count once from final rows
@@ -338,15 +364,21 @@ class SalesCostReportService
         $query = SalesReturn::query()
             ->where('sales_returns.company_id', $companyId)
             ->where('sales_returns.branch_id', $branchId)
-            ->where('sales_returns.status', '!=', SalesReturn::StatusCancelled)
+            ->where(fn ($source) => $source->where('sales_returns.status', '!=', SalesReturn::StatusCancelled)
+                ->orWhereHas('corrections', fn ($correction) => $correction->where('operation', 'return')->where('status', 'approved')))
             ->whereNotNull('sales_returns.return_inventory_document_id');
 
         // Period/date filters use the posted return InventoryDocument fields
-        if ($periodId) {
-            $query->whereHas('returnInventoryDocument', function (Builder $doc) use ($periodId): void {
-                $doc->where('financial_period_id', $periodId);
-            });
-        }
+        $window = static function ($event, string $dateColumn) use ($periodId, $from, $to): void {
+            $event->when($periodId, fn ($builder) => $builder->where($dateColumn === 'posting_date' ? 'posting_financial_period_id' : 'financial_period_id', $periodId))
+                ->when($from, fn ($builder) => $builder->whereDate($dateColumn, '>=', $from))
+                ->when($to, fn ($builder) => $builder->whereDate($dateColumn, '<=', $to));
+        };
+        $query->where(fn ($events) => $events->whereHas('returnInventoryDocument', fn ($doc) => $window($doc, 'document_date'))
+            ->orWhereHas('corrections', function ($correction) use ($window): void {
+                $correction->where('operation', 'return')->where('status', 'approved');
+                $window($correction, 'posting_date');
+            }));
 
         if ($customerId) {
             $query->where('sales_returns.customer_id', $customerId);
@@ -366,19 +398,12 @@ class SalesCostReportService
             });
         }
 
-        if ($from) {
-            $query->whereHas('returnInventoryDocument', function (Builder $doc) use ($from): void {
-                $doc->whereDate('document_date', '>=', $from);
-            });
-        }
-
-        if ($to) {
-            $query->whereHas('returnInventoryDocument', function (Builder $doc) use ($to): void {
-                $doc->whereDate('document_date', '<=', $to);
-            });
-        }
-
         return $query->orderByDesc('sales_returns.return_date')->orderByDesc('sales_returns.id');
+    }
+
+    private function matchesPostingWindow(int $sourcePeriodId, string $date, ?int $periodId, ?string $from, ?string $to): bool
+    {
+        return ($periodId === null || $sourcePeriodId === $periodId) && ($from === null || $date >= $from) && ($to === null || $date <= $to);
     }
 
     /**

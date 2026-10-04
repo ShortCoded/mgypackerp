@@ -136,6 +136,7 @@
                         <td>
                             @if($isItemDocument)
                                 @include('reports.partials.item-details', ['line' => $line, 'product' => $product, 'showItemCode' => false])
+                                @include('modules.purchases.procurement.serial-details', ['line' => $line])
                             @else
                                 {{ $line->purchaseInvoice?->doc_num ?? '—' }}
                             @endif

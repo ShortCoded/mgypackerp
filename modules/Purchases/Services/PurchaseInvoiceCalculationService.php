@@ -35,7 +35,7 @@ class PurchaseInvoiceCalculationService
 
         foreach ($lines as $line) {
             $quantity = $this->normalize($line['quantity'] ?? 0, self::QuantityScale);
-            $unitPrice = $this->normalize($line['unit_price'] ?? 0);
+            $unitPrice = $this->numbers->normalize($this->normalize($line['unit_price'] ?? 0, 8)) ?? '0';
             $lineSubtotal = $this->round(bcmul($quantity, $unitPrice, self::IntermediateScale));
             $lineDiscount = $this->discountAmount($lineSubtotal, $line['discount_type'] ?? null, $line['discount_value'] ?? 0);
             $totalBeforeTax = $this->nonNegative(bcsub($lineSubtotal, $lineDiscount, self::AmountScale));
@@ -127,6 +127,23 @@ class PurchaseInvoiceCalculationService
     public function number(mixed $value): string
     {
         return $this->normalize($value);
+    }
+
+    /** @param list<array<string, mixed>> $schedules */
+    public function scheduledAmount(array $schedules): string
+    {
+        $total = $this->zero();
+        foreach ($schedules as $schedule) {
+            $total = bcadd($total, $this->normalize($schedule['amount'] ?? 0), self::AmountScale);
+        }
+
+        return $total;
+    }
+
+    /** @param list<array<string, mixed>> $schedules */
+    public function schedulesMatchTotal(array $schedules, string $total): bool
+    {
+        return bccomp($this->scheduledAmount($schedules), $this->normalize($total), self::AmountScale) === 0;
     }
 
     public function decimal(mixed $value): string

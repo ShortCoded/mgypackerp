@@ -1,7 +1,11 @@
 <?php
 
+use Maatwebsite\Excel\Excel as ExcelFormat;
+use Maatwebsite\Excel\Facades\Excel;
 use Modules\Accounting\Exports\LedgerReportExport;
 use Modules\Accounting\Services\JournalSourceLabelService;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 
 test('journal source labels are canonical in english and arabic without leaking identifiers', function (): void {
     $labels = app(JournalSourceLabelService::class);
@@ -75,4 +79,34 @@ test('ledger export consumes the canonical source mapper without leaking raw key
 
     expect($rows[1][1])->toBe('عكس حركة مخزنية')
         ->and(json_encode($rows, JSON_UNESCAPED_UNICODE))->not->toContain('inventory_document_reversal', 'ledger_reports.sources.');
+});
+
+test('ledger workbook and CSV preserve an eighteen-digit authorized decimal without spreadsheet coercion', function (): void {
+    $amount = '99999999999999.1234';
+    $export = new LedgerReportExport([
+        'filters' => ['from_date' => '2026-01-01', 'to_date' => '2026-01-31'],
+        'opening' => ['debit' => '0.0000', 'credit' => '0.0000'],
+        'period' => ['debit' => $amount, 'credit' => '0.0000'],
+        'ending' => ['debit' => $amount, 'credit' => '0.0000'],
+        'movements' => [[
+            'entry_date' => '2026-01-10', 'source_type' => null,
+            'doc_num' => 'SYN-LEDGER-1', 'reference_no' => null, 'source_doc_num' => null,
+            'description' => 'Synthetic precision movement', 'cost_center' => '', 'branch' => '',
+            'debit' => $amount, 'credit' => '0.0000', 'running_debit' => $amount, 'running_credit' => '0.0000',
+        ]],
+    ]);
+
+    expect(Excel::raw($export, ExcelFormat::CSV))->toContain($amount);
+
+    $path = tempnam(sys_get_temp_dir(), 'ledger-precision-');
+    file_put_contents($path, Excel::raw($export, ExcelFormat::XLSX));
+
+    try {
+        $sheet = IOFactory::load($path)->getActiveSheet();
+        expect($sheet->getCell('H3')->getValue())->toBe($amount)
+            ->and($sheet->getCell('H3')->getDataType())->toBe(DataType::TYPE_STRING)
+            ->and($sheet->getCell('J4')->getValue())->toBe($amount);
+    } finally {
+        @unlink($path);
+    }
 });

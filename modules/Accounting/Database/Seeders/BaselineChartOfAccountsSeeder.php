@@ -41,19 +41,16 @@ class BaselineChartOfAccountsSeeder extends Seeder
                 ->orderByRaw('CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END')
                 ->first();
 
-            if (! $account instanceof Account) {
-                $account = new Account(app(DocumentNumberService::class)->nextForCompany('accounts', Account::class, $company->getKey()));
+            if ($account instanceof Account) {
+                continue;
             }
 
-            if ($account->trashed()) {
-                $account->restore();
-            }
-
+            $account = new Account(app(DocumentNumberService::class)->nextForCompany('accounts', Account::class, $company->getKey()));
             $account->forceFill([
                 'company_id' => $company->getKey(),
                 'account_code' => $data['account_code'],
-                'name' => trim((string) $account->name) !== '' ? $account->name : $data['name'],
-                'name_en' => trim((string) $account->name_en) !== '' ? $account->name_en : $data['name_en'],
+                'name' => $data['name'],
+                'name_en' => $data['name_en'],
                 'parent_id' => null,
                 'level' => 1,
                 'account_classification_id' => $data['account_code'] === '5' ? $expensesClassificationId : null,
@@ -65,18 +62,7 @@ class BaselineChartOfAccountsSeeder extends Seeder
                 'is_system' => true,
                 'status' => 'active',
             ])->save();
-
-            $this->ensureDocumentNumber($account, $company);
         }
-    }
-
-    private function ensureDocumentNumber(Account $account, Company $company): void
-    {
-        if ($account->doc_number !== null && $account->doc_num !== null) {
-            return;
-        }
-
-        $account->forceFill(app(DocumentNumberService::class)->nextForCompany('accounts', Account::class, $company->getKey()))->save();
     }
 
     /**

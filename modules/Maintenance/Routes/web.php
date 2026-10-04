@@ -47,6 +47,7 @@ Route::middleware('auth')->prefix('admin/maintenance')->as('admin.maintenance.')
     Route::post('/expenses/{productionExpenseRequest}/reverse', [MaintenanceController::class, 'reverseExpense'])->middleware('can:maintenance.expenses.reverse')->name('expenses.reverse');
     Route::get('/reports', [MaintenanceController::class, 'reports'])->middleware('can:maintenance.reports.view')->name('reports.index');
     Route::get('/reports/export.xlsx', [MaintenanceController::class, 'exportReport'])->middleware('can:maintenance.reports.export')->name('reports.export');
+    Route::get('/reports/export.csv', [MaintenanceController::class, 'exportReportCsv'])->middleware('can:maintenance.reports.export')->name('reports.export.csv');
     Route::get('/reports/print', [MaintenanceController::class, 'printReport'])->middleware('can:maintenance.reports.export')->name('reports.print');
     Route::get('/select2/{lookup}', [MaintenanceController::class, 'select2'])
         ->middleware('can:maintenance.orders.view')

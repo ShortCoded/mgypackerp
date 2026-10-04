@@ -74,6 +74,7 @@ final class CostingReportController extends Controller
         $company = Company::query()->findOrFail($this->companies->requireCompanyId());
 
         return $pdf->stream('reports.costing', [
+            'title' => $report['title'],
             'report' => $report,
             'companyPrintIdentity' => $printIdentities->forCompany($company),
         ], 'costing-'.$report['type'].'.pdf', 'L');

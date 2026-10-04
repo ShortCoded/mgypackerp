@@ -1,0 +1,25 @@
+<?php
+
+return [
+    'title' => 'Credit Application Evidence',
+    'help' => 'Enter the original application details from company records and their reference, then submit for independent approval. Approval records missing details while preserving existing balances and journals.',
+    'applied' => 'Amount applied to the original invoice according to current balances',
+    'schedule' => 'Original invoice installment',
+    'credited' => 'Recorded installment credit',
+    'unassigned' => 'Remaining credit available for application evidence',
+    'prepared_by' => 'Prepared by',
+    'approved_by' => 'Approved by',
+    'amount' => 'Amount applied from this credit note',
+    'reference' => 'Application evidence document reference',
+    'reason' => 'Application details explanation',
+    'approval_reason' => 'Approval review reference and explanation',
+    'prepare' => 'Submit details for approval',
+    'approve' => 'Approve details',
+    'history' => 'Application details and reviews',
+    'pending' => 'Details awaiting independent approval',
+    'approved' => 'Application details approved',
+    'stale' => 'The credit note or evidence has changed. Review current data and prepare the details again.',
+    'independent' => 'Approval requires another user and an explanation of the evidence review.',
+    'source_invalid' => 'The credit note, invoice, installments or source journal do not reconcile. Correct the source first.',
+    'amount_invalid' => 'Select each original installment once and enter amounts matching the credit application within its recorded credit.',
+];

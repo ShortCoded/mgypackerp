@@ -210,14 +210,28 @@
         return this.children.length === 1 && this.children[0].hasAttribute('colspan');
       }).remove();
 
+      const wideReport = element.hasAttribute('data-report-wide') || element.closest('[data-inventory-operation-tables]') !== null;
       const base = {
         pageLength: 25,
         lengthMenu: [10, 25, 50, 75, 100],
         stateSave: false,
         autoWidth: false,
-        responsive: element.hasAttribute('data-report-wide') ? false : { details: { type: 'inline', target: 0 } },
-        scrollX: false,
+        responsive: wideReport ? false : { details: { type: 'inline', target: 0 } },
+        scrollX: wideReport,
         order: [],
+        initComplete: function () {
+          if (wideReport) {
+            const scroller = this.api().table().container().querySelector('.dt-scroll-body');
+            if (scroller) {
+              scroller.setAttribute('tabindex', '0');
+              scroller.setAttribute('role', 'region');
+              const heading = element.closest('.card')?.querySelector('.card-header');
+              if (heading) {
+                scroller.setAttribute('aria-label', heading.textContent.trim());
+              }
+            }
+          }
+        },
         drawCallback: function () {
           if (window.AppDataTables && typeof window.AppDataTables.applyFalconEnhancements === 'function') {
             window.AppDataTables.applyFalconEnhancements(document);
@@ -705,13 +719,11 @@
     const batch = form && form.querySelector('[name="batch_lot"]');
     const quantity = form && form.querySelector('[name="affected_base_quantity"]');
     if (!form || !summary || subject?.value !== 'inventory_stock') {
-      quantity?.setCustomValidity('');
       return;
     }
     if (!product?.value || !store?.value || !status?.value) {
       summary.className = 'alert alert-secondary mb-0';
       summary.textContent = fallbackMessage('stockBalanceLoading');
-      quantity?.setCustomValidity('');
       return;
     }
 
@@ -734,14 +746,12 @@
       const insufficient = requested > inspectable;
       summary.className = `alert ${insufficient ? 'alert-danger' : 'alert-success'} mb-0`;
       summary.textContent = `${fallbackMessage('stockBalanceAvailable')}${inspectable.toLocaleString()}` + (insufficient ? ` — ${fallbackMessage('stockBalanceInsufficient')}` : '');
-      quantity?.setCustomValidity(insufficient ? fallbackMessage('stockBalanceInsufficient') : '');
     }).fail(function (xhr) {
       if (xhr.statusText === 'abort') {
         return;
       }
       summary.className = 'alert alert-danger mb-0';
       summary.textContent = (xhr.responseJSON && xhr.responseJSON.message) || fallbackMessage('stockBalanceError');
-      quantity?.setCustomValidity('');
     });
   }
 
@@ -1259,6 +1269,7 @@
         field.value = values[fieldName];
       }
     });
+    (values?.work_segments || []).forEach(function (segment) { addLaborDay(row, segment); });
     initializeWorkflowSelects(row);
     if (window.AppNumbers && typeof window.AppNumbers.refresh === 'function') {
       window.AppNumbers.refresh(row);
@@ -1286,6 +1297,9 @@
     ['role', 'planned_hours', 'actual_hours', 'notes'].forEach(function (fieldName) {
       values[fieldName] = row.querySelector(`[name$="[${fieldName}]"]`)?.value || '';
     });
+    values.work_segments = Array.from(row.querySelectorAll('[data-labor-day]')).map(function (day) {
+      return { work_date: day.querySelector('[name$="[work_date]"]')?.value || '', actual_hours: day.querySelector('[name$="[actual_hours]"]')?.value || '' };
+    });
     addLaborRow(container, values, row, true);
   }
 
@@ -1297,18 +1311,56 @@
     }
 
     if (rows.length === 1) {
+      row.querySelectorAll('[data-labor-day] .js-date-picker').forEach(function (field) { field._flatpickr?.destroy(); });
+      row.querySelector('[data-labor-day-rows]')?.replaceChildren();
       $(row).find('select').val(null).trigger('change');
       row.querySelectorAll('input:not([type="hidden"]), textarea').forEach(function (field) { field.value = ''; });
     } else {
       $(row).find('select.select2-hidden-accessible').each(function () { $(this).select2('destroy'); });
       row.remove();
-      $(rows).find('select.select2-hidden-accessible').each(function () { $(this).select2('destroy'); });
+      $(rows).find('select.select2-hidden-accessible').each(function () { $(this).select2('destroy').removeData('select2AjaxInitialized'); });
       reindexLaborRows(container);
       initializeWorkflowSelects(container);
       return;
     }
     reindexLaborRows(container);
   }
+
+  function reindexLaborDays(row) {
+    const workerIndex = row.dataset.index || Array.from(row.parentElement.children).indexOf(row);
+    row.querySelectorAll('[data-labor-day]').forEach(function (day, dayIndex) {
+      day.querySelectorAll('[name]').forEach(function (field) {
+        field.name = field.name.replace(/labor_details\[(?:\d+|__INDEX__)\]/, `labor_details[${workerIndex}]`)
+          .replace(/\[work_segments\]\[(?:\d+|__DAY__)\]/, `[work_segments][${dayIndex}]`);
+      });
+    });
+  }
+
+  function addLaborDay(row, values) {
+    const days = row?.querySelector('[data-labor-days]');
+    const template = days?.querySelector('[data-labor-day-template]');
+    if (!(template instanceof HTMLTemplateElement) || !row) return;
+    days.querySelector('[data-labor-day-rows]').appendChild(template.content.cloneNode(true));
+    reindexLaborDays(row);
+    const day = days.querySelector('[data-labor-day-rows]').lastElementChild;
+    ['work_date', 'actual_hours'].forEach(function (field) {
+      if (values?.[field] !== undefined) day.querySelector(`[name$="[${field}]"]`).value = values[field];
+    });
+    window.AppDatePicker?.init(days);
+    window.AppNumbers?.refresh(days);
+  }
+
+  $(document).on('click', '[data-add-labor-day]', function () {
+    addLaborDay(this.closest('[data-labor-row]'), {});
+  });
+
+  $(document).on('click', '[data-remove-labor-day]', function () {
+    const row = this.closest('[data-labor-row]');
+    const day = this.closest('[data-labor-day]');
+    day?.querySelectorAll('.js-date-picker').forEach(function (field) { field._flatpickr?.destroy(); });
+    day?.remove();
+    if (row) reindexLaborDays(row);
+  });
 
   $(document).on('click', '[data-add-labor-row]', function () {
     const container = this.closest('[data-production-labor-planning]');
@@ -1643,7 +1695,7 @@
   $(document).on('change', '[data-maintenance-expense-form] [name="payment_channel"]', updateMaintenanceExpenseFields);
   function scrollReportTable(trigger) {
     const card = trigger.closest('.report-wide-card');
-    const scrollArea = card?.querySelector('[data-report-scroll-area]');
+    const scrollArea = card?.querySelector('.dt-scroll-body') || card?.querySelector('[data-report-scroll-area]');
     if (!scrollArea) {
       return;
     }

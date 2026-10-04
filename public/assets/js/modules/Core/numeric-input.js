@@ -109,6 +109,22 @@
         return negative ? '-' + result : result;
     }
 
+    function formatWithMinimumDecimals(value, minimumDecimals) {
+        if (!Number.isInteger(minimumDecimals) || minimumDecimals < 0) {
+            throw new RangeError('Minimum decimal places must be a non-negative integer.');
+        }
+
+        var formatted = format(value);
+
+        if (formatted === '' || minimumDecimals === 0 || !parseDecimal(value).valid) {
+            return formatted;
+        }
+
+        var parts = formatted.split('.');
+
+        return parts[0] + '.' + (parts[1] || '').padEnd(minimumDecimals, '0');
+    }
+
     function decimalPlaces(value) {
         var normalized = normalize(value);
 
@@ -242,6 +258,87 @@
         return normalize(decimalFromScaledInteger(difference, resultScale));
     }
 
+    function add(left, right) {
+        if (typeof BigInt !== 'function') {
+            return null;
+        }
+
+        var normalizedLeft = normalize(left);
+        var normalizedRight = normalize(right);
+        if (normalizedLeft === null || normalizedRight === null || normalizedLeft === '' || normalizedRight === '') {
+            return null;
+        }
+
+        var scale = Math.max(decimalPlaces(normalizedLeft), decimalPlaces(normalizedRight));
+        return normalize(decimalFromScaledInteger(
+            scaledInteger(normalizedLeft, scale) + scaledInteger(normalizedRight, scale),
+            scale
+        ));
+    }
+
+    function round(value, scale) {
+        if (typeof BigInt !== 'function' || !Number.isInteger(scale) || scale < 0) {
+            return null;
+        }
+
+        var normalized = normalize(value);
+        if (normalized === null || normalized === '') {
+            return null;
+        }
+
+        var currentScale = decimalPlaces(normalized);
+        if (currentScale <= scale) {
+            return normalized;
+        }
+
+        var units = scaledInteger(normalized, currentScale);
+        var divisor = BigInt(10) ** BigInt(currentScale - scale);
+        var negative = units < BigInt(0);
+        var absolute = negative ? -units : units;
+        var rounded = (absolute + divisor / BigInt(2)) / divisor;
+        return normalize(decimalFromScaledInteger(negative ? -rounded : rounded, scale));
+    }
+
+    function multiply(left, right, resultScale) {
+        if (typeof BigInt !== 'function') {
+            return null;
+        }
+
+        var normalizedLeft = normalize(left);
+        var normalizedRight = normalize(right);
+        if (normalizedLeft === null || normalizedRight === null || normalizedLeft === '' || normalizedRight === '') {
+            return null;
+        }
+
+        var scale = decimalPlaces(normalizedLeft) + decimalPlaces(normalizedRight);
+        var product = normalize(decimalFromScaledInteger(
+            scaledInteger(normalizedLeft, decimalPlaces(normalizedLeft))
+                * scaledInteger(normalizedRight, decimalPlaces(normalizedRight)),
+            scale
+        ));
+
+        return resultScale === undefined ? product : round(product, resultScale);
+    }
+
+    function divide(left, right, scale) {
+        if (typeof BigInt !== 'function' || !Number.isInteger(scale) || scale < 0) {
+            return null;
+        }
+
+        var normalizedLeft = normalize(left);
+        var normalizedRight = normalize(right);
+        if (normalizedLeft === null || normalizedRight === null || normalizedLeft === '' || normalizedRight === '' || compare(normalizedRight, '0') === 0) {
+            return null;
+        }
+
+        var leftScale = decimalPlaces(normalizedLeft);
+        var rightScale = decimalPlaces(normalizedRight);
+        var numerator = scaledInteger(normalizedLeft, leftScale) * BigInt(10) ** BigInt(rightScale + scale);
+        var denominator = scaledInteger(normalizedRight, rightScale) * BigInt(10) ** BigInt(leftScale);
+
+        return normalize(decimalFromScaledInteger(numerator / denominator, scale));
+    }
+
     function incrementInput(input, direction) {
         if (typeof BigInt !== 'function' || input.disabled || input.readOnly) {
             return;
@@ -342,8 +439,6 @@
                 message = validationMessage('maximum', 'The value exceeds the allowed maximum.');
             }
         }
-
-        input.setCustomValidity(message);
 
         return message === '';
     }
@@ -456,15 +551,20 @@
     }
 
     window.AppNumbers = {
+        add: add,
         compare: compare,
         decimalPlaces: decimalPlaces,
+        divide: divide,
         format: format,
+        formatWithMinimumDecimals: formatWithMinimumDecimals,
         formatInput: formatInput,
+        multiply: multiply,
         normalize: normalize,
         normalizeForm: normalizeForm,
         number: number,
         parse: parseDecimal,
         refresh: refresh,
+        round: round,
         same: same,
         stepAligned: stepAligned,
         subtract: subtract,

@@ -30,13 +30,13 @@
     </table>
 
     <table class="report-table">
-        <thead><tr><th>#</th><th>{{ __($translationKey.'.attributes.account') }}</th><th>{{ __($translationKey.'.attributes.line_description') }}</th><th class="text-end">{{ __($translationKey.'.attributes.line_amount') }}</th></tr></thead>
+        <thead><tr><th>#</th><th>{{ __($translationKey.'.attributes.account') }}</th><th>{{ __('cost_centers.singular') }}</th><th>{{ __($translationKey.'.attributes.line_description') }}</th><th class="text-end">{{ __($translationKey.'.attributes.line_amount') }}</th></tr></thead>
         <tbody>
             @foreach($record->lines as $line)
-                <tr><td>{{ $line->line_number }}</td><td>{{ $line->account?->codeNameLabel() }}</td><td>{{ $line->description ?: '—' }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->amount) }}</td></tr>
+                <tr><td>{{ $line->line_number }}</td><td>{{ $line->account?->codeNameLabel() }}</td><td>{{ $line->costCenter?->codeNameLabel() ?: '—' }}</td><td>{{ $line->description ?: '—' }}</td><td class="text-end" dir="ltr">{{ $numbers->format($line->amount) }}</td></tr>
             @endforeach
         </tbody>
-        <tfoot><tr><th colspan="3">{{ __($translationKey.'.attributes.total_distributed') }}</th><th class="text-end" dir="ltr">{{ $numbers->format($record->lines->sum('amount')) }} {{ $record->currency?->code }}</th></tr></tfoot>
+        <tfoot><tr><th colspan="4">{{ __($translationKey.'.attributes.total_distributed') }}</th><th class="text-end" dir="ltr">{{ $numbers->format($record->lines->sum('amount')) }} {{ $record->currency?->code }}</th></tr></tfoot>
     </table>
 
     @include('reports.partials.payment-sources')

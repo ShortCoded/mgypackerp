@@ -5,12 +5,37 @@ use Illuminate\Support\Facades\DB;
 use Modules\Auth\Models\Role;
 use Modules\Core\Models\UserNotification;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\OperationalNotificationService;
 use Modules\Purchases\Models\PurchaseRequisition;
 use Modules\Purchases\Services\ProcurementSourcingService;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
 require_once __DIR__.'/../ProcurementSupport.php';
+
+test('operational notification resolves newly persisted permissions even when the registry cache predates them', function (): void {
+    $fixture = procurementFixture();
+    $recipient = User::factory()->create();
+    $unassigned = User::factory()->create();
+    $registrar = app(PermissionRegistrar::class);
+    $registrar->forgetCachedPermissions();
+    $registrar->getPermissions();
+    $permissionId = DB::table('permissions')->insertGetId([
+        'name' => 'synthetic.notifications.after_cache', 'guard_name' => 'web',
+        'created_at' => now(), 'updated_at' => now(),
+    ]);
+    DB::table('model_has_permissions')->insert([
+        'permission_id' => $permissionId, 'model_type' => $recipient->getMorphClass(), 'model_id' => $recipient->id,
+    ]);
+    $subject = procurementManualRequisition($fixture);
+    app(OperationalNotificationService::class)->send(
+        $subject, 'purchases.synthetic_cache', 'SYNTHETIC notification', 'SYNTHETIC permission added in another process',
+        route('admin.purchases.purchase-requisitions.show', $subject), 'synthetic.notifications.after_cache',
+    );
+    expect(UserNotification::query()->where('user_id', $recipient->id)->where('type', 'purchases.synthetic_cache')->sole()->required_permission)
+        ->toBe('synthetic.notifications.after_cache')
+        ->and(UserNotification::query()->where('user_id', $unassigned->id)->where('type', 'purchases.synthetic_cache')->exists())->toBeFalse();
+});
 
 test('submitted purchase request notifies only scoped approver and dashboard remains document driven', function (): void {
     $fixture = procurementFixture();

@@ -9,6 +9,8 @@ use Illuminate\Support\Collection;
 use Maatwebsite\Excel\Excel as ExcelFormat;
 use Maatwebsite\Excel\Facades\Excel;
 use Modules\Core\Services\BreadcrumbService;
+use Modules\Core\Services\CompanyPrintIdentityService;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\Core\Services\Reports\ReportPdfService;
@@ -24,6 +26,8 @@ class PayrollReportController extends Controller
         private readonly OperatingCompanyContextService $companies,
         private readonly OperatingScopeAccessService $scope,
         private readonly BreadcrumbService $breadcrumbs,
+        private readonly DateFormatService $dates,
+        private readonly CompanyPrintIdentityService $printIdentities,
     ) {}
 
     public function payroll(PayrollReportRequest $request): View
@@ -87,8 +91,13 @@ class PayrollReportController extends Controller
         if ($format === 'pdf') {
             return $pdf->stream('reports.hr.payroll', [
                 'title' => __('hr_payroll_reports.'.$type.'.title'),
+                'companyPrintIdentity' => $this->printIdentities->forCompany($company),
+                'printIdentityPolicy' => 'report',
                 'headings' => $headings,
                 'rows' => $exportRows,
+                'detailRowCount' => $rows->count(),
+                'ltrColumns' => $type === 'payroll' ? [0, 1, 3, 5, 6, 7, 8] : [0, 1, 3, 5, 6, 7, 8, 10],
+                'numericColumns' => $type === 'payroll' ? [6, 7, 8] : [8],
                 'filters' => $filters,
             ], $filename.'.pdf', 'L');
         }
@@ -116,7 +125,7 @@ class PayrollReportController extends Controller
         if ($type === 'payroll') {
             return [
                 $row->payroll_run_id,
-                $row->period_start.' — '.$row->period_end,
+                $this->periodLabel($row),
                 $row->branch_name,
                 $row->employee_doc_num,
                 $row->employee_name,
@@ -130,17 +139,22 @@ class PayrollReportController extends Controller
 
         return [
             $row->payroll_run_id,
-            $row->period_start.' — '.$row->period_end,
+            $this->periodLabel($row),
             $row->branch_name,
             $row->employee_doc_num,
             $row->employee_name ?: __('hr_payroll.labels.legacy_branch_payment'),
             $row->voucher_doc_num,
-            $row->voucher_date,
+            $this->dates->formatDate($row->voucher_date, '—'),
             $row->currency_code,
             (string) $row->amount,
             __('hr_payroll.status.'.$row->status),
             $row->journal_doc_num ?: $row->reversal_journal_doc_num,
         ];
+    }
+
+    private function periodLabel(object $row): string
+    {
+        return $this->dates->formatDate($row->period_start, '—').' — '.$this->dates->formatDate($row->period_end, '—');
     }
 
     /** @param Collection<int, object> $rows @return list<list<mixed>> */

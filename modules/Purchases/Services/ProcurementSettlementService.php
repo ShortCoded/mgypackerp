@@ -8,20 +8,24 @@ use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cheque;
 use Modules\Finance\Services\CashVoucherService;
 use Modules\Finance\Services\ChequeService;
+use Modules\Inventory\Models\InventoryCostPolicy;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Inventory\Services\InventoryAvailabilityService;
+use Modules\Inventory\Services\InventoryCostPolicyService;
 use Modules\Inventory\Services\InventoryLayerService;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseInvoiceLine;
@@ -49,6 +53,7 @@ class ProcurementSettlementService
         private readonly PurchaseOrderCalculationService $purchaseOrderCalculator,
         private readonly InventoryGrniService $grni,
         private readonly InventoryLayerService $layers,
+        private readonly InventoryCostPolicyService $costPolicies,
         private readonly PurchaseInvoiceMatchingService $matching,
     ) {}
 
@@ -111,9 +116,12 @@ class ProcurementSettlementService
                     ->where('purchase_order_id', $order->getKey())
                     ->where('public_id', $lineValues['public_id'])
                     ->firstOrFail();
-                $quantity = (float) ($lineValues['ordered_quantity'] ?? $line->ordered_quantity);
-                $price = (float) ($lineValues['unit_price'] ?? $line->unit_price);
-                if ($quantity <= 0 || $quantity < (float) $line->received_quantity || $price < 0) {
+                $quantity = app(NumericFormatService::class)
+                    ->normalizeToScale($lineValues['ordered_quantity'] ?? $line->ordered_quantity, 8)
+                    ?? throw new DomainException(__('Requested purchase order line values are invalid.'));
+                $price = app(NumericFormatService::class)
+                    ->normalizeToScale($lineValues['unit_price'] ?? $line->unit_price, 8);
+                if (bccomp($quantity, '0', 8) <= 0 || bccomp($quantity, (string) $line->received_quantity, 8) < 0 || bccomp($price, '0', 8) < 0) {
                     throw new DomainException(__('Requested purchase order line values are invalid.'));
                 }
                 $this->assertChangedQuantityWithinSource($line, $quantity);
@@ -147,7 +155,7 @@ class ProcurementSettlementService
                 'total_ordered_quantity' => $this->quantity($order->lines()->sum('ordered_quantity')),
                 'total_remaining_quantity' => $this->quantity($order->lines()->sum('remaining_quantity')),
                 'subtotal_amount' => $this->amount($order->lines()->sum('subtotal_amount')),
-                'total_amount' => $this->amount((float) $order->lines()->sum('total_after_tax') + (float) $order->freight_amount),
+                'total_amount' => bcadd($this->amount($order->lines()->sum('total_after_tax')), $this->amount($order->freight_amount), 4),
             ])->save();
             $request->forceFill([
                 'status' => 'approved', 'approved_by' => auth()->id(), 'approved_at' => now(),
@@ -173,8 +181,15 @@ class ProcurementSettlementService
     public function deletePurchaseReturn(PurchaseReturn $record): PurchaseReturn
     {
         return DB::transaction(function () use ($record): PurchaseReturn {
+            $context = $this->context();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = PurchaseReturn::query()->lockForUpdate()->findOrFail($record->getKey());
-            $this->assertDocumentContext($locked);
+            if ((int) $locked->company_id !== $context['company_id'] || (int) $locked->branch_id !== $context['branch_id']) {
+                throw new DomainException(__('The purchase return is outside the active operating context.'));
+            }
+            if ((int) $locked->financial_period_id !== $context['financial_period_id']) {
+                abort_unless(auth()->user()?->can('purchases.purchase_returns.delete'), 403);
+            }
             if ($locked->status !== PurchaseReturn::StatusDraft) {
                 throw new DomainException(__('Only a draft purchase return can be edited or deleted.'));
             }
@@ -188,6 +203,7 @@ class ProcurementSettlementService
     private function savePurchaseReturn(array $data, ?PurchaseReturn $record = null): PurchaseReturn
     {
         return DB::transaction(function () use ($data, $record): PurchaseReturn {
+            Company::query()->whereKey($this->operatingContext->snapshot(request())['company_id'])->lockForUpdate()->firstOrFail();
             $context = $this->context();
             app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $data['return_date'], $context['financial_period_id'], lockForUpdate: true);
             $order = PurchaseOrder::query()->lockForUpdate()->where('company_id', $context['company_id'])
@@ -238,8 +254,8 @@ class ProcurementSettlementService
             $kept = [];
             $receiptId = null;
 
-            $totalQuantity = 0.0;
-            $totalAmount = 0.0;
+            $totalQuantity = '0.00000000';
+            $totalAmount = '0.0000';
             foreach ($data['lines'] as $index => $input) {
                 $receiptLine = UnpricedInventoryReceiptLine::query()->with('receipt')->lockForUpdate()
                     ->where('public_id', $input['receipt_line_public_id'])->firstOrFail();
@@ -247,8 +263,10 @@ class ProcurementSettlementService
                     throw new DomainException(__('The return line does not belong to the selected purchase order.'));
                 }
                 $fromQuarantine = (bool) ($input['from_quarantine'] ?? false);
-                $quantity = (float) $input['quantity'];
-                $this->assertReturnable($receiptLine, $quantity, $fromQuarantine, $return);
+                $quantityDecimal = app(NumericFormatService::class)
+                    ->normalizeToScale($input['quantity'], 8)
+                    ?? throw new DomainException(__('Return quantity must be greater than zero.'));
+                $this->assertReturnable($receiptLine, $quantityDecimal, $fromQuarantine, $return);
                 $invoiceLine = $invoice instanceof PurchaseInvoice
                     ? PurchaseInvoiceLine::query()->where('purchase_invoice_id', $invoice->getKey())
                         ->where('receipt_line_id', $receiptLine->getKey())->first()
@@ -257,30 +275,39 @@ class ProcurementSettlementService
                     throw new DomainException(__('The return line was not invoiced by the selected supplier invoice.'));
                 }
                 if ($invoiceLine instanceof PurchaseInvoiceLine) {
-                    $previouslyCreditedQuantity = (float) DB::table('purchase_return_lines')
+                    $previouslyCreditedQuantity = app(NumericFormatService::class)->normalizeScientificNotation((string) DB::table('purchase_return_lines')
                         ->join('purchase_returns', 'purchase_returns.id', '=', 'purchase_return_lines.purchase_return_id')
                         ->where('purchase_return_lines.purchase_invoice_line_id', $invoiceLine->getKey())
                         ->where('purchase_returns.id', '<>', $return->getKey())
                         ->whereNotIn('purchase_returns.status', ['cancelled', PurchaseReturn::StatusReversed])
-                        ->sum('purchase_return_lines.quantity');
-                    if ($previouslyCreditedQuantity + $quantity > (float) $invoiceLine->quantity + 0.00000001) {
+                        ->sum('purchase_return_lines.quantity')) ?? '0';
+                    if (bccomp(bcadd($previouslyCreditedQuantity, $quantityDecimal, 8), (string) $invoiceLine->quantity, 8) > 0) {
                         throw new DomainException(__('Return quantity exceeds the quantity billed on the selected supplier invoice.'));
                     }
                 }
-                if (! $invoice && ! $fromQuarantine && $quantity > $this->matching->remainingForReceipt($receiptLine) + 0.00000001) {
+                if (! $invoice && ! $fromQuarantine && bccomp($quantityDecimal, $this->matching->remainingForReceiptExact($receiptLine), 8) > 0) {
                     throw new DomainException(__('Select the posted supplier invoice for a return of billed quantities.'));
                 }
                 $orderLine = PurchaseOrderLine::query()->findOrFail($receiptLine->purchase_order_line_id);
-                $unitPrice = $invoiceLine instanceof PurchaseInvoiceLine && (float) $invoiceLine->quantity > 0
+                $serialLayerIds = array_map('intval', $input['serial_receipt_layer_ids'] ?? []);
+                if ($receiptLine->product?->tracks_serials && ! $fromQuarantine) {
+                    $baseQuantity = bcmul($quantityDecimal, $orderLine->stockConversionFactor(), 8);
+                    if (count($serialLayerIds) !== count(array_unique($serialLayerIds)) || bccomp((string) count($serialLayerIds), $baseQuantity, 8) !== 0) {
+                        throw new DomainException(__('inventory_serial.selection_mismatch'));
+                    }
+                } elseif ($serialLayerIds !== []) {
+                    throw new DomainException(__('inventory_serial.selection_mismatch'));
+                }
+                $unitPrice = $invoiceLine instanceof PurchaseInvoiceLine && bccomp((string) $invoiceLine->quantity, '0', 8) > 0
                     ? $this->invoiceLineNetUnitValue($invoice, $invoiceLine)
-                    : (float) $orderLine->total_before_tax / max((float) $orderLine->ordered_quantity, 0.00000001);
-                $taxPerUnit = $invoiceLine instanceof PurchaseInvoiceLine && (float) $invoiceLine->quantity > 0
-                    ? (float) $invoiceLine->tax_amount / (float) $invoiceLine->quantity
-                    : 0.0;
-                $tax = $taxPerUnit * $quantity;
-                $storedUnitPrice = $this->amount($unitPrice);
-                $storedTax = $this->amount($tax);
-                $lineTotal = $this->amount((float) $storedUnitPrice * $quantity + (float) $storedTax);
+                    : bcdiv((string) $orderLine->total_before_tax, (string) $orderLine->ordered_quantity, 8);
+                $taxPerUnit = $invoiceLine instanceof PurchaseInvoiceLine && bccomp((string) $invoiceLine->quantity, '0', 8) > 0
+                    ? bcdiv((string) $invoiceLine->tax_amount, (string) $invoiceLine->quantity, 16)
+                    : '0';
+                $tax = bcround(bcmul($taxPerUnit, $quantityDecimal, 16), 4);
+                $storedUnitPrice = $unitPrice;
+                $storedTax = $tax;
+                $lineTotal = bcround(bcadd(bcmul($storedUnitPrice, $quantityDecimal, 16), $storedTax, 16), 4);
 
                 $returnLine = $return->lines()->where('receipt_line_id', $receiptLine->getKey())->where('from_quarantine', $fromQuarantine)->first() ?? new PurchaseReturnLine;
                 $returnLine->fill([
@@ -293,8 +320,9 @@ class ProcurementSettlementService
                     'purchase_invoice_line_id' => $invoiceLine?->getKey(),
                     'product_id' => $receiptLine->product_id,
                     'unit_id' => $receiptLine->unit_id,
-                    'quantity' => $this->quantity($quantity),
+                    'quantity' => $quantityDecimal,
                     'from_quarantine' => $fromQuarantine,
+                    'serial_receipt_layer_ids' => $serialLayerIds === [] ? null : $serialLayerIds,
                     'unit_price' => $storedUnitPrice,
                     'tax_amount' => $storedTax,
                     'line_total' => $lineTotal,
@@ -311,8 +339,8 @@ class ProcurementSettlementService
                 $changed = $changed || $returnLine->wasChanged() || $returnLine->wasRecentlyCreated || $lineAttachmentChanged;
                 $kept[] = $returnLine->getKey();
                 $receiptId ??= $receiptLine->receipt_id;
-                $totalQuantity += $quantity;
-                $totalAmount += (float) $lineTotal;
+                $totalQuantity = bcadd($totalQuantity, $quantityDecimal, 8);
+                $totalAmount = bcadd($totalAmount, $lineTotal, 4);
             }
 
             $removed = $return->lines()->whereNotIn('id', $kept)->delete();
@@ -325,8 +353,8 @@ class ProcurementSettlementService
             ) || $changed;
             $return->forceFill([
                 'receipt_id' => $receiptId,
-                'total_quantity' => $this->quantity($totalQuantity),
-                'total_amount' => $this->amount($totalAmount),
+                'total_quantity' => $totalQuantity,
+                'total_amount' => $totalAmount,
             ]);
             if ($return->isDirty() || $changed) {
                 if ($record) {
@@ -348,6 +376,7 @@ class ProcurementSettlementService
     public function approvePurchaseReturn(PurchaseReturn $purchaseReturn): PurchaseReturn
     {
         return DB::transaction(function () use ($purchaseReturn): PurchaseReturn {
+            Company::query()->whereKey($this->operatingContext->snapshot(request())['company_id'])->lockForUpdate()->firstOrFail();
             $context = $this->context();
             $return = PurchaseReturn::query()->with(['lines.receiptLine', 'purchaseInvoice', 'purchaseOrder'])->lockForUpdate()->findOrFail($purchaseReturn->getKey());
             if ((int) $return->company_id !== $context['company_id'] || (int) $return->financial_period_id !== $context['financial_period_id'] || (int) $return->branch_id !== $context['branch_id']) {
@@ -361,12 +390,19 @@ class ProcurementSettlementService
             }
             $this->assertOpenFinancialPeriod((int) $return->financial_period_id);
 
+            $this->costPolicies->assertPostingDateAllowed(
+                (int) $return->company_id,
+                (int) $return->branch_store_id,
+                $return->return_date->toDateString(),
+            );
+            $costPolicy = $this->costPolicies->resolve((int) $return->company_id, (int) $return->branch_store_id, $return->return_date->toDateString());
+
             BranchStore::query()->lockForUpdate()->findOrFail($return->branch_store_id);
             foreach ($return->lines as $line) {
                 $receiptLine = UnpricedInventoryReceiptLine::query()->lockForUpdate()->findOrFail($line->receipt_line_id);
                 $receiptLine->loadMissing('product');
-                $this->assertReturnable($receiptLine, (float) $line->quantity, (bool) $line->from_quarantine, $return);
-                if (! $return->purchase_invoice_id && ! $line->from_quarantine && (float) $line->quantity > $this->matching->remainingForReceipt($receiptLine) + 0.00000001) {
+                $this->assertReturnable($receiptLine, (string) $line->quantity, (bool) $line->from_quarantine, $return);
+                if (! $return->purchase_invoice_id && ! $line->from_quarantine && bccomp((string) $line->quantity, $this->matching->remainingForReceiptExact($receiptLine), 8) > 0) {
                     throw new DomainException(__('Select the posted supplier invoice for a return of billed quantities.'));
                 }
                 if ($return->purchaseInvoice && ! in_array($return->purchaseInvoice->status, [PurchaseInvoice::StatusApproved, PurchaseInvoice::StatusClosed], true)) {
@@ -387,7 +423,7 @@ class ProcurementSettlementService
                     $factor = bcdiv((string) $sourceMovement->quantity_in, (string) $receiptLine->accepted_quantity, 8);
                     $stockQuantity = bcmul((string) $line->quantity, $factor, 8);
                     Product::query()->lockForUpdate()->findOrFail($line->product_id);
-                    $available = (float) $this->availability->forProduct(
+                    $available = $this->availability->forProduct(
                         (int) $return->company_id,
                         (int) $return->branch_store_id,
                         (int) $line->product_id,
@@ -397,7 +433,8 @@ class ProcurementSettlementService
                         $receiptLine->supplier_lot_number,
                         filled($receiptLine->supplier_lot_number),
                     )['available'];
-                    if ((float) $stockQuantity > $available + 0.00000001) {
+                    $availableQuantity = app(NumericFormatService::class)->normalizeScientificNotation((string) $available) ?? '0';
+                    if (bccomp($stockQuantity, $availableQuantity, 8) > 0) {
                         throw new DomainException(__('Return quantity exceeds currently available unreserved stock.'));
                     }
 
@@ -428,10 +465,16 @@ class ProcurementSettlementService
                         'supplier_id' => $return->supplier_id,
                         'unit_cost' => bcdiv($inventoryUnitCost, $factor, 8),
                         'total_cost' => bcmul((string) $line->quantity, $inventoryUnitCost, 8),
+                        'cost_method' => $costPolicy['method'],
+                        'cost_policy_id' => $costPolicy['policy_id'],
+                        'cost_basis' => 'source_purchase_receipt',
                         'created_by' => auth()->id(),
                     ]);
                     $sourceMovement = InventoryTransaction::query()->where('posting_key', "purchase-receipt:{$receiptLine->getKey()}")->firstOrFail();
-                    $this->layers->allocateIssue($movement, $sourceMovement->getKey());
+                    $this->layers->allocateIssue($movement, $sourceMovement->getKey(), selectedSerialLayerIds: $line->serial_receipt_layer_ids ?? []);
+                    if ($receiptLine->product?->tracks_serials && InventoryCostPolicy::usesReceiptLayers($movement->cost_method)) {
+                        $movement->forceFill($this->layers->allocatedIssueCost($movement))->save();
+                    }
                 }
             }
 
@@ -463,26 +506,49 @@ class ProcurementSettlementService
     public function reversePurchaseReturn(PurchaseReturn $purchaseReturn, string $reason): PurchaseReturn
     {
         return DB::transaction(function () use ($purchaseReturn, $reason): PurchaseReturn {
+            Company::query()->whereKey($this->operatingContext->snapshot(request())['company_id'])->lockForUpdate()->firstOrFail();
             $context = $this->context();
             $return = PurchaseReturn::query()
                 ->with(['lines.receiptLine', 'journalEntry.lines', 'purchaseInvoice', 'purchaseOrder'])
                 ->lockForUpdate()
                 ->findOrFail($purchaseReturn->getKey());
-            if ((int) $return->company_id !== $context['company_id'] || (int) $return->branch_id !== $context['branch_id'] || (int) $return->financial_period_id !== $context['financial_period_id']) {
+            if ((int) $return->company_id !== $context['company_id'] || (int) $return->branch_id !== $context['branch_id']) {
                 throw new DomainException(__('The purchase return is outside the active operating context.'));
             }
             if ($return->status === PurchaseReturn::StatusReversed) {
                 return $return;
             }
-            $this->assertOpenFinancialPeriod($context['financial_period_id']);
+            if ((int) $return->financial_period_id !== $context['financial_period_id']) {
+                abort_unless(auth()->user()?->can('purchases.purchase_returns.reverse'), 403);
+            }
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate(
+                (int) $return->company_id, now()->toDateString(), $context['financial_period_id'], lockForUpdate: true,
+            );
             if (blank($reason) || $return->status !== PurchaseReturn::StatusPosted) {
                 throw new DomainException(__('Only a posted Purchase Return in the active company can be reversed.'));
             }
 
+            $this->costPolicies->assertPostingDateAllowed(
+                (int) $return->company_id,
+                (int) $return->branch_store_id,
+                now()->toDateString(),
+            );
+            $this->validateReturnSourceJournals($return);
+
             PurchaseOrder::query()->lockForUpdate()->findOrFail($return->purchase_order_id);
             foreach ($return->lines->groupBy('purchase_order_line_id') as $orderLineId => $returnLines) {
                 $orderLine = PurchaseOrderLine::query()->lockForUpdate()->findOrFail($orderLineId);
-                if ($orderLine->netReceivedQuantity() + (float) $returnLines->sum('quantity') > (float) $orderLine->ordered_quantity + 0.00000001) {
+                $received = app(NumericFormatService::class)->normalizeScientificNotation((string) UnpricedInventoryReceiptLine::query()
+                    ->where('purchase_order_line_id', $orderLineId)
+                    ->whereHas('receipt', fn ($query) => $query->where('approved', true)->where('posting_status', 'posted')->whereNotIn('status', ['cancelled', 'reversed']))
+                    ->sum('accepted_quantity')) ?? '0';
+                $returned = app(NumericFormatService::class)->normalizeScientificNotation((string) PurchaseReturnLine::query()
+                    ->where('purchase_order_line_id', $orderLineId)
+                    ->where('from_quarantine', false)
+                    ->whereHas('purchaseReturn', fn ($query) => $query->where('status', PurchaseReturn::StatusPosted))
+                    ->sum('quantity')) ?? '0';
+                $restored = $returnLines->reduce(fn (string $sum, PurchaseReturnLine $line): string => bcadd($sum, (string) $line->quantity, 8), '0.00000000');
+                if (bccomp(bcadd(bcsub($received, $returned, 8), $restored, 8), (string) $orderLine->ordered_quantity, 8) > 0) {
                     throw new DomainException(__('Reverse the replacement receipts before reversing this purchase return.'));
                 }
             }
@@ -549,13 +615,16 @@ class ProcurementSettlementService
                     'supplier_id' => $return->supplier_id,
                     'unit_cost' => $inventoryUnitCost,
                     'total_cost' => bcmul((string) $line->quantity, $inventoryUnitCost, 8),
+                    'cost_method' => $sourceIssue->cost_method,
+                    'cost_policy_id' => $sourceIssue->cost_policy_id,
+                    'cost_basis' => 'reversal',
                     'created_by' => auth()->id(),
                 ]);
-                $sourceIssue = InventoryTransaction::query()->where('posting_key', "purchase-return:{$line->getKey()}")->firstOrFail();
                 $movement->forceFill([
                     'is_reversal' => true, 'reversal_of_id' => $sourceIssue->getKey(),
                     'warehouse_location_id' => $sourceIssue->warehouse_location_id, 'batch_lot' => $sourceIssue->batch_lot,
                     'manufacture_date' => $sourceIssue->manufacture_date, 'expiry_date' => $sourceIssue->expiry_date,
+                    'inventory_serial_identity_id' => $sourceIssue->inventory_serial_identity_id,
                     'unit_cost' => $sourceIssue->unit_cost, 'total_cost' => $sourceIssue->total_cost,
                 ])->save();
                 $this->layers->recordInbound($movement, $sourceIssue);
@@ -592,6 +661,7 @@ class ProcurementSettlementService
     public function createSupplierPayment(array $data): SupplierPaymentContext
     {
         return DB::transaction(function () use ($data): SupplierPaymentContext {
+            Company::query()->whereKey($this->operatingContext->snapshot(request())['company_id'])->lockForUpdate()->firstOrFail();
             $context = $this->context();
             app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $data['payment_date'], $context['financial_period_id'], lockForUpdate: true);
             $supplier = Supplier::query()->with('account')->active()->forCompany($context['company_id'])
@@ -599,10 +669,16 @@ class ProcurementSettlementService
             if ($supplier->account === null) {
                 throw new DomainException(__('The supplier requires a payable account before payment.'));
             }
-            $amount = (float) $data['amount'];
-            $allocationTotal = collect($data['allocations'] ?? [])->sum(fn (array $allocation): float => (float) $allocation['amount']);
+            $amount = app(NumericFormatService::class)->normalizeToScale($data['amount'], 4)
+                ?? throw new DomainException(__('Payment allocations must reconcile to the payment amount.'));
+            $allocationTotal = collect($data['allocations'] ?? [])->reduce(
+                fn (string $sum, array $allocation): string => bcadd($sum, app(NumericFormatService::class)->normalizeToScale($allocation['amount'], 4) ?? '0', 4),
+                '0.0000',
+            );
             $isAdvance = (bool) ($data['is_advance'] ?? false);
-            if ($amount <= 0 || $allocationTotal > $amount + 0.0001 || (! $isAdvance && abs($allocationTotal - $amount) > 0.0001)) {
+            if (bccomp($amount, '0', 4) <= 0
+                || bccomp($allocationTotal, $amount, 4) > 0
+                || (! $isAdvance && bccomp($allocationTotal, $amount, 4) !== 0)) {
                 throw new DomainException(__('Payment allocations must reconcile to the payment amount.'));
             }
             $method = (string) ($data['payment_method'] ?? SupplierPaymentContext::MethodCash);
@@ -701,6 +777,7 @@ class ProcurementSettlementService
     public function allocatePayment(SupplierPaymentContext $payment, array $allocations): SupplierPaymentContext
     {
         return DB::transaction(function () use ($allocations, $payment): SupplierPaymentContext {
+            Company::query()->whereKey($this->operatingContext->snapshot(request())['company_id'])->lockForUpdate()->firstOrFail();
             $locked = SupplierPaymentContext::query()->with(['cashVoucher', 'bankAccount', 'cheque'])->lockForUpdate()->findOrFail($payment->getKey());
             $this->assertDocumentContext($locked);
             $this->assertOpenFinancialPeriod((int) $locked->financial_period_id);
@@ -725,24 +802,26 @@ class ProcurementSettlementService
                 if ($schedule instanceof PurchaseInvoicePaymentSchedule && $schedule->status === PurchaseInvoicePaymentSchedule::StatusCancelled) {
                     throw new DomainException(__('A cancelled payment installment cannot receive an allocation.'));
                 }
-                $amount = (float) $input['amount'];
-                $invoiceAllocated = (float) SupplierPaymentAllocation::query()
+                $amount = app(NumericFormatService::class)->normalizeToScale($input['amount'], 4)
+                    ?? throw new DomainException(__('Payment allocation exceeds the supplier invoice outstanding amount.'));
+                $invoiceAllocated = $this->amount(SupplierPaymentAllocation::query()
                     ->where('purchase_invoice_id', $invoice->getKey())
                     ->whereHas('paymentContext', fn ($query) => $query->where('status', '<>', SupplierPaymentContext::StatusCancelled))
-                    ->sum('amount');
-                $invoiceCredits = (float) PurchaseReturn::query()
+                    ->sum('amount'));
+                $invoiceCredits = $this->amount(PurchaseReturn::query()
                     ->where('purchase_invoice_id', $invoice->getKey())
                     ->where('status', 'posted')
-                    ->sum('total_amount');
-                if ($amount <= 0 || $invoiceCredits + $invoiceAllocated + $amount > (float) $invoice->total_amount + 0.0001) {
+                    ->sum('total_amount'));
+                if (bccomp($amount, '0', 4) <= 0
+                    || bccomp(bcadd(bcadd($invoiceCredits, $invoiceAllocated, 4), $amount, 4), (string) $invoice->total_amount, 4) > 0) {
                     throw new DomainException(__('Payment allocation exceeds the supplier invoice outstanding amount.'));
                 }
                 if ($schedule instanceof PurchaseInvoicePaymentSchedule) {
-                    $scheduleAllocated = (float) SupplierPaymentAllocation::query()
+                    $scheduleAllocated = $this->amount(SupplierPaymentAllocation::query()
                         ->where('payment_schedule_id', $schedule->getKey())
                         ->whereHas('paymentContext', fn ($query) => $query->where('status', '<>', SupplierPaymentContext::StatusCancelled))
-                        ->sum('amount');
-                    if ((float) $schedule->credited_amount + $scheduleAllocated + $amount > (float) $schedule->amount + 0.0001) {
+                        ->sum('amount'));
+                    if (bccomp(bcadd(bcadd((string) $schedule->credited_amount, $scheduleAllocated, 4), $amount, 4), (string) $schedule->amount, 4) > 0) {
                         throw new DomainException(__('Payment allocation exceeds the installment outstanding amount.'));
                     }
                 }
@@ -757,8 +836,8 @@ class ProcurementSettlementService
                 ]);
             }
 
-            $allocated = (float) $locked->allocations()->sum('amount');
-            if ($allocated > (float) $locked->amount + 0.0001) {
+            $allocated = $this->amount($locked->allocations()->sum('amount'));
+            if (bccomp($allocated, (string) $locked->amount, 4) > 0) {
                 throw new DomainException(__('Payment allocations exceed the voucher amount.'));
             }
             $locked->forceFill(['allocated_amount' => $this->amount($allocated)])->save();
@@ -778,6 +857,7 @@ class ProcurementSettlementService
     public function approveSupplierPayment(SupplierPaymentContext $payment): SupplierPaymentContext
     {
         return DB::transaction(function () use ($payment): SupplierPaymentContext {
+            Company::query()->whereKey($this->operatingContext->snapshot(request())['company_id'])->lockForUpdate()->firstOrFail();
             $locked = SupplierPaymentContext::query()
                 ->with(['cashVoucher', 'bankAccount.account', 'cheque', 'allocations.purchaseInvoice', 'allocations.paymentSchedule'])
                 ->lockForUpdate()
@@ -790,8 +870,24 @@ class ProcurementSettlementService
                 throw new DomainException(__('A cancelled supplier payment cannot be approved.'));
             }
             $this->assertOpenFinancialPeriod((int) $locked->financial_period_id);
-            if (! $locked->is_advance && abs((float) $locked->allocated_amount - (float) $locked->amount) > 0.0001) {
+            if (! $locked->is_advance && bccomp((string) $locked->allocated_amount, (string) $locked->amount, 4) !== 0) {
                 throw new DomainException(__('A non-advance supplier payment must be fully allocated before approval.'));
+            }
+
+            $invoiceIds = $locked->allocations->pluck('purchase_invoice_id')->filter()->unique()->sort()->values();
+            $invoices = PurchaseInvoice::query()->whereKey($invoiceIds->all())
+                ->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+            foreach ($invoiceIds as $invoiceId) {
+                $invoice = $invoices->get($invoiceId);
+                if (! $invoice instanceof PurchaseInvoice
+                    || (int) $invoice->company_id !== (int) $locked->company_id
+                    || (int) $invoice->supplier_id !== (int) $locked->supplier_id
+                    || (int) $invoice->branch_id !== (int) $locked->branch_id
+                    || (int) $invoice->currency_id !== (int) $locked->currency_id
+                    || ! in_array($invoice->status, [PurchaseInvoice::StatusApproved, PurchaseInvoice::StatusClosed], true)
+                    || $invoice->reversal_journal_entry_id !== null) {
+                    throw new DomainException(__('open_documents.corrections.payment_invoice_inactive'));
+                }
             }
 
             match ($locked->payment_method) {
@@ -814,14 +910,51 @@ class ProcurementSettlementService
     public function cancelSupplierPayment(SupplierPaymentContext $payment, string $reason): SupplierPaymentContext
     {
         return DB::transaction(function () use ($payment, $reason): SupplierPaymentContext {
+            Company::query()->whereKey($this->operatingContext->snapshot(request())['company_id'])->lockForUpdate()->firstOrFail();
             $locked = SupplierPaymentContext::query()
                 ->with(['cashVoucher', 'bankAccount.account', 'cheque', 'journalEntry'])
                 ->lockForUpdate()
                 ->findOrFail($payment->getKey());
 
-            $this->assertDocumentContext($locked);
-            if ($locked->isCancelled()) {
-                return $locked;
+            if ($locked->isDraft()) {
+                $this->assertDocumentContext($locked);
+            } else {
+                $context = $this->context();
+                if ((int) $locked->company_id !== $context['company_id'] || (int) $locked->branch_id !== $context['branch_id']) {
+                    throw new DomainException(__('The document is outside the active operating context.'));
+                }
+                if ($locked->isCancelled()) {
+                    return $locked;
+                }
+                if ((int) $locked->financial_period_id !== $context['financial_period_id']) {
+                    abort_unless(auth()->user()?->can('supplier_payments.cancel'), 403);
+                }
+                app(FinancialPeriodService::class)->resolveOpenForPostingDate(
+                    (int) $locked->company_id, now()->toDateString(), $context['financial_period_id'], lockForUpdate: true,
+                );
+                if (blank($reason)) {
+                    throw new DomainException(__('open_documents.validation.reason_required'));
+                }
+            }
+            if ($locked->isDraft()) {
+                if (blank($reason)) {
+                    throw new DomainException(__('open_documents.validation.reason_required'));
+                }
+                if ($locked->cashVoucher instanceof CashVoucher) {
+                    $this->cashVouchers->delete(CashVoucher::TypePayment, $locked->cashVoucher);
+                }
+                if ($locked->cheque instanceof Cheque) {
+                    $this->cheques->delete($locked->cheque);
+                }
+                $locked->forceFill([
+                    'status' => SupplierPaymentContext::StatusCancelled,
+                    'cancelled_by' => auth()->id(),
+                    'cancelled_at' => now(),
+                    'cancel_reason' => trim($reason),
+                ])->save();
+                $this->audit->record($locked, 'supplier_payment.draft_cancelled', ['reason' => trim($reason)]);
+
+                return $locked->refresh();
             }
 
             if (! $locked->isApproved()) {
@@ -888,7 +1021,7 @@ class ProcurementSettlementService
             throw new DomainException(__('The canonical Cash Payment Voucher is missing.'));
         }
 
-        $this->cashVouchers->cancel(CashVoucher::TypePayment, $payment->cashVoucher, $reason);
+        $this->cashVouchers->cancelSupplierPaymentVoucher($payment, $reason);
     }
 
     private function cancelChequePayment(SupplierPaymentContext $payment, string $reason): void
@@ -907,45 +1040,45 @@ class ProcurementSettlementService
             ->each(fn (PurchaseInvoice $invoice) => $invoice->refreshPaymentTotals());
     }
 
-    private function assertReturnable(UnpricedInventoryReceiptLine $receiptLine, float $quantity, bool $fromQuarantine, ?PurchaseReturn $excluding): void
+    private function assertReturnable(UnpricedInventoryReceiptLine $receiptLine, string $quantity, bool $fromQuarantine, ?PurchaseReturn $excluding): void
     {
         if (! $receiptLine->receipt?->approved || in_array($receiptLine->receipt?->status, ['cancelled', 'reversed'], true)) {
             throw new DomainException(__('Only posted receipts can be returned.'));
         }
-        if ($quantity <= 0) {
+        if (bccomp($quantity, '0', 8) <= 0) {
             throw new DomainException(__('Return quantity must be greater than zero.'));
         }
-        $previouslyReturned = (float) DB::table('purchase_return_lines')
+        $previouslyReturned = app(NumericFormatService::class)->normalizeScientificNotation((string) DB::table('purchase_return_lines')
             ->join('purchase_returns', 'purchase_returns.id', '=', 'purchase_return_lines.purchase_return_id')
             ->where('purchase_return_lines.receipt_line_id', $receiptLine->getKey())
             ->where('purchase_return_lines.from_quarantine', $fromQuarantine)
             ->whereNotIn('purchase_returns.status', ['cancelled', PurchaseReturn::StatusReversed])
             ->when($excluding, fn ($query) => $query->where('purchase_returns.id', '<>', $excluding->getKey()))
-            ->sum('purchase_return_lines.quantity');
-        $available = (float) ($fromQuarantine ? $receiptLine->rejected_quantity : $receiptLine->accepted_quantity) - $previouslyReturned;
-        if ($quantity > $available + 0.00000001) {
+            ->sum('purchase_return_lines.quantity')) ?? '0';
+        $available = bcsub((string) ($fromQuarantine ? $receiptLine->rejected_quantity : $receiptLine->accepted_quantity), $previouslyReturned, 8);
+        if (bccomp($quantity, $available, 8) > 0) {
             throw new DomainException(__('Return quantity exceeds the material received and still returnable.'));
         }
     }
 
-    private function invoiceLineNetUnitValue(PurchaseInvoice $invoice, PurchaseInvoiceLine $line): float
+    private function invoiceLineNetUnitValue(PurchaseInvoice $invoice, PurchaseInvoiceLine $line): string
     {
-        $lineBase = (float) $line->total_before_tax;
-        $invoiceLineBase = (float) $invoice->lines()->sum('total_before_tax');
-        $headerDiscountShare = $invoiceLineBase > 0
-            ? (float) $invoice->header_discount_amount * ($lineBase / $invoiceLineBase)
-            : 0.0;
+        $netAmounts = app(PurchaseInvoiceCalculationService::class)->netAmountsByLine($invoice);
+        $net = $netAmounts[$line->getKey()] ?? '0.0000';
 
-        return max(0, $lineBase - $headerDiscountShare) / max((float) $line->quantity, 0.00000001);
+        return bcdiv($net, (string) $line->quantity, 8);
     }
 
-    private function assertChangedQuantityWithinSource(PurchaseOrderLine $line, float $quantity): void
+    private function assertChangedQuantityWithinSource(PurchaseOrderLine $line, string $quantity): void
     {
         if ($line->supplier_selection_line_id !== null) {
-            $selectedQuantity = (float) DB::table('supplier_selection_lines')
+            $selectedQuantity = (string) DB::table('supplier_selection_lines')
                 ->where('id', $line->supplier_selection_line_id)
                 ->value('selected_quantity');
-            if ($quantity > $selectedQuantity + 0.00000001) {
+            if ($selectedQuantity === '') {
+                throw new DomainException(__('Changed quantity exceeds the approved supplier award.'));
+            }
+            if (bccomp($quantity, $selectedQuantity, 8) > 0) {
                 throw new DomainException(__('Changed quantity exceeds the approved supplier award.'));
             }
         }
@@ -954,17 +1087,20 @@ class ProcurementSettlementService
             return;
         }
 
-        $approvedQuantity = (float) DB::table('purchase_requisition_lines')
+        $approvedQuantity = (string) DB::table('purchase_requisition_lines')
             ->where('id', $line->purchase_requisition_line_id)
             ->lockForUpdate()
             ->value('approved_quantity');
-        $otherCommitted = (float) PurchaseOrderLine::query()
+        if ($approvedQuantity === '') {
+            throw new DomainException(__('Changed quantity exceeds the approved purchase requirement.'));
+        }
+        $otherCommitted = app(NumericFormatService::class)->normalizeScientificNotation((string) PurchaseOrderLine::query()
             ->where('purchase_requisition_line_id', $line->purchase_requisition_line_id)
             ->whereKeyNot($line->getKey())
             ->whereHas('purchaseOrder', fn ($query) => $query->whereNotIn('status', [PurchaseOrder::StatusCancelled]))
-            ->sum('ordered_quantity');
+            ->sum('ordered_quantity')) ?? '0';
 
-        if ($otherCommitted + $quantity > $approvedQuantity + 0.00000001) {
+        if (bccomp(bcadd($otherCommitted, $quantity, 8), $approvedQuantity, 8) > 0) {
             throw new DomainException(__('Changed quantity exceeds the approved purchase requirement.'));
         }
     }
@@ -1008,6 +1144,32 @@ class ProcurementSettlementService
         if ((int) $document->company_id !== $context['company_id'] || (int) $document->branch_id !== $context['branch_id']
             || (int) $document->financial_period_id !== $context['financial_period_id']) {
             throw new DomainException(__('The document is outside the active operating context.'));
+        }
+    }
+
+    private function validateReturnSourceJournals(PurchaseReturn $return): void
+    {
+        $base = ['company_id' => (int) $return->company_id, 'branch_id' => $return->branch_id,
+            'financial_period_id' => (int) $return->financial_period_id, 'source_id' => (int) $return->id,
+            'entry_date' => $return->return_date->toDateString()];
+        if ($return->purchase_invoice_id !== null && bccomp((string) $return->total_amount, '0', 4) > 0 && $return->journal_entry_id === null) {
+            throw new DomainException(__('open_documents.validation.purchase_journal_invalid'));
+        }
+        if ($return->journal_entry_id !== null) {
+            app(ProcurementSourceJournalService::class)->requireSource($return->journal_entry_id, $base + [
+                'currency_id' => $return->purchaseInvoice?->currency_id,
+                'exchange_rate' => (string) ($return->purchaseInvoice?->exchange_rate ?? 1), 'source_type' => 'purchase_return',
+            ], true);
+        }
+        if ($return->purchase_invoice_id === null && $return->lines->contains(fn ($line): bool => ! $line->from_quarantine)
+            && $return->grni_reversal_journal_entry_id === null) {
+            throw new DomainException(__('open_documents.validation.purchase_journal_invalid'));
+        }
+        if ($return->grni_reversal_journal_entry_id !== null) {
+            app(ProcurementSourceJournalService::class)->requireSource($return->grni_reversal_journal_entry_id, $base + [
+                'currency_id' => $return->purchaseOrder?->currency_id,
+                'exchange_rate' => (string) ($return->purchaseOrder?->exchange_rate ?? 1), 'source_type' => 'grni_purchase_return',
+            ], true);
         }
     }
 
@@ -1055,11 +1217,11 @@ class ProcurementSettlementService
 
     private function quantity(mixed $value): string
     {
-        return number_format((float) $value, 8, '.', '');
+        return bcadd(app(NumericFormatService::class)->normalizeScientificNotation((string) ($value ?? 0)) ?? '0', '0', 8);
     }
 
     private function amount(mixed $value): string
     {
-        return number_format((float) $value, 4, '.', '');
+        return bcround(app(NumericFormatService::class)->normalizeScientificNotation((string) ($value ?? 0)) ?? '0', 4);
     }
 }

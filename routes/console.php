@@ -16,6 +16,10 @@ Schedule::command('notifications:dispatch-due')
     ->everyMinute()
     ->withoutOverlapping();
 
+Schedule::command('hr:wages:project-current')
+    ->dailyAt('00:15')
+    ->withoutOverlapping();
+
 Schedule::command('queue:work --queue=default --stop-when-empty --max-jobs=100 --max-time=50 --tries=3 --sleep=1')
     ->everyMinute()
     ->withoutOverlapping();

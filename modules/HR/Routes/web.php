@@ -14,6 +14,8 @@ use Modules\HR\Http\Controllers\HrCountryController;
 use Modules\HR\Http\Controllers\HrDepartmentController;
 use Modules\HR\Http\Controllers\HrDocumentTypeController;
 use Modules\HR\Http\Controllers\HrEmployeeController;
+use Modules\HR\Http\Controllers\HrEmployeeOrganizationAssignmentController;
+use Modules\HR\Http\Controllers\HrEmployeeWageVersionController;
 use Modules\HR\Http\Controllers\HrEmploymentTaxPolicyController;
 use Modules\HR\Http\Controllers\HrEmploymentTypeController;
 use Modules\HR\Http\Controllers\HrFacultyController;
@@ -36,9 +38,11 @@ use Modules\HR\Http\Controllers\HrShiftController;
 use Modules\HR\Http\Controllers\HrSocialInsurancePolicyController;
 use Modules\HR\Http\Controllers\HrSpecializationController;
 use Modules\HR\Http\Controllers\HrUniversityController;
+use Modules\HR\Http\Controllers\HrWorkCalendarController;
 use Modules\HR\Http\Controllers\HrWorkforceReportController;
 use Modules\HR\Http\Controllers\PayrollAttendancePolicyController;
 use Modules\HR\Http\Controllers\PayrollController;
+use Modules\HR\Http\Controllers\PayrollCorrectionController;
 use Modules\HR\Http\Controllers\PayrollCostPreviewController;
 use Modules\HR\Http\Controllers\PayrollReportController;
 use Modules\HR\Http\Controllers\PayslipController;
@@ -83,6 +87,23 @@ Route::middleware('auth')
             ->whereNumber('assignment')
             ->middleware('can:hr.shift_assignments.manage')
             ->name('shift-assignments.update');
+
+        Route::get('/work-calendars', [HrWorkCalendarController::class, 'index'])
+            ->middleware('can:hr.work_calendars.view')->name('work-calendars.index');
+        Route::post('/work-calendars', [HrWorkCalendarController::class, 'store'])
+            ->middleware('can:hr.work_calendars.manage')->name('work-calendars.store');
+        Route::get('/work-calendars/{calendar}/select2/employees', [HrWorkCalendarController::class, 'selectableEmployees'])
+            ->whereNumber('calendar')->middleware('can:hr.work_calendars.manage')->name('work-calendars.select2.employees');
+        Route::post('/work-calendars/{calendar}/days', [HrWorkCalendarController::class, 'storeDay'])
+            ->whereNumber('calendar')->middleware('can:hr.work_calendars.manage')->name('work-calendars.days.store');
+        Route::patch('/work-calendars/{calendar}/days/{day}', [HrWorkCalendarController::class, 'updateDay'])
+            ->whereNumber('calendar')->whereNumber('day')->middleware('can:hr.work_calendars.manage')->name('work-calendars.days.update');
+        Route::post('/work-calendars/{calendar}/days/fill-range', [HrWorkCalendarController::class, 'fillRange'])
+            ->whereNumber('calendar')->middleware('can:hr.work_calendars.manage')->name('work-calendars.days.fill-range');
+        Route::post('/work-calendars/{calendar}/assignments', [HrWorkCalendarController::class, 'storeAssignment'])
+            ->whereNumber('calendar')->middleware('can:hr.work_calendars.manage')->name('work-calendars.assignments.store');
+        Route::patch('/work-calendars/{calendar}/assignments/{assignment}', [HrWorkCalendarController::class, 'updateAssignment'])
+            ->whereNumber('calendar')->whereNumber('assignment')->middleware('can:hr.work_calendars.manage')->name('work-calendars.assignments.update');
 
         Route::prefix('employee-attendance')->name('employee-attendance.')->controller(HrAttendanceController::class)->group(function (): void {
             Route::get('/', 'index')->middleware('can:hr.employee_attendance.view')->name('index');
@@ -137,6 +158,10 @@ Route::middleware('auth')
                 ->middleware('can:hr.attendance_report.view')->name('attendance');
             Route::get('/attendance/export/csv', [HrAttendanceController::class, 'exportCsv'])
                 ->middleware('can:hr.attendance_report.export')->name('attendance.export.csv');
+            Route::get('/attendance/export/xlsx', [HrAttendanceController::class, 'exportXlsx'])
+                ->middleware('can:hr.attendance_report.export')->name('attendance.export.xlsx');
+            Route::get('/attendance/export/pdf', [HrAttendanceController::class, 'exportPdf'])
+                ->middleware('can:hr.attendance_report.export')->name('attendance.export.pdf');
             Route::get('/leave-requests', [HrWorkforceReportController::class, 'leaveRequests'])
                 ->middleware('can:hr.leave_reports.view')->name('leave-requests');
             Route::get('/leave-requests/export', [HrWorkforceReportController::class, 'exportLeaveRequests'])
@@ -153,6 +178,7 @@ Route::middleware('auth')
         Route::prefix('payroll-runs')->name('payroll-runs.')->controller(PayrollController::class)->group(function (): void {
             Route::post('/calculate', 'calculate')->middleware('can:hr.payroll_preparation.calculate')->name('calculate');
             Route::post('/{payrollRun}/review', 'review')->whereNumber('payrollRun')->middleware('can:hr.payroll_approval.review')->name('review');
+            Route::post('/{payrollRun}/return-for-recalculation', 'returnForRecalculation')->whereNumber('payrollRun')->middleware('can:hr.payroll_approval.review')->name('return-for-recalculation');
             Route::post('/{payrollRun}/approve', 'approve')->whereNumber('payrollRun')->middleware('can:hr.payroll_approval.approve')->name('approve');
             Route::post('/{payrollRun}/payments', 'storePayment')->whereNumber('payrollRun')->middleware([
                 'can:hr.payroll_payment.create',
@@ -161,6 +187,13 @@ Route::middleware('auth')
             ])->name('payments.store');
             Route::get('/{payrollRun}/reconciliation', 'reconcile')->whereNumber('payrollRun')->middleware('can:hr.payroll_reconciliation.view')->name('reconciliation');
         });
+        Route::prefix('payroll-runs/{payrollRun}/corrections')->whereNumber('payrollRun')->name('payroll-runs.corrections.')
+            ->controller(PayrollCorrectionController::class)->group(function (): void {
+                Route::get('/', 'index')->name('index');
+                Route::post('/', 'store')->middleware('can:hr.payroll_approval.correct')->name('store');
+                Route::post('/{correction}/approve', 'approve')->whereNumber('correction')->middleware('can:hr.payroll_approval.correct_approve')->name('approve');
+                Route::post('/{correction}/reject', 'reject')->whereNumber('correction')->middleware('can:hr.payroll_approval.correct_approve')->name('reject');
+            });
 
         Route::get('/select2/lookups/{resource}', [HrSelect2Controller::class, 'lookup'])
             ->name('select2.lookups');
@@ -168,10 +201,17 @@ Route::middleware('auth')
             ->name('select2.foundation');
         Route::get('/select2/employees', [HrSelect2Controller::class, 'employees'])
             ->name('select2.employees');
+        Route::get('/select2/organization-cost-centers', [HrEmployeeOrganizationAssignmentController::class, 'costCenters'])
+            ->middleware('can:hr.employees.edit')
+            ->name('select2.organization-cost-centers');
         Route::get('/payroll-runs/{payrollRun}/cost-preview', PayrollCostPreviewController::class)
             ->whereNumber('payrollRun')
             ->middleware('can:hr.payroll_preparation.view')
             ->name('payroll-runs.cost-preview');
+        Route::post('/payroll-runs/{payrollRun}/cost-allocations/recalculate', [PayrollCostPreviewController::class, 'recalculate'])
+            ->whereNumber('payrollRun')
+            ->middleware('can:hr.payroll_preparation.calculate')
+            ->name('payroll-runs.cost-allocations.recalculate');
         Route::post('/select2/inline/lookups/{resource}', [HrSelect2InlineController::class, 'storeLookup'])
             ->name('select2.inline.lookups.store');
         Route::post('/select2/inline/foundation/{resource}', [HrSelect2InlineController::class, 'storeFoundation'])
@@ -291,6 +331,18 @@ Route::middleware('auth')
             Route::get('/{employee:doc_num}', 'show')->middleware('can:hr.employees.view')->name('show');
             Route::get('/{employee:doc_num}/edit', 'edit')->middleware('can:hr.employees.edit')->name('edit');
             Route::put('/{employee:doc_num}', 'update')->middleware('can:hr.employees.edit')->name('update');
+            Route::get('/{employee:doc_num}/organization-assignments', [HrEmployeeOrganizationAssignmentController::class, 'index'])
+                ->middleware('can:hr.employees.view')->name('organization-assignments.index');
+            Route::post('/{employee:doc_num}/organization-assignments/initial', [HrEmployeeOrganizationAssignmentController::class, 'storeInitial'])
+                ->middleware('can:hr.employees.edit')->name('organization-assignments.initial');
+            Route::post('/{employee:doc_num}/organization-assignments/transfer', [HrEmployeeOrganizationAssignmentController::class, 'storeTransfer'])
+                ->middleware('can:hr.employees.edit')->name('organization-assignments.transfer');
+            Route::get('/{employee:doc_num}/wage-versions', [HrEmployeeWageVersionController::class, 'index'])
+                ->middleware('can:hr.employees.view')->name('wage-versions.index');
+            Route::post('/{employee:doc_num}/wage-versions', [HrEmployeeWageVersionController::class, 'store'])
+                ->middleware('can:hr.employees.edit')->name('wage-versions.store');
+            Route::post('/{employee:doc_num}/wage-versions/{assignment}/verify', [HrEmployeeWageVersionController::class, 'verifyLegacy'])
+                ->whereNumber('assignment')->middleware('can:hr.employees.edit')->name('wage-versions.verify');
             Route::delete('/{employee:doc_num}', 'destroy')->middleware('can:hr.employees.delete')->name('destroy');
             Route::post('/{employee:doc_num}/documents', 'storeDocument')->middleware('can:hr.employees.documents.manage')->name('documents.store');
             Route::get('/{employee:doc_num}/documents/{document:doc_num}/download', 'downloadDocument')->middleware('can:hr.employees.documents.view')->name('documents.download');

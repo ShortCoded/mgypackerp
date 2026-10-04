@@ -63,6 +63,9 @@ return [
         'restored_successfully' => 'Record restored successfully.',
     ],
     'permission_labels' => [
+        'correct_receipt' => 'Correct received sales return',
+        'correct_disposition' => 'Correct inspected sales return',
+        'correct_closed' => 'Correct unused sales return credit',
         'activate' => 'Activate',
         'account_materials' => 'Account for materials',
         'adjust' => 'Adjust stock',

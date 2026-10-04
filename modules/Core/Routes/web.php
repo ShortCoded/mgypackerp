@@ -144,8 +144,10 @@ Route::middleware('auth')
             ->whereIn('type', ['countries', 'governorates', 'cities', 'areas'])
             ->name('select2.inline.locations.store');
 
-        Route::get('/notifications/poll', [NotificationController::class, 'poll'])
+        Route::get('/inbox-updates', [NotificationController::class, 'poll'])
             ->name('notifications.poll');
+        Route::get('/notifications/poll', [NotificationController::class, 'poll'])
+            ->name('notifications.poll-legacy');
         Route::get('/notifications', [NotificationController::class, 'index'])
             ->name('notifications.index');
         Route::get('/notifications/{notification:public_uuid}/open', [NotificationController::class, 'open'])
@@ -213,6 +215,8 @@ Route::middleware('auth')
             ->group(function (): void {
                 Route::get('/', 'index')
                     ->name('index');
+                Route::post('/preview', 'preview')
+                    ->name('preview');
                 Route::post('/', 'store')
                     ->name('store');
             });

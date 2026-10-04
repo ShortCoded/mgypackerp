@@ -7,10 +7,13 @@ use Illuminate\Support\Facades\Storage;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\ArchiveFileService;
 use Modules\Core\Services\ArchiveFolderService;
+use Modules\Core\Services\DateFormatService;
 use Modules\FixedAssets\Services\FixedAssetDepreciationService;
 use Modules\FixedAssets\Services\FixedAssetReportService;
 use Modules\FixedAssets\Services\FixedAssetService;
 use Modules\HR\Models\HrEmployee;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+use Symfony\Component\Process\Process;
 
 uses(RefreshDatabase::class);
 require_once dirname(__DIR__).'/FixedAssetCycleSupport.php';
@@ -260,6 +263,80 @@ test('fixed asset reports expose real workflows with summaries totals and mobile
         ->assertSee(route('admin.fixed-assets.assets.show', $asset), false)
         ->assertSee('fa-report-mobile-row', false)
         ->assertDontSee('fixed_assets.reports.descriptions.', false);
+});
+
+test('fixed asset report dropdown exports the same filtered rows dates and full totals to CSV XLSX and bilingual PDF', function (): void {
+    $context = coreFixedAssetContext();
+    $asset = coreRecognizedAsset($context, ['asset_name' => 'Synthetic report acceptance asset']);
+    $excluded = coreRecognizedAsset($context, ['asset_name' => 'Excluded report acceptance asset']);
+    corePostMonth($context, $asset);
+    $actor = auth()->user();
+    $dates = app(DateFormatService::class);
+
+    foreach (FixedAssetReportService::types() as $type) {
+        $query = ['type' => $type, 'asset_doc_num' => $asset->doc_num, 'to_date' => $context['period']->from_date->copy()->endOfMonth()->toDateString()];
+        $report = app(FixedAssetReportService::class)->report($query);
+        $screen = $this->get(route('admin.fixed-assets.reports.index', $query))->assertOk();
+        $screen->assertSee('dropdown-item js-report-export', false)
+            ->assertSee(route('admin.fixed-assets.reports.csv', $query));
+        if ($report['rows']->isNotEmpty()) {
+            $screen->assertSee($asset->doc_num)->assertDontSee($excluded->doc_num);
+        }
+        $excel = $this->get(route('admin.fixed-assets.reports.excel', $query))->assertOk()->assertDownload();
+        $csv = $this->get(route('admin.fixed-assets.reports.csv', $query))->assertOk()->assertDownload();
+        $sheet = IOFactory::load($excel->baseResponse->getFile()->getPathname())->getActiveSheet();
+        $csvSheet = IOFactory::load($csv->baseResponse->getFile()->getPathname())->getActiveSheet();
+        expect($csvSheet->toArray('', false, false, false))->toEqual($sheet->toArray('', false, false, false));
+        $expectedRows = [array_values($report['columns'])];
+        foreach ($report['rows'] as $row) {
+            $expectedRows[] = array_map(function (string $key) use ($row, $dates): string {
+                $value = data_get($row, $key);
+
+                return $value instanceof DateTimeInterface ? $dates->formatDate($value, '') : (string) $value;
+            }, array_keys($report['columns']));
+        }
+        foreach ($report['totals'] as $label => $value) {
+            $expectedRows[] = [__('common.total').' — '.$label, (string) $value, ...array_fill(0, count($report['columns']) - 2, '')];
+        }
+        expect($sheet->toArray('', false, false, false))->toEqual($expectedRows);
+    }
+
+    $query = ['type' => 'net_book_value', 'asset_doc_num' => $asset->doc_num, 'to_date' => $context['period']->from_date->copy()->endOfMonth()->toDateString()];
+    $report = app(FixedAssetReportService::class)->report($query);
+    expect($report['rows'])->toHaveCount(1)
+        ->and($report['rows']->first()['cost'])->toBe('120000.0000');
+    $originalLocale = app()->getLocale();
+    try {
+        foreach (['en', 'ar'] as $locale) {
+            $actor->forceFill(['locale' => $locale])->save();
+            app()->setLocale($locale);
+            $pdf = $this->actingAs($actor)->withSession(['locale' => $locale])
+                ->get(route('admin.fixed-assets.reports.pdf', $query))->assertOk()->assertHeader('content-type', 'application/pdf');
+            $path = tempnam(sys_get_temp_dir(), 'fixed-asset-report-');
+            try {
+                file_put_contents($path, $pdf->getContent());
+                $text = new Process(['pdftotext', '-layout', $path, '-']);
+                $text->mustRun();
+                expect($text->getOutput())->toContain($asset->doc_num, '120,000')->not->toContain($excluded->doc_num);
+                if ($directory = getenv('MGYPACK_REPORT_PRINT_SAMPLES')) {
+                    file_put_contents($directory.'/fixed-assets-net-book-'.$locale.'.pdf', $pdf->getContent());
+                }
+            } finally {
+                @unlink($path);
+            }
+        }
+    } finally {
+        $actor->forceFill(['locale' => $originalLocale])->save();
+        app()->setLocale($originalLocale);
+        $this->withSession(['locale' => $originalLocale]);
+    }
+
+    $actor->revokePermissionTo(['fixed_assets.export', 'fixed_assets.print']);
+    $this->get(route('admin.fixed-assets.reports.index', $query))->assertOk()
+        ->assertDontSee(route('admin.fixed-assets.reports.csv', $query), false);
+    foreach (['csv', 'excel', 'pdf'] as $format) {
+        $this->get(route('admin.fixed-assets.reports.'.$format, $query))->assertForbidden();
+    }
 });
 
 test('depreciation screen keeps accessible recent runs in the operating scope', function (): void {

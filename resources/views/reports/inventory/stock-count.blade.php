@@ -22,5 +22,5 @@
         @endforeach
     </tbody></table>
     <table style="width:100%; margin-top:20px;"><tr><td style="border:0; text-align:center;">{{ __('Counted by') }}: __________________</td><td style="border:0; text-align:center;">{{ __('Reviewed by') }}: __________________</td><td style="border:0; text-align:center;">{{ __('Approved by') }}: __________________</td></tr></table>
-    <style>.stock-count-lines thead{display:table-header-group}.stock-count-lines tr{page-break-inside:avoid}.stock-count-lines th,.stock-count-lines td{font-size:6.9px}</style>
+    <style>.stock-count-lines thead{display:table-header-group}.stock-count-lines tr{page-break-inside:avoid}.stock-count-lines th,.stock-count-lines td{font-size: 12px}</style>
 @endsection

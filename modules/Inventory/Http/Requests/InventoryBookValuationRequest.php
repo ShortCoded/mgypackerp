@@ -33,7 +33,7 @@ class InventoryBookValuationRequest extends FormRequest
             'quantity_state' => ['nullable', Rule::in(['positive', 'negative'])],
             'product_id' => ['nullable', 'integer'],
             'branch_store_id' => ['nullable', 'integer'],
-            'reference_method' => ['nullable', Rule::in(['moving_average', 'periodic_weighted_average', 'fifo', 'last_purchase_reference'])],
+            'reference_method' => ['nullable', Rule::in(['moving_average', 'periodic_weighted_average', 'fifo', 'lifo', 'last_inbound_reference', 'last_purchase_reference'])],
         ];
     }
 

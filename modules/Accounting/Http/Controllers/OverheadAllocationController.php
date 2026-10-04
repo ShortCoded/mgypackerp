@@ -118,6 +118,7 @@ final class OverheadAllocationController extends Controller
             'basis' => ['required', Rule::in([
                 OverheadAllocationRule::BasisMachineHours,
                 OverheadAllocationRule::BasisLaborHours,
+                OverheadAllocationRule::BasisDirectPayrollHours,
                 OverheadAllocationRule::BasisDirectMaterialCost,
             ])],
             'fallback_basis' => ['nullable', Rule::in([OverheadAllocationRule::BasisDirectMaterialCost])],
@@ -160,6 +161,7 @@ final class OverheadAllocationController extends Controller
                     'journalEntry',
                     'reversalJournalEntry',
                 ])->firstOrFail();
+            $this->allocations->assertTargetAccess($selectedRun);
         }
 
         return view('modules.accounting.overhead-allocations.runs', [

@@ -6,6 +6,7 @@ use DomainException;
 use Modules\Core\Models\Product;
 use Modules\Sales\Models\PriceList;
 use Modules\Sales\Models\PriceListLine;
+use Modules\Sales\Models\QuotationRevisionLine;
 use Modules\Sales\Models\SalesOrderLine;
 
 class PriceListPricingService
@@ -46,7 +47,7 @@ class PriceListPricingService
         }
 
         $conversion = $this->unitConversions->snapshot($product, $unitId, $quantity);
-        $unitPrice = $this->amounts->round(bcmul((string) $line->unit_price, $conversion['conversion_factor'], 8));
+        $unitPrice = $this->amounts->round(bcmul((string) $line->unit_price, $conversion['conversion_factor'], 16), 8);
         $maximumDiscount = $this->maximumDiscountAmount($line->allowed_discount_type, (string) $line->allowed_discount_value, $unitPrice, (string) $quantity, $conversion['conversion_factor']);
 
         return [
@@ -100,16 +101,80 @@ class PriceListPricingService
         return $priced;
     }
 
+    /** @param list<array<string, mixed>> $lines @param iterable<int, QuotationRevisionLine> $storedLines @return list<array<string, mixed>> */
+    public function preserveStoredQuotationPrices(array $lines, iterable $storedLines, int $companyId, ?int $customerId, int $currencyId, string $date, bool $lockForUpdate = false): array
+    {
+        $stored = collect($storedLines)->values();
+        $storedByUuid = $stored->keyBy('public_uuid');
+        $used = [];
+        $priced = [];
+        $unmatched = [];
+
+        foreach ($lines as $index => $line) {
+            $sourceUuid = $line['source_line_public_uuid'] ?? null;
+            $source = $sourceUuid ? $storedByUuid->get($sourceUuid) : $stored->get($index);
+            if ($sourceUuid && (! $source instanceof QuotationRevisionLine || isset($used[$sourceUuid]))) {
+                throw new DomainException(__('quotations.messages.source_line_changed'));
+            }
+            if ($source instanceof QuotationRevisionLine && isset($used[$source->public_uuid])) {
+                $source = null;
+            }
+            if ($source instanceof QuotationRevisionLine) {
+                $used[$source->public_uuid] = true;
+            }
+
+            if ($source instanceof QuotationRevisionLine
+                && (int) $source->product_id === (int) $line['product_id']
+                && (int) $source->unit_id === (int) $line['unit_id']
+                && bccomp((string) $source->quantity, (string) $line['quantity'], 8) === 0
+                && bccomp((string) $source->unit_price, (string) ($line['unit_price'] ?? 0), 8) === 0) {
+                $product = Product::query()->forCompany($companyId)->active()->findOrFail($line['product_id']);
+                $conversion = $this->unitConversions->snapshot($product, $line['unit_id'], $line['quantity']);
+                $maximum = $this->maximumDiscountAmount($source->allowed_discount_type, (string) $source->allowed_discount_value, (string) $source->unit_price, (string) $line['quantity'], $conversion['conversion_factor']);
+                if ($this->amounts->compare($this->quotationDiscountAmount($line, (string) $source->unit_price), $maximum) > 0) {
+                    throw new DomainException(__('price_lists.messages.discount_exceeded', ['product' => $product->doc_num.' / '.$product->name, 'maximum' => $maximum]));
+                }
+
+                $priced[$index] = [
+                    ...$line,
+                    'unit_price' => $source->unit_price,
+                    'price_list_line_id' => $source->price_list_line_id,
+                    'allowed_discount_type' => $source->allowed_discount_type,
+                    'allowed_discount_value' => $source->allowed_discount_value,
+                ];
+
+                continue;
+            }
+
+            $unmatched[$index] = $line;
+        }
+
+        if ($unmatched !== []) {
+            $resolved = $this->applyToLines(array_values($unmatched), $companyId, $customerId, $currencyId, $date, 'quotation', $lockForUpdate);
+            foreach (array_keys($unmatched) as $offset => $index) {
+                $priced[$index] = $resolved[$offset];
+            }
+        }
+
+        ksort($priced);
+
+        return array_values($priced);
+    }
+
     /** @param list<array<string, mixed>> $lines @param iterable<int, SalesOrderLine> $storedLines @return list<array<string, mixed>> */
     public function preserveStoredOrderPrices(array $lines, iterable $storedLines, int $companyId, ?int $customerId, int $currencyId, string $date, bool $lockForUpdate = false): array
     {
         $stored = collect($storedLines)->values();
+        $identifiedSourceIds = collect($lines)->pluck('public_id')->filter()->all();
         $usedStoredLineIds = [];
         $matched = [];
         foreach ($lines as $line) {
-            $source = $stored->first(fn (SalesOrderLine $storedLine): bool => ! in_array($storedLine->getKey(), $usedStoredLineIds, true)
-                && (int) $storedLine->product_id === (int) $line['product_id']
-                && (int) $storedLine->unit_id === (int) ($line['unit_id'] ?? 0));
+            $source = filled($line['public_id'] ?? null)
+                ? $stored->firstWhere('public_id', $line['public_id'])
+                : $stored->first(fn (SalesOrderLine $storedLine): bool => ! in_array($storedLine->getKey(), $usedStoredLineIds, true)
+                    && ! in_array($storedLine->public_id, $identifiedSourceIds, true)
+                    && (int) $storedLine->product_id === (int) $line['product_id']
+                    && (int) $storedLine->unit_id === (int) ($line['unit_id'] ?? 0));
             if ($source) {
                 $usedStoredLineIds[] = $source->getKey();
             }
@@ -209,7 +274,7 @@ class PriceListPricingService
 
     private function maximumDiscountAmount(?string $type, string $value, string $unitPrice, string $quantity, string $conversionFactor): string
     {
-        $gross = $this->amounts->multiply($unitPrice, $quantity);
+        $gross = $this->amounts->round($this->amounts->multiply($unitPrice, $quantity, 16));
 
         return match ($type) {
             PriceListLine::DiscountPercentage => $this->amounts->round($this->amounts->multiply($gross, bcdiv($value, '100', 8), 8)),
@@ -221,7 +286,7 @@ class PriceListPricingService
     /** @param array<string, mixed> $line */
     private function quotationDiscountAmount(array $line, string $unitPrice): string
     {
-        $gross = $this->amounts->multiply((string) $line['quantity'], $unitPrice);
+        $gross = $this->amounts->round($this->amounts->multiply((string) $line['quantity'], $unitPrice, 16));
         $value = (string) ($line['discount_value'] ?? 0);
 
         return match ($line['discount_type'] ?? null) {

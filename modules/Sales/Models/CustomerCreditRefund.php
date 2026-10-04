@@ -17,6 +17,8 @@ class CustomerCreditRefund extends Model
 
     public const StatusPosted = 'posted';
 
+    public const StatusReversed = 'reversed';
+
     protected $guarded = ['id'];
 
     public function getRouteKeyName(): string
@@ -35,7 +37,14 @@ class CustomerCreditRefund extends Model
 
     protected function casts(): array
     {
-        return ['refund_date' => 'date', 'exchange_rate' => 'decimal:6', 'amount' => 'decimal:4', 'posted_at' => 'datetime'];
+        return [
+            'refund_date' => 'date',
+            'exchange_rate' => 'decimal:6',
+            'amount' => 'decimal:4',
+            'posted_at' => 'datetime',
+            'reversed_at' => 'datetime',
+            'reversal_effect_snapshot' => 'array',
+        ];
     }
 
     public function creditNote(): BelongsTo
@@ -56,5 +65,10 @@ class CustomerCreditRefund extends Model
     public function journalEntry(): BelongsTo
     {
         return $this->belongsTo(JournalEntry::class);
+    }
+
+    public function reversalJournalEntry(): BelongsTo
+    {
+        return $this->belongsTo(JournalEntry::class, 'reversal_journal_entry_id');
     }
 }

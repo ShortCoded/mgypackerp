@@ -56,9 +56,13 @@ return [
     'view' => 'View',
     'no_records' => 'No records found.',
     'policy_snapshot' => 'The preview stores the rule, source lines, target metrics, basis, and rounding policy. Approval rejects stale inputs.',
+    'direct_payroll_details' => 'Direct payroll by employee and production run',
+    'employee' => 'Employee reference',
+    'payroll_period' => 'Payroll period',
     'basis_options' => [
         'machine_hours' => 'Recorded machine hours',
         'labor_hours' => 'Recorded labor hours',
+        'direct_payroll_hours' => 'Direct payroll by each employee’s recorded run hours',
         'direct_material_cost' => 'Net direct material cost',
     ],
     'behavior_options' => [
@@ -85,6 +89,12 @@ return [
         'source' => 'Capitalized by overhead allocation :document',
     ],
     'messages' => [
+        'direct_payroll_dated_hours' => 'Record dated daily labor hours for run :run before allocating payroll across its work periods.',
+        'direct_payroll_policy' => 'Direct payroll uses each employee’s actual run hours, with variable cost and no material-cost fallback.',
+        'direct_payroll_accounts' => 'Select only accounts classified as direct labor cost for direct payroll attribution.',
+        'direct_payroll_employee' => 'Direct payroll requires a posted employee source and positive actual hours on a dated production run.',
+        'direct_payroll_unmatched' => 'Employee :employee has no matching dated actual hours on the selected production runs. Complete the run labor records before approval.',
+        'source_journal_allocated' => 'This cost is allocated to production runs. Reverse the cost allocation before correcting its source document. If finished goods have been received, correct the linked production cycle first.',
         'context_required' => 'Select a company, branch, and financial period first.',
         'rule_created' => 'The allocation rule was created.',
         'preview_created' => 'The allocation preview is ready for review.',

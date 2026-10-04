@@ -7,6 +7,8 @@ use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\JournalEntryService;
+use Modules\Core\Models\Company;
+use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\OpeningBalance;
 
@@ -15,18 +17,32 @@ class OpeningBalanceApprovalService
     public function __construct(
         private readonly JournalEntryService $journalEntries,
         private readonly OperatingContextService $operatingContext,
+        private readonly OpeningInventoryValuationService $inventoryValuation,
     ) {}
 
     public function approve(OpeningBalance $openingBalance): OpeningBalance
     {
         return DB::transaction(function () use ($openingBalance): OpeningBalance {
+            $context = $this->currentContext();
+            if ((int) $openingBalance->company_id !== $context['company_id']
+                || (int) $openingBalance->financial_period_id !== $context['financial_period_id']) {
+                throw new DomainException(__('operating_context.messages.required'));
+            }
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
+            FinancialPeriod::query()->where('company_id', $context['company_id'])
+                ->whereKey($context['financial_period_id'])->lockForUpdate()->firstOrFail();
             /** @var OpeningBalance $record */
             $record = OpeningBalance::query()
-                ->with(['lines.account', 'financialPeriod'])
+                ->with(['lines.account', 'financialPeriod', 'currency'])
                 ->lockForUpdate()
                 ->findOrFail($openingBalance->getKey());
 
             $this->assertApprovable($record);
+            if (is_array($record->inventory_valuation_snapshot)
+                && (int) $record->inventory_valuation_snapshot['branch_id'] !== (int) $this->operatingContext->snapshot(request())['branch_id']) {
+                throw new DomainException(__('opening_balances.messages.inventory_source_changed'));
+            }
+            $this->inventoryValuation->assertApproval($record);
 
             $journalEntry = $this->journalEntries->createPostedFromOpeningBalance($record);
 
@@ -132,15 +148,15 @@ class OpeningBalanceApprovalService
 
     private function assertLinesAreValid(OpeningBalance $record): void
     {
-        $totalDebit = 0.0;
-        $totalCredit = 0.0;
+        $totalDebit = '0.0000';
+        $totalCredit = '0.0000';
         $seen = [];
 
         foreach ($record->lines as $line) {
-            $debit = (float) $line->debit_amount;
-            $credit = (float) $line->credit_amount;
+            $debit = (string) $line->debit_amount;
+            $credit = (string) $line->credit_amount;
 
-            if (($debit > 0 && $credit > 0) || ($debit <= 0 && $credit <= 0)) {
+            if ((bccomp($debit, '0', 4) > 0 && bccomp($credit, '0', 4) > 0) || (bccomp($debit, '0', 4) <= 0 && bccomp($credit, '0', 4) <= 0)) {
                 throw new DomainException(__('opening_balances.messages.line_side_invalid'));
             }
 
@@ -163,11 +179,11 @@ class OpeningBalanceApprovalService
             }
 
             $seen[$key] = true;
-            $totalDebit += $debit;
-            $totalCredit += $credit;
+            $totalDebit = bcadd($totalDebit, $debit, 4);
+            $totalCredit = bcadd($totalCredit, $credit, 4);
         }
 
-        if (round($totalDebit, 4) !== round($totalCredit, 4)) {
+        if (bccomp($totalDebit, $totalCredit, 4) !== 0) {
             throw new DomainException(__('opening_balances.messages.unbalanced'));
         }
     }

@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseOrder;
@@ -22,6 +23,7 @@ class SupplyOrderService
         private readonly OperatingContextService $operatingContext,
         private readonly ProcurementAttachmentService $attachments,
         private readonly ProcurementAuditService $audit,
+        private readonly NumericFormatService $numbers,
     ) {}
 
     public function create(array $data): SupplyOrder
@@ -111,18 +113,19 @@ class SupplyOrderService
         return $record->refresh();
     }
 
-    public function remainingToSupply(PurchaseOrderLine $line, ?SupplyOrder $except = null): float
+    public function remainingToSupply(PurchaseOrderLine $line, ?SupplyOrder $except = null): string
     {
-        $allocated = (float) SupplyOrderLine::query()
+        $line = PurchaseOrderLine::query()->withQuantityProgress()->findOrFail($line->getKey());
+        $allocated = $this->decimalQuantity(SupplyOrderLine::query()
             ->where('purchase_order_line_id', $line->getKey())
             ->when($except, fn ($query) => $query->where('supply_order_id', '<>', $except->getKey()))
             ->whereHas('supplyOrder', fn ($query) => $query->whereNotIn('status', [SupplyOrder::StatusCancelled]))
-            ->sum('ordered_quantity');
+            ->sum('ordered_quantity'));
 
-        return max(0, min(
-            (float) $line->ordered_quantity - $allocated,
-            $line->quantityProgress()['remaining'],
-        ));
+        return $this->minimumNonNegative(
+            bcsub((string) $line->ordered_quantity, $allocated, 8),
+            $this->orderRemainingQuantity($line),
+        );
     }
 
     /** @return Collection<int, PurchaseOrderLine> */
@@ -142,27 +145,32 @@ class SupplyOrderService
             $source->loadMissing('lines');
             $invoiceQuantities = $source->lines->whereNotNull('purchase_order_line_id')
                 ->groupBy('purchase_order_line_id')
-                ->map(fn (Collection $lines): float => (float) $lines->sum('quantity'));
+                ->map(fn (Collection $lines): string => $lines->reduce(
+                    fn (string $sum, $line): string => bcadd($sum, (string) $line->quantity, 8),
+                    '0.00000000',
+                ));
             $invoiceAllocations = $this->allocatedQuantities($lineIds, $editing, $source);
         }
 
         foreach ($order->lines as $line) {
-            $available = max(0, min(
-                (float) $line->ordered_quantity - (float) $allocatedByOrderLine->get($line->getKey(), 0),
-                $line->quantityProgress()['remaining'],
-            ));
+            $orderRemaining = $this->orderRemainingQuantity($line);
+            $available = $this->minimumNonNegative(
+                bcsub((string) $line->ordered_quantity, (string) $allocatedByOrderLine->get($line->getKey(), '0.00000000'), 8),
+                $orderRemaining,
+            );
             if ($source instanceof PurchaseInvoice) {
-                $available = max(0, min(
+                $available = $this->minimumNonNegative(
                     $available,
-                    (float) $invoiceQuantities->get($line->getKey(), 0) - (float) $invoiceAllocations->get($line->getKey(), 0),
-                ));
+                    bcsub((string) $invoiceQuantities->get($line->getKey(), '0.00000000'), (string) $invoiceAllocations->get($line->getKey(), '0.00000000'), 8),
+                );
             }
+            $line->setAttribute('purchase_order_remaining_quantity', $orderRemaining);
             $line->setAttribute('supply_available_quantity', $available);
         }
 
         return $order->lines
             ->reject(fn (PurchaseOrderLine $line): bool => $line->product?->isPurchasable() !== true)
-            ->filter(fn (PurchaseOrderLine $line): bool => (float) $line->getAttribute('supply_available_quantity') > 0
+            ->filter(fn (PurchaseOrderLine $line): bool => bccomp((string) $line->getAttribute('supply_available_quantity'), '0', 8) > 0
                 || $editing?->lines->contains('purchase_order_line_id', $line->getKey()));
     }
 
@@ -207,16 +215,16 @@ class SupplyOrderService
             }
 
             $kept = [];
-            $total = 0.0;
+            $total = '0.00000000';
             foreach (array_values($data['lines']) as $index => $input) {
                 $orderLine = $sourceLines->get($input['purchase_order_line_public_id'] ?? '');
                 if (! $orderLine instanceof PurchaseOrderLine) {
                     throw new DomainException(__('The selected supply order line is outside the source document.'));
                 }
-                $quantity = (float) $input['ordered_quantity'];
+                $quantity = $this->numbers->normalizeToScale($input['ordered_quantity'] ?? null, 8);
                 $existingLine = $record->lines->firstWhere('purchase_order_line_id', $orderLine->getKey());
-                $available = (float) $orderLine->getAttribute('supply_available_quantity');
-                if ($quantity <= 0 || $quantity > $available + 0.00000001) {
+                $available = (string) $orderLine->getAttribute('supply_available_quantity');
+                if ($quantity === null || bccomp($quantity, '0', 8) <= 0 || bccomp($quantity, $available, 8) > 0) {
                     throw new DomainException(__('Supply order quantity exceeds the remaining source quantity.'));
                 }
                 $invoiceLine = $source instanceof PurchaseInvoice
@@ -232,7 +240,7 @@ class SupplyOrderService
                     'purchase_invoice_line_id' => $invoiceLine?->getKey(),
                     'product_id' => $orderLine->product_id,
                     'unit_id' => $orderLine->unit_id,
-                    'ordered_quantity' => $this->quantity($quantity),
+                    'ordered_quantity' => $quantity,
                     'notes' => $input['notes'] ?? null,
                 ]);
                 $line->save();
@@ -242,13 +250,13 @@ class SupplyOrderService
                     $context['company_id'],
                 );
                 $kept[] = $line->getKey();
-                $total += $quantity;
+                $total = bcadd($total, $quantity, 8);
             }
             if ($kept === []) {
                 throw new DomainException(__('A supply order requires at least one line.'));
             }
             $record->lines()->whereNotIn('id', $kept)->delete();
-            $record->forceFill(['total_ordered_quantity' => $this->quantity($total)])->save();
+            $record->forceFill(['total_ordered_quantity' => $total])->save();
             $this->attachments->attach($record, $data['attachment_file_doc_nums'] ?? [], ProcurementAttachmentService::OperationalCollection, $context['company_id']);
             $this->audit->record($record, $editing ? 'supply_order.updated' : 'supply_order.created', ['source' => $source->doc_num]);
 
@@ -283,7 +291,7 @@ class SupplyOrderService
 
     /**
      * @param  list<int>  $purchaseOrderLineIds
-     * @return Collection<int, float>
+     * @return Collection<int, string>
      */
     private function allocatedQuantities(array $purchaseOrderLineIds, ?SupplyOrder $except = null, ?PurchaseInvoice $invoice = null): Collection
     {
@@ -296,7 +304,7 @@ class SupplyOrderService
                 ->when($invoice, fn ($orders) => $orders->where('purchase_invoice_id', $invoice->getKey())))
             ->groupBy('purchase_order_line_id')
             ->pluck('allocated_quantity', 'purchase_order_line_id')
-            ->map(fn (mixed $quantity): float => (float) $quantity);
+            ->map(fn (mixed $quantity): string => $this->decimalQuantity($quantity));
     }
 
     private function locked(SupplyOrder $supplyOrder, bool $withLines = false): SupplyOrder
@@ -335,8 +343,29 @@ class SupplyOrderService
         return ['supplier', 'branchStore', 'purchaseOrder', 'purchaseInvoice', 'lines.product', 'lines.unit', 'lines.purchaseOrderLine'];
     }
 
-    private function quantity(float $quantity): string
+    private function decimalQuantity(mixed $value): string
     {
-        return number_format($quantity, 8, '.', '');
+        return bcadd($this->numbers->normalizeScientificNotation((string) ($value ?? 0)) ?? '0', '0', 8);
+    }
+
+    private function orderRemainingQuantity(PurchaseOrderLine $line): string
+    {
+        $received = $this->decimalQuantity($line->getAttribute('progress_received'));
+        $returned = $this->decimalQuantity($line->getAttribute('progress_accepted_returned'));
+        $netReceived = bcsub($received, $returned, 8);
+        if (bccomp($netReceived, '0', 8) < 0) {
+            $netReceived = '0.00000000';
+        }
+
+        $remaining = bcsub((string) $line->ordered_quantity, $netReceived, 8);
+
+        return bccomp($remaining, '0', 8) > 0 ? $remaining : '0.00000000';
+    }
+
+    private function minimumNonNegative(string $first, string $second): string
+    {
+        $minimum = bccomp($first, $second, 8) <= 0 ? $first : $second;
+
+        return bccomp($minimum, '0', 8) > 0 ? $minimum : '0.00000000';
     }
 }

@@ -41,6 +41,7 @@
         update();
     });
     document.querySelectorAll('.fixed-asset-360 form, .js-depreciation-post-form').forEach((form) => {
+        form.noValidate = true;
         form.addEventListener('submit', (event) => {
             if (event.defaultPrevented) { return; }
             if (form.classList.contains('js-depreciation-post-form') && form.dataset.confirmed !== 'true') {
@@ -146,7 +147,6 @@
         if (window.jQuery) { window.jQuery(form).on('select2:select select2:clear', invalidate); }
         form.querySelector('.js-disposal-preview').addEventListener('click', async () => {
             post.disabled = true;
-            if (!form.reportValidity()) { return; }
             const requestedRevision = revision;
             try {
                 const data = await send(form);

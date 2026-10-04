@@ -1,6 +1,7 @@
 <?php
 
 use App\Models\User;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
@@ -29,6 +30,9 @@ use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Inventory\Services\InventoryDocumentPostingService;
 use Modules\Inventory\Services\InventoryMovementService;
 use Modules\Inventory\Services\InventoryOpeningStockPostingService;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 
@@ -506,7 +510,7 @@ test('closed opening stock pricing cannot be edited or deleted but can be cloned
 
 test('opening stock pricing preserves accepted exchange rate and unit price precision before persistence', function (): void {
     $context = openingStockPricingContext($this);
-    $actor = openingStockPricingActor(['inventory.opening_stock_pricings.create']);
+    $actor = openingStockPricingActor(['inventory.opening_stock_pricings.create', 'inventory.opening_stock_pricings.view']);
     $currency = openingStockPricingCurrency($context['company'], false);
     $product = openingStockPricingProduct($context['company']);
     $openingStock = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [$product], 71);
@@ -533,7 +537,22 @@ test('opening stock pricing preserves accepted exchange rate and unit price prec
         ->assertJsonPath('success', true);
 
     expect($capturedExchangeRate)->toBe('999999999999.999999')
-        ->and($capturedUnitPrice)->toBe('12345678901.2345');
+        ->and($capturedUnitPrice)->toBe('12345678901.23450000');
+
+    $preciseOpening = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [$product], 73);
+    $this->postJson(route('admin.inventory.opening-stock-pricings.store'), openingStockPricingPayload($preciseOpening, $currency, [
+        'lines' => [[
+            'opening_stock_line_public_id' => $preciseOpening->lines()->sole()->public_id,
+            'unit_price' => '22.54545123',
+        ]],
+    ]))->assertOk()->assertJsonPath('success', true);
+
+    $stored = OpeningStockPricing::query()->where('opening_stock_id', $preciseOpening->getKey())->firstOrFail();
+    expect($stored->lines()->sole()->unit_price)->toBe('22.54545123')
+        ->and($stored->lines()->sole()->line_total)->toBe('45.0909');
+    $this->get(route('admin.inventory.opening-stock-pricings.show', $stored->doc_num))
+        ->assertOk()
+        ->assertSee('22.54545123');
 });
 
 test('browser pricing values the approved opening stock ledger in base currency without creating a journal', function (): void {
@@ -580,6 +599,198 @@ test('browser pricing values the approved opening stock ledger in base currency 
     $this->actingAs($actor)->deleteJson(route('admin.inventory.opening-stock-pricings.destroy', $pricing->doc_num))->assertOk();
     expect($movement->fresh()->unit_cost)->toBeNull()
         ->and(InventoryReceiptLayer::query()->where('receipt_transaction_id', $movement->getKey())->firstOrFail()->unit_cost)->toBeNull();
+});
+
+test('estimated opening stock pricing waits for separate sourced approval before changing ledger cost', function (): void {
+    $context = openingStockPricingContext($this, Branch::TypeFactory);
+    $preparer = openingStockPricingActor(['inventory.opening_stock_pricings.create', 'inventory.opening_stock_pricings.view']);
+    $approver = openingStockPricingActor(['inventory.opening_stock_pricings.approve_estimate', 'inventory.opening_stock_pricings.view']);
+    $currency = openingStockPricingCurrency($context['company']);
+    $product = openingStockPricingProduct($context['company']);
+    $store = BranchStore::query()->create(['branch_id' => $context['branch']->getKey(), 'name' => 'Estimate staging store']);
+    $openingStock = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [$product], 87);
+    $openingStock->forceFill(['branch_store_id' => $store->getKey(), 'approved' => true, 'status' => OpeningStock::StatusApproved])->save();
+
+    $this->actingAs($preparer);
+    app(InventoryOpeningStockPostingService::class)->post($openingStock);
+    $movement = InventoryTransaction::query()->where('source_id', $openingStock->getKey())->sole();
+    $quantity = (string) $movement->quantity_in;
+
+    $this->postJson(route('admin.inventory.opening-stock-pricings.store'), openingStockPricingPayload($openingStock, $currency, [
+        'pricing_basis' => OpeningStockPricing::BasisEstimate,
+        'estimate_basis_note' => 'Supplier indicative quote, subject to finance approval',
+    ]))->assertOk()->assertJsonPath('success', true);
+
+    $proposal = OpeningStockPricing::query()->sole();
+    expect($proposal->status)->toBe(OpeningStockPricing::StatusDraft)
+        ->and($proposal->approved_by)->toBeNull()
+        ->and($movement->fresh()->unit_cost)->toBeNull()
+        ->and((string) $movement->quantity_in)->toBe($quantity)
+        ->and(InventoryReceiptLayer::query()->where('receipt_transaction_id', $movement->getKey())->sole()->unit_cost)->toBeNull();
+
+    $approvalUrl = route('admin.inventory.opening-stock-pricings.approve-estimate', $proposal->doc_num);
+    $approval = ['source_reference' => 'QUOTE-2026-87', 'approval_reference' => 'FIN-APP-87'];
+    $this->postJson($approvalUrl, $approval)->assertForbidden();
+    $this->actingAs($approver)
+        ->get(route('admin.inventory.opening-stock-pricings.show', $proposal->doc_num))
+        ->assertOk()
+        ->assertSee(__('inventory.opening_stock_pricings.actions.approve_estimate'));
+    $this->actingAs($approver)->postJson($approvalUrl, $approval)->assertOk()->assertJsonPath('success', true);
+
+    expect($proposal->fresh()->status)->toBe(OpeningStockPricing::StatusClosed)
+        ->and($proposal->fresh()->approved_by)->toBe($approver->getKey())
+        ->and($proposal->fresh()->source_reference)->toBe('QUOTE-2026-87')
+        ->and((string) $movement->fresh()->unit_cost)->toBe('10.50000000')
+        ->and((string) $movement->quantity_in)->toBe($quantity);
+
+    $this->postJson($approvalUrl, $approval)->assertUnprocessable();
+});
+
+test('opening stock estimate workbook imports only matching source quantities into an unposted proposal', function (): void {
+    Storage::fake('local');
+    $context = openingStockPricingContext($this, Branch::TypeFactory);
+    $actor = openingStockPricingActor(['inventory.opening_stock_pricings.import_estimate', 'inventory.opening_stock_pricings.view']);
+    $currency = openingStockPricingCurrency($context['company']);
+    $product = openingStockPricingProduct($context['company']);
+    $store = BranchStore::query()->create(['branch_id' => $context['branch']->getKey(), 'name' => 'Workbook staging store']);
+    $openingStock = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [$product], 88);
+    $openingStock->forceFill(['branch_store_id' => $store->getKey(), 'approved' => true, 'status' => OpeningStock::StatusApproved])->save();
+    $this->actingAs($actor);
+    app(InventoryOpeningStockPostingService::class)->post($openingStock);
+    $line = $openingStock->lines()->sole();
+    $movement = InventoryTransaction::query()->where('source_id', $openingStock->getKey())->sole();
+
+    $this->get(route('admin.inventory.opening-stock-pricings.import-estimate.form'))
+        ->assertOk()
+        ->assertSee(__('inventory.opening_stock_pricings.actions.download_estimate_template'));
+
+    $this->get(route('admin.inventory.opening-stock-pricings.import-estimate.template', ['opening_stock_doc_num' => $openingStock->doc_num]))
+        ->assertOk()
+        ->assertHeader('content-disposition');
+
+    $spreadsheet = new Spreadsheet;
+    $sheet = $spreadsheet->getActiveSheet();
+    $sheet->fromArray([
+        ['opening_stock_line_public_id', 'product_code', 'quantity', 'unit_price'],
+        [$line->public_id, $product->doc_num, (string) $line->quantity, ''],
+    ]);
+    $sheet->setCellValueExplicit('D2', '12.34567890', DataType::TYPE_STRING);
+    $path = tempnam(sys_get_temp_dir(), 'opening-estimate-');
+    expect($path)->toBeString();
+    (new Xlsx($spreadsheet))->save($path);
+    $spreadsheet->disconnectWorksheets();
+
+    try {
+        $this->post(route('admin.inventory.opening-stock-pricings.import-estimate.store'), [
+            'opening_stock_doc_num' => $openingStock->doc_num,
+            'document_date' => '01/03/2026',
+            'currency_doc_num' => $currency->doc_num,
+            'exchange_rate' => '1',
+            'estimate_basis_note' => 'Synthetic source workbook awaiting approval',
+            'workbook' => new UploadedFile($path, 'synthetic-source.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', null, true),
+        ])->assertRedirect()->assertSessionHasNoErrors();
+    } finally {
+        @unlink($path);
+    }
+
+    $proposal = OpeningStockPricing::query()->sole();
+    expect($proposal->status)->toBe(OpeningStockPricing::StatusDraft)
+        ->and($proposal->pricing_basis)->toBe(OpeningStockPricing::BasisEstimate)
+        ->and($proposal->source_file_sha256)->toMatch('/^[a-f0-9]{64}$/')
+        ->and((string) $proposal->lines()->sole()->unit_price)->toBe('12.34567890')
+        ->and($movement->fresh()->unit_cost)->toBeNull();
+    Storage::disk('local')->assertExists($proposal->source_file_path);
+    $this->get(route('admin.inventory.opening-stock-pricings.source-file', $proposal->doc_num))->assertOk();
+});
+
+test('estimated opening stock cost cannot be approved in a closed period or after later stock consumption', function (): void {
+    $context = openingStockPricingContext($this, Branch::TypeFactory);
+    $preparer = openingStockPricingActor(['inventory.opening_stock_pricings.create']);
+    $approver = openingStockPricingActor(['inventory.opening_stock_pricings.approve_estimate']);
+    $currency = openingStockPricingCurrency($context['company']);
+    $product = openingStockPricingProduct($context['company']);
+    $store = BranchStore::query()->create(['branch_id' => $context['branch']->getKey(), 'name' => 'Estimate consumed store']);
+    $openingStock = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [$product], 89);
+    $openingStock->forceFill(['branch_store_id' => $store->getKey(), 'approved' => true, 'status' => OpeningStock::StatusApproved])->save();
+    $this->actingAs($preparer);
+    app(InventoryOpeningStockPostingService::class)->post($openingStock);
+    $this->postJson(route('admin.inventory.opening-stock-pricings.store'), openingStockPricingPayload($openingStock, $currency, [
+        'pricing_basis' => OpeningStockPricing::BasisEstimate,
+        'estimate_basis_note' => 'Synthetic supplier estimate',
+    ]))->assertOk();
+    $proposal = OpeningStockPricing::query()->sole();
+    $movement = InventoryTransaction::query()->where('source_id', $openingStock->getKey())->sole();
+    $approvalUrl = route('admin.inventory.opening-stock-pricings.approve-estimate', $proposal->doc_num);
+    $approval = ['source_reference' => 'SYNTHETIC-QUOTE-89', 'approval_reference' => 'SYNTHETIC-APPROVAL-89'];
+
+    $context['period']->forceFill(['is_closed' => true])->save();
+    $this->actingAs($approver)->postJson($approvalUrl, $approval)->assertUnprocessable();
+    $context['period']->forceFill(['is_closed' => false])->save();
+    $this->actingAs($preparer);
+    app(InventoryMovementService::class)->createAndPost([
+        'company_id' => $context['company']->getKey(),
+        'financial_period_id' => $context['period']->getKey(),
+        'branch_id' => $context['branch']->getKey(),
+        'branch_store_id' => $store->getKey(),
+        'document_type' => InventoryDocument::TypeIssue,
+        'document_date' => '2026-03-02',
+        'source_stock_status' => InventoryTransaction::StatusAvailable,
+    ], [['product_id' => $product->getKey(), 'quantity' => '1']]);
+
+    $this->actingAs($approver)->postJson($approvalUrl, $approval)->assertUnprocessable();
+    expect($proposal->fresh()->status)->toBe(OpeningStockPricing::StatusDraft)
+        ->and($proposal->fresh()->approved_by)->toBeNull()
+        ->and($movement->fresh()->unit_cost)->toBeNull();
+});
+
+test('estimate import rejects mismatched quantities and formulas without creating a pricing document', function (): void {
+    Storage::fake('local');
+    $context = openingStockPricingContext($this, Branch::TypeFactory);
+    $actor = openingStockPricingActor(['inventory.opening_stock_pricings.import_estimate', 'inventory.opening_stock_pricings.view']);
+    $currency = openingStockPricingCurrency($context['company']);
+    $product = openingStockPricingProduct($context['company']);
+    $openingStock = openingStockPricingOpeningStock($context['company'], $context['period'], $context['branch'], [$product], 90);
+    $openingStock->forceFill(['approved' => true, 'status' => OpeningStock::StatusApproved])->save();
+    $line = $openingStock->lines()->sole();
+    $this->actingAs($actor);
+
+    $spreadsheet = new Spreadsheet;
+    $sheet = $spreadsheet->getActiveSheet();
+    $sheet->fromArray([
+        ['opening_stock_line_public_id', 'product_code', 'quantity', 'unit_price'],
+        [$line->public_id, $product->doc_num, '999', '10'],
+    ]);
+    $path = tempnam(sys_get_temp_dir(), 'opening-estimate-invalid-');
+    expect($path)->toBeString();
+    $payload = [
+        'opening_stock_doc_num' => $openingStock->doc_num,
+        'document_date' => '01/03/2026',
+        'currency_doc_num' => $currency->doc_num,
+        'exchange_rate' => '1',
+        'estimate_basis_note' => 'Synthetic invalid workbook',
+    ];
+
+    try {
+        (new Xlsx($spreadsheet))->save($path);
+        $this->post(route('admin.inventory.opening-stock-pricings.import-estimate.store'), [
+            ...$payload,
+            'workbook' => new UploadedFile($path, 'wrong-quantity.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', null, true),
+        ])->assertRedirect()->assertSessionHasErrors('workbook');
+
+        $sheet->setCellValue('C2', (string) $line->quantity);
+        $sheet->setCellValue('D2', '=5+5');
+        (new Xlsx($spreadsheet))->save($path);
+        $this->post(route('admin.inventory.opening-stock-pricings.import-estimate.store'), [
+            ...$payload,
+            'workbook' => new UploadedFile($path, 'formula.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', null, true),
+        ])->assertRedirect()->assertSessionHasErrors('workbook');
+    } finally {
+        $spreadsheet->disconnectWorksheets();
+        @unlink($path);
+    }
+
+    expect(OpeningStockPricing::query()->count())->toBe(0)
+        ->and(Storage::disk('local')->files('opening-stock-pricing-sources'))->toBe([]);
 });
 
 test('opening stock can be priced after a fully reversed issue without leaving stale layer costs', function (): void {
@@ -751,6 +962,14 @@ test('a reversed pricing cannot be restored after its source line was priced aga
     $oldPricing = OpeningStockPricing::query()->firstOrFail();
     $oldPricing->forceFill(['is_closed' => false, 'status' => OpeningStockPricing::StatusDraft])->save();
     $this->actingAs($actor)->deleteJson(route('admin.inventory.opening-stock-pricings.destroy', $oldPricing->doc_num))->assertOk();
+    expect($oldPricing->lines()->withTrashed()->firstOrFail()->deleted_at)->not->toBeNull();
+    if (DB::getDriverName() === 'sqlite') {
+        $activeSourceIndex = DB::table('sqlite_master')
+            ->where('type', 'index')
+            ->where('name', 'inventory_opening_stock_pricing_lines_source_unique_active')
+            ->value('sql');
+        expect($activeSourceIndex)->toContain('WHERE deleted_at IS NULL');
+    }
     $this->actingAs($actor)->postJson(route('admin.inventory.opening-stock-pricings.store'), $payload)->assertOk();
 
     $this->actingAs($actor)->patchJson(route('admin.inventory.opening-stock-pricings.restore', $oldPricing->doc_num))

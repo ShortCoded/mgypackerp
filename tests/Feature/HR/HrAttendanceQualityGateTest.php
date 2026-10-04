@@ -5,6 +5,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\SettingService;
 use Modules\HR\Models\HrAttendanceDailyRecord;
@@ -12,8 +13,10 @@ use Modules\HR\Models\HrAttendanceEvent;
 use Modules\HR\Models\HrAttendanceSession;
 use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrShift;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
+use Symfony\Component\Process\Process;
 
 afterEach(function (): void {
     Carbon::setTestNow();
@@ -363,4 +366,153 @@ test('attendance report is tenant-isolated standardized responsive filterable an
         'idempotency_key' => (string) Str::uuid(),
         'notes' => 'Cross-company attempt',
     ])->assertRedirect()->assertSessionHasErrors('employee_doc_num');
+});
+
+test('attendance report shares filtered rows across screen csv xlsx and real Arabic and English PDFs', function (): void {
+    $first = attendanceQualityFixture(11);
+    $second = attendanceQualityFixture(12);
+    Carbon::setTestNow('2026-09-13 08:00:00');
+    $this->actingAs($first['user'])->postJson(route('employee.hr.attendance.punch'), attendanceQualityPayload('check_in', (string) Str::uuid()))->assertOk();
+    $this->actingAs($second['user'])->postJson(route('employee.hr.attendance.punch'), attendanceQualityPayload('check_in', (string) Str::uuid()))->assertOk();
+
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    Permission::findOrCreate('hr.attendance_report.view', 'web');
+    Permission::findOrCreate('hr.attendance_report.export', 'web');
+    $reviewer = User::factory()->create();
+    $reviewer->givePermissionTo('hr.attendance_report.view');
+    $session = attendanceQualityAdminSession($first);
+    $filters = ['date_from' => '2026-09-13', 'date_to' => '2026-09-13', 'branch' => $first['branch']->doc_num];
+
+    $screen = $this->actingAs($reviewer)->withSession($session)->get(route('admin.hr.reports.attendance', $filters));
+    $screen->assertOk()->assertSee($first['employee']->full_name)->assertDontSee($second['employee']->full_name)
+        ->assertDontSee(route('admin.hr.reports.attendance.export.xlsx', $filters));
+    expect($screen->viewData('summary')['session_count'])->toBe(1);
+    foreach (['csv', 'xlsx', 'pdf'] as $format) {
+        $this->withSession($session)->get(route('admin.hr.reports.attendance.export.'.$format, $filters))->assertForbidden();
+    }
+
+    $reviewer->givePermissionTo('hr.attendance_report.export');
+    $authorizedScreen = $this->withSession($session)->get(route('admin.hr.reports.attendance', $filters));
+    $authorizedScreen->assertOk();
+    $renderedFilters = $authorizedScreen->viewData('filters');
+    $authorizedScreen->assertSee(route('admin.hr.reports.attendance.export.csv', $renderedFilters))
+        ->assertSee(route('admin.hr.reports.attendance.export.xlsx', $renderedFilters))
+        ->assertSee(route('admin.hr.reports.attendance.export.pdf', $renderedFilters));
+    $csv = $this->withSession($session)->get(route('admin.hr.reports.attendance.export.csv', $filters));
+    $csv->assertOk()->assertHeader('content-type', 'text/csv; charset=UTF-8');
+    $csvContent = $csv->streamedContent();
+    $date = app(DateFormatService::class)->formatDate('2026-09-13');
+    $sessionsLabel = __('hr_attendance.report.summary.sessions');
+    expect($csvContent)->toContain($first['employee']->full_name, $date, $sessionsLabel)
+        ->not->toContain($second['employee']->full_name, '2026-09-13 00:00:00');
+
+    $xlsx = $this->withSession($session)->get(route('admin.hr.reports.attendance.export.xlsx', $filters));
+    $xlsx->assertOk();
+    $xlsxRows = IOFactory::load($xlsx->baseResponse->getFile()->getPathname())->getActiveSheet()->toArray();
+    expect($xlsxRows[1][0])->toBe($date)
+        ->and($xlsxRows[1][2])->toBe($first['employee']->full_name)
+        ->and(collect($xlsxRows)->contains(fn (array $row): bool => ($row[0] ?? null) === $sessionsLabel && (int) ($row[1] ?? 0) === 1))->toBeTrue();
+
+    foreach (['en', 'ar'] as $locale) {
+        $response = $this->withSession([...$session, 'locale' => $locale])
+            ->get(route('admin.hr.reports.attendance.export.pdf', $filters));
+        $response->assertOk()->assertHeader('content-type', 'application/pdf');
+        $pdfContent = $response->getContent();
+        if ($directory = getenv('MGYPACK_REPORT_PRINT_SAMPLES')) {
+            file_put_contents($directory.'/attendance-single-'.$locale.'.pdf', $pdfContent);
+        }
+        expect(str_starts_with($pdfContent, '%PDF-'))->toBeTrue();
+        $extract = new Process(['pdftotext', '-layout', '-', '-']);
+        $extract->setInput($pdfContent);
+        $extract->run();
+        expect($extract->isSuccessful())->toBeTrue()
+            ->and($extract->getOutput())->toContain($first['employee']->full_name, $date)
+            ->not->toContain($second['employee']->full_name);
+    }
+
+    $empty = $this->withSession($session)->get(route('admin.hr.reports.attendance', ['date_from' => '2026-09-14', 'date_to' => '2026-09-14']));
+    $empty->assertOk()->assertDontSee('data-attendance-summary', false);
+});
+
+test('attendance report exports all filtered rows beyond the screen page and repeats PDF headings', function (): void {
+    $fixture = attendanceQualityFixture(31);
+    $foreign = attendanceQualityFixture(32);
+    $start = Carbon::parse('2026-07-01 08:00:00');
+
+    for ($index = 0; $index < 80; $index++) {
+        $checkIn = $start->copy()->addDays($index);
+        HrAttendanceSession::query()->create([
+            'employee_id' => $fixture['employee']->getKey(),
+            'company_id' => $fixture['company']->getKey(),
+            'assigned_branch_id' => $fixture['branch']->getKey(),
+            'shift_id' => $fixture['shift']->getKey(),
+            'work_date' => $checkIn->toDateString(),
+            'status' => HrAttendanceSession::StatusClosed,
+            'started_at' => $checkIn,
+            'ended_at' => $checkIn->copy()->addHours(8),
+            'worked_minutes' => 480,
+            'total_break_minutes' => 0,
+        ]);
+    }
+    HrAttendanceSession::query()->create([
+        'employee_id' => $foreign['employee']->getKey(),
+        'company_id' => $foreign['company']->getKey(),
+        'assigned_branch_id' => $foreign['branch']->getKey(),
+        'work_date' => '2026-09-18',
+        'status' => HrAttendanceSession::StatusClosed,
+        'started_at' => '2026-09-18 08:00:00',
+        'ended_at' => '2026-09-18 16:00:00',
+        'worked_minutes' => 480,
+    ]);
+
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    Permission::findOrCreate('hr.attendance_report.view', 'web');
+    Permission::findOrCreate('hr.attendance_report.export', 'web');
+    $reviewer = User::factory()->create();
+    $reviewer->givePermissionTo(['hr.attendance_report.view', 'hr.attendance_report.export']);
+    $session = [...attendanceQualityAdminSession($fixture), 'locale' => 'en'];
+    $filters = ['date_from' => '2026-07-01', 'date_to' => '2026-09-18'];
+
+    $screen = $this->actingAs($reviewer)->withSession($session)->get(route('admin.hr.reports.attendance', $filters));
+    $screen->assertOk()->assertDontSee($foreign['employee']->full_name);
+    expect($screen->viewData('sessions')->total())->toBe(80)
+        ->and($screen->viewData('sessions')->count())->toBe(30)
+        ->and($screen->viewData('summary')['session_count'])->toBe(80)
+        ->and($screen->viewData('summary')['worked_minutes'])->toBe(38400);
+
+    $csv = $this->withSession($session)->get(route('admin.hr.reports.attendance.export.csv', $filters));
+    $csv->assertOk();
+    $csvContent = $csv->streamedContent();
+    expect(substr_count($csvContent, $fixture['employee']->full_name))->toBe(80)
+        ->and($csvContent)->not->toContain($foreign['employee']->full_name);
+
+    $xlsx = $this->withSession($session)->get(route('admin.hr.reports.attendance.export.xlsx', $filters));
+    $xlsx->assertOk();
+    $xlsxRows = IOFactory::load($xlsx->baseResponse->getFile()->getPathname())->getActiveSheet()->toArray();
+    expect(collect($xlsxRows)->filter(fn (array $row): bool => ($row[2] ?? null) === $fixture['employee']->full_name))->toHaveCount(80)
+        ->and(collect($xlsxRows)->contains(fn (array $row): bool => ($row[0] ?? null) === __('hr_attendance.report.summary.sessions') && (int) ($row[1] ?? 0) === 80))->toBeTrue();
+
+    $pdf = $this->withSession($session)->get(route('admin.hr.reports.attendance.export.pdf', $filters));
+    $pdf->assertOk()->assertHeader('content-type', 'application/pdf');
+    $pdfPath = tempnam(sys_get_temp_dir(), 'attendance-report-');
+    expect($pdfPath)->not->toBeFalse();
+    file_put_contents($pdfPath, $pdf->getContent());
+    if ($directory = getenv('MGYPACK_REPORT_PRINT_SAMPLES')) {
+        file_put_contents($directory.'/attendance-volume-en.pdf', $pdf->getContent());
+    }
+    try {
+        $info = new Process(['pdfinfo', $pdfPath]);
+        $info->run();
+        $text = new Process(['pdftotext', '-layout', $pdfPath, '-']);
+        $text->run();
+        expect($info->isSuccessful())->toBeTrue()
+            ->and($text->isSuccessful())->toBeTrue()
+            ->and(preg_match('/Pages:\s+([0-9]+)/', $info->getOutput(), $pages))->toBe(1)
+            ->and((int) $pages[1])->toBeGreaterThan(1)
+            ->and(substr_count($text->getOutput(), $fixture['employee']->full_name))->toBe(80)
+            ->and(substr_count($text->getOutput(), __('hr_attendance.report.columns.work_date')))->toBe((int) $pages[1])
+            ->and($text->getOutput())->not->toContain($foreign['employee']->full_name);
+    } finally {
+        unlink($pdfPath);
+    }
 });

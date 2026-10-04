@@ -59,6 +59,9 @@ class StoreOpeningStockPricingRequest extends FormRequest
             'currency_doc_num' => $this->filled('currency_doc_num') ? trim((string) $this->input('currency_doc_num')) : null,
             'exchange_rate' => $this->filled('exchange_rate') ? trim((string) $this->input('exchange_rate')) : null,
             'notes' => $this->filled('notes') ? trim((string) $this->input('notes')) : null,
+            'pricing_basis' => $this->filled('pricing_basis') ? trim((string) $this->input('pricing_basis')) : OpeningStockPricing::BasisDocumented,
+            'source_reference' => $this->filled('source_reference') ? trim((string) $this->input('source_reference')) : null,
+            'estimate_basis_note' => $this->filled('estimate_basis_note') ? trim((string) $this->input('estimate_basis_note')) : null,
             'lines' => $lines,
         ]);
     }
@@ -87,10 +90,13 @@ class StoreOpeningStockPricingRequest extends FormRequest
             'currency_doc_num' => ['required', 'string'],
             'exchange_rate' => ['required', 'numeric', 'decimal:0,6', 'regex:/^\d{1,12}(?:\.\d{1,6})?$/D', 'gt:0'],
             'notes' => ['nullable', 'string'],
+            'pricing_basis' => ['required', Rule::in([OpeningStockPricing::BasisDocumented, OpeningStockPricing::BasisEstimate])],
+            'source_reference' => ['nullable', 'string', 'max:160'],
+            'estimate_basis_note' => ['required_if:pricing_basis,estimate', 'nullable', 'string', 'max:2000'],
             'lines' => ['required', 'array'],
             'lines.*.public_id' => ['nullable', 'string'],
             'lines.*.opening_stock_line_public_id' => ['nullable', 'string'],
-            'lines.*.unit_price' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,11}(?:\.\d{1,4})?$/D'],
+            'lines.*.unit_price' => ['nullable', 'numeric', 'decimal:0,8', 'regex:/^\d{1,11}(?:\.\d{1,8})?$/D'],
             'lines.*.notes' => ['nullable', 'string'],
             'lines.*._delete' => ['nullable', 'boolean'],
             'submit_action' => ['nullable', 'string'],
@@ -121,6 +127,9 @@ class StoreOpeningStockPricingRequest extends FormRequest
     {
         if ($current?->isClosed()) {
             $validator->errors()->add('document', __('inventory.opening_stock_pricings.messages.closed_edit_forbidden'));
+        }
+        if ($current && $current->pricing_basis !== $this->input('pricing_basis')) {
+            $validator->errors()->add('pricing_basis', __('inventory.opening_stock_pricings.messages.estimate_basis_immutable'));
         }
 
         $companyId = (int) $this->input('company_id');
@@ -295,6 +304,9 @@ class StoreOpeningStockPricingRequest extends FormRequest
             'currency_doc_num' => __('inventory.opening_stock_pricings.attributes.currency'),
             'exchange_rate' => __('inventory.opening_stock_pricings.attributes.exchange_rate'),
             'notes' => __('inventory.opening_stock_pricings.attributes.notes'),
+            'pricing_basis' => __('inventory.opening_stock_pricings.attributes.pricing_basis'),
+            'source_reference' => __('inventory.opening_stock_pricings.attributes.source_reference'),
+            'estimate_basis_note' => __('inventory.opening_stock_pricings.attributes.estimate_basis_note'),
             'lines' => __('inventory.opening_stock_pricings.attributes.lines'),
             'lines.*.opening_stock_line_public_id' => __('inventory.opening_stock_pricings.attributes.product'),
             'lines.*.unit_price' => __('inventory.opening_stock_pricings.attributes.unit_price'),

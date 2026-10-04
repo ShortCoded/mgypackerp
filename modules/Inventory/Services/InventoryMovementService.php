@@ -3,12 +3,17 @@
 namespace Modules\Inventory\Services;
 
 use DomainException;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\Inventory\Models\InventoryDocument;
+use Modules\Inventory\Models\InventoryReceiptLayer;
+use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\WarehouseLocation;
 
 class InventoryMovementService
@@ -25,6 +30,7 @@ class InventoryMovementService
     public function createAndPost(array $header, array $lines): InventoryDocument
     {
         return DB::transaction(function () use ($header, $lines): InventoryDocument {
+            Company::query()->whereKey($header['company_id'])->lockForUpdate()->firstOrFail();
             FinancialPeriod::query()->lockForUpdate()->findOrFail($header['financial_period_id']);
 
             return $this->posting->post($this->createDraft($header, $lines));
@@ -44,7 +50,6 @@ class InventoryMovementService
                 'inventory_documents',
                 InventoryDocument::class,
                 (int) $header['company_id'],
-                fn ($query) => $query->where('financial_period_id', $header['financial_period_id']),
             );
             $document = InventoryDocument::query()->create([
                 ...$numbers,
@@ -119,6 +124,9 @@ class InventoryMovementService
                 || $destinationStore->branch?->status !== 'active')) {
             throw new DomainException(__('The destination inventory store must belong to an active branch in the operating company.'));
         }
+        if ($header['document_type'] === InventoryDocument::TypeTransfer) {
+            $this->assertTransferBranchAccess((int) $header['company_id'], [(int) $sourceStore->branch_id, (int) ($destinationStore?->branch_id ?? $sourceStore->branch_id)]);
+        }
 
         $this->assertLocationBelongsToStore($header['warehouse_location_id'] ?? null, (int) $sourceStore->getKey());
         $this->assertLocationBelongsToStore(
@@ -127,6 +135,18 @@ class InventoryMovementService
         );
 
         return [$sourceStore, $destinationStore];
+    }
+
+    /** @param list<int> $branchIds */
+    public function assertTransferBranchAccess(int $companyId, array $branchIds): void
+    {
+        $company = Company::query()->findOrFail($companyId);
+        $user = auth()->user();
+        $branchIds = array_values(array_unique($branchIds));
+        if ($user === null || app(OperatingScopeAccessService::class)->allowedBranchQuery($user, [$company->doc_num])
+            ->whereIn('branches.id', $branchIds)->count() !== count($branchIds)) {
+            throw new AuthorizationException(__('inventory.movements.messages.receipt_completion_branch_access'));
+        }
     }
 
     /**
@@ -144,9 +164,33 @@ class InventoryMovementService
             throw new DomainException(__('An inventory movement requires at least one line.'));
         }
 
+        $lines = $this->expandSerialLines($lines);
         foreach (array_values($lines) as $index => $input) {
             $product = Product::query()->lockForUpdate()->findOrFail($input['product_id']);
             $quantity = (string) $input['quantity'];
+            $serialIdentityId = null;
+            $selectedLayerId = filled($input['selected_receipt_layer_id'] ?? null) ? (int) $input['selected_receipt_layer_id'] : null;
+            if ($selectedLayerId !== null) {
+                $layer = InventoryReceiptLayer::query()->whereKey($selectedLayerId)
+                    ->where('company_id', $document->company_id)->where('branch_store_id', $sourceStore->id)
+                    ->where('product_id', $product->id)->where('stock_status', $document->source_stock_status ?? InventoryTransaction::StatusAvailable)
+                    ->where('remaining_quantity', '>', 0)->withAuthoritativeCost()->lockForUpdate()->first();
+                if ($layer === null || (filled($input['batch_lot'] ?? null) && $input['batch_lot'] !== $layer->batch_lot)) {
+                    throw new DomainException(__('inventory_cost_policy.errors.layer_selection'));
+                }
+                $input = [...$input, 'warehouse_location_id' => $layer->warehouse_location_id, 'batch_lot' => $layer->batch_lot,
+                    'manufacture_date' => $layer->manufacture_date, 'expiry_date' => $layer->expiry_date];
+                $serialIdentityId = $layer->inventory_serial_identity_id;
+            }
+            if (filled($input['serial_number'] ?? null)) {
+                if ($selectedLayerId !== null) {
+                    throw new DomainException(__('inventory_serial.select_existing'));
+                }
+                $serialIdentityId = app(InventorySerialService::class)->resolve($product, (string) $input['serial_number'])->id;
+            }
+            if (($product->tracks_serials || $serialIdentityId !== null) && bccomp($quantity, '1', 8) !== 0) {
+                throw new DomainException(__('inventory_serial.exact_unit_required'));
+            }
             $sourceLocationId = $input['warehouse_location_id'] ?? $header['warehouse_location_id'] ?? null;
             $destinationLocationId = $input['destination_warehouse_location_id'] ?? $header['destination_warehouse_location_id'] ?? null;
 
@@ -170,6 +214,8 @@ class InventoryMovementService
                 'financial_period_id' => $header['financial_period_id'],
                 'line_number' => $index + 1,
                 'product_id' => $product->getKey(),
+                'selected_receipt_layer_id' => $selectedLayerId,
+                'inventory_serial_identity_id' => $serialIdentityId,
                 'unit_id' => $input['unit_id'] ?? $product->item_unit_id,
                 'transaction_unit_id' => $input['transaction_unit_id'] ?? $input['unit_id'] ?? $product->item_unit_id,
                 'conversion_factor' => $input['conversion_factor'] ?? 1,
@@ -193,6 +239,37 @@ class InventoryMovementService
                 'created_by' => auth()->id(),
             ]);
         }
+    }
+
+    /** @param list<array<string, mixed>> $lines @return list<array<string, mixed>> */
+    private function expandSerialLines(array $lines): array
+    {
+        $expanded = [];
+        foreach ($lines as $input) {
+            $serials = $input['serial_numbers'] ?? [];
+            if (is_string($serials)) {
+                $serials = preg_split('/\r\n|\r|\n/', $serials);
+            }
+            if (! is_array($serials)) {
+                throw new DomainException(__('inventory_serial.invalid_serial'));
+            }
+            $serials = array_values(array_filter(array_map(fn ($value): string => is_string($value) ? trim($value) : '', $serials), fn (string $value): bool => $value !== ''));
+            if ($serials === []) {
+                $expanded[] = $input;
+
+                continue;
+            }
+            if (count($serials) > 10000 || bccomp((string) count($serials), (string) $input['quantity'], 8) !== 0
+                || filled($input['selected_receipt_layer_id'] ?? null) || filled($input['serial_number'] ?? null)) {
+                throw new DomainException(__('inventory_serial.count_mismatch'));
+            }
+            foreach ($serials as $serial) {
+                $expanded[] = [...$input, 'quantity' => '1', 'base_quantity' => '1',
+                    'transaction_quantity' => bcdiv('1', (string) ($input['conversion_factor'] ?? '1'), 8), 'serial_number' => $serial];
+            }
+        }
+
+        return $expanded;
     }
 
     private function assertLocationBelongsToStore(mixed $warehouseLocationId, int $branchStoreId): void

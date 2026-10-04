@@ -6,7 +6,7 @@
     $numbers = $numbers ?? app(\Modules\Core\Services\NumericFormatService::class);
     $valuation = $valuation ?? [];
     $rows = $valuation['rows'] ?? collect();
-    $totals = $valuation['totals'] ?? ['position_count' => 0, 'product_count' => 0, 'unpriced_product_count' => 0, 'quantity' => '0.00000000', 'sales_value' => '0.00000000', 'unpriced_quantity' => '0.00000000'];
+    $totals = $valuation['totals'] ?? ['position_count' => 0, 'product_count' => 0, 'unpriced_product_count' => 0, 'quantity' => '0.00000000', 'sales_value' => '0.00000000', 'unpriced_quantity' => '0.00000000', 'mixed_units' => false, 'quantity_by_unit' => []];
     $currencyCode = $valuation['priceListCurrencyCode'] ?? '';
     $priceList = $valuation['priceList'] ?? null;
     $asOf = $valuation['asOf'] ?? $filters['as_of'] ?? today()->toDateString();
@@ -59,12 +59,19 @@
     <div class="row g-3 mb-3">
         <div class="col-12 col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-muted small">@lang('stock_balance_inquiry.columns.positions')</div><div class="fs-5 fw-semibold text-nowrap">{{ $totals['position_count'] }}</div></div></div></div>
         <div class="col-12 col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-muted small">@lang('stock_balance_inquiry.columns.products')</div><div class="fs-5 fw-semibold text-nowrap">{{ $totals['product_count'] }}</div></div></div></div>
-        <div class="col-12 col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-muted small">@lang('inventory_accounting.sales_valuation.quantity')</div><div class="fs-5 fw-semibold text-nowrap" dir="ltr">{{ $numbers->format($totals['quantity']) }}</div></div></div></div>
+        <div class="col-12 col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-muted small">@lang('inventory_accounting.sales_valuation.quantity')</div><div class="fs-5 fw-semibold text-nowrap" dir="ltr">{{ $totals['mixed_units'] ? '—' : $numbers->format($totals['quantity']) }}</div></div></div></div>
         <div class="col-12 col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-muted small">@lang('inventory_accounting.sales_valuation.sales_value')</div><div class="fs-5 fw-semibold text-nowrap" dir="ltr">{{ $numbers->format($totals['sales_value']) }} @if($currencyCode){{ $currencyCode }}@endif</div></div></div></div>
-        <div class="col-12 col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-muted small">@lang('inventory_accounting.sales_valuation.unpriced_quantity')</div><div class="fs-5 fw-semibold text-nowrap" dir="ltr">{{ $numbers->format($totals['unpriced_quantity']) }}</div></div></div></div>
+        <div class="col-12 col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-muted small">@lang('inventory_accounting.sales_valuation.unpriced_quantity')</div><div class="fs-5 fw-semibold text-nowrap" dir="ltr">{{ $totals['mixed_units'] ? '—' : $numbers->format($totals['unpriced_quantity']) }}</div></div></div></div>
         <div class="col-12 col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-muted small">@lang('inventory_accounting.sales_valuation.unpriced_product_count')</div><div class="fs-5 fw-semibold text-nowrap">{{ $totals['unpriced_product_count'] }}</div></div></div></div>
         @if($priceList)<div class="col-12 col-sm-6 col-xl-3"><div class="card h-100"><div class="card-body"><div class="text-muted small">@lang('inventory_accounting.sales_valuation.priced_outside_stock_scope_count')</div><div class="fs-5 fw-semibold text-nowrap">{{ $totals['priced_outside_stock_scope_count'] }}</div></div></div></div>@endif
     </div>
+    @if($totals['mixed_units'])
+        <div class="alert alert-info" role="status">{{ __('inventory_accounting.book_valuation.mixed_units_warning') }}
+            @foreach($totals['quantity_by_unit'] as $unitTotal)
+                <span class="d-inline-block mx-2">{{ $unitTotal['unit_name'] }}: {{ $numbers->format($unitTotal['quantity']) }} · {{ __('inventory_accounting.sales_valuation.unpriced_quantity') }} {{ $numbers->format($unitTotal['unpriced_quantity']) }}</span>
+            @endforeach
+        </div>
+    @endif
 
     <div class="card mb-4"><div class="table-responsive"><table class="table table-bordered align-middle mb-0">
         <thead><tr>
@@ -96,11 +103,16 @@
             @endforelse
             <tr class="fw-bold">
                 <td colspan="5">@lang('inventory_accounting.book_valuation.total')</td>
-                <td class="text-end">{{ $numbers->format($totals['quantity']) }}</td>
+                <td class="text-end">{{ $totals['mixed_units'] ? '—' : $numbers->format($totals['quantity']) }}</td>
                 <td></td>
                 <td class="text-end">{{ $numbers->format($totals['sales_value']) }} @if($currencyCode){{ $currencyCode }}@endif</td>
                 <td></td>
             </tr>
+            @if($totals['mixed_units'])
+                @foreach($totals['quantity_by_unit'] as $unitTotal)
+                    <tr><td colspan="5">{{ __('inventory_accounting.book_valuation.unit_subtotal', ['unit' => $unitTotal['unit_name']]) }}</td><td class="text-end">{{ $numbers->format($unitTotal['quantity']) }}</td><td colspan="3"></td></tr>
+                @endforeach
+            @endif
         </tbody>
     </table></div></div>
     @if($priceList && $valuation['pricedOutsideStockScope']->isNotEmpty())

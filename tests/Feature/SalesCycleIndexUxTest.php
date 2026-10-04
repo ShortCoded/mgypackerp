@@ -97,7 +97,7 @@ test('request index offers valid workflow and print actions and supports draft r
     $this->deleteJson(route('admin.sales.customer-requests.destroy', $record))->assertConflict();
 });
 
-test('request index exposes reopened workflow and hides reopen for historical downstream lineage', function () {
+test('request index exposes reopening for amendments while retaining historical downstream lineage', function () {
     $f = salesIndexFixture();
     $this->actingAs($f['user'])->withSession(salesCycleSession($f));
     $record = salesIndexRequest($f);
@@ -117,7 +117,7 @@ test('request index exposes reopened workflow and hides reopen for historical do
     app(SalesOrderService::class)->create(salesCycleOrderPayload($f, ['sales_request_id' => $record->getKey()]))->delete();
 
     $approvedUrl = route('admin.sales.customer-requests.index', ['draw' => 1, 'status' => 'approved', 'document' => $record->doc_num]);
-    expect($this->getJson($approvedUrl)->assertOk()->json('data.0.actions'))->not->toContain('document_type=sales_requests');
+    expect($this->getJson($approvedUrl)->assertOk()->json('data.0.actions'))->toContain('document_type=sales_requests');
 
     $invoiceRecord = salesIndexRequest($f);
     $service->transition($invoiceRecord, 'submitted');
@@ -136,14 +136,14 @@ test('request index exposes reopened workflow and hides reopen for historical do
         'source_doc_num' => $invoiceRecord->doc_num,
     ])->delete();
     $invoiceUrl = route('admin.sales.customer-requests.index', ['draw' => 1, 'status' => 'approved', 'document' => $invoiceRecord->doc_num]);
-    expect($this->getJson($invoiceUrl)->assertOk()->json('data.0.actions'))->not->toContain('document_type=sales_requests');
+    expect($this->getJson($invoiceUrl)->assertOk()->json('data.0.actions'))->toContain('document_type=sales_requests');
 
     $convertedRecord = salesIndexRequest($f);
     $service->transition($convertedRecord, 'submitted');
     $service->transition($convertedRecord->fresh(), 'approved');
     $convertedRecord->lines()->update(['converted_quantity' => '1']);
     $convertedUrl = route('admin.sales.customer-requests.index', ['draw' => 1, 'status' => 'approved', 'document' => $convertedRecord->doc_num]);
-    expect($this->getJson($convertedUrl)->assertOk()->json('data.0.actions'))->not->toContain('document_type=sales_requests');
+    expect($this->getJson($convertedUrl)->assertOk()->json('data.0.actions'))->toContain('document_type=sales_requests');
 
     $this->get(route('admin.sales.customer-requests.index'))
         ->assertOk()

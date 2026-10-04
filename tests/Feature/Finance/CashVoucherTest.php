@@ -1,201 +1,49 @@
 <?php
 
-use App\Models\User;
-use Database\Seeders\DefaultOperatingContextSeeder;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
-use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
-use Modules\Core\Database\Seeders\CurrencySeeder;
-use Modules\Core\Models\ArchiveFile;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
-use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\Cashbox;
-use Modules\Finance\Models\CashboxCurrency;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Services\CashVoucherService;
 use Modules\Finance\Services\FinanceReportService;
 use Spatie\Permission\Models\Permission;
-use Spatie\Permission\PermissionRegistrar;
 use Symfony\Component\Process\Process;
 
-function cashVoucherActor(array $permissions): User
-{
-    app(PermissionRegistrar::class)->forgetCachedPermissions();
+require_once dirname(__DIR__, 2).'/CashVoucherSupport.php';
 
-    foreach ($permissions as $permission) {
-        Permission::findOrCreate($permission, 'web');
-    }
-
-    $user = User::factory()->create();
-    $user->givePermissionTo($permissions);
-
-    return $user;
-}
-
-/**
- * @return array{company: Company, branch: Branch, period: FinancialPeriod, currency: Currency}
- */
-function cashVoucherSeedFoundation(): array
-{
-    test()->seed(DefaultOperatingContextSeeder::class);
-    test()->seed(DefaultChartOfAccountsSeeder::class);
-    test()->seed(CurrencySeeder::class);
-
-    $company = Company::query()->where('status', 'active')->orderBy('id')->firstOrFail();
-    $branch = Branch::query()->where('company_id', $company->getKey())->where('status', 'active')->orderBy('id')->firstOrFail();
-    $period = FinancialPeriod::query()->where('company_id', $company->getKey())->where('is_closed', false)->orderBy('id')->firstOrFail();
-    $currency = Currency::query()->where('company_id', $company->getKey())->where('code', 'EGP')->firstOrFail();
-
-    test()->withSession([
-        OperatingContextService::CompanyIdKey => $company->getKey(),
-        OperatingContextService::CompanyDocNumKey => $company->doc_num,
-        OperatingContextService::BranchIdKey => $branch->getKey(),
-        OperatingContextService::BranchDocNumKey => $branch->doc_num,
-        OperatingContextService::FinancialPeriodIdKey => $period->getKey(),
-        OperatingContextService::FinancialPeriodDocNumKey => $period->doc_num,
-    ]);
-
-    return compact('company', 'branch', 'period', 'currency');
-}
-
-function cashVoucherLinkedCashAccount(Company $company, string $accountCode = '111101'): Account
-{
-    $parent = Account::query()
-        ->where('company_id', $company->getKey())
-        ->where('account_code', '1111')
-        ->firstOrFail();
-
-    return Account::query()->create([
-        ...app(DocumentNumberService::class)->nextForCompany('accounts', Account::class, $company->getKey()),
-        'company_id' => $company->getKey(),
-        'account_code' => $accountCode,
-        'name' => 'Test Cashbox Account',
-        'name_en' => 'Test Cashbox Account',
-        'parent_id' => $parent->getKey(),
-        'level' => ((int) $parent->level) + 1,
-        'account_classification_id' => $parent->account_classification_id,
-        'account_type' => Account::TypeAsset,
-        'statement_type' => Account::StatementFinancialPosition,
-        'normal_balance' => Account::BalanceDebit,
-        'is_group' => false,
-        'is_postable' => true,
-        'is_system' => false,
-        'status' => 'active',
-    ]);
-}
-
-function cashVoucherPostableAccount(Company $company, string $accountCode): Account
-{
-    return Account::query()
-        ->where('company_id', $company->getKey())
-        ->where('account_code', $accountCode)
-        ->where('is_postable', true)
-        ->where('is_group', false)
-        ->where('status', 'active')
-        ->firstOrFail();
-}
-
-/**
- * @param  list<Currency>  $currencies
- */
-function cashVoucherCashbox(Company $company, Branch $branch, array $currencies, string $name = 'Main Cashbox'): Cashbox
-{
-    static $accountSequence = 10;
-
-    $accountSequence++;
-
-    $cashbox = Cashbox::query()->create([
-        ...app(DocumentNumberService::class)->nextForCompany('cashboxes', Cashbox::class, $company->getKey()),
-        'company_id' => $company->getKey(),
-        'name' => $name,
-        'branch_id' => $branch->getKey(),
-        'account_id' => cashVoucherLinkedCashAccount($company, '1111'.str_pad((string) $accountSequence, 2, '0', STR_PAD_LEFT))->getKey(),
-        'status' => 'active',
-    ]);
-
-    foreach ($currencies as $currency) {
-        CashboxCurrency::query()->create([
-            'cashbox_id' => $cashbox->getKey(),
-            'currency_id' => $currency->getKey(),
-            'status' => 'active',
-        ]);
-    }
-
-    return $cashbox->refresh();
-}
-
-function cashVoucherUsd(Company $company): Currency
-{
-    return Currency::query()->create([
-        ...app(DocumentNumberService::class)->nextForCompany('currencies', Currency::class, $company->getKey()),
-        'company_id' => $company->getKey(),
-        'name' => 'US Dollar',
-        'code' => 'USD',
-        'minor_unit_name' => 'Cent',
-        'minor_unit_factor' => 100,
-        'is_main' => false,
-        'status' => 'active',
-    ]);
-}
-
-function cashVoucherPayload(Cashbox $cashbox, Currency $currency, Account $lineAccount, array $overrides = []): array
-{
-    return [
-        'voucher_date' => '2026-06-18',
-        'cashbox_doc_num' => $cashbox->doc_num,
-        'currency_doc_num' => $currency->doc_num,
-        'exchange_rate' => $currency->is_main ? 1 : 30.5,
-        'amount' => 100,
-        'person_name' => 'Feature Test Person',
-        'person_national_id' => '29901011234567',
-        'person_phone' => '+201001112223',
-        'reason' => 'Test voucher',
-        'description' => 'Created by feature test',
-        'lines' => [
-            [
-                'account_doc_num' => $lineAccount->doc_num,
-                'amount' => 100,
-                'description' => 'Distribution',
-                'notes' => 'Line note',
-            ],
-        ],
-        ...$overrides,
-    ];
-}
-
-function cashVoucherAuthorizationImage(Company $company, int $documentNumber, string $docNum, string $fileName): ArchiveFile
-{
-    $path = 'tests/cash-voucher-authorization/'.$fileName;
-    Storage::disk('public')->put($path, base64_decode('iVBORw0KGgoAAAANSUhEUgAAAKAAAAAyCAIAAABUA0cyAAAACXBIWXMAAA7EAAAOxAGVKw4bAAABR0lEQVR4nO3bUY6CMBgA4XWz91hvocfYPSnX4BgcxYcmTfNTaolFzTjfk8GChBGoJJ5+L39f4vp+9Q7oWAaGMzCcgeEMDGdgOAPDGRjOwHAGhjMwnIHhDAxnYDgDwxkYzsBwBob76Rm0zFN1+fn6H8aUS6rrpgF3N1gOqC6sbrBnfz5NV+CkcbDyoV/mqXGUl3lKA0KzsOVyYV6luhvrdxUMuETnHuHsXMfrKRHWap/xYcuNj/5Yjwbe2+O4g16e8dbNdlyiq/fF56ve1PNr6wZj7sEv8W778552BG64e48caGvypaoxv4PTDKucHm8Z9VXonHzpwAcd6wY9PfrnwzbuMeYSvSXNevbOzsJaXocfcfLPZ2w+i4YzMJyB4QwMZ2A4A8MZGM7AcAaGMzCcgeEMDGdgOAPDGRjOwHAGhjMwnIHhDAx3A4Npkgj1aQnLAAAAAElFTkSuQmCC'));
-
-    return ArchiveFile::query()->create([
-        'doc_number' => $documentNumber,
-        'doc_num' => $docNum,
-        'attachable_type' => (new Company)->getMorphClass(),
-        'attachable_id' => $company->getKey(),
-        'module' => 'core',
-        'record_type' => 'company_authorization',
-        'hidden_from_picker' => false,
-        'original_name' => $fileName,
-        'stored_name' => $fileName,
-        'disk' => 'public',
-        'path' => $path,
-        'mime_type' => 'image/png',
-        'extension' => 'png',
-        'size_bytes' => 13,
-    ]);
-}
+test('cash vouchers keep automatic numbers beyond deleted history and resolve an active legacy duplicate', function (): void {
+    ['company' => $company, 'branch' => $branch, 'currency' => $currency] = cashVoucherSeedFoundation();
+    $actor = cashVoucherActor(['cash_payment_vouchers.view', 'cash_payment_vouchers.create', 'cash_payment_vouchers.delete']);
+    $this->actingAs($actor);
+    request()->setLaravelSession(app('session.store'));
+    request()->setUserResolver(fn () => $actor);
+    $cashbox = cashVoucherCashbox($company, $branch, [$currency], 'SYNTHETIC retained-number cashbox');
+    $account = cashVoucherPostableAccount($company, '411');
+    $payload = cashVoucherPayload($cashbox, $currency, $account);
+    $service = app(CashVoucherService::class);
+    $old = $service->create(CashVoucher::TypePayment, $payload, $company->id)['record'];
+    $service->delete(CashVoucher::TypePayment, $old);
+    $next = $service->create(CashVoucher::TypePayment, $payload, $company->id)['record'];
+    expect($next->doc_number)->toBe($old->doc_number + 1)->and($next->doc_num)->not->toBe($old->doc_num);
+    $legacy = $service->create(CashVoucher::TypePayment, $payload + ['doc_number' => $old->doc_number], $company->id)['record'];
+    $this->get(route('admin.finance.cash-payment-vouchers.show', $legacy->doc_num))->assertOk()
+        ->assertViewHas('record', fn ($record): bool => $record->id === $legacy->id);
+    expect($old->fresh()->trashed())->toBeTrue();
+});
 
 test('CashVoucher permissions are discovered for receipt and payment vouchers', function (): void {
     $this->seed(PermissionSeeder::class);
@@ -1200,4 +1048,106 @@ test('active cashbox cannot approve with inactive or deleted linked ledger accou
         ->postJson(route('admin.finance.cash-receipt-vouchers.approve', $docNum))
         ->assertUnprocessable();
     expect(CashVoucher::query()->where('doc_num', $docNum)->value('status'))->toBe(CashVoucher::StatusDraft);
+});
+
+test('cash voucher cost centers use linked scoped AJAX choices and remain attributed through approval print and reversal', function (): void {
+    ['company' => $company, 'branch' => $branch, 'currency' => $currency] = cashVoucherSeedFoundation();
+    $actor = cashVoucherActor(['cash_payment_vouchers.view', 'cash_payment_vouchers.create', 'cash_payment_vouchers.edit',
+        'cash_payment_vouchers.approve', 'cash_payment_vouchers.cancel', 'cash_payment_vouchers.print']);
+    $cashbox = cashVoucherCashbox($company, $branch, [$currency], 'SYNTHETIC attributed cashbox');
+    $account = cashVoucherPostableAccount($company, '523');
+    $makeCenter = function (int $number, array $overrides = []) use ($company, $account): CostCenter {
+        $center = CostCenter::query()->create(['company_id' => $company->id,
+            'doc_number' => $number, 'doc_num' => 'SYNTHETIC-CASH-CENTER-'.$number,
+            'cost_center_code' => 'SYNTHETIC-'.$number, 'name' => 'مركز مصروفات صناعية تجريبي '.$number,
+            'name_en' => 'SYNTHETIC factory expense center '.$number, 'is_group' => false, 'status' => 'active', ...$overrides]);
+        $center->accounts()->sync([$account->id]);
+
+        return $center;
+    };
+    $center = $makeCenter(18001);
+    $inactive = $makeCenter(18002, ['status' => 'inactive']);
+    $unlinked = $makeCenter(18003);
+    $unlinked->accounts()->sync([]);
+    $foreignCompany = Company::factory()->create(['doc_number' => 18002, 'doc_num' => 'SYNTHETIC-CASH-FOREIGN']);
+    $foreign = $makeCenter(18004, ['company_id' => $foreignCompany->id]);
+    foreach (range(18005, 18016) as $number) {
+        $makeCenter($number);
+    }
+    config()->set('select2.pagination.per_page', 10);
+    $this->actingAs($actor);
+    $this->getJson(route('admin.finance.select2.accounts', ['q' => '523']))->assertForbidden();
+    $this->getJson(route('admin.finance.select2.cash-voucher-accounts', ['q' => '523', 'exclude' => $cashbox->account->doc_num]))
+        ->assertOk()->assertJsonPath('results.0.id', $account->doc_num)->assertJsonPath('pagination.more', false);
+    $lookup = route('admin.finance.select2.cash-voucher-cost-centers', ['account' => $account->doc_num]);
+    $firstPage = $this->getJson($lookup)->assertOk()->assertJsonPath('pagination.more', true);
+    expect($firstPage->json('results'))->toHaveCount(10)
+        ->and(collect($firstPage->json('results'))->pluck('id')->all())->not->toContain($inactive->doc_num, $unlinked->doc_num, $foreign->doc_num);
+    $this->getJson($lookup.'&page=2')->assertOk()->assertJsonCount(3, 'results')->assertJsonPath('pagination.more', false);
+    $this->getJson(route('admin.finance.select2.cash-voucher-cost-centers', ['account' => $cashbox->account->doc_num]))
+        ->assertOk()->assertJsonPath('results', []);
+    $payload = cashVoucherPayload($cashbox, $currency, $account);
+    foreach ([$inactive, $unlinked, $foreign] as $invalid) {
+        $payload['lines'][0]['cost_center_doc_num'] = $invalid->doc_num;
+        $this->postJson(route('admin.finance.cash-payment-vouchers.store'), $payload)->assertUnprocessable()
+            ->assertJsonValidationErrors('lines.0.cost_center_doc_num');
+    }
+    expect(CashVoucher::query()->count())->toBe(0);
+    $payload['lines'][0]['cost_center_doc_num'] = $center->doc_num;
+    $response = $this->postJson(route('admin.finance.cash-payment-vouchers.store'), $payload)->assertOk();
+    $voucher = CashVoucher::query()->where('doc_num', $response->json('data.doc_num'))->sole();
+    expect($voucher->lines->sole()->cost_center_id)->toBe($center->id);
+    $center->accounts()->sync([]);
+    $this->postJson(route('admin.finance.cash-payment-vouchers.approve', $voucher->doc_num))->assertUnprocessable();
+    expect($voucher->fresh()->status)->toBe(CashVoucher::StatusDraft)->and(JournalEntry::query()->where('source_type', CashVoucherService::SourcePayment)->exists())->toBeFalse();
+    $center->accounts()->sync([$account->id]);
+    $this->postJson(route('admin.finance.cash-payment-vouchers.approve', $voucher->doc_num))->assertOk();
+    $journal = JournalEntry::query()->where('source_type', CashVoucherService::SourcePayment)->where('source_id', $voucher->id)->sole();
+    expect($journal->lines->firstWhere('account_id', $account->id)->cost_center_id)->toBe($center->id);
+    $center->delete();
+    $this->get(route('admin.finance.cash-payment-vouchers.show', $voucher->doc_num))->assertOk()->assertSee($center->cost_center_code);
+    foreach (['ar', 'en'] as $locale) {
+        $actor->update(['locale' => $locale]);
+        $pdf = $this->get(route('admin.finance.cash-payment-vouchers.print', $voucher->doc_num))->assertOk()->assertHeader('content-type', 'application/pdf');
+        $path = '/tmp/mgypack-cash-cost-center-'.$locale.'.pdf';
+        file_put_contents($path, $pdf->getContent());
+        $process = new Process(['pdftotext', '-layout', $path, '-']);
+        $process->mustRun();
+        expect($process->getOutput())->toContain($center->cost_center_code)->and(strlen($pdf->getContent()))->toBeGreaterThan(1000);
+    }
+    $this->postJson(route('admin.finance.cash-payment-vouchers.cancel', $voucher->doc_num), ['cancel_reason' => 'SYNTHETIC historic-center reversal'])->assertOk();
+    $reversal = JournalEntry::query()->where('source_type', CashVoucherService::SourcePaymentReversal)->where('source_id', $voucher->id)->sole();
+    expect($reversal->lines->firstWhere('account_id', $account->id)->cost_center_id)->toBe($center->id)
+        ->and($reversal->lines->firstWhere('account_id', $account->id)->credit_amount)->toBe('100.0000');
+});
+
+test('cash center migration owns only its added column and refuses to discard attributed lines', function (): void {
+    ['company' => $company, 'branch' => $branch, 'currency' => $currency] = cashVoucherSeedFoundation();
+    $actor = cashVoucherActor(['cash_payment_vouchers.create']);
+    $cashbox = cashVoucherCashbox($company, $branch, [$currency], 'SYNTHETIC migration cashbox');
+    $account = cashVoucherPostableAccount($company, '523');
+    $center = CostCenter::query()->create(['company_id' => $company->id,
+        'doc_number' => 18001, 'doc_num' => 'SYNTHETIC-MIGRATION-CC', 'cost_center_code' => 'SYNTHETIC-MIGRATION',
+        'name' => 'SYNTHETIC migration center', 'status' => 'active', 'is_group' => false]);
+    $center->accounts()->sync([$account->id]);
+    $payload = cashVoucherPayload($cashbox, $currency, $account);
+    $payload['lines'][0]['cost_center_doc_num'] = $center->doc_num;
+    $response = $this->actingAs($actor)->postJson(route('admin.finance.cash-payment-vouchers.store'), $payload)->assertOk();
+    $voucher = CashVoucher::query()->where('doc_num', $response->json('data.doc_num'))->sole();
+    $migration = require base_path('modules/Finance/Database/Migrations/2026_10_03_120300_add_cost_center_to_cash_voucher_lines.php');
+    $migration->up();
+    expect(fn () => $migration->down())->toThrow(RuntimeException::class)
+        ->and($voucher->fresh()->lines->sole()->cost_center_id)->toBe($center->id);
+    $voucher->lines()->update(['cost_center_id' => null]);
+    $migration->down();
+    expect(Schema::hasColumn('cash_voucher_lines', 'cost_center_id'))->toBeFalse();
+    Schema::table('cash_voucher_lines', fn (Blueprint $table) => $table->unsignedBigInteger('cost_center_id')->nullable());
+    $migration->up();
+    expect((bool) DB::table('cash_voucher_cost_center_column_ownership')->where('column_name', 'cost_center_id')->value('created_by_migration'))->toBeFalse();
+    $voucher->lines()->update(['cost_center_id' => $center->id]);
+    $migration->down();
+    expect(Schema::hasColumn('cash_voucher_lines', 'cost_center_id'))->toBeTrue()
+        ->and($voucher->fresh()->lines->sole()->cost_center_id)->toBe($center->id);
+    expect(fn () => $migration->down())->toThrow(RuntimeException::class);
+    $migration->up();
 });

@@ -116,8 +116,13 @@ final class CostingReportService
             $capitalizable = (string) ($cost?->capitalizable ?? '0');
             $actual = $capitalizable;
             $goodQuantity = (string) $run->good_base_quantity;
-            $actualBasis = bccomp($recognized, '0', 8) > 0 ? $recognized : $capitalizable;
+            $receivedQuantity = (string) $run->received_base_quantity;
+            $hasReceipts = bccomp($receivedQuantity, '0', 8) > 0;
+            $unitQuantity = $hasReceipts ? $receivedQuantity : $goodQuantity;
+            $actualBasis = $hasReceipts ? $recognized : $capitalizable;
             $costComplete = (bool) ($cost?->material_valuation_complete ?? false)
+                && (bool) ($cost?->expense_valuation_complete ?? false)
+                && (bool) ($cost?->labor_valuation_complete ?? false)
                 && bccomp($recognized, '0', 8) !== 0;
 
             return [
@@ -138,6 +143,7 @@ final class CostingReportService
                 'status' => __('production_execution.statuses.'.$run->status),
                 'planned_quantity' => $run->planned_base_quantity,
                 'good_quantity' => $goodQuantity,
+                'received_quantity' => $receivedQuantity,
                 'planned_cost' => $planned,
                 'actual_cost' => $actual,
                 'variance' => bcsub($actual, $planned, 8),
@@ -145,11 +151,12 @@ final class CostingReportService
                 'returned_cost' => (string) ($cost?->returned ?? '0'),
                 'waste_cost' => (string) ($cost?->waste ?? '0'),
                 'other_direct_cost' => (string) ($cost?->other_direct_cost ?? '0'),
+                'direct_labor_cost' => (string) ($cost?->direct_labor_cost ?? '0'),
                 'allocated_overhead' => (string) ($cost?->allocated_overhead ?? '0'),
                 'capitalizable_cost' => $capitalizable,
                 'recognized_cost' => $recognized,
                 'wip' => (string) ($cost?->wip ?? '0'),
-                'unit_cost' => bccomp($goodQuantity, '0', 8) > 0 ? bcdiv($actualBasis, $goodQuantity, 8) : '0.00000000',
+                'unit_cost' => bccomp($unitQuantity, '0', 8) > 0 ? bcdiv($actualBasis, $unitQuantity, 8) : '0.00000000',
             ];
         });
 
@@ -167,8 +174,8 @@ final class CostingReportService
         };
         $columns = $this->columns($type);
         $numericColumns = array_values(array_intersect(array_keys($columns), [
-            'planned_quantity', 'good_quantity', 'planned_cost', 'actual_cost', 'variance',
-            'issued_cost', 'returned_cost', 'waste_cost', 'allocated_overhead', 'capitalizable_cost',
+            'planned_quantity', 'good_quantity', 'received_quantity', 'planned_cost', 'actual_cost', 'variance',
+            'issued_cost', 'returned_cost', 'waste_cost', 'direct_labor_cost', 'allocated_overhead', 'capitalizable_cost',
             'other_direct_cost', 'recognized_cost', 'wip', 'unit_cost', 'revenue', 'gross_profit', 'margin_percent',
         ]));
         $totals = collect($numericColumns)->reject(fn (string $column): bool => in_array($column, ['unit_cost', 'margin_percent'], true))
@@ -186,6 +193,9 @@ final class CostingReportService
             $filters['to_date'] ?? null,
         )->count();
         $notices = [__('costing_reports.notices.posted_inventory_basis')];
+        if (array_key_exists('unit_cost', $columns)) {
+            $notices[] = __('costing_reports.notices.unit_cost_basis');
+        }
         if ($unallocatedCount > 0) {
             $notices[] = __('costing_reports.notices.unallocated_transactions', ['count' => $unallocatedCount]);
         }
@@ -292,11 +302,13 @@ final class CostingReportService
         return $rows->groupBy($groupKey)->map(function (Collection $group) use ($labels): array {
             $first = $group->first();
             $row = collect($labels)->mapWithKeys(fn (string $label): array => [$label => $first[$label] ?? null])->all();
-            foreach (['planned_quantity', 'good_quantity', 'planned_cost', 'actual_cost', 'variance', 'issued_cost', 'returned_cost', 'waste_cost', 'other_direct_cost', 'allocated_overhead', 'capitalizable_cost', 'recognized_cost', 'wip'] as $column) {
+            foreach (['planned_quantity', 'good_quantity', 'received_quantity', 'planned_cost', 'actual_cost', 'variance', 'issued_cost', 'returned_cost', 'waste_cost', 'other_direct_cost', 'direct_labor_cost', 'allocated_overhead', 'capitalizable_cost', 'recognized_cost', 'wip'] as $column) {
                 $row[$column] = $this->sum($group, $column);
             }
-            $basis = bccomp($row['recognized_cost'], '0', 8) > 0 ? $row['recognized_cost'] : $row['capitalizable_cost'];
-            $row['unit_cost'] = bccomp($row['good_quantity'], '0', 8) > 0 ? bcdiv($basis, $row['good_quantity'], 8) : '0.00000000';
+            $hasReceipts = bccomp($row['received_quantity'], '0', 8) > 0;
+            $basis = $hasReceipts ? $row['recognized_cost'] : $row['capitalizable_cost'];
+            $quantity = $hasReceipts ? $row['received_quantity'] : $row['good_quantity'];
+            $row['unit_cost'] = bccomp($quantity, '0', 8) > 0 ? bcdiv($basis, $quantity, 8) : '0.00000000';
             $row['_url'] = $group->count() === 1 ? $first['_url'] : null;
 
             return $row;
@@ -370,13 +382,13 @@ final class CostingReportService
     private function columns(string $type): array
     {
         $keys = match ($type) {
-            self::ProductCost => ['product', 'planned_quantity', 'good_quantity', 'planned_cost', 'actual_cost', 'variance', 'waste_cost', 'allocated_overhead', 'recognized_cost', 'wip', 'unit_cost'],
-            self::WorkOrderCost => ['work_order', 'sales_order', 'planned_quantity', 'good_quantity', 'issued_cost', 'returned_cost', 'waste_cost', 'other_direct_cost', 'allocated_overhead', 'capitalizable_cost', 'recognized_cost', 'wip', 'unit_cost'],
+            self::ProductCost => ['product', 'planned_quantity', 'good_quantity', 'received_quantity', 'planned_cost', 'actual_cost', 'variance', 'waste_cost', 'direct_labor_cost', 'allocated_overhead', 'recognized_cost', 'wip', 'unit_cost'],
+            self::WorkOrderCost => ['work_order', 'sales_order', 'planned_quantity', 'good_quantity', 'received_quantity', 'issued_cost', 'returned_cost', 'waste_cost', 'other_direct_cost', 'direct_labor_cost', 'allocated_overhead', 'capitalizable_cost', 'recognized_cost', 'wip', 'unit_cost'],
             self::Profitability => ['sales_order', 'product', 'good_quantity', 'revenue', 'recognized_cost', 'wip', 'gross_profit', 'margin_percent'],
             self::CostVariance => ['run', 'work_order', 'product', 'cost_center', 'status', 'planned_cost', 'actual_cost', 'variance', 'waste_cost'],
-            self::WorkInProgress => ['run', 'work_order', 'product', 'cost_center', 'status', 'issued_cost', 'returned_cost', 'waste_cost', 'other_direct_cost', 'allocated_overhead', 'capitalizable_cost', 'recognized_cost', 'wip'],
-            self::FinishedGoodsCost => ['product', 'good_quantity', 'other_direct_cost', 'allocated_overhead', 'recognized_cost', 'unit_cost'],
-            default => ['run', 'work_order', 'product', 'cost_center', 'status', 'planned_quantity', 'good_quantity', 'planned_cost', 'actual_cost', 'allocated_overhead', 'variance'],
+            self::WorkInProgress => ['run', 'work_order', 'product', 'cost_center', 'status', 'issued_cost', 'returned_cost', 'waste_cost', 'other_direct_cost', 'direct_labor_cost', 'allocated_overhead', 'capitalizable_cost', 'recognized_cost', 'wip'],
+            self::FinishedGoodsCost => ['product', 'good_quantity', 'received_quantity', 'other_direct_cost', 'direct_labor_cost', 'allocated_overhead', 'recognized_cost', 'unit_cost'],
+            default => ['run', 'work_order', 'product', 'cost_center', 'status', 'planned_quantity', 'good_quantity', 'planned_cost', 'actual_cost', 'direct_labor_cost', 'allocated_overhead', 'variance'],
         };
 
         return collect($keys)->mapWithKeys(fn (string $key): array => [$key => __('costing_reports.columns.'.$key)])->all();

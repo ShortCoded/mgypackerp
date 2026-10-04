@@ -121,6 +121,7 @@ class ProductionQualityWorkflowService
                 'subject_type' => $subjectType,
                 'production_order_id' => $lockedRun?->production_order_id,
                 'production_run_id' => $lockedRun?->getKey(),
+                'correction_sequence' => $lockedRun?->correction_sequence ?? 0,
                 'production_order_stage_id' => $lockedRun?->production_order_stage_snapshot_id,
                 'product_id' => $productId,
                 'branch_store_id' => $storeId,
@@ -165,6 +166,11 @@ class ProductionQualityWorkflowService
             $lockedRun = $run instanceof ProductionRun
                 ? ProductionRun::query()->with('order')->lockForUpdate()->findOrFail($run->getKey())
                 : null;
+            if ($locked->production_run_id !== null
+                && ($lockedRun === null || (int) $locked->production_run_id !== (int) $lockedRun->getKey()
+                    || (int) $locked->correction_sequence !== (int) $lockedRun->correction_sequence)) {
+                throw new DomainException(__('production_run_correction.old_inspection'));
+            }
             if ($subjectType === ProductionQualityInspection::SubjectProductionRun) {
                 if (! $lockedRun instanceof ProductionRun) {
                     throw new DomainException(__('production_execution.messages.quality_run_required'));
@@ -211,6 +217,7 @@ class ProductionQualityWorkflowService
                 'subject_type' => $subjectType,
                 'production_order_id' => $lockedRun?->production_order_id,
                 'production_run_id' => $lockedRun?->getKey(),
+                'correction_sequence' => $lockedRun?->correction_sequence ?? 0,
                 'production_order_stage_id' => $lockedRun?->production_order_stage_snapshot_id,
                 'product_id' => $productId,
                 'branch_store_id' => $storeId,
@@ -645,8 +652,10 @@ class ProductionQualityWorkflowService
     /** @param array{company_id: int, financial_period_id: int, branch_id: int} $context */
     private function assertContext(Model $record, array $context): void
     {
+        $periodId = $record instanceof ProductionRun ? app(ProductionCorrectionContextService::class)->executionPeriodId($record)
+            : (int) $record->getAttribute('financial_period_id');
         if ((int) $record->getAttribute('company_id') !== $context['company_id']
-            || (int) $record->getAttribute('financial_period_id') !== $context['financial_period_id']
+            || $periodId !== $context['financial_period_id']
             || (int) $record->getAttribute('branch_id') !== $context['branch_id']) {
             throw new DomainException(__('production_execution.messages.document_outside_context'));
         }

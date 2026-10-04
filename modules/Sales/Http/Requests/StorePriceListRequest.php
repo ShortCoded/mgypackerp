@@ -55,7 +55,7 @@ class StorePriceListRequest extends FormRequest
             '_submission_token' => ['nullable', 'required_with:clone_source_token', 'uuid', 'same:clone_source_token'],
             'submit_action' => ['nullable', 'string', Rule::in(['save', 'save_view', 'save_edit', 'save_back', 'save_new'])],
             'lines' => ['required', 'array', 'min:1'], 'lines.*.product_doc_num' => ['required', 'string', 'distinct'],
-            'lines.*.unit_price' => ['required', 'numeric', 'gt:0'],
+            'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,8', 'regex:/^\d{1,16}(?:\.\d{1,8})?$/D', 'gt:0'],
             'lines.*.allowed_discount_type' => ['nullable', Rule::in(PriceListLine::DiscountTypes)],
             'lines.*.allowed_discount_value' => ['nullable', 'numeric', 'min:0'],
         ];

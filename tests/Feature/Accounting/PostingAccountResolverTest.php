@@ -85,3 +85,38 @@ test('duplicate posting accounts are rejected instead of selecting an arbitrary 
         'Purchase invoice approval',
     ))->toThrow(DomainException::class, 'more than one active postable account');
 });
+
+test('posting resolver and audit exclude incompatible legacy dimensions without changing their rows', function (string $dimension, string $value): void {
+    $company = Company::query()->active()->firstOrFail();
+    $classification = AccountClassification::query()->where('code', PostingAccountResolver::InventoryAdjustmentLoss)->firstOrFail();
+    $valid = Account::query()->forCompany($company->id)->where('account_classification_id', $classification->id)->sole();
+    $legacy = $valid->replicate(['id', 'created_at', 'updated_at']);
+    $legacy->forceFill(['doc_number' => 999669, 'doc_num' => 'SYNTHETIC-LEGACY-669', 'account_code' => '999669',
+        'name' => 'Synthetic incompatible legacy mapping', $dimension => $value])->save();
+    $before = $legacy->fresh()->getAttributes();
+    $resolver = app(PostingAccountResolver::class);
+    expect($resolver->resolve($company->id, $classification->code, 'synthetic acceptance')->id)->toBe($valid->id)
+        ->and($resolver->resolveFirst($company->id, $classification->code, 'synthetic acceptance')->id)->toBe($valid->id);
+    $audit = app(PostingAccountConfigurationAudit::class)->forCompany($company->id);
+    $row = collect($audit['rows'])->firstWhere('code', $classification->code);
+    expect($row['status'])->toBe('ready')->and($row['incompatible_accounts'])->toContain('999669')
+        ->and($audit['incompatible_count'])->toBe(1)->and($legacy->fresh()->getAttributes())->toBe($before);
+    $valid->update(['status' => 'inactive']);
+    expect(fn () => $resolver->resolve($company->id, $classification->code, 'synthetic acceptance'))->toThrow(DomainException::class)
+        ->and(fn () => $resolver->resolveFirst($company->id, $classification->code, 'synthetic acceptance'))->toThrow(DomainException::class);
+    $row = collect(app(PostingAccountConfigurationAudit::class)->forCompany($company->id)['rows'])->firstWhere('code', $classification->code);
+    expect($row['status'])->toBe('account_missing')->and($row['incompatible_accounts'])->toContain('999669')
+        ->and($legacy->fresh()->getAttributes())->toBe($before);
+})->with(['account type' => ['account_type', 'asset'], 'statement' => ['statement_type', 'financial_position'],
+    'normal balance' => ['normal_balance', 'credit']]);
+
+test('posting compatibility follows current classification metadata instead of stale account selections', function (): void {
+    $company = Company::query()->active()->firstOrFail();
+    $classification = AccountClassification::query()->where('code', PostingAccountResolver::InventoryAdjustmentLoss)->firstOrFail();
+    $resolver = app(PostingAccountResolver::class);
+    $original = $resolver->resolve($company->id, $classification->code, 'synthetic metadata acceptance');
+    $classification->update(['normal_balance' => 'credit']);
+    expect(fn () => $resolver->resolve($company->id, $classification->code, 'synthetic metadata acceptance'))->toThrow(DomainException::class);
+    $classification->update(['normal_balance' => 'debit']);
+    expect($resolver->resolve($company->id, $classification->code, 'synthetic metadata acceptance')->id)->toBe($original->id);
+});

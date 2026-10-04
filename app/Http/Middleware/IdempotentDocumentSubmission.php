@@ -9,6 +9,7 @@ use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Inventory\Models\InventoryDocument;
 use Symfony\Component\HttpFoundation\Response;
 
 class IdempotentDocumentSubmission
@@ -25,6 +26,13 @@ class IdempotentDocumentSubmission
             : $request->input($inputName, $request->header('Idempotency-Key'));
         if (! $request->isMethod('POST')) {
             return $next($request);
+        }
+        if ($request->routeIs('admin.inventory.documents.store') && $request->filled('production_run_batch_public_id')) {
+            $mode = 'required';
+            $permissions = $request->input('document_type') === InventoryDocument::TypeReceipt
+                ? ['inventory.documents.receive', 'production.runs.receive']
+                : ['inventory.documents.issue', 'production.runs.issue'];
+            abort_unless(collect($permissions)->every(fn (string $permission): bool => (bool) $request->user()?->can($permission)), 403);
         }
         if (! $token) {
             abort_if($mode === 'required', 422, __('The document submission token is invalid.'));

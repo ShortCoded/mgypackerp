@@ -161,7 +161,7 @@ class ProductionReportService
             $run->setRelation('reportProgressEntries', $reportEntries);
             $run->setAttribute('report_good_weight_kg', $this->controlMeasuredWeight($reportEntries, 'good_weight_kg', 'good_base_quantity'));
             $run->setAttribute('report_production_scrap_weight_kg', $this->controlMeasuredWeight($reportEntries, 'production_scrap_weight_kg', 'scrap_base_quantity'));
-            $runStart = ($run->actual_start_at ?? $run->planned_start_at)?->toDateString();
+            $runStart = $run->actual_start_at?->toDateString();
             foreach (['good_base_quantity', 'rejected_base_quantity', 'rework_base_quantity', 'scrap_base_quantity'] as $field) {
                 $reportQuantity = ! $hasDateFilter || ($run->progressEntries->isEmpty() && $this->controlDateMatches($runStart, $filters))
                     ? (string) $run->{$field}
@@ -227,7 +227,7 @@ class ProductionReportService
                 'runs' => $runs->count(),
                 'products' => $runs->pluck('product_id')->unique()->count(),
                 'recorded_days' => $daily->pluck('date')->unique()->count(),
-                'unreceived_runs' => $runs->filter(fn (ProductionRun $run): bool => bccomp((string) $run->receipt_remaining_base_quantity, '0', 8) > 0)->count(),
+                'unreceived_runs' => $runs->filter(fn (ProductionRun $run): bool => bccomp((string) $run->report_receipt_remaining_base_quantity, '0', 8) > 0)->count(),
                 'material_exception_runs' => $runs->filter(fn (ProductionRun $run): bool => $run->material_exception_count > 0)->count(),
                 'quality_hold_runs' => $runs->filter(fn (ProductionRun $run): bool => $run->quality_hold_count > 0)->count(),
                 'receipt_documents' => $runs->sum('receipt_document_count'),
@@ -299,27 +299,49 @@ class ProductionReportService
     /** @return SupportCollection<int, array<string, mixed>> */
     private function controlDailyOutput(Collection $runs): SupportCollection
     {
-        return $runs->flatMap(fn (ProductionRun $run) => $run->reportProgressEntries->map(fn ($entry): array => [
-            'run' => $run,
-            'entry' => $entry,
-            'date' => $entry->recorded_at?->toDateString(),
-            'good' => (string) $entry->good_base_quantity,
-            'rejected' => (string) $entry->rejected_base_quantity,
-            'rework' => (string) $entry->rework_base_quantity,
-            'scrap' => (string) $entry->scrap_base_quantity,
-        ]))
+        return $runs->flatMap(function (ProductionRun $run): SupportCollection {
+            if ($run->progressEntries->isEmpty()) {
+                $date = $run->actual_start_at?->toDateString();
+                if ($date === null || bccomp((string) $run->report_recorded_base_quantity, '0', 8) <= 0) {
+                    return collect();
+                }
+
+                return collect([[
+                    'run' => $run,
+                    'entry' => null,
+                    'date' => $date,
+                    'date_basis' => 'run_start',
+                    'good' => (string) $run->report_good_base_quantity,
+                    'rejected' => (string) $run->report_rejected_base_quantity,
+                    'rework' => (string) $run->report_rework_base_quantity,
+                    'scrap' => (string) $run->report_scrap_base_quantity,
+                ]]);
+            }
+
+            return $run->reportProgressEntries->map(fn ($entry): array => [
+                'run' => $run,
+                'entry' => $entry,
+                'date' => $entry->recorded_at?->toDateString(),
+                'date_basis' => 'progress',
+                'good' => (string) $entry->good_base_quantity,
+                'rejected' => (string) $entry->rejected_base_quantity,
+                'rework' => (string) $entry->rework_base_quantity,
+                'scrap' => (string) $entry->scrap_base_quantity,
+            ]);
+        })
             ->groupBy(fn (array $row): string => $row['run']->getKey().':'.$row['date'])
             ->map(function (SupportCollection $group): array {
                 $first = $group->first();
                 $good = $this->controlArrayQuantitySum($group, 'good');
                 $factor = $first['run']->output_factor;
-                $entries = $group->pluck('entry');
+                $entries = $group->pluck('entry')->filter();
                 $goodWeight = $this->controlMeasuredWeight($entries, 'good_weight_kg', 'good_base_quantity');
                 $scrapWeight = $this->controlMeasuredWeight($entries, 'production_scrap_weight_kg', 'scrap_base_quantity');
 
                 return [
                     'run' => $first['run'],
                     'date' => $first['date'],
+                    'date_basis' => $first['date_basis'],
                     'good' => $good,
                     'equivalent_good' => $factor !== null ? bcmul($good, (string) $factor, 8) : null,
                     'good_weight_kg' => $goodWeight,

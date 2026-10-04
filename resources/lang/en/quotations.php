@@ -166,6 +166,7 @@ return [
         'updated_successfully' => 'Quotation document number settings updated successfully.',
     ],
     'messages' => [
+        'source_line_changed' => 'The source quotation line changed. Reload the quotation before saving.',
         'created' => 'Quotation created successfully.',
         'updated' => 'Quotation updated successfully.',
         'deleted' => 'Quotation deleted successfully.',

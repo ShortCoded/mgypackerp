@@ -98,6 +98,7 @@ return [
         'select_cashbox' => 'اختر الخزنة',
         'select_currency' => 'اختر العملة',
         'select_account' => 'اختر الحساب',
+        'select_cost_center' => 'اختر مركز التكلفة',
         'add_line_title' => 'إضافة سطر',
         'duplicate_line_title' => 'تكرار السطر',
         'delete_line_title' => 'حذف السطر',

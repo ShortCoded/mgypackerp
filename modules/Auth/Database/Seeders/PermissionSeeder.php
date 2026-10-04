@@ -24,6 +24,15 @@ class PermissionSeeder extends Seeder
     {
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
+        try {
+            DB::transaction(fn () => $this->seedPermissions());
+        } finally {
+            app(PermissionRegistrar::class)->forgetCachedPermissions();
+        }
+    }
+
+    private function seedPermissions(): void
+    {
         $permissionNames = collect($this->permissionRegistry->all())->values();
         $existingPermissionCount = Permission::query()
             ->where('guard_name', 'web')
@@ -39,11 +48,7 @@ class PermissionSeeder extends Seeder
                 'updated_at' => $now,
             ])
             ->chunk(500)
-            ->each(fn (Collection $permissions): int => Permission::query()->upsert(
-                $permissions->all(),
-                ['name', 'guard_name'],
-                ['updated_at'],
-            ));
+            ->each(fn (Collection $permissions): int => Permission::query()->insertOrIgnore($permissions->all()));
 
         $migratedLegacyGrants = $this->legacyGrants->migrate($permissionNames->all());
         $migratedProductionControlGrants = $this->legacyGrants->migrateProductionControlGrants();
@@ -55,35 +60,24 @@ class PermissionSeeder extends Seeder
             ->pluck('name')
             ->values();
 
-        $adminRole = Role::withTrashed()->updateOrCreate(
-            [
-                'name' => 'admin',
-                'guard_name' => 'web',
-            ],
-            [
-                'name' => 'admin',
-                'guard_name' => 'web',
-            ],
-        );
+        $adminRole = Role::withTrashed()->where('name', 'admin')->where('guard_name', 'web')->first();
+        if (! $adminRole?->trashed()) {
+            $createdAdminRole = $adminRole === null;
+            $adminRole ??= Role::query()->create(['name' => 'admin', 'guard_name' => 'web']);
 
-        if ($adminRole->trashed()) {
-            $adminRole->restore();
-        }
-
-        if ($adminRole->doc_number === null || $adminRole->doc_num === null) {
-            DB::transaction(function () use ($adminRole): void {
+            if ($createdAdminRole && ($adminRole->doc_number === null || $adminRole->doc_num === null)) {
                 $adminRole->forceFill($this->documentNumberService->next('roles', Role::class))->save();
-            });
+            }
+
+            if ($createdAdminRole) {
+                $permissionIds = Permission::query()
+                    ->where('guard_name', 'web')
+                    ->whereIn('name', $permissionNames)
+                    ->pluck((new Permission)->getKeyName());
+
+                $adminRole->permissions()->sync($permissionIds);
+            }
         }
-
-        $permissionIds = Permission::query()
-            ->where('guard_name', 'web')
-            ->whereIn('name', $permissionNames)
-            ->pluck((new Permission)->getKeyName());
-
-        $adminRole->permissions()->sync($permissionIds);
-
-        app(PermissionRegistrar::class)->forgetCachedPermissions();
 
         $this->command?->info(sprintf(
             'Permissions discovered from menu: %d (%d created, %d existing).',

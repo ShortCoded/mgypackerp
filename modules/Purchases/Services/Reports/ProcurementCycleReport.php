@@ -1137,7 +1137,9 @@ class ProcurementCycleReport
             'purchaseReturn.receipt.branchStore',
             'product',
         ])
-            ->whereHas('purchaseReturn', fn ($query) => $query->where('company_id', $companyId)->where('financial_period_id', $periodId))
+            ->whereHas('purchaseReturn', fn ($query) => $query->where('company_id', $companyId)
+                ->where('financial_period_id', $periodId)
+                ->where('status', PurchaseReturn::StatusPosted))
             ->get()->map(fn (PurchaseReturnLine $line): array => $this->row([
                 'date' => $line->purchaseReturn?->return_date?->toDateString(),
                 'document' => $line->purchaseReturn?->doc_num,

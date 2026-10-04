@@ -269,6 +269,18 @@ class Account extends Model
             && ! (bool) $this->is_group;
     }
 
+    public function scopeEligibleForClassifiedPosting(Builder $query): Builder
+    {
+        $table = $this->getTable();
+
+        return $query->eligibleForDirectPosting()->whereHas('classification', function (Builder $classification) use ($table): void {
+            $classification->active()
+                ->whereColumn('account_classifications.account_type', $table.'.account_type')
+                ->whereColumn('account_classifications.statement_type', $table.'.statement_type')
+                ->whereColumn('account_classifications.normal_balance', $table.'.normal_balance');
+        });
+    }
+
     public function scopeOrdered(Builder $query): Builder
     {
         return $query->orderBy($this->getTable().'.account_code');

@@ -17,6 +17,8 @@ use Modules\FixedAssets\Services\FixedAssetReportService;
 use Modules\HR\Services\PayrollReconciliationService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Inventory\Models\InventoryValueAdjustment;
+use Modules\Inventory\Models\InventoryValueAdjustmentLine;
 use Throwable;
 
 final class ReconciliationCenterService
@@ -610,7 +612,8 @@ final class ReconciliationCenterService
             ->pluck('balance', 'customer_id');
         $refunds = Schema::hasTable('customer_credit_refunds')
             ? DB::table('customer_credit_refunds')->where('company_id', $companyId)->where('branch_id', $branchId)
-                ->where('status', 'posted')->whereNotNull('journal_entry_id')->whereDate('refund_date', '<=', $cutoff)
+                ->whereIn('status', ['posted', 'reversed'])->whereNotNull('journal_entry_id')->whereDate('refund_date', '<=', $cutoff)
+                ->where(fn (Builder $query): Builder => $query->whereNull('reversed_at')->orWhereDate('reversed_at', '>', $cutoff))
                 ->groupBy('customer_id')->selectRaw('customer_id, sum(amount * exchange_rate) as balance')->pluck('balance', 'customer_id')
             : collect();
         $opening = $this->openingBalanceDimensionAt($companyId, $branchId, $cutoff, 'customer_id');
@@ -683,6 +686,19 @@ final class ReconciliationCenterService
                     $signed = $row->voucher_type === 'receipt' ? (string) $row->amount_base : bcmul((string) $row->amount_base, '-1', 4);
                     $balances[$row->cashbox_id] = bcadd((string) ($balances[$row->cashbox_id] ?? '0'), $signed, 4);
                 });
+            if (Schema::hasTable('customer_credit_refunds')) {
+                DB::table('customer_credit_refunds')
+                    ->where('company_id', $companyId)->where('branch_id', $branchId)
+                    ->whereIn('status', ['posted', 'reversed'])
+                    ->whereNotNull('cashbox_id')->whereNotNull('journal_entry_id')
+                    ->whereDate('refund_date', '<=', $cutoff)
+                    ->where(fn (Builder $query): Builder => $query->whereNull('reversed_at')->orWhereDate('reversed_at', '>', $cutoff))
+                    ->get(['cashbox_id', 'amount', 'exchange_rate'])
+                    ->each(function (object $row) use ($balances): void {
+                        $value = bcmul((string) $row->amount, (string) $row->exchange_rate, 4);
+                        $balances[$row->cashbox_id] = bcsub((string) ($balances[$row->cashbox_id] ?? '0'), $value, 4);
+                    });
+            }
         } else {
             DB::table('opening_balance_lines as line')
                 ->join('opening_balances as opening', 'opening.id', '=', 'line.opening_balance_id')
@@ -698,12 +714,13 @@ final class ReconciliationCenterService
             foreach ([
                 ['customer_receipts', 'receipt_date', 'amount', 'bank_account_id', 1, 'approved', 'cancelled_at'],
                 ['supplier_payment_contexts', 'payment_date', 'amount', 'bank_account_id', -1, 'approved', 'cancelled_at'],
-                ['customer_credit_refunds', 'refund_date', 'amount', 'bank_account_id', -1, 'posted', null],
+                ['customer_credit_refunds', 'refund_date', 'amount', 'bank_account_id', -1, 'posted', 'reversed_at'],
             ] as [$table, $date, $amount, $holderId, $sign, $status, $cancelledAt]) {
                 if (! Schema::hasTable($table)) {
                     continue;
                 }
-                DB::table($table)->where('company_id', $companyId)->where('branch_id', $branchId)->where('status', $status)
+                DB::table($table)->where('company_id', $companyId)->where('branch_id', $branchId)
+                    ->whereIn('status', $table === 'customer_credit_refunds' ? ['posted', 'reversed'] : [$status])
                     ->whereNotNull($holderId)->whereNotNull('journal_entry_id')->whereDate($date, '<=', $cutoff)
                     ->when(in_array($table, ['customer_receipts', 'supplier_payment_contexts'], true), fn (Builder $query): Builder => $query->whereNull('cheque_id'))
                     ->when($cancelledAt !== null, fn (Builder $query): Builder => $query->where(fn (Builder $cancellation): Builder => $cancellation->whereNull($cancelledAt)->orWhereDate($cancelledAt, '>', $cutoff)))
@@ -785,7 +802,7 @@ final class ReconciliationCenterService
             ->whereDate('transaction_date', '<=', $cutoff)
             ->whereNotIn('stock_status', [InventoryTransaction::StatusProductionStaging, InventoryTransaction::StatusWip])
             ->groupBy('product_id', 'stock_status')
-            ->selectRaw('product_id, stock_status, coalesce(sum(case when quantity_in > 0 then total_cost else -total_cost end), 0) as value')
+            ->selectRaw('product_id, stock_status, coalesce(sum('.InventoryTransaction::signedValueSql().'), 0) as value')
             ->get()
             ->each(function (InventoryTransaction $row) use ($balances, $productAccounts, $specialAccounts): void {
                 $accountId = $specialAccounts[$row->stock_status] ?? $productAccounts[$row->product_id] ?? null;
@@ -827,17 +844,26 @@ final class ReconciliationCenterService
                     InventoryTransaction::StatusRework,
                 ])
                 ->whereDate('inventory_transactions.transaction_date', '<=', $cutoff)
-                ->selectRaw('coalesce(sum(case when quantity_in > 0 then total_cost else -total_cost end), 0) as value')
+                ->selectRaw('coalesce(sum('.InventoryTransaction::signedValueSql().'), 0) as value')
                 ->value('value');
         }
 
         if ($type === 'cogs') {
-            return (string) InventoryTransaction::query()
+            $original = InventoryTransaction::query()
                 ->where('company_id', $companyId)->where('branch_id', $branchId)
                 ->whereDate('transaction_date', '<=', $cutoff)
                 ->whereIn('transaction_type', [InventoryDocument::TypeSalesDelivery, InventoryDocument::TypeSalesReturnReceipt])
-                ->selectRaw('coalesce(sum(case when transaction_type = ? then total_cost else -total_cost end), 0) as value', [InventoryDocument::TypeSalesDelivery])
-                ->value('value');
+                ->selectRaw('coalesce(sum(-'.InventoryTransaction::signedValueSql().'), 0) as value')->value('value');
+            $completion = DB::table('inventory_value_adjustment_lines as correction_line')
+                ->join('inventory_value_adjustments as correction', 'correction.id', '=', 'correction_line.inventory_value_adjustment_id')
+                ->join('inventory_transactions as source', 'source.id', '=', 'correction_line.source_transaction_id')
+                ->where('correction.company_id', $companyId)->where('correction_line.branch_id', $branchId)
+                ->where('correction.status', InventoryValueAdjustment::StatusPosted)->whereDate('correction.posting_date', '<=', $cutoff)
+                ->where('correction_line.effect', InventoryValueAdjustmentLine::EffectExpense)
+                ->whereIn('source.transaction_type', [InventoryDocument::TypeSalesDelivery, InventoryDocument::TypeSalesReturnReceipt])
+                ->sum('correction_line.amount');
+
+            return bcadd((string) $original, (string) $completion, 8);
         }
 
         $documents = DB::table('inventory_document_lines as line')
@@ -865,7 +891,17 @@ final class ReconciliationCenterService
                 ->whereDate('run.to_date', '<=', $cutoff)->sum('line.allocated_amount')
             : 0;
 
-        return bcadd((string) $documents, (string) $overhead, 4);
+        $completion = DB::table('inventory_value_adjustment_lines as correction_line')
+            ->join('inventory_value_adjustments as correction', 'correction.id', '=', 'correction_line.inventory_value_adjustment_id')
+            ->join('inventory_document_lines as source_line', 'source_line.id', '=', 'correction_line.inventory_document_line_id')
+            ->join('inventory_documents as source_document', 'source_document.id', '=', 'source_line.inventory_document_id')
+            ->where('correction.company_id', $companyId)->where('correction_line.branch_id', $branchId)
+            ->where('correction.status', InventoryValueAdjustment::StatusPosted)->whereDate('correction.posting_date', '<=', $cutoff)
+            ->where('source_document.status', InventoryDocument::StatusPosted)
+            ->selectRaw("coalesce(sum(case when correction_line.production_cost_role = 'issued' then correction_line.production_cost_delta
+                when correction_line.production_cost_role in ('returned', 'waste', 'finished_goods') then -correction_line.production_cost_delta else 0 end), 0) as value")->value('value');
+
+        return bcadd(bcadd((string) $documents, (string) $overhead, 8), (string) $completion, 8);
     }
 
     /** @return array{debit_side: string, credit_side: string, has_data: bool} */

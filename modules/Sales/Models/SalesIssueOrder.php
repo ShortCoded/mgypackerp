@@ -15,6 +15,8 @@ class SalesIssueOrder extends Model
 
     public const StatusIssued = 'issued';
 
+    public const StatusCorrected = 'corrected';
+
     protected $guarded = ['id'];
 
     protected function casts(): array

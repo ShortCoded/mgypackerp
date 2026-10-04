@@ -36,7 +36,9 @@
     window.clearTimeout(timer);
     const delay = document.hidden
       ? Number(config.hiddenIntervalMs || 120000)
-      : Math.min(300000, Number(config.intervalMs || 45000) * Math.max(1, failures + 1));
+      : failures === 1
+        ? 10000
+        : Math.min(300000, Number(config.intervalMs || 45000) * Math.max(1, failures));
     timer = window.setTimeout(refresh, delay);
   }
 
@@ -132,7 +134,7 @@
     }).catch(function () {
       failures += 1;
 
-      if (healthElement) {
+      if (healthElement && failures > 1) {
         healthElement.textContent = config.messages?.stale || '';
         healthElement.classList.add('text-danger');
         healthElement.classList.remove('d-none');

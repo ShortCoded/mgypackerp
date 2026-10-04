@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Modules\Core\Models\ArchiveFile;
 use Modules\Core\Models\Branch;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
@@ -131,6 +132,7 @@ class HrEmployeeService
         private readonly DocumentNumberService $documentNumberService,
         private readonly CrudAuditService $crudAudit,
         private readonly NumericFormatService $numericFormatter,
+        private readonly HrEmployeeOrganizationAssignmentService $organizationAssignments,
     ) {}
 
     /**
@@ -154,6 +156,7 @@ class HrEmployeeService
             $this->crudAudit->clearCreationUpdateAudit($employee);
 
             $employee = $employee->refresh();
+            $this->organizationAssignments->recordCreation($employee);
             $this->syncBiometricMappings($employee, $data['biometric_mappings'] ?? []);
             $this->syncDocuments($employee, $data['documents'] ?? []);
 
@@ -170,6 +173,8 @@ class HrEmployeeService
     public function update(HrEmployee $employee, array $data): array
     {
         return DB::transaction(function () use ($employee, $data): array {
+            Company::query()->whereKey($employee->company_id)->lockForUpdate()->firstOrFail();
+            $employee = HrEmployee::query()->whereKey($employee->getKey())->lockForUpdate()->firstOrFail();
             $oldDocNumber = $employee->doc_number === null ? null : (int) $employee->doc_number;
             $oldDocNum = $employee->doc_num;
             $oldName = $employee->full_name;
@@ -177,6 +182,13 @@ class HrEmployeeService
             $newDocNumber = $canChangeDocumentNumber ? (int) $data['doc_number'] : $oldDocNumber;
             $newDocNum = $canChangeDocumentNumber ? $this->documentNumberService->format('hr_employees', $newDocNumber) : $oldDocNum;
             $newValues = $this->normalizedValues($data, $employee);
+
+            foreach (['branch_id', 'department_id'] as $datedField) {
+                if (array_key_exists($datedField, $newValues)
+                    && (int) $newValues[$datedField] !== (int) $employee->{$datedField}) {
+                    throw new DomainException(__('hr_organization_assignments.messages.card_edit_requires_transfer'));
+                }
+            }
 
             if ($canChangeDocumentNumber) {
                 $newValues['doc_number'] = $newDocNumber;
@@ -189,6 +201,17 @@ class HrEmployeeService
                 ->unique()
                 ->values()
                 ->all();
+
+            if (array_intersect($changedFields, [
+                'pay_basis', 'basic_salary', 'weekly_wage', 'daily_wage', 'hourly_wage', 'shift_wage', 'piece_rate',
+                'hire_date', 'contract_start_date',
+            ]) !== [] && DB::table('hr_employee_salary_assignments')
+                ->where('employee_id', $employee->getKey())
+                ->whereNotNull('pay_basis')
+                ->whereNull('deleted_at')
+                ->exists()) {
+                throw new DomainException(__('hr_wage_versions.messages.card_edit_requires_version'));
+            }
 
             if ($changedFields !== []) {
                 $this->crudAudit->saveUpdate($employee, $newValues);

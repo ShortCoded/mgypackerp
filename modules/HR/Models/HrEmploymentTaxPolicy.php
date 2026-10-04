@@ -20,6 +20,8 @@ class HrEmploymentTaxPolicy extends HrCompanyFoundationModel
         'effective_from',
         'effective_to',
         'annual_exemption_amount',
+        'taxable_basis',
+        'annualization_method',
         'rounding_rule',
         'status',
         'notes',

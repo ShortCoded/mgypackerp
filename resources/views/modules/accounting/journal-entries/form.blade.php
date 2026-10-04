@@ -12,7 +12,7 @@
             'account_label' => $line->account?->codeNameLabel(),
             'debit_amount' => $line->debit_amount,
             'credit_amount' => $line->credit_amount,
-            'description' => $line->description,
+            'description' => $isReadonly ? $record->localizedSystemDescription((string) $line->description) : $line->description,
             'cost_center_doc_num' => $line->costCenter?->doc_num,
             'cost_center_label' => $line->costCenter?->codeNameLabel(),
             'customer_doc_num' => $line->customer?->doc_num,
@@ -101,7 +101,7 @@
                     </div>
                     <div class="col-md-6">
                         <label class="form-label" for="description">{{ __('journal_entries.attributes.description') }}</label>
-                        <x-forms.input class="form-control" id="description" name="description" value="{{ old('description', $record?->description) }}" :readonly='$isReadonly' />
+                        <x-forms.input class="form-control" id="description" name="description" value="{{ old('description', $isReadonly ? $record?->localizedSystemDescription() : $record?->description) }}" :readonly='$isReadonly' />
                         <div class="invalid-feedback d-block" data-error-for="description"></div>
                     </div>
                     <div class="col-md-6">

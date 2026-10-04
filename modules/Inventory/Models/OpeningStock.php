@@ -13,6 +13,7 @@ use Modules\Core\Models\BranchHall;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\Core\Services\OperatingCompanyContextService;
 
 class OpeningStock extends Model
 {
@@ -71,6 +72,22 @@ class OpeningStock extends Model
     public function getRouteKeyName(): string
     {
         return 'doc_num';
+    }
+
+    public function resolveRouteBinding($value, $field = null): ?self
+    {
+        $companyId = app(OperatingCompanyContextService::class)->currentCompanyId();
+
+        return $companyId === null ? null : $this->newQuery()->where($field ?? $this->getRouteKeyName(), $value)
+            ->where('company_id', $companyId)->first();
+    }
+
+    public function resolveSoftDeletableRouteBinding($value, $field = null): ?self
+    {
+        $companyId = app(OperatingCompanyContextService::class)->currentCompanyId();
+
+        return $companyId === null ? null : $this->newQueryWithoutScopes()->where($field ?? $this->getRouteKeyName(), $value)
+            ->where('company_id', $companyId)->first();
     }
 
     public function isLockedForEditing(): bool

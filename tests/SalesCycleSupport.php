@@ -23,6 +23,9 @@ use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\PriceList;
 use Modules\Sales\Services\CustomerInvoiceService;
 use Modules\Sales\Services\SalesOrderService;
+use Spatie\Permission\Models\Permission;
+
+require_once __DIR__.'/ClosureAcceptanceSupport.php';
 use Symfony\Component\Process\Process;
 
 function salesPdfText(string $content): string
@@ -72,16 +75,30 @@ function salesPdfImageCount(string $content): int
 }
 
 /** @return array<string, mixed> */
-function salesCycleFixture(): array
+function salesCycleFixture(bool $isolatedCompany = false): array
 {
     test()->seed(DefaultOperatingContextSeeder::class);
+    if ($isolatedCompany) {
+        $number = (int) Company::withTrashed()->max('doc_number') + 1;
+        $isolated = Company::factory()->create(['doc_number' => $number, 'doc_num' => 'SYNTHETIC-SALES-EVIDENCE-'.$number,
+            'name' => 'SYNTHETIC isolated sales evidence '.$number]);
+        Branch::query()->create(['company_id' => $isolated->id, 'doc_number' => (int) Branch::withTrashed()->max('doc_number') + 1,
+            'doc_num' => 'SYNTHETIC-SALES-EVIDENCE-BRANCH-'.$number, 'name' => 'SYNTHETIC sales evidence branch', 'type' => Branch::TypeAdministrative, 'status' => 'active']);
+        FinancialPeriod::query()->create(['company_id' => $isolated->id, 'doc_number' => (int) FinancialPeriod::withTrashed()->max('doc_number') + 1,
+            'doc_num' => 'SYNTHETIC-SALES-EVIDENCE-PERIOD-'.$number, 'name' => 'SYNTHETIC sales evidence period',
+            'from_date' => now()->startOfYear()->toDateString(), 'to_date' => now()->endOfYear()->toDateString(), 'is_closed' => false]);
+    }
     test()->seed(CurrencySeeder::class);
     test()->seed(DefaultChartOfAccountsSeeder::class);
 
-    $user = User::factory()->create();
+    $user = $isolatedCompany ? closureSyntheticUser() : User::factory()->create();
+    foreach (['sales_orders.edit', 'sales_orders.reopen'] as $ability) {
+        Permission::findOrCreate($ability, 'web');
+    }
+    $user->givePermissionTo(['sales_orders.edit', 'sales_orders.reopen']);
     auth()->login($user);
     request()->setUserResolver(fn (): User => $user);
-    $company = Company::query()->where('status', 'active')->firstOrFail();
+    $company = $isolatedCompany ? $isolated : Company::query()->where('status', 'active')->firstOrFail();
     $branch = Branch::query()->where('company_id', $company->getKey())->where('status', 'active')->firstOrFail();
     $period = FinancialPeriod::query()->where('company_id', $company->getKey())->where('is_closed', false)->firstOrFail();
     $currency = Currency::query()->where('company_id', $company->getKey())->orderByDesc('is_main')->firstOrFail();
@@ -106,7 +123,7 @@ function salesCycleFixture(): array
     $bankLedgerAccount = Account::query()->create(['doc_number' => 9803, 'doc_num' => 'Account-Bank-Sales', 'company_id' => $company->getKey(), 'account_code' => '11129803', 'name' => 'Sales Collection Bank Account', 'parent_id' => $bankParent->getKey(), 'level' => ((int) $bankParent->level) + 1, 'account_classification_id' => $cashClassification->getKey(), 'account_type' => Account::TypeAsset, 'statement_type' => Account::StatementFinancialPosition, 'normal_balance' => Account::BalanceDebit, 'is_group' => false, 'is_postable' => true, 'status' => 'active']);
     $bankAccount = BankAccount::query()->create(['doc_number' => 9801, 'doc_num' => 'BankAccount-SALES', 'company_id' => $company->getKey(), 'account_id' => $bankLedgerAccount->getKey(), 'currency_id' => $currency->getKey(), 'account_name' => 'Sales Collection Bank', 'account_number' => 'E2E-9801', 'status' => 'active']);
 
-    InventoryTransaction::query()->create(['posting_key' => 'sales-cycle-opening-stock', 'company_id' => $company->getKey(), 'financial_period_id' => $period->getKey(), 'branch_id' => $branch->getKey(), 'branch_store_id' => $store->getKey(), 'transaction_date' => now()->toDateString(), 'transaction_type' => 'opening_stock', 'product_id' => $finished->getKey(), 'unit_id' => $unit->getKey(), 'batch_lot' => 'SALES-OPENING-BATCH', 'quantity_in' => '100', 'quantity_out' => 0, 'source_type' => 'test_opening_stock', 'source_id' => 1, 'source_doc_num' => 'TEST-STOCK', 'unit_cost' => '5', 'total_cost' => '500', 'created_by' => $user->getKey()]);
+    InventoryTransaction::query()->create(['posting_key' => $isolatedCompany ? 'sales-cycle-opening-stock-'.$company->id : 'sales-cycle-opening-stock', 'company_id' => $company->getKey(), 'financial_period_id' => $period->getKey(), 'branch_id' => $branch->getKey(), 'branch_store_id' => $store->getKey(), 'transaction_date' => now()->toDateString(), 'transaction_type' => 'opening_stock', 'product_id' => $finished->getKey(), 'unit_id' => $unit->getKey(), 'batch_lot' => 'SALES-OPENING-BATCH', 'quantity_in' => '100', 'quantity_out' => 0, 'source_type' => 'test_opening_stock', 'source_id' => 1, 'source_doc_num' => 'TEST-STOCK', 'unit_cost' => '5', 'total_cost' => '500', 'created_by' => $user->getKey()]);
 
     return compact('user', 'company', 'branch', 'period', 'currency', 'store', 'unit', 'finished', 'service', 'raw', 'semiFinished', 'customer', 'cashbox', 'bankAccount');
 }

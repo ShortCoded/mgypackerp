@@ -2,6 +2,8 @@
 
 use App\Models\User;
 use Database\Seeders\DatabaseSeeder;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\DB;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
 use Modules\Auth\Services\PermissionRegistryService;
@@ -499,6 +501,44 @@ test('permission seeder creates permissions and syncs all to admin role', functi
         ->not->toContain('hr.org_units.move')
         ->not->toContain('hr.positions.hierarchy.view')
         ->not->toContain('hr.positions.occupancy.view');
+});
+
+test('repeated permission seeding preserves reviewed admin grants and revocations', function (): void {
+    $this->seed(PermissionSeeder::class);
+    $adminRole = Role::query()->where('name', 'admin')->where('guard_name', 'web')->firstOrFail();
+    $adminRole->revokePermissionTo('dashboard.view');
+    $customPermission = Permission::findOrCreate('local.reviewed_permission', 'web');
+    $adminRole->givePermissionTo($customPermission);
+    $adminRole->forceFill(['doc_number' => null, 'doc_num' => null])->save();
+    Permission::query()->where('name', 'dashboard.view')->update(['updated_at' => '2020-01-01 00:00:00']);
+    $reviewedPermissionIds = $adminRole->permissions()->pluck('id')->sort()->values()->all();
+
+    $this->seed(PermissionSeeder::class);
+
+    expect($adminRole->permissions()->pluck('id')->sort()->values()->all())->toBe($reviewedPermissionIds)
+        ->and($adminRole->fresh()->hasPermissionTo('dashboard.view'))->toBeFalse()
+        ->and($adminRole->fresh()->hasPermissionTo('local.reviewed_permission'))->toBeTrue()
+        ->and($adminRole->fresh()->doc_number)->toBeNull()
+        ->and($adminRole->fresh()->doc_num)->toBeNull()
+        ->and(Permission::query()->where('name', 'dashboard.view')->firstOrFail()->updated_at->toDateTimeString())->toBe('2020-01-01 00:00:00');
+});
+
+test('permission seeding rolls back registry and admin role when grant insertion fails', function (): void {
+    DB::unprepared("CREATE TRIGGER fail_admin_grant BEFORE INSERT ON role_has_permissions BEGIN SELECT RAISE(ABORT, 'synthetic grant failure'); END");
+
+    try {
+        expect(fn () => $this->seed(PermissionSeeder::class))->toThrow(QueryException::class);
+        expect(Permission::query()->count())->toBe(0)
+            ->and(Role::query()->count())->toBe(0)
+            ->and(DB::table('role_has_permissions')->count())->toBe(0);
+    } finally {
+        DB::unprepared('DROP TRIGGER IF EXISTS fail_admin_grant');
+    }
+
+    $this->seed(PermissionSeeder::class);
+
+    expect(Role::query()->where('name', 'admin')->where('guard_name', 'web')->count())->toBe(1)
+        ->and(Role::query()->where('name', 'admin')->firstOrFail()->permissions()->count())->toBeGreaterThan(0);
 });
 
 test('permission seeder copies legacy duplicate grants to canonical permissions', function () {

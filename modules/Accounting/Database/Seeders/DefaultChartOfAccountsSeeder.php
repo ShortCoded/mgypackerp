@@ -14,13 +14,13 @@ class DefaultChartOfAccountsSeeder extends Seeder
 {
     public function run(): void
     {
-        $this->call(AccountClassificationsSeeder::class);
-
-        if (! Company::query()->exists()) {
-            $this->call(DefaultOperatingContextSeeder::class);
-        }
-
         DB::transaction(function (): void {
+            $this->call(AccountClassificationsSeeder::class);
+
+            if (! Company::query()->exists()) {
+                $this->call(DefaultOperatingContextSeeder::class);
+            }
+
             $companies = Company::query()
                 ->whereNull('deleted_at')
                 ->orderBy('id')
@@ -36,6 +36,7 @@ class DefaultChartOfAccountsSeeder extends Seeder
     {
         $accountsByCode = Account::withTrashed()
             ->where('company_id', $company->getKey())
+            ->orderByRaw('CASE WHEN deleted_at IS NULL THEN 1 ELSE 0 END')
             ->get()
             ->keyBy('account_code');
         $classificationsByCode = AccountClassification::query()
@@ -52,6 +53,10 @@ class DefaultChartOfAccountsSeeder extends Seeder
             $parent = isset($data['parent_code'])
                 ? $accountsByCode->get($data['parent_code'])
                 : null;
+
+            if (isset($data['parent_code']) && (! $parent instanceof Account || $parent->trashed())) {
+                continue;
+            }
             $classificationId = isset($data['classification_code'])
                 ? $classificationsByCode->get($data['classification_code'])
                 : null;
@@ -73,14 +78,6 @@ class DefaultChartOfAccountsSeeder extends Seeder
             ];
 
             if ($account instanceof Account) {
-                if ($account->trashed()) {
-                    $account->restore();
-                }
-
-                $account->forceFill($payload)->save();
-                $this->ensureDocumentNumber($account, $company);
-                $accountsByCode->put($account->account_code, $account->refresh());
-
                 continue;
             }
 
@@ -90,15 +87,6 @@ class DefaultChartOfAccountsSeeder extends Seeder
             ]);
             $accountsByCode->put($account->account_code, $account);
         }
-    }
-
-    private function ensureDocumentNumber(Account $account, Company $company): void
-    {
-        if ($account->doc_number && $account->doc_num) {
-            return;
-        }
-
-        $account->forceFill(app(DocumentNumberService::class)->nextForCompany('accounts', Account::class, $company->getKey()))->save();
     }
 
     /**

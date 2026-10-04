@@ -19,6 +19,7 @@ use Modules\Core\Services\ProductImageResolver;
 use Modules\Core\Services\Select2ResponseService;
 use Modules\HR\Models\HrEmployee;
 use Modules\Inventory\Models\InventoryDocument;
+use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerInvoiceLine;
@@ -98,6 +99,31 @@ class SalesSelect2Service
             'id' => $invoice->doc_num,
             'text' => trim(implode(' / ', array_filter([$invoice->doc_num, $invoice->customer?->name, $invoice->invoice_date?->toDateString()]))),
         ]);
+    }
+
+    public function returnableSerialDeliveries(Request $request): array
+    {
+        $request->validate(['invoice_doc_num' => ['required', 'string', 'max:100'], 'invoice_line_public_id' => ['required', 'uuid']]);
+        $context = $this->operatingContext->snapshot($request);
+        $line = CustomerInvoiceLine::query()->where('public_id', $request->input('invoice_line_public_id'))
+            ->whereHas('invoice', fn ($invoice) => $invoice->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
+                ->where('doc_num', $request->input('invoice_doc_num'))->where('posting_status', 'posted')->where('document_type', CustomerInvoice::TypeInvoice))->first();
+        $query = InventoryDocumentLine::query()->with(['document', 'serialIdentity'])
+            ->where('company_id', $context['company_id'])->where('product_id', $line?->product_id ?? 0)
+            ->whereNotNull('inventory_serial_identity_id')->where('source_line_type', $line?->sales_order_line_id ? SalesOrderLine::class : CustomerInvoiceLine::class)
+            ->where('source_line_id', $line?->sales_order_line_id ?: $line?->id ?? 0)
+            ->whereIn('inventory_document_id', $line?->invoice?->deliveries()->pluck('inventory_documents.id') ?? [])
+            ->whereHas('document', fn ($document) => $document->where('status', InventoryDocument::StatusPosted)->where('document_type', InventoryDocument::TypeSalesDelivery))
+            ->whereNotExists(fn ($returned) => $returned->selectRaw('1')->from('sales_return_lines')->join('sales_returns', 'sales_returns.id', '=', 'sales_return_lines.sales_return_id')
+                ->whereColumn('sales_return_lines.delivery_line_id', 'inventory_document_lines.id')->where('sales_returns.status', '<>', SalesReturn::StatusCancelled)->whereNull('sales_returns.deleted_at'))
+            ->orderBy('id');
+        $terms = $this->search->terms($request->input('q', $request->input('term')));
+        if ($terms !== []) {
+            $query->whereHas('serialIdentity', fn ($serial) => $this->search->applyMultiTermSearch($serial, $terms, ['text' => ['serial_number']]));
+        }
+
+        return $this->select2->paginated($query, $request, fn ($delivery): array => ['id' => (string) $delivery->id,
+            'text' => $delivery->document->doc_num.' — '.$delivery->serialIdentity->serial_number]);
     }
 
     public function creditTargetInvoices(Request $request): array

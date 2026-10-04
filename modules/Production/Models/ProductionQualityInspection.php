@@ -40,7 +40,7 @@ class ProductionQualityInspection extends Model
 
     protected $fillable = [
         'doc_number', 'doc_num', 'parent_inspection_id', 'root_inspection_id', 'company_id', 'financial_period_id', 'branch_id',
-        'production_order_id', 'production_run_id', 'production_order_stage_id', 'subject_type',
+        'production_order_id', 'production_run_id', 'production_order_stage_id', 'subject_type', 'correction_sequence',
         'product_id', 'branch_store_id', 'warehouse_location_id', 'stock_status', 'batch_lot', 'source_reference',
         'quality_inspection_type_id', 'inspection_plan_snapshot', 'version', 'reinspection_number', 'inspection_date', 'sampled_at', 'status',
         'result', 'disposition', 'defect_code', 'affected_base_quantity', 'inspector_id', 'notes',

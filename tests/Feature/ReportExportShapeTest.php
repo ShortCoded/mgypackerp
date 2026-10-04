@@ -3,13 +3,67 @@
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Maatwebsite\Excel\Excel as ExcelWriter;
+use Maatwebsite\Excel\Facades\Excel;
+use Modules\Accounting\Exports\CostingReportExport;
+use Modules\Accounting\Exports\FinancialStatementReportExport;
 use Modules\Accounting\Exports\ReconciliationCenterExport;
+use Modules\Accounting\Exports\TrialBalanceReportExport;
 use Modules\Accounting\Services\ReconciliationComparisonService;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Product;
+use Modules\Finance\Exports\FinanceReportExport;
+use Modules\FixedAssets\Exports\FixedAssetReportExport;
 use Modules\Inventory\Exports\InventoryValuationComparisonExport;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Services\InventoryValuationService;
+use Modules\Production\Exports\ProductionReportExport;
+use Modules\Production\Exports\ProductionReportSheet;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\IOFactory;
+
+test('financial and production workbooks preserve exact decimal values zeros and literal text through the real writers', function (): void {
+    new ProductionReportExport([]);
+    $amount = '9999999999999999.12345678';
+    $report = ['columns' => ['document' => 'Document', 'amount' => 'Amount', 'quantity' => 'Quantity', 'zero' => 'Zero'],
+        'rows' => collect([['document' => '=1+1', 'amount' => $amount, 'quantity' => '0.00000001', 'zero' => '0.00000000']])];
+    $comparison = app(ReconciliationComparisonService::class)->compare('synthetic', 'Synthetic', [[
+        'key' => '=1+1', 'source_opening' => $amount, 'gl_opening' => $amount,
+        'source_movement' => '0.0000', 'gl_movement' => '0.0000', 'source_ending' => $amount, 'gl_ending' => $amount,
+    ]]);
+    $exports = [
+        'finance' => [new FinanceReportExport($report), 'B2', $amount, 'A2'],
+        'costing' => [new CostingReportExport($report), 'B2', $amount, 'A2'],
+        'fixed-assets' => [new FixedAssetReportExport($report), 'B2', $amount, 'A2'],
+        'production' => [new ProductionReportSheet('Synthetic', array_values($report['columns']), [['=1+1', $amount, '0.00000001', '0.00000000']]), 'B2', $amount, 'A2'],
+        'trial-balance' => [new TrialBalanceReportExport(['presentation' => ['columns' => ['period_debit']], 'rows' => [[
+            'account_code' => '001', 'name' => '=1+1', 'level' => 1, 'is_inactive' => false, 'period_debit' => $amount,
+        ]], 'totals' => ['period_debit' => $amount]]), 'D2', $amount, 'B2'],
+        'financial-statement' => [new FinancialStatementReportExport(['statement_type' => 'financial_position',
+            'rows' => [['label' => '=1+1', 'amount' => $amount, 'comparison_amount' => '0.0000']]]), 'B2', $amount, 'A2'],
+        'reconciliation' => [new ReconciliationCenterExport(['results' => collect([$comparison])]), 'D2', $comparison['rows']->sole()['source_opening'], 'B2'],
+    ];
+    foreach ($exports as $name => [$export, $coordinate, $expected, $textCoordinate]) {
+        $path = tempnam(sys_get_temp_dir(), 'synthetic-exact-'.$name.'-');
+        try {
+            file_put_contents($path, Excel::raw($export, ExcelWriter::XLSX));
+            $book = IOFactory::load($path);
+            $sheet = $book->getActiveSheet();
+            expect($sheet->getCell($coordinate)->getValue())->toBe($expected, $name)
+                ->and($sheet->getCell($coordinate)->getDataType())->toBe(DataType::TYPE_STRING, $name)
+                ->and($sheet->getCell($textCoordinate)->getValue())->toBe('=1+1', $name)
+                ->and($sheet->getCell($textCoordinate)->getDataType())->toBe(DataType::TYPE_STRING, $name)
+                ->and(Excel::raw($export, ExcelWriter::CSV))->toContain($expected);
+            if (in_array($name, ['finance', 'costing', 'fixed-assets', 'production'], true)) {
+                expect($sheet->getCell('C2')->getValue())->toBe('0.00000001', $name)
+                    ->and($sheet->getCell('D2')->getValue())->toBe('0.00000000', $name);
+            }
+            $book->disconnectWorksheets();
+        } finally {
+            @unlink($path);
+        }
+    }
+});
 
 test('valuation export preserves every comparison method and column', function (): void {
     $comparison = app(InventoryValuationService::class)->compareMovements([
@@ -18,9 +72,9 @@ test('valuation export preserves every comparison method and column', function (
     ]);
     $export = new InventoryValuationComparisonExport($comparison);
 
-    expect($export->headings())->toHaveCount(6)
-        ->and($export->array())->toHaveCount(4)
-        ->and($export->array()[0])->toHaveCount(6);
+    expect($export->headings())->toHaveCount(7)
+        ->and($export->array())->toHaveCount(6)
+        ->and($export->array()[0])->toHaveCount(7);
 });
 
 test('reconciliation export preserves unavailable and detailed controls without inventing matches', function (): void {

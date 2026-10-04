@@ -32,6 +32,7 @@ use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Inventory\Exports\InventoryBookValuationExport;
+use Modules\Inventory\Exports\InventoryPeriodicCostCloseExport;
 use Modules\Inventory\Exports\InventoryReportExport;
 use Modules\Inventory\Exports\InventorySalesValuationExport;
 use Modules\Inventory\Exports\InventoryValuationComparisonExport;
@@ -92,6 +93,14 @@ class InventoryReportController extends Controller
             'companyPrintIdentity' => $this->printIdentity->forCompany($company),
             'numbers' => $this->numbers,
         ], 'inventory-operations-report.pdf');
+    }
+
+    public function exportCsv(Request $request): BinaryFileResponse
+    {
+        [, , $report] = $this->report($request, true);
+
+        return Excel::download(new InventoryPeriodicCostCloseExport((new InventoryReportExport($report))->sections(), true),
+            'inventory-operations-'.now()->format('Ymd-His').'.csv', ExcelFormat::CSV);
     }
 
     public function valuation(InventoryBookValuationRequest $request): View

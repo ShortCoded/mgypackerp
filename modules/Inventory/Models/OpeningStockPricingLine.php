@@ -50,7 +50,7 @@ class OpeningStockPricingLine extends Model
         return [
             'product_snapshot' => 'array',
             'quantity' => 'decimal:4',
-            'unit_price' => 'decimal:4',
+            'unit_price' => 'decimal:8',
             'line_total' => 'decimal:4',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',

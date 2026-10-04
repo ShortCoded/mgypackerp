@@ -2,16 +2,45 @@
 
 namespace Modules\Sales\Services;
 
+use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\SalesOrderLine;
-use Modules\Sales\Models\SalesReturn;
 
 class SalesCycleReadService
 {
+    /** @return array{ordered: string, invoiced: string, delivered: string, remaining: string} */
+    public function fulfillmentQuantities(object $order): array
+    {
+        $ordered = $this->reportQuantity($order->ordered_quantity);
+        $delivered = $this->reportQuantity($order->delivered_quantity);
+        $invoiced = '0.00000000';
+
+        foreach ($order->lines as $line) {
+            $invoiced = bcadd($invoiced, $this->reportQuantity($line->invoiced_quantity), 8);
+        }
+
+        return [
+            'ordered' => $ordered,
+            'invoiced' => $invoiced,
+            'delivered' => $delivered,
+            'remaining' => bccomp($ordered, $delivered, 8) > 0
+                ? bcsub($ordered, $delivered, 8)
+                : '0.00000000',
+        ];
+    }
+
+    public function reportQuantity(mixed $value): string
+    {
+        $normalized = app(NumericFormatService::class)->normalizeScientificNotation((string) ($value ?? '0')) ?? '0';
+
+        return app(SalesAmountService::class)->round($normalized, 8);
+    }
+
     /** @param array<string, mixed> $filters */
     public function backorders(int $companyId, int $branchId, array $filters = []): Collection
     {
@@ -68,8 +97,10 @@ class SalesCycleReadService
     /** @param array<string, mixed> $filters */
     public function ledger(int $companyId, int $branchId, array $filters = []): Builder
     {
-        return CustomerInvoice::query()->with(['customer', 'order', 'currency', 'deliveries', 'lines.product.color', 'lines.product.category', 'lines.returnLines.salesReturn'])
-            ->with(['lines' => fn ($query) => $query->withSum(['returnLines as returned_quantity' => fn ($returns) => $returns->whereHas('salesReturn', fn ($return) => $return->where('status', '<>', SalesReturn::StatusCancelled))], 'quantity')])
+        $cutoff = CarbonImmutable::parse($filters['cutoff'] ?? $filters['to'] ?? now())->toDateString();
+
+        return app(SalesBalanceProjectionService::class)->invoicesAt($companyId, (string) $cutoff)->with(['customer', 'order', 'currency', 'deliveries', 'lines.product.color', 'lines.product.category', 'lines.returnLines.salesReturn'])
+            ->with(['lines' => fn ($query) => $query->withSum(['returnLines as returned_quantity' => fn ($returns) => $returns->whereHas('salesReturn', fn ($return) => $return->whereDate('return_date', '<=', $cutoff)->uncancelledAt($cutoff))], 'quantity')])
             ->where('company_id', $companyId)->where('branch_id', $branchId)->where('posting_status', 'posted')->where('document_type', CustomerInvoice::TypeInvoice)
             ->when($filters['financial_period_id'] ?? null, fn ($query, $id) => $query->where('financial_period_id', $id))
             ->when($filters['customer_id'] ?? null, fn ($query, $id) => $query->where('customer_id', $id))

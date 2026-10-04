@@ -32,6 +32,14 @@
     @endif
 
     @if ($isView && $employee)
+        @if (! $isTrashed && $canView)
+            <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.hr.employees.organization-assignments.index', $employee->doc_num) }}">
+                {{ __('hr_organization_assignments.title') }}
+            </a>
+            <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.hr.employees.wage-versions.index', $employee->doc_num) }}">
+                {{ __('hr_wage_versions.title') }}
+            </a>
+        @endif
         @if (! $isTrashed && $canEdit)
             <a class="btn btn-primary btn-sm" href="{{ route('admin.hr.employees.edit', $employee->doc_num) }}" data-shortcut-action="form.edit" title="{{ $shortcutTitles['edit'] }}" data-bs-title="{{ $shortcutTitles['edit'] }}">
                 <span class="fas fa-edit me-1"></span>{{ __('common.actions.edit') }}

@@ -155,7 +155,9 @@ test('statutory policies are company scoped effective dated and tax brackets are
     $this->withSession($session)
         ->get(route('admin.hr.employment-tax-policies.create'))
         ->assertOk()
-        ->assertSee('tax_brackets[0][from_amount]', false);
+        ->assertSee('tax_brackets[0][from_amount]', false)
+        ->assertSee('name="taxable_basis"', false)
+        ->assertSee('name="annualization_method"', false);
 
     $this->actingAs($actor)
         ->withSession($session)
@@ -210,6 +212,8 @@ test('statutory policies are company scoped effective dated and tax brackets are
         'effective_from' => '2026-01-01',
         'effective_to' => '2026-12-31',
         'annual_exemption_amount' => '15,000.00',
+        'taxable_basis' => 'gross_after_employee_insurance',
+        'annualization_method' => 'twelve_equal_periods',
         'rounding_rule' => 'down',
         'status' => 'active',
         'tax_brackets' => [
@@ -226,6 +230,8 @@ test('statutory policies are company scoped effective dated and tax brackets are
     $taxPolicy = HrEmploymentTaxPolicy::query()->with('brackets')->firstOrFail();
 
     expect($taxPolicy->company_id)->toBe($company->getKey())
+        ->and($taxPolicy->taxable_basis)->toBe('gross_after_employee_insurance')
+        ->and($taxPolicy->annualization_method)->toBe('twelve_equal_periods')
         ->and($taxPolicy->brackets)->toHaveCount(3)
         ->and($taxPolicy->brackets->first()->from_amount)->toBe('0.00')
         ->and($taxPolicy->brackets->get(1)?->notes)->toBe('Neutral test bracket.')

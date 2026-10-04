@@ -25,7 +25,7 @@ class StoreQuotationRequest extends FormRequest
 
     public function authorize(): bool
     {
-        return (bool) $this->user()?->can($this->filled('clone_source_token') ? 'quotations.clone' : 'quotations.create');
+        return (bool) $this->user()?->can($this->filled('clone_source_token') || $this->filled('clone_source_doc_num') ? 'quotations.clone' : 'quotations.create');
     }
 
     protected function prepareForValidation(): void
@@ -48,6 +48,7 @@ class StoreQuotationRequest extends FormRequest
             'company_id' => $context['company_id'],
             'branch_id' => $context['branch_id'],
             'source_request_doc_num' => $this->nullableTrim('source_request_doc_num'),
+            'clone_source_doc_num' => $this->nullableTrim('clone_source_doc_num'),
             'customer_doc_num' => $this->nullableTrim('customer_doc_num'),
             'quotation_type' => $this->nullableTrim('quotation_type') ?: Quotation::TypeStandard,
             'project_name' => $this->nullableTrim('project_name'),
@@ -95,7 +96,8 @@ class StoreQuotationRequest extends FormRequest
             'doc_number' => ['nullable', 'integer', 'min:1', $this->uniqueActiveQuotationRule('doc_number')],
             'company_id' => ['required', 'integer', 'exists:companies,id'],
             'branch_id' => ['required', 'integer', 'exists:branches,id'],
-            'source_request_doc_num' => ['nullable', 'string'],
+            'source_request_doc_num' => ['nullable', 'string', 'prohibits:clone_source_doc_num,clone_source_token'],
+            'clone_source_doc_num' => ['nullable', 'required_with:clone_source_token', 'prohibits:source_request_doc_num', 'string'],
             'customer_doc_num' => ['required', 'string'],
             'quotation_type' => ['required', Rule::in(Quotation::Types)],
             'project_name' => ['nullable', 'required_if:quotation_type,'.Quotation::TypeProject, 'string', 'max:255'],
@@ -122,10 +124,11 @@ class StoreQuotationRequest extends FormRequest
             'lines' => ['required', 'array', 'min:1'],
             'lines.*.product_doc_num' => ['required', 'string'],
             'lines.*.source_request_line_public_id' => ['nullable', 'uuid'],
+            'lines.*.source_line_public_uuid' => ['nullable', 'uuid'],
             'lines.*.description' => ['nullable', 'string'],
             'lines.*.unit_doc_num' => ['required', 'string'],
             'lines.*.quantity' => ['required', 'numeric', 'decimal:0,8', 'regex:/^\d{1,14}(?:\.\d{1,8})?$/D', 'gt:0'],
-            'lines.*.unit_price' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0.0001'],
+            'lines.*.unit_price' => ['nullable', 'numeric', 'decimal:0,8', 'regex:/^\d{1,14}(?:\.\d{1,8})?$/D', 'gt:0'],
             'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
             'lines.*.discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,5}(?:\.\d{1,4})?$/D', 'min:0', 'max:100'],
@@ -158,7 +161,7 @@ class StoreQuotationRequest extends FormRequest
             'attachment_file_doc_nums' => ['nullable', 'array', 'max:20'],
             'attachment_file_doc_nums.*' => ['string'],
             'submit_action' => ['nullable', 'string'],
-            'clone_source_token' => ['nullable', 'string'],
+            'clone_source_token' => ['nullable', 'required_with:clone_source_doc_num', 'uuid'],
         ];
     }
 
@@ -550,6 +553,7 @@ class StoreQuotationRequest extends FormRequest
             ->map(fn (array $row): array => [
                 'product_doc_num' => isset($row['product_doc_num']) ? trim((string) $row['product_doc_num']) ?: null : null,
                 'source_request_line_public_id' => isset($row['source_request_line_public_id']) ? trim((string) $row['source_request_line_public_id']) ?: null : null,
+                'source_line_public_uuid' => isset($row['source_line_public_uuid']) ? trim((string) $row['source_line_public_uuid']) ?: null : null,
                 'description' => isset($row['description']) ? trim((string) $row['description']) ?: null : null,
                 'unit_doc_num' => isset($row['unit_doc_num']) ? trim((string) $row['unit_doc_num']) ?: null : null,
                 'quantity' => isset($row['quantity']) ? trim((string) $row['quantity']) ?: null : null,

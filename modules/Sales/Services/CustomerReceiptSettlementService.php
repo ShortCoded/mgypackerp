@@ -43,6 +43,7 @@ class CustomerReceiptSettlementService
                     $applied = bcadd($applied, $amount, 4);
                 }
                 $receipt->update(['journal_entry_id' => $journal->id, 'unallocated_amount' => bcsub($receipt->amount, $applied, 4), 'updated_by' => auth()->id()]);
+                app(CustomerReceiptApplicationHistoryService::class)->record($receipt, $journal);
                 $this->audit->record($receipt, 'customer_receipt.cheque_collected', ['cheque_doc_num' => $cheque->doc_num, 'applied_amount' => $applied]);
             }
         });
@@ -82,6 +83,7 @@ class CustomerReceiptSettlementService
             }
             $reversal = null;
             if ($locked->journalEntry) {
+                app(CustomerReceiptApplicationHistoryService::class)->record($locked, $locked->journalEntry);
                 $posting = $this->postingCopy($locked);
                 $reversal = $this->journals->createPostedReversalFromSource($locked->journalEntry, [
                     'company_id' => $locked->company_id, 'branch_id' => $locked->branch_id, 'financial_period_id' => $posting->financial_period_id,
@@ -89,6 +91,7 @@ class CustomerReceiptSettlementService
                     'description' => __('Collection reversal').' '.$locked->doc_num, 'notes' => trim($reason),
                     'source_type' => 'customer_receipt_reversal', 'source_id' => $locked->id, 'source_doc_num' => $locked->doc_num,
                 ]);
+                app(CustomerReceiptApplicationHistoryService::class)->record($locked, $reversal, reversal: true);
                 foreach ($locked->allocations()->whereNotNull('applied_at')->orderBy('customer_invoice_id')->orderBy('id')->lockForUpdate()->get() as $allocation) {
                     $invoice = CustomerInvoice::query()->lockForUpdate()->findOrFail($allocation->customer_invoice_id);
                     $schedule = CustomerInvoicePaymentSchedule::query()->lockForUpdate()->findOrFail($allocation->customer_invoice_payment_schedule_id);

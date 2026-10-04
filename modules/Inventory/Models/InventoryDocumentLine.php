@@ -41,6 +41,16 @@ class InventoryDocumentLine extends Model
         return $this->belongsTo(Product::class)->withTrashed();
     }
 
+    public function selectedReceiptLayer(): BelongsTo
+    {
+        return $this->belongsTo(InventoryReceiptLayer::class, 'selected_receipt_layer_id');
+    }
+
+    public function serialIdentity(): BelongsTo
+    {
+        return $this->belongsTo(InventorySerialIdentity::class, 'inventory_serial_identity_id');
+    }
+
     public function unit(): BelongsTo
     {
         return $this->belongsTo(ItemUnit::class)->withTrashed();

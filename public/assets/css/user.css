@@ -468,6 +468,27 @@ body {
   display: none;
 }
 
+.erp-notifications-menu .notification-indicator.has-unread::before {
+  display: none;
+}
+
+.erp-notifications-menu .notification-indicator-number {
+  background: var(--falcon-primary);
+  border: 2px solid var(--falcon-body-bg);
+  border-radius: 999px;
+  box-sizing: border-box;
+  font-size: .65rem;
+  height: 1.25rem;
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+  line-height: 1;
+  min-width: 1.25rem;
+  padding-inline: .25rem;
+  top: .05rem;
+  white-space: nowrap;
+  width: max-content;
+}
+
 .erp-notifications-menu .dropdown-menu-notification,
 .erp-notifications-menu .card-notification,
 .erp-notifications-menu .card-notification .card-header,
@@ -2633,7 +2654,16 @@ html[dir="rtl"] .erp-date-picker-calendar {
   }
 
   .report-wide-card [data-report-scroll-area] {
-    overflow-x: scroll !important;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    overflow-x: auto;
+    scrollbar-gutter: stable;
+    scrollbar-width: auto;
+  }
+
+  .report-wide-card .dt-scroll-body {
+    max-inline-size: 100%;
+    overflow-x: auto !important;
     scrollbar-gutter: stable;
     scrollbar-width: auto;
   }

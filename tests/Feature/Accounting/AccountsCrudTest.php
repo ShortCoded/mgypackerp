@@ -185,7 +185,7 @@ test('classification and default chart account seeders are idempotent', function
     $this->seed(DefaultChartOfAccountsSeeder::class);
     $context = accountEnsureOperatingContext();
 
-    expect(AccountClassification::query()->count())->toBe(139)
+    expect(AccountClassification::query()->count())->toBe(140)
         ->and(Account::query()->where('company_id', $context['company']->getKey())->whereNull('parent_id')->count())->toBe(5)
         ->and(Account::query()->whereNull('company_id')->exists())->toBeFalse()
         ->and(Account::query()->forCompany($context['company']->getKey())->where('account_code', '1')->first()?->is_system)->toBeTrue()

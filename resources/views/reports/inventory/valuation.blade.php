@@ -2,15 +2,25 @@
 
 @section('report')
     @php($numbers = app(\Modules\Core\Services\NumericFormatService::class))
+    @php($dates = app(\Modules\Core\Services\DateFormatService::class))
 
     <div class="report-filter-summary">
         <strong>{{ $product ? $product->doc_num.' / '.$product->name : ($filterSummary[__('stock_balance_inquiry.filters.branch')] ?? __('stock_balance_inquiry.options.all')) }}</strong>
-        <div>{{ $store?->name ?? __('stock_balance_inquiry.options.all') }} — {{ $comparison['as_of'] }}</div>
+        <div>{{ $store?->name ?? __('stock_balance_inquiry.options.all') }} — {{ $dates->formatDate($comparison['as_of']) }}</div>
         <div>{{ __('inventory_accounting.valuation_report.reference_method') }}: {{ __('inventory_accounting.valuation_methods.'.$comparison['reference_method']) }}</div>
     </div>
 
     @if(! ($comparison['valuation_complete'] ?? true))
-        <div class="report-warning">{{ app()->getLocale() === 'ar' ? 'مقارنة جزئية: بنود غير مسعّرة أو حركات غير قابلة للتقييم' : 'Partial comparison: unvalued or invalid stock positions' }} — {{ $comparison['excluded_position_count'] }} / {{ $numbers->format($comparison['excluded_quantity']) }}</div>
+        <div class="report-warning">{{ app()->getLocale() === 'ar' ? 'مقارنة جزئية: بنود غير مسعّرة أو حركات غير قابلة للتقييم' : 'Partial comparison: unvalued or invalid stock positions' }} — {{ $comparison['excluded_position_count'] }} / {{ $comparison['excluded_mixed_units'] ? '—' : $numbers->format($comparison['excluded_quantity']) }}
+            @if($comparison['excluded_mixed_units'])
+                <div>{{ __('inventory_accounting.valuation_report.excluded_unit_summary') }}:
+                    @foreach($comparison['excluded_quantity_by_unit'] as $unitTotal){{ $unitTotal['unit_name'] }}: {{ $numbers->format($unitTotal['quantity']) }}@unless($loop->last) · @endunless @endforeach
+                </div>
+            @endif
+        </div>
+    @endif
+    @if($comparison['multiple_products'] ?? false)
+        <div class="report-filter-summary">{{ __('inventory_accounting.valuation_report.multiple_products_note') }}</div>
     @endif
 
     <table dir="{{ $direction ?? 'ltr' }}" class="report-table valuation-table">
@@ -26,13 +36,35 @@
                 <tr>
                     <td>{{ __('inventory_accounting.valuation_methods.'.$method) }}</td>
                     <td>{{ $result['issue_cost'] === null ? '—' : $numbers->format($result['issue_cost']) }}</td>
-                    <td>{{ $numbers->format($result['ending_value']) }}</td>
-                    <td>{{ $numbers->format($result['ending_unit_cost']) }}</td>
+                    <td>{{ $result['ending_value'] === null ? '—' : $numbers->format($result['ending_value']) }}</td>
+                    <td>{{ $result['ending_unit_cost'] === null ? '—' : $numbers->format($result['ending_unit_cost']) }}</td>
                     <td>{{ $result['difference_vs_reference'] === null ? '—' : $numbers->format($result['difference_vs_reference']) }}</td>
                 </tr>
             @endforeach
         </tbody>
     </table>
+
+    @foreach(['last_inbound_reference', 'last_purchase_reference'] as $referenceMethod)
+        <div class="report-filter-summary">
+            <strong>{{ __('inventory_accounting.valuation_methods.'.$referenceMethod) }}:</strong>
+            @forelse($comparison['methods'][$referenceMethod]['sources'] ?? [] as $source)
+                <div>
+                    {{ $source['document'] ?? '—' }} · {{ $dates->formatDate($source['date'] ?? null, '—') }} · {{ __('inventory_accounting.valuation_report.source_types.'.($source['source'] ?? 'other')) }}
+                    @if(isset($source['unit_cost']))
+                        · {{ $numbers->format($source['unit_cost']) }}
+                    @endif
+                    @if(isset($source['currency']))
+                        · {{ $source['currency'] }} × {{ $source['exchange_rate'] ?? '1' }}
+                    @endif
+                    @if(isset($source['basis']))
+                        · {{ __('inventory_accounting.valuation_report.source_bases.'.$source['basis']) }}
+                    @endif
+                </div>
+            @empty
+                {{ __('inventory_accounting.valuation_report.no_reference_source') }}
+            @endforelse
+        </div>
+    @endforeach
 
     @if(($comparison['excluded_positions'] ?? []) !== [])
         <h4>{{ __('inventory_accounting.valuation_report.excluded_title') }}</h4>
@@ -76,7 +108,7 @@
         <tbody>
             @foreach($comparison['sources'] as $source)
                 <tr>
-                    <td>{{ $source['date'] }}</td>
+                    <td>{{ $dates->formatDate($source['date']) }}</td>
                     <td>{{ $source['document'] }}</td>
                     <td>{{ __('inventory.movements.types.'.$source['type']) }}</td>
                     <td>{{ __('inventory.movements.stock_statuses.'.$source['stock_status']) }}</td>
@@ -93,7 +125,7 @@
     <style>
         .report-filter-summary { background: #f8fafc; border: 1px solid #d8e2ef; margin-bottom: 8px; padding: 6px 8px; }
         .valuation-table { table-layout: fixed; margin-bottom: 12px; }
-        .valuation-table th, .valuation-table td { font-size: 7px; line-height: 1.2; }
+        .valuation-table th, .valuation-table td { font-size: 12px; line-height: 1.3; white-space: normal; }
         .valuation-table th:nth-child(n+2), .valuation-table td:nth-child(n+2) { text-align: right; }
     </style>
 @endsection

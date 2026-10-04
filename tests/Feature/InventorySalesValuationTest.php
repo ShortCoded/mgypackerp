@@ -5,6 +5,7 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
+use Modules\Core\Models\ItemUnit;
 use Modules\Inventory\Exports\InventorySalesValuationExport;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\WarehouseLocation;
@@ -77,7 +78,7 @@ test('sales valuation uses explicit stored price lines and one price-list curren
 
     $export = new InventorySalesValuationExport($valuation);
     expect($export->headings())->toHaveCount(10)
-        ->and($export->array()[0][7])->toBe('12.5000')
+        ->and($export->array()[0][7])->toBe('12.50000000')
         ->and($export->array()[0][8])->toBe('1250.00000000');
 
     expect(PriceList::query()->operationalPricingEligible()->whereKey($priceList)->exists())->toBeFalse();
@@ -95,7 +96,46 @@ test('sales valuation uses explicit stored price lines and one price-list curren
         ->and(app(PriceListPricingService::class)->resolve(
             $fixture['company']->getKey(), $fixture['customer']->getKey(), $fixture['currency']->getKey(),
             $fixture['finished'], $fixture['unit']->getKey(), 1, now()->toDateString(),
-        )['unit_price'])->toBe('12.5000');
+        )['unit_price'])->toBe('12.50000000');
+});
+
+test('sales valuation exports separate quantities for different base units without changing monetary totals', function (): void {
+    $fixture = salesCycleFixture();
+    $fixture['branch']->update(['type' => Branch::TypeWarehouse]);
+    $kilogram = ItemUnit::query()->create([
+        'company_id' => $fixture['company']->getKey(), 'doc_number' => 991198, 'doc_num' => 'SV-KG',
+        'name' => 'Kilogram', 'status' => 'active',
+    ]);
+    $fixture['raw']->forceFill(['item_unit_id' => $kilogram->getKey()])->save();
+    salesValuationTransaction($fixture, $fixture['raw']->getKey(), $fixture['store']->getKey(), '3', '0', ['unit_id' => $kilogram->getKey()]);
+    $priceList = createSalesPriceList($fixture, null, [['product' => $fixture['finished'], 'price' => '12.5']]);
+    $priceList->update(['approved_at' => now(), 'approved_by' => $fixture['user']->getKey()]);
+
+    $valuation = app(InventoryReportService::class)->salesValuation(
+        $fixture['company']->getKey(), [$fixture['branch']->getKey()],
+        ['as_of' => now()->toDateString(), 'price_list_id' => $priceList->getKey()],
+    );
+    $export = new InventorySalesValuationExport($valuation);
+    $pdfRows = view('reports.inventory.sales-valuation', [
+        'valuation' => $valuation, 'filterSummary' => ['As of' => now()->toDateString()],
+    ])->render();
+
+    expect($valuation['totals']['mixed_units'])->toBeTrue()
+        ->and($valuation['totals']['sales_value'])->toBe('1250.00000000')
+        ->and(collect($valuation['totals']['quantity_by_unit'])->pluck('quantity', 'unit_name')->all())
+        ->toBe([$fixture['unit']->name => '100.00000000', 'Kilogram' => '3.00000000'])
+        ->and($export->array()[2][6])->toBeNull()
+        ->and($export->array()[3][6])->toBeNull()
+        ->and($export->array()[4][6])->toBe('100.00000000')
+        ->and($export->array()[5][6])->toBe('3.00000000')
+        ->and($pdfRows)->toContain(__('inventory_accounting.book_valuation.mixed_units_warning'));
+
+    Permission::findOrCreate('inventory.reports.sales_valuation.view', 'web');
+    $fixture['user']->givePermissionTo('inventory.reports.sales_valuation.view');
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture))
+        ->get(route('admin.inventory.sales-valuation', ['price_list_id' => $priceList->getKey()]))
+        ->assertOk()
+        ->assertSee(__('inventory_accounting.book_valuation.mixed_units_warning'));
 });
 
 test('sales valuation applies meaningful as-of hall and location filters and rejects invalid hierarchy combinations', function (): void {
@@ -105,6 +145,12 @@ test('sales valuation applies meaningful as-of hall and location filters and rej
     $location = WarehouseLocation::query()->create(['branch_store_id' => $fixture['store']->getKey(), 'code' => 'SV-L1', 'name' => 'Valuation Location']);
     salesValuationTransaction($fixture, $fixture['raw']->getKey(), $fixture['store']->getKey(), '9', '0', [
         'branch_hall_id' => $hall->getKey(), 'warehouse_location_id' => $location->getKey(),
+        'transaction_date' => now()->addDay()->toDateString(),
+    ]);
+    $secondHall = BranchHall::query()->create(['branch_id' => $fixture['branch']->getKey(), 'name' => 'Second valuation hall']);
+    $secondLocation = WarehouseLocation::query()->create(['branch_store_id' => $fixture['store']->getKey(), 'code' => 'SV-L2', 'name' => 'Historical location']);
+    salesValuationTransaction($fixture, $fixture['raw']->getKey(), $fixture['store']->getKey(), '1', '0', [
+        'branch_hall_id' => $secondHall->getKey(), 'warehouse_location_id' => $secondLocation->getKey(),
         'transaction_date' => now()->addDay()->toDateString(),
     ]);
     $priceList = createSalesPriceList($fixture, null, [['product' => $fixture['raw'], 'price' => '7']]);
@@ -118,6 +164,12 @@ test('sales valuation applies meaningful as-of hall and location filters and rej
     expect($beforeFuture['rows'])->toBeEmpty()
         ->and($afterFuture['totals']['position_count'])->toBe(1)
         ->and($afterFuture['totals']['sales_value'])->toBe('63.00000000');
+    $storeValuation = app(InventoryReportService::class)->salesValuation($fixture['company']->getKey(), [$fixture['branch']->getKey()], [
+        'price_list_id' => $priceList->getKey(), 'as_of' => now()->addDay()->toDateString(), 'branch_store_id' => $fixture['store']->getKey(),
+    ]);
+    expect($storeValuation['rows']->where('product_id', $fixture['raw']->getKey()))->toHaveCount(1)
+        ->and($storeValuation['rows']->firstWhere('product_id', $fixture['raw']->getKey())->on_hand)->toBe('10.00000000')
+        ->and($storeValuation['rows']->firstWhere('product_id', $fixture['raw']->getKey())->sales_value)->toBe('70.00000000');
 
     Permission::findOrCreate('inventory.reports.sales_valuation.view', 'web');
     $fixture['user']->givePermissionTo('inventory.reports.sales_valuation.view');

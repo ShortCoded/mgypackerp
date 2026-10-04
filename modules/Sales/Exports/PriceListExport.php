@@ -21,7 +21,6 @@ class PriceListExport extends DefaultValueBinder implements FromCollection, Shou
     {
         return collect($this->report['export_rows'])->map(function (array $row): array {
             if (! $this->forCsv) {
-                $row[14] = $row[14] === '' ? null : (float) $row[14];
                 $row[16] = $row[16] === '' ? null : (float) $row[16];
             }
 
@@ -38,7 +37,7 @@ class PriceListExport extends DefaultValueBinder implements FromCollection, Shou
     /** @return array<string, string> */
     public function columnFormats(): array
     {
-        return $this->forCsv ? [] : ['O' => '#,##0.0000', 'Q' => '#,##0.0000'];
+        return $this->forCsv ? [] : ['Q' => '#,##0.0000'];
     }
 
     public function bindValue(Cell $cell, mixed $value): bool
@@ -55,6 +54,6 @@ class PriceListExport extends DefaultValueBinder implements FromCollection, Shou
     /** @return list<string> */
     private function numericColumns(): array
     {
-        return $this->forCsv ? [] : ['L', 'O', 'Q'];
+        return $this->forCsv ? [] : ['L', 'Q'];
     }
 }

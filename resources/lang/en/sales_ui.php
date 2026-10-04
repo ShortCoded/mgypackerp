@@ -1,6 +1,15 @@
 <?php
 
 return [
+    'amendment_stale' => 'This sales order changed after the form was opened. Reload it before saving your amendment.',
+    'amendment_below_commitment' => 'Line :line cannot be reduced below :quantity already allocated to production, reservations, deliveries or invoices. Correct the linked documents first.',
+    'production_amendment_help' => 'Amend the unallocated quantity, increase it or add lines, then submit and approve again. Existing line identities, commercial terms and linked invoice/production snapshots are preserved.',
+    'production_amendment_context' => 'A production-linked order requires an additive amendment in its original operating context.',
+    'production_amendment_line_identity' => 'Each linked sales line must retain its unique source identity.',
+    'production_amendment_locked_terms' => 'A production-linked line cannot change product, unit, price, or commercial terms. Add a new line for extra demand.',
+    'production_amendment_cannot_reduce' => 'A production-linked line cannot be reduced below its approved quantity.',
+    'production_amendment_new_line_required' => 'Add a separate line when extending a discounted or taxed source.',
+    'production_amendment_preserve_lines' => 'All production-linked sales lines must remain on the amended order.',
     'delivery_cost_unknown' => 'Cannot post delivery :document because product :product has no known inventory cost. Resolve the receipt and pricing before delivery.',
     'continue_sales_cycle' => 'Continue sales cycle',
     'create_quotation' => 'Create quotation',
@@ -162,6 +171,15 @@ return [
                 'cost_of_sales' => 'Cost of Sales',
                 'cost_of_sales_summary' => 'Cost of Sales Summary',
             ],
+            'row_types' => [
+                'invoice' => 'Invoice',
+                'line' => 'Invoice line',
+                'total' => 'Total',
+                'detail' => 'Detail',
+                'summary' => 'Summary',
+                'headings' => 'Headings',
+                'data' => 'Data',
+            ],
             'metrics' => [
                 'invoice_count' => 'Invoice count',
                 'gross_sales' => 'Gross sales',
@@ -183,7 +201,10 @@ return [
                 'unreconciled' => 'unreconciled',
             ],
             'headings' => [
+                'row_type' => 'Row Type',
+                'section' => 'Section',
                 'metric' => 'Metric',
+                'summary_value' => 'Summary Value',
                 'value' => 'Value',
                 'invoice_date' => 'Invoice Date',
                 'customer' => 'Customer',

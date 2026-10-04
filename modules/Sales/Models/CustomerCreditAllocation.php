@@ -15,7 +15,10 @@ class CustomerCreditAllocation extends Model
 
     protected function casts(): array
     {
-        return ['allocation_date' => 'date', 'amount' => 'decimal:4', 'applied_at' => 'datetime', 'reversed_at' => 'datetime'];
+        return [
+            'allocation_date' => 'date', 'amount' => 'decimal:4', 'applied_at' => 'datetime',
+            'reversed_at' => 'datetime', 'reversal_effect_snapshot' => 'array',
+        ];
     }
 
     public function creditNote(): BelongsTo

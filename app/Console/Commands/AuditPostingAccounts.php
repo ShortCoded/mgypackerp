@@ -36,12 +36,13 @@ class AuditPostingAccounts extends Command
             $this->newLine();
             $this->info($company->name.' ['.$company->doc_num.']');
             $this->table(
-                ['Classification code', 'Classification', 'State', 'Eligible posting account(s)'],
+                ['Classification code', 'Classification', 'State', 'Eligible posting account(s)', 'Incompatible classified account(s)'],
                 collect($result['rows'])->map(fn (array $row): array => [
                     $row['code'],
                     $row['classification'],
                     $row['status'],
                     $row['accounts'] !== '' ? $row['accounts'] : '—',
+                    $row['incompatible_accounts'] !== '' ? $row['incompatible_accounts'] : '—',
                 ])->all(),
             );
         }

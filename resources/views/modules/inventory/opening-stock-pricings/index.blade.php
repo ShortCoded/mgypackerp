@@ -72,6 +72,9 @@
                             </x-forms.select>
                         </div>
                     @endcan
+                    @can('inventory.opening_stock_pricings.import_estimate')
+                        <a class="btn btn-falcon-default btn-sm" href="{{ route($routePrefix.'.import-estimate.form') }}">{{ __('inventory.opening_stock_pricings.actions.import_estimate') }}</a>
+                    @endcan
                     <x-buttons.add-record :href="route($routePrefix.'.create')" permission="inventory.opening_stock_pricings.create" />
                 </div>
             </div>

@@ -58,7 +58,7 @@
             @endcan
         @endif
 
-        @if(! $isTrashed && ! $record->isClosed() && $record->closed_at === null && ! $record->isCancelled() && ! $record->hasDownstreamDocuments())
+        @if(! $isTrashed && ! $record->isClosed() && $record->closed_at === null && ! $record->isCancelled() && ! ($record->isDraft() && $record->approved_at !== null) && ! $record->hasDownstreamDocuments())
             @can('purchase_orders.cancel')
                 <button class="dropdown-item text-danger js-purchase-order-row-action" type="button" data-url="{{ route('admin.purchases.purchase-orders.cancel', $docNum) }}" data-method="POST" data-action="cancel">
                     <span class="fas fa-ban me-2"></span>{{ __('purchase_orders.actions.cancel') }}

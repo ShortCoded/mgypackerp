@@ -20,6 +20,8 @@ use Modules\Sales\Services\SalesCycleReadService;
 use Modules\Sales\Services\SalesFulfillmentService;
 use Modules\Sales\Services\SalesOrderService;
 use Modules\Sales\Services\SalesReturnService;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use Spatie\Permission\Models\Permission;
 
 require_once dirname(__DIR__).'/SalesCycleSupport.php';
@@ -182,10 +184,197 @@ test('sales ledger summary uses exact decimal strings and matches screen export 
     $sheets = (new SalesCycleReportExport($data))->sheets();
     $ledgerSheet = $sheets['invoices'][0] ?? $sheets[0];
     $last = collect($ledgerSheet->array())->last();
-    expect($last[2])->toContain('TOTAL');
+    expect($last[2])->toContain(__('sales_ui.reports.export.row_types.total'));
     expect(bccomp((string) $last[11], $ledger['net_sales'], 4))->toBe(0)
         ->and(bccomp((string) $last[12], $ledger['collected'], 4))->toBe(0)
         ->and(bccomp((string) $last[13], $ledger['outstanding'], 4))->toBe(0);
+});
+
+test('fulfillment remaining quantity agrees across screen pdf xlsx and csv', function (): void {
+    $fixture = salesCycleFixture();
+    foreach (['reports.sales.fulfillment.view', 'reports.sales.fulfillment.print', 'reports.sales.fulfillment.export'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $fixture['user']->givePermissionTo($permission);
+    }
+    $session = salesCycleSession($fixture);
+    $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
+        'lines' => [[
+            'product_id' => $fixture['service']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Synthetic report quantity',
+            'quantity' => '0.12345678',
+            'unit_price' => '10',
+            'discount_amount' => '0',
+            'tax_amount' => '0',
+        ]],
+        'payment_schedules' => [],
+    ])));
+    $order->lines()->sole()->forceFill([
+        'delivered_quantity' => '0.12345677',
+        'invoiced_quantity' => '0.00000003',
+    ])->save();
+    $params = ['report' => 'fulfillment'];
+
+    $screen = $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.reports.sales.sales-orders.index', $params))->assertOk()->getContent();
+    expect($screen)->toContain($order->doc_num, '0.00000001');
+
+    $pdf = $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.reports.sales.sales-orders.print', $params))->assertOk();
+    expect(salesPdfText($pdf->getContent()))->toContain($order->doc_num, '0.00000001');
+
+    $xlsx = $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.reports.sales.sales-orders.export', [...$params, 'format' => 'xlsx']))
+        ->assertOk()->assertDownload();
+    $cell = IOFactory::load($xlsx->baseResponse->getFile()->getPathname())->getActiveSheet()->getCell('H2');
+    expect($cell->getDataType())->toBe(DataType::TYPE_STRING)
+        ->and($cell->getValue())->toBe('0.00000001');
+
+    $csv = $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.reports.sales.sales-orders.export', [...$params, 'format' => 'csv']))
+        ->assertOk()->assertDownload();
+    expect(file_get_contents($csv->baseResponse->getFile()->getPathname()))->toContain($order->doc_num, '0.00000001');
+});
+
+test('sales invoice eight-place unit price survives source document and invoice report exports', function (): void {
+    $fixture = salesCycleFixture();
+    salesReportTotalsPermissions($fixture);
+    foreach (['customer_invoices.view', 'customer_invoices.view_prices', 'customer_invoices.print'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+        $fixture['user']->givePermissionTo($permission);
+    }
+    $session = salesCycleSession($fixture);
+    $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
+        'lines' => [[
+            'product_id' => $fixture['service']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Synthetic eight-place invoice price',
+            'quantity' => '2',
+            'unit_price' => '22.54545123',
+            'discount_amount' => '0',
+            'tax_amount' => '0',
+        ]],
+        'payment_schedules' => [[
+            'title' => 'Exact invoice value',
+            'amount' => '45.0909',
+            'due_date' => now()->toDateString(),
+        ]],
+    ])));
+    $invoice = app(CustomerInvoiceService::class)->post(app(CustomerInvoiceService::class)->createFromOrder(
+        $order,
+        [['sales_order_line_id' => $order->lines->sole()->getKey(), 'quantity' => '2']],
+        [['due_date' => now()->toDateString(), 'amount' => '45.0909']],
+    ));
+    expect($invoice->lines()->sole()->unit_price)->toBe('22.54545123');
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.sales.sales-invoices.show', $invoice))->assertOk()->assertSee('22.54545123');
+    $documentPdf = $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.sales.sales-invoices.print', $invoice))->assertOk();
+    expect(salesPdfText($documentPdf->getContent()))->toContain('22.54545123');
+
+    $params = ['report' => 'invoices', 'invoice_doc_num' => $invoice->doc_num];
+    $xlsx = $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.reports.sales.sales-orders.export', [...$params, 'format' => 'xlsx']))
+        ->assertOk()->assertDownload();
+    $workbook = IOFactory::load($xlsx->baseResponse->getFile()->getPathname());
+    $priceCell = $workbook->getSheet(1)->getCell('F2');
+    expect($priceCell->getDataType())->toBe(DataType::TYPE_STRING)
+        ->and($priceCell->getValue())->toBe('22.54545123');
+
+    $csv = $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.reports.sales.sales-orders.export', [...$params, 'format' => 'csv']))
+        ->assertOk()->assertDownload();
+    $csvRows = array_map('str_getcsv', file($csv->baseResponse->getFile()->getPathname()));
+    expect($csvRows)->toHaveCount(4)
+        ->and($csvRows[1][1])->toBe($invoice->doc_num)
+        ->and($csvRows[1][15])->toBe('45.0909')
+        ->and($csvRows[2][1])->toBe($invoice->doc_num)
+        ->and($csvRows[2][9])->toBe('22.54545123')
+        ->and($csvRows[3][17])->toBe('45.0909');
+});
+
+test('cost of sales export keeps detail and totals with full precision in xlsx and csv', function (): void {
+    $report = [
+        'reportType' => 'cost_of_sales',
+        'costOfSalesSummary' => [
+            'delivery_count' => 1,
+            'return_count' => 0,
+            'delivery_cost' => '278338884.0337',
+            'return_cost' => '0.0000',
+            'net_cost' => '278338884.0337',
+            'unreconciled_count' => 0,
+        ],
+        'costOfSalesRows' => [[
+            'movement_kind' => 'delivery',
+            'document' => 'SYNTHETIC-ISSUE-1',
+            'product' => 'Synthetic precise product',
+            'quantity' => '12345678.12345678',
+            'unit_cost' => '22.54545123',
+            'signed_total_cost' => '278338884.0337',
+            'posting_date' => now(),
+            'reconciliation_status' => 'matched',
+        ]],
+    ];
+    $export = new SalesCycleReportExport($report);
+    $path = tempnam(sys_get_temp_dir(), 'mgypack-sales-cost-');
+    try {
+        file_put_contents($path, Excel::raw($export, ExcelWriter::XLSX));
+        $sheet = IOFactory::load($path)->getSheet(1);
+        expect($sheet->getCell('H2')->getDataType())->toBe(DataType::TYPE_STRING)
+            ->and($sheet->getCell('H2')->getValue())->toBe('12345678.12345678')
+            ->and($sheet->getCell('I2')->getDataType())->toBe(DataType::TYPE_STRING)
+            ->and($sheet->getCell('I2')->getValue())->toBe('22.54545123')
+            ->and($sheet->getCell('J2')->getDataType())->toBe(DataType::TYPE_STRING)
+            ->and($sheet->getCell('J2')->getValue())->toBe('278338884.0337')
+            ->and($sheet->getParent()->getSheet(0)->getCell('B4')->getDataType())->toBe(DataType::TYPE_STRING)
+            ->and($sheet->getParent()->getSheet(0)->getCell('B4')->getValue())->toBe('278338884.0337');
+    } finally {
+        unlink($path);
+    }
+
+    $csvRows = array_map('str_getcsv', explode("\n", trim(Excel::raw(new SalesCycleReportExport($report, true), ExcelWriter::CSV))));
+    expect($csvRows[1])->toContain('SYNTHETIC-ISSUE-1', '12345678.12345678', '22.54545123')
+        ->and(collect($csvRows)->flatten()->all())->toContain('278338884.0337');
+});
+
+test('multi-section sales CSV includes every section rather than only the first worksheet', function (): void {
+    $csv = Excel::raw(new SalesCycleReportExport([
+        'reportType' => 'pricing',
+        'unpricedProducts' => [(object) ['doc_num' => 'SYN-UNPRICED', 'name' => 'Synthetic unpriced item', 'category_name' => 'Synthetic category']],
+        'customersWithoutPriceLists' => [(object) ['doc_num' => 'SYN-CUSTOMER', 'name' => 'Synthetic customer']],
+        'customerProductPricingGaps' => [(object) [
+            'customer_doc_num' => 'SYN-GAP-CUSTOMER', 'customer_name' => 'Synthetic gap customer',
+            'product_doc_num' => 'SYN-GAP-PRODUCT', 'product_name' => 'Synthetic gap product',
+        ]],
+    ], true), ExcelWriter::CSV);
+
+    expect($csv)->toContain('SYN-UNPRICED', 'SYN-CUSTOMER', 'SYN-GAP-CUSTOMER', 'SYN-GAP-PRODUCT');
+});
+
+test('single-section sales CSV does not coerce a high significant-digit amount', function (): void {
+    $report = [
+        'reportType' => 'period',
+        'salesByPeriod' => [(object) [
+            'invoice_date' => '2026-10-01', 'invoice_count' => 1, 'sales_value' => '9999999999999999.1234',
+        ]],
+        'periodSummary' => ['invoice_count' => 1, 'sales_value' => '9999999999999999.1234'],
+    ];
+    $csv = Excel::raw(new SalesCycleReportExport($report, true), ExcelWriter::CSV);
+
+    $rows = array_map('str_getcsv', explode("\n", trim($csv)));
+    expect($rows[1][2])->toBe('9999999999999999.1234')
+        ->and($rows[2][2])->toBe('9999999999999999.1234');
+
+    $path = tempnam(sys_get_temp_dir(), 'mgypack-sales-period-');
+    try {
+        file_put_contents($path, Excel::raw(new SalesCycleReportExport($report), ExcelWriter::XLSX));
+        $cell = IOFactory::load($path)->getSheet(0)->getCell('C2');
+        expect($cell->getDataType())->toBe(DataType::TYPE_STRING)
+            ->and($cell->getValue())->toBe('9999999999999999.1234');
+    } finally {
+        unlink($path);
+    }
 });
 
 test('sales ledger totals are pagination independent beyond twenty five rows', function () {
@@ -409,6 +598,17 @@ test('sales ledger return quantity excludes cancelled returns only', function ()
         ])->firstOrFail();
     expect(bccomp((string) $ledgerRow->lines->sole()->returned_quantity, '1', 8))->toBe(0);
 
+    $returnsData = salesReportControllerData($fixture, $session, ['report' => 'returns']);
+    expect($returnsData['returnsSummary']['return_count'])->toBe(1)
+        ->and($returnsData['returnsSummary']['returned_quantity'])->toBe('1.00000000')
+        ->and($returnsData['returnAnalysisSummary']['line_count'])->toBe(1)
+        ->and($returnsData['returnAnalysisSummary']['returned_quantity'])->toBe('1.00000000');
+    $returnsScreen = $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.reports.sales.sales-orders.index', ['report' => 'returns']))
+        ->assertOk()->getContent();
+    expect(salesReportTotalsBc(salesReportFooterValue($returnsScreen, 'returns-total', 'returned_quantity'), '1.00000000', 8))->toBeTrue()
+        ->and(salesReportTotalsBc(salesReportFooterValue($returnsScreen, 'return-analysis-total', 'returned_quantity'), '1.00000000', 8))->toBeTrue();
+
     $this->actingAs($fixture['user'])->withSession($session)
         ->get(route('admin.reports.sales.sales-orders.index', ['report' => 'invoices']))
         ->assertOk();
@@ -453,7 +653,7 @@ test('sales ledger renders zero row totals across screen pdf and exports', funct
     $ledgerSheet = $sheets['invoices'][0] ?? $sheets[0];
     $rows = $ledgerSheet->array();
     expect(count($rows))->toBe(1);
-    expect($rows[0][2])->toContain('TOTAL (0)');
+    expect($rows[0][2])->toContain(__('sales_ui.reports.export.row_types.total').' (0)');
 });
 
 test('every non ledger perspective footer totals match summaries across screen pdf and export', function () {
@@ -628,7 +828,7 @@ test('every non ledger perspective footer totals match summaries across screen p
         'returns' => $returnsData,
     ];
     $expectedSheetCounts = [
-        'financial' => 4, 'customers' => 1, 'period' => 1, 'products' => 2,
+        'financial' => 5, 'customers' => 1, 'period' => 1, 'products' => 2,
         'receivables' => 3, 'collections' => 2, 'returns' => 2,
     ];
     foreach ($exportData as $type => $reportData) {
@@ -643,7 +843,7 @@ test('every non ledger perspective footer totals match summaries across screen p
 
                 continue;
             }
-            expect(implode(' ', array_map('strval', end($rows))))->toContain('TOTAL');
+            expect(implode(' ', array_map('strval', end($rows))))->toContain(__('sales_ui.reports.export.row_types.total'));
         }
     }
     $customersExport = array_values((new SalesCycleReportExport($exportData['customers']))->sheets());
@@ -686,14 +886,16 @@ test('serialized xlsx and csv exports carry total rows with exact values', funct
             }
         }
         $zip->close();
-        expect($strings)->toContain('TOTAL (1)');
-        expect(preg_match('/<v>42\.5<\/v>/', $strings))->toBe(1);
+        expect($strings)->toContain(__('sales_ui.reports.export.row_types.total').' (1)');
+        $totalCell = IOFactory::load($path)->getSheet(0)->getCell('J3');
+        expect($totalCell->getDataType())->toBe(DataType::TYPE_STRING)
+            ->and($totalCell->getValue())->toBe('42.5000');
     } finally {
         @unlink($path);
     }
 
     $csv = Excel::raw($export, ExcelWriter::CSV);
-    expect($csv)->toContain('TOTAL (1)');
+    expect($csv)->toContain(__('sales_ui.reports.export.row_types.total').' (1)');
     expect($csv)->toContain('42.5');
 });
 

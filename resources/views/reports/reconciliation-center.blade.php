@@ -2,10 +2,11 @@
 
 @section('report')
     @php($numbers = app(\Modules\Core\Services\NumericFormatService::class))
+    @php($dates = app(\Modules\Core\Services\DateFormatService::class))
 
     <div class="report-filter-summary">
         <strong>{{ __('reconciliation_center.title') }}</strong>
-        <div>{{ data_get($report, 'filters.from_date') }} — {{ data_get($report, 'filters.to_date') }}</div>
+        <div dir="ltr">{{ $dates->formatDate(data_get($report, 'filters.from_date')) }} — {{ $dates->formatDate(data_get($report, 'filters.to_date')) }}</div>
         <div>{{ __('reconciliation_center.summary.mismatches') }}: {{ $report['mismatch_count'] }} / {{ __('reconciliation_center.summary.absolute_difference') }}: {{ $numbers->format($report['absolute_difference_total']) }}</div>
     </div>
 
@@ -30,7 +31,7 @@
                         <td>{{ $row['label'] }}</td>
                         <td>{{ __('reconciliation_center.statuses.'.$row['status']) }}</td>
                         @foreach(['source_opening', 'gl_opening', 'source_movement', 'gl_movement', 'source_ending', 'gl_ending', 'ending_difference'] as $column)
-                            <td>{{ $numbers->format($row[$column]) }}</td>
+                            <td dir="ltr">{{ $numbers->format($row[$column]) }}</td>
                         @endforeach
                     </tr>
                 @empty
@@ -43,7 +44,7 @@
     <style>
         .report-filter-summary { background: #f8fafc; border: 1px solid #d8e2ef; margin-bottom: 8px; padding: 6px 8px; }
         .reconciliation-table { margin-bottom: 12px; table-layout: fixed; }
-        .reconciliation-table th, .reconciliation-table td { font-size: 6.5px; line-height: 1.2; }
+        .reconciliation-table th, .reconciliation-table td { font-size: 12px; line-height: 1.3; }
         .reconciliation-table th:nth-child(n+3), .reconciliation-table td:nth-child(n+3) { text-align: right; white-space: nowrap; }
     </style>
 @endsection

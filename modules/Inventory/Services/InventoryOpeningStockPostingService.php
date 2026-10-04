@@ -3,8 +3,10 @@
 namespace Modules\Inventory\Services;
 
 use DomainException;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
+use Modules\Finance\Services\OpeningInventoryValuationService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Inventory\Models\InventoryLayerAllocation;
@@ -16,10 +18,15 @@ use Modules\Inventory\Models\OpeningStockPricingLine;
 
 class InventoryOpeningStockPostingService
 {
-    public function __construct(private readonly InventoryLayerService $layers) {}
+    public function __construct(
+        private readonly InventoryLayerService $layers,
+        private readonly InventoryCostPolicyService $costPolicies,
+    ) {}
 
     public function post(OpeningStock $openingStock): void
     {
+        Company::query()->whereKey($openingStock->company_id)->lockForUpdate()->firstOrFail();
+        FinancialPeriod::query()->whereKey($openingStock->financial_period_id)->lockForUpdate()->firstOrFail();
         $locked = OpeningStock::query()
             ->with('lines')
             ->lockForUpdate()
@@ -46,6 +53,13 @@ class InventoryOpeningStockPostingService
             return;
         }
 
+        $this->costPolicies->assertPostingDateAllowed(
+            (int) $locked->company_id,
+            (int) $locked->branch_store_id,
+            $locked->document_date->toDateString(),
+        );
+        $costPolicy = $this->costPolicies->resolve((int) $locked->company_id, (int) $locked->branch_store_id, $locked->document_date->toDateString());
+
         foreach ($locked->lines as $line) {
             $quantity = (string) $line->quantity;
 
@@ -54,6 +68,10 @@ class InventoryOpeningStockPostingService
             }
 
             $product = Product::query()->lockForUpdate()->findOrFail($line->product_id);
+            if (! InventoryTransaction::query()->where('posting_key', "opening-stock:{$locked->id}:line:{$line->id}")->exists()) {
+                app(OpeningInventoryValuationService::class)->assertSourceMayBePosted((int) $locked->company_id, (int) $locked->financial_period_id,
+                    (int) $locked->branch_id, $product, $line->stock_status ?: InventoryTransaction::StatusAvailable);
+            }
             $valuation = $this->valuationForLine((int) $line->getKey());
 
             $transaction = InventoryTransaction::query()->firstOrCreate(
@@ -82,6 +100,10 @@ class InventoryOpeningStockPostingService
                     'source_line_id' => $line->getKey(),
                     'unit_cost' => $valuation['unit_cost'],
                     'total_cost' => $valuation['total_cost'],
+                    'cost_method' => $costPolicy['method'],
+                    'cost_policy_id' => $costPolicy['policy_id'],
+                    'cost_basis' => 'opening_stock',
+                    'serial_numbers' => $line->product_snapshot['serial_numbers'] ?? null,
                     'created_by' => auth()->id(),
                 ],
             );
@@ -91,10 +113,16 @@ class InventoryOpeningStockPostingService
 
     public function applyPricing(OpeningStockPricing $pricing): void
     {
+        Company::query()->whereKey($pricing->company_id)->lockForUpdate()->firstOrFail();
+        FinancialPeriod::query()->whereKey($pricing->financial_period_id)->lockForUpdate()->firstOrFail();
         $lockedPricing = OpeningStockPricing::query()
             ->with('lines.openingStockLine')
             ->lockForUpdate()
             ->findOrFail($pricing->getKey());
+
+        if ($lockedPricing->pricing_basis === OpeningStockPricing::BasisEstimate && ! $lockedPricing->isClosed()) {
+            throw new DomainException(__('inventory.opening_stock_pricings.messages.estimate_approval_unavailable'));
+        }
 
         foreach ($lockedPricing->lines as $pricingLine) {
             $openingLine = $pricingLine->openingStockLine;
@@ -113,6 +141,8 @@ class InventoryOpeningStockPostingService
                 continue;
             }
 
+            app(OpeningInventoryValuationService::class)->assertSourceMayBePosted((int) $movement->company_id, (int) $movement->financial_period_id,
+                (int) $movement->branch_id, $openingLine->product, $movement->stock_status);
             $this->assertNoLaterMovement($movement);
 
             $unitCost = bcmul((string) $pricingLine->unit_price, (string) $lockedPricing->exchange_rate, 8);
@@ -131,6 +161,8 @@ class InventoryOpeningStockPostingService
 
     public function clearPricing(OpeningStockPricing $pricing): void
     {
+        Company::query()->whereKey($pricing->company_id)->lockForUpdate()->firstOrFail();
+        FinancialPeriod::query()->whereKey($pricing->financial_period_id)->lockForUpdate()->firstOrFail();
         $lockedPricing = OpeningStockPricing::query()
             ->withTrashed()
             ->with('lines.openingStockLine')
@@ -154,6 +186,8 @@ class InventoryOpeningStockPostingService
                 continue;
             }
 
+            app(OpeningInventoryValuationService::class)->assertSourceMayBePosted((int) $movement->company_id, (int) $movement->financial_period_id,
+                (int) $movement->branch_id, $openingLine->product, $movement->stock_status);
             $this->assertNoLaterMovement($movement);
             $movement->forceFill(['unit_cost' => null, 'total_cost' => null])->save();
             $this->syncReceiptLayerCost($movement, null);
@@ -168,6 +202,13 @@ class InventoryOpeningStockPostingService
             ->where('inventory_opening_stock_pricing_lines.opening_stock_line_id', $openingStockLineId)
             ->whereNull('inventory_opening_stock_pricing_lines.deleted_at')
             ->whereNull('inventory_opening_stock_pricings.deleted_at')
+            ->where(function ($query): void {
+                $query->where('inventory_opening_stock_pricings.pricing_basis', '!=', OpeningStockPricing::BasisEstimate)
+                    ->orWhere(function ($approved): void {
+                        $approved->where('inventory_opening_stock_pricings.status', OpeningStockPricing::StatusClosed)
+                            ->where('inventory_opening_stock_pricings.is_closed', true);
+                    });
+            })
             ->select([
                 'inventory_opening_stock_pricing_lines.unit_price',
                 'inventory_opening_stock_pricing_lines.line_total',

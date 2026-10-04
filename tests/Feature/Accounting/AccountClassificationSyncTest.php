@@ -89,21 +89,21 @@ function protectedClassificationSnapshots(array $codes): array
         ->toArray();
 }
 
-test('canonical registry exactly matches the normalized 139 label dictionary', function (): void {
+test('canonical registry preserves the normalized 139 label dictionary and adds receipt completion clearing', function (): void {
     $registry = app(AccountClassificationRegistry::class);
     $definitions = collect($registry->definitions())->keyBy('code')->sortKeys();
-    $labelDigest = hash('sha256', $definitions
+    $labelDigest = hash('sha256', $definitions->except('inventory_cost_completion_clearing')
         ->map(fn (array $definition, string $code): string => implode("\0", [$code, $definition['name'], $definition['name_en']]))
         ->implode("\n"));
 
-    expect($definitions)->toHaveCount(139)
-        ->and($definitions->keys()->unique())->toHaveCount(139)
+    expect($definitions)->toHaveCount(140)
+        ->and($definitions->keys()->unique())->toHaveCount(140)
         ->and($registry->originalCodes())->toHaveCount(24)
-        ->and($registry->addedCodes())->toHaveCount(115)
-        ->and($definitions->pluck('name')->filter(fn (string $name): bool => trim($name) !== ''))->toHaveCount(139)
-        ->and($definitions->pluck('name_en')->filter(fn (string $name): bool => trim($name) !== ''))->toHaveCount(139)
-        ->and($definitions->pluck('name')->unique())->toHaveCount(139)
-        ->and($definitions->pluck('name_en')->unique())->toHaveCount(139)
+        ->and($registry->addedCodes())->toHaveCount(116)
+        ->and($definitions->pluck('name')->filter(fn (string $name): bool => trim($name) !== ''))->toHaveCount(140)
+        ->and($definitions->pluck('name_en')->filter(fn (string $name): bool => trim($name) !== ''))->toHaveCount(140)
+        ->and($definitions->pluck('name')->unique())->toHaveCount(140)
+        ->and($definitions->pluck('name_en')->unique())->toHaveCount(140)
         ->and($definitions->where('code', AccountClassification::FixedAssets))->toHaveCount(1)
         ->and($definitions->get(AccountClassification::FixedAssets))->toMatchArray([
             'name' => 'الأصول الثابتة',
@@ -137,6 +137,13 @@ test('canonical registry exactly matches the normalized 139 label dictionary', f
             'statement_type' => Account::StatementIncomeStatement,
             'normal_balance' => Account::BalanceDebit,
         ])
+        ->and($definitions->get('inventory_cost_completion_clearing'))->toMatchArray([
+            'name' => 'حساب مقابل استكمال تكلفة الاستلامات',
+            'name_en' => 'Receipt Cost Completion Clearing',
+            'account_type' => Account::TypeLiability,
+            'statement_type' => Account::StatementFinancialPosition,
+            'normal_balance' => Account::BalanceCredit,
+        ])
         ->and($labelDigest)->toBe('fecd16fc948c47b398c455da526a78e0deeb2e8535ff72b4ed8aae3faad58ea3');
 });
 
@@ -161,7 +168,7 @@ test('dry run reports exact label changes and performs no writes', function (): 
     $protectedTablesBefore = accountingTableSnapshots();
 
     $this->artisan('account-classifications:sync', ['--dry-run' => true])
-        ->expectsOutputToContain('inserted=115, unchanged=1, label_updates=23, label_conflicts=0, deleted=0')
+        ->expectsOutputToContain('inserted=116, unchanged=1, label_updates=23, label_conflicts=0, deleted=0')
         ->expectsOutputToContain('Dry run complete; no database writes were performed.')
         ->assertSuccessful();
 
@@ -185,7 +192,7 @@ test('label comparison treats each bilingual pair atomically and never overwrite
     $plan = $registry->plan();
 
     expect($plan)->toMatchArray([
-        'inserted' => 115,
+        'inserted' => 116,
         'unchanged' => 1,
         'label_updates' => 19,
         'label_conflicts' => 4,
@@ -198,7 +205,7 @@ test('label comparison treats each bilingual pair atomically and never overwrite
     ]);
 
     $this->artisan('account-classifications:sync', ['--dry-run' => true])
-        ->expectsOutputToContain('inserted=115, unchanged=1, label_updates=19, label_conflicts=4, deleted=0')
+        ->expectsOutputToContain('inserted=116, unchanged=1, label_updates=19, label_conflicts=4, deleted=0')
         ->expectsOutputToContain('label_conflict_codes=cash,bank,accounts_receivable,inventory')
         ->assertFailed();
 
@@ -218,13 +225,13 @@ test('service synchronization inserts missing rows and changes only safe labels 
     $result = $registry->synchronize();
 
     expect($result)->toMatchArray([
-        'inserted' => 115,
+        'inserted' => 116,
         'unchanged' => 1,
         'label_updates' => 23,
         'label_conflicts' => 0,
         'deleted' => 0,
-    ])->and(AccountClassification::query()->count())->toBe(139)
-        ->and(AccountClassification::query()->distinct()->count('code'))->toBe(139)
+    ])->and(AccountClassification::query()->count())->toBe(140)
+        ->and(AccountClassification::query()->distinct()->count('code'))->toBe(140)
         ->and(protectedClassificationSnapshots($registry->originalCodes()))->toBe($protectedClassificationsBefore)
         ->and(accountingTableSnapshots())->toBe($protectedTablesBefore);
 
@@ -239,7 +246,7 @@ test('service synchronization inserts missing rows and changes only safe labels 
 
     expect($registry->synchronize())->toMatchArray([
         'inserted' => 0,
-        'unchanged' => 139,
+        'unchanged' => 140,
         'label_updates' => 0,
         'label_conflicts' => 0,
         'deleted' => 0,
@@ -247,7 +254,7 @@ test('service synchronization inserts missing rows and changes only safe labels 
         ->and(accountingTableSnapshots())->toBe($protectedTablesBefore);
 
     $this->artisan('account-classifications:verify')
-        ->expectsOutputToContain('current=139, current_with_trashed=139, canonical=139')
+        ->expectsOutputToContain('current=140, current_with_trashed=140, canonical=140')
         ->expectsOutputToContain('label_update_codes=0')
         ->expectsOutputToContain('label_conflict_codes=0')
         ->assertSuccessful();

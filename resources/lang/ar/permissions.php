@@ -108,6 +108,9 @@ $hrPayrollPermissionLabels = [
     'hr.payroll_preparation.calculate' => 'احتساب الرواتب',
     'hr.payroll_approval.review' => 'إرسال الرواتب للمراجعة',
     'hr.payroll_approval.approve' => 'اعتماد وترحيل الرواتب',
+    'hr.payroll_approval.correct' => 'تجهيز تصحيح مسير الرواتب',
+    'hr.payroll_approval.correct_approve' => 'اعتماد أو رفض تصحيح مسير الرواتب',
+    'hr.payroll_approval.correct_later_period' => 'تصحيح مسير الرواتب في فترة مالية لاحقة مع حفظ الفترة الأصلية',
     'hr.payroll_payment.create' => 'إنشاء دفعة رواتب',
     'hr.payroll_reconciliation.view' => 'عرض تسوية الرواتب',
 ];
@@ -319,6 +322,14 @@ foreach ([
 }
 
 $inventoryPermissionLabels['inventory.opening_stocks.approve'] = 'اعتماد مخزون أول المدة';
+$inventoryPermissionLabels['inventory.opening_stock_cost_corrections.prepare'] = 'إعداد تصحيح تكلفة مخزون أول المدة';
+$inventoryPermissionLabels['inventory.opening_stock_cost_corrections.approve'] = 'اعتماد أو رفض تصحيح تكلفة مخزون أول المدة';
+$inventoryPermissionLabels['inventory.opening_stock_quantity_corrections.prepare'] = 'إعداد تصحيح كمية مخزون أول المدة';
+$inventoryPermissionLabels['inventory.opening_stock_quantity_corrections.approve'] = 'اعتماد أو رفض تصحيح كمية مخزون أول المدة';
+$inventoryPermissionLabels['inventory.opening_stock_pricings.approve_estimate'] = 'اعتماد تكلفة تقديرية لمخزون أول المدة';
+$inventoryPermissionLabels['inventory.documents.propose_receipt_cost'] = 'إعداد مقترح تكلفة إذن استلام مخزني';
+$inventoryPermissionLabels['inventory.documents.approve_receipt_cost'] = 'اعتماد تكلفة إذن استلام مخزني';
+$inventoryPermissionLabels['inventory.opening_stock_pricings.import_estimate'] = 'استيراد تقدير تكلفة لمخزون أول المدة';
 $inventoryPermissionLabels['inventory.unpriced_inventory_receipts.view'] = 'عرض توريد مخزني بدون أسعار';
 $inventoryPermissionLabels['inventory.unpriced_inventory_receipts.create'] = 'إنشاء توريد مخزني بدون أسعار';
 $inventoryPermissionLabels['inventory.unpriced_inventory_receipts.edit'] = 'تعديل توريد مخزني بدون أسعار';
@@ -332,6 +343,13 @@ $inventoryPermissionLabels['inventory.unpriced_inventory_receipts.document_numbe
 $inventoryPermissionLabels['inventory.unpriced_inventory_receipts.document_number_settings.update'] = 'تحديث إعدادات رقم مستند توريد مخزني بدون أسعار';
 
 return [
+    'production.runs.correct' => 'تصحيح تشغيلة مكتملة',
+    'production.runs.correct_approve' => 'اعتماد أو رفض تصحيح التشغيلة',
+    'production.runs.correct_later_period' => 'تصحيح وإعادة استلام التشغيلة في فترة لاحقة مع حفظ الفترة الأصلية',
+    'inventory.cost_policies.transition.prepare' => 'إعداد انتقالات سياسة تكلفة المخزون',
+    'inventory.cost_policies.transition.approve' => 'اعتماد انتقالات سياسة تكلفة المخزون',
+    'inventory.cost_policies.transition.activate' => 'تفعيل انتقالات سياسة تكلفة المخزون',
+    'inventory.cost_policies.transition.cancel' => 'إلغاء انتقالات سياسة تكلفة المخزون',
     'activity.logs.details' => 'عرض تفاصيل سجل النشاط',
     'activity.logs.export' => 'تصدير سجلات النشاط',
     'activity.logs.pdf' => 'تصدير سجلات النشاط PDF',
@@ -427,7 +445,14 @@ return [
     ...$fixedAssetPermissionLabels,
     ...$inventoryPermissionLabels,
     'customer_credits.allocate' => 'تخصيص رصيد العميل',
+    'customer_credits.reverse_allocation' => 'عكس تخصيص رصيد العميل',
     'customer_credits.refund' => 'رد رصيد العميل',
+    'customer_credits.reverse_refund' => 'عكس رد رصيد العميل بعد إثبات استرداده',
+    'sales_returns.correct_prepare' => 'إعداد تصحيح مرتجع المبيعات',
+    'sales_returns.correct_approve' => 'اعتماد تصحيح مرتجع المبيعات بصورة مستقلة',
+    'sales_returns.correct_later_period' => 'تصحيح مرتجع المبيعات في فترة لاحقة مفتوحة',
+    'customer_credits.prepare_application_evidence' => 'إعداد توثيق تطبيق إشعار الدائن القديم',
+    'customer_credits.approve_application_evidence' => 'اعتماد توثيق تطبيق إشعار الدائن من مستخدم مستقل',
     'customer_invoices.electronic_invoice.submit' => 'إرسال الفاتورة الإلكترونية',
     'purchases.direct_procurement.override' => 'تجاوز ضوابط الشراء المباشر',
     'production.quality.release_normal' => 'إطلاق الإنتاج بعد فحص الجودة',
@@ -539,4 +564,22 @@ return [
     'reports.costing.product_cost.print' => 'طباعة تقرير تكلفة المنتج',
     'reports.costing.product_cost.export' => 'تصدير تقرير تكلفة المنتج',
     'purchases.supplier_payment_allocations.create' => 'تخصيص مدفوعات الموردين',
+    'inventory.documents.correct_prepare' => 'تجهيز تصحيح الأذون المخزنية',
+    'inventory.documents.correct_approve' => 'اعتماد تصحيح الأذون المخزنية',
+    'inventory.documents.correct_later_period' => 'ترحيل تصحيح الأذون في فترة لاحقة',
+    'inventory.cost_policies.periodic.view' => 'عرض إقفالات تكلفة المخزون الدورية',
+    'inventory.cost_policies.periodic.prepare' => 'إعداد إقفال تكلفة المخزون الدوري',
+    'inventory.cost_policies.periodic.approve' => 'اعتماد إقفال تكلفة المخزون الدوري',
+    'inventory.cost_policies.periodic.export' => 'تصدير إقفال تكلفة المخزون الدوري',
+    'inventory.cost_policies.periodic.print' => 'طباعة إقفال تكلفة المخزون الدوري',
+    'inventory.cost_policies.standard.view' => 'عرض التكلفة المعيارية وفروقها',
+    'inventory.cost_policies.standard.prepare' => 'إعداد نسخة التكلفة المعيارية',
+    'inventory.cost_policies.standard.settle' => 'إعداد تسوية فروق التكلفة المعيارية',
+    'inventory.cost_policies.standard.approve' => 'اعتماد التكلفة المعيارية وفروقها',
+    'inventory.cost_policies.standard.export' => 'تصدير التكلفة المعيارية وفروقها',
+    'inventory.cost_policies.standard.print' => 'طباعة التكلفة المعيارية وفروقها',
+    'customer_invoices.correct_prepare' => 'إعداد تصحيح الفاتورة والتسليم',
+    'customer_invoices.correct_approve' => 'اعتماد تصحيح الفاتورة والتسليم',
+    'customer_invoices.correct_later_period' => 'تصحيح الفاتورة والتسليم في فترة لاحقة',
+    'customer_invoices.correct_company_warehouse' => 'تصحيح تسليم الفاتورة من مخزن فرع آخر',
 ];

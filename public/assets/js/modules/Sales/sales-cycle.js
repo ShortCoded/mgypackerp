@@ -198,9 +198,12 @@
   window.AppSalesPricing = {suggest: suggestPrice};
 
   function calculateLineTotal(row) {
-    const number = (selector) => window.AppNumbers.number(row.querySelector(selector)?.value || '0', 0);
-    const total = (number('.js-sales-quantity') * number('.js-sales-price'))
-      - number('.js-sales-discount') + number('.js-sales-tax');
+    const decimal = (selector) => window.AppNumbers.normalize(row.querySelector(selector)?.value || '0') || '0';
+    const gross = window.AppNumbers.multiply(decimal('.js-sales-quantity'), decimal('.js-sales-price'), 4) || '0';
+    const total = window.AppNumbers.add(
+      window.AppNumbers.subtract(gross, decimal('.js-sales-discount')) || '0',
+      decimal('.js-sales-tax')
+    ) || '0';
     const output = row.querySelector('[data-sales-line-total]');
     if (output) output.textContent = window.AppNumbers.format(total);
     calculateDocumentSummary(row.closest('form'));
@@ -210,23 +213,25 @@
     if (!form?.matches('[data-sales-document-summary], [data-sales-request-form]')) return;
     const rows = Array.from(form.querySelectorAll('[data-sales-lines] [data-sales-line]'));
     const products = new Set();
-    let quantity = 0;
-    let subtotal = 0;
-    let discounts = 0;
-    let tax = 0;
-    let total = 0;
+    let quantity = '0';
+    let subtotal = '0';
+    let discounts = '0';
+    let tax = '0';
+    let total = '0';
     rows.forEach((row) => {
       const product = row.querySelector('[name$="[product_doc_num]"]')?.value || '';
-      const rowQuantity = window.AppNumbers.number(row.querySelector('.js-sales-quantity')?.value || '0', 0);
-      const rowPrice = window.AppNumbers.number(row.querySelector('.js-sales-price')?.value || '0', 0);
-      const rowDiscount = window.AppNumbers.number(row.querySelector('.js-sales-discount')?.value || '0', 0);
-      const rowTax = window.AppNumbers.number(row.querySelector('.js-sales-tax')?.value || '0', 0);
+      const rowQuantity = window.AppNumbers.normalize(row.querySelector('.js-sales-quantity')?.value || '0') || '0';
+      const rowPrice = window.AppNumbers.normalize(row.querySelector('.js-sales-price')?.value || '0') || '0';
+      const rowDiscount = window.AppNumbers.normalize(row.querySelector('.js-sales-discount')?.value || '0') || '0';
+      const rowTax = window.AppNumbers.normalize(row.querySelector('.js-sales-tax')?.value || '0') || '0';
+      const rowSubtotal = window.AppNumbers.multiply(rowQuantity, rowPrice, 4) || '0';
+      const rowTotal = window.AppNumbers.add(window.AppNumbers.subtract(rowSubtotal, rowDiscount) || '0', rowTax) || '0';
       if (product) products.add(product);
-      quantity += rowQuantity;
-      subtotal += rowQuantity * rowPrice;
-      discounts += rowDiscount;
-      tax += rowTax;
-      total += (rowQuantity * rowPrice) - rowDiscount + rowTax;
+      quantity = window.AppNumbers.add(quantity, rowQuantity) || '0';
+      subtotal = window.AppNumbers.add(subtotal, rowSubtotal) || '0';
+      discounts = window.AppNumbers.add(discounts, rowDiscount) || '0';
+      tax = window.AppNumbers.add(tax, rowTax) || '0';
+      total = window.AppNumbers.add(total, rowTotal) || '0';
     });
     const set = (selector, value) => {
       const element = form.querySelector(selector);
@@ -237,7 +242,7 @@
     set('[data-sales-summary-quantity]', window.AppNumbers.format(quantity));
     set('[data-sales-summary-subtotal]', window.AppNumbers.format(subtotal));
     set('[data-sales-summary-discount]', window.AppNumbers.format(discounts));
-    set('[data-sales-summary-taxable]', window.AppNumbers.format(subtotal - discounts));
+    set('[data-sales-summary-taxable]', window.AppNumbers.format(window.AppNumbers.subtract(subtotal, discounts) || '0'));
     set('[data-sales-summary-tax]', window.AppNumbers.format(tax));
     set('[data-sales-summary-total]', window.AppNumbers.format(total));
     const currency = form.querySelector('[name="currency_doc_num"]');
@@ -361,8 +366,9 @@
   function bindReturnLines() {
     document.querySelectorAll('[data-sales-return-toggle]').forEach((toggle) => {
       toggle.addEventListener('change', () => {
-        toggle.closest('[data-sales-return-line]').querySelectorAll('input:not([type="checkbox"])').forEach((field) => {
+        toggle.closest('[data-sales-return-line]').querySelectorAll('input:not([type="checkbox"]), select').forEach((field) => {
           field.disabled = !toggle.checked;
+          if (field.tagName === 'SELECT' && window.jQuery) window.jQuery(field).trigger('change.select2');
         });
       });
     });

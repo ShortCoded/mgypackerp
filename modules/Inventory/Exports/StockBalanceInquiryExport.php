@@ -10,7 +10,7 @@ use Maatwebsite\Excel\Concerns\WithStrictNullComparison;
 
 class StockBalanceInquiryExport implements FromArray, ShouldAutoSize, WithHeadings, WithStrictNullComparison
 {
-    /** @param array<string, string|int> $totals */
+    /** @param array<string, mixed> $totals */
     public function __construct(
         private readonly Collection $rows,
         private readonly array $totals,
@@ -49,14 +49,26 @@ class StockBalanceInquiryExport implements FromArray, ShouldAutoSize, WithHeadin
         $total[0] = __('stock_balance_inquiry.total');
         array_push(
             $total,
-            (float) $this->totals['on_hand'],
-            (float) $this->totals['available_stock'],
-            (float) $this->totals['reserved'],
-            (float) $this->totals['available'],
-            (float) $this->totals['held_stock'],
+            $this->totals['mixed_units'] ? null : (float) $this->totals['on_hand'],
+            $this->totals['mixed_units'] ? null : (float) $this->totals['available_stock'],
+            $this->totals['mixed_units'] ? null : (float) $this->totals['reserved'],
+            $this->totals['mixed_units'] ? null : (float) $this->totals['available'],
+            $this->totals['mixed_units'] ? null : (float) $this->totals['held_stock'],
         );
 
         $rows[] = $total;
+
+        if ($this->totals['mixed_units']) {
+            foreach ($this->totals['quantity_by_unit'] as $unitTotal) {
+                $subtotal = array_fill(0, 19, null);
+                $subtotal[0] = __('inventory_accounting.book_valuation.unit_subtotal', ['unit' => $unitTotal['unit_name']]);
+                $subtotal[6] = $unitTotal['unit_name'];
+                foreach (['on_hand', 'available_stock', 'reserved', 'available', 'held_stock'] as $offset => $field) {
+                    $subtotal[14 + $offset] = (float) $unitTotal[$field];
+                }
+                $rows[] = $subtotal;
+            }
+        }
 
         return $rows;
     }

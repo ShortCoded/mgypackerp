@@ -5,6 +5,7 @@ namespace Modules\HR\Services;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingScopeAccessService;
@@ -92,6 +93,7 @@ class HrSelect2Service
     public function employees(Request $request): array
     {
         $search = $request->input('q', $request->input('term'));
+        $isPayroll = $request->string('purpose')->toString() === 'payroll';
         $company = $this->companies->currentCompany($request);
         $branchIds = $company === null
             ? []
@@ -102,12 +104,12 @@ class HrSelect2Service
             ->when($company === null, fn (Builder $query): Builder => $query->whereRaw('1 = 0'))
             ->when($company !== null, fn (Builder $query): Builder => $query
                 ->where('company_id', $company->getKey())
-                ->whereIn('branch_id', $branchIds !== [] ? $branchIds : [0]))
-            ->where('status', 'active')
+                ->when(! $isPayroll, fn (Builder $query): Builder => $query->whereIn('branch_id', $branchIds !== [] ? $branchIds : [0])))
+            ->when(! $isPayroll, fn (Builder $query): Builder => $query->where('status', 'active'))
             ->orderBy('full_name')
             ->orderBy('doc_number');
 
-        if ($request->string('purpose')->toString() === 'payroll') {
+        if ($isPayroll) {
             $filters = $request->validate([
                 'payroll_period_start' => ['required', 'date_format:Y-m-d'],
                 'payroll_period_end' => ['required', 'date_format:Y-m-d', 'after_or_equal:payroll_period_start'],
@@ -115,8 +117,15 @@ class HrSelect2Service
             ]);
             $query->eligibleForPayrollPeriod($filters['payroll_period_start'], $filters['payroll_period_end']);
             if (filled($filters['payroll_branch_doc_num'] ?? null)) {
-                $query->whereHas('branch', fn (Builder $branchQuery): Builder => $branchQuery->where('doc_num', $filters['payroll_branch_doc_num']));
+                $branchId = $company === null ? null : DB::table('branches')
+                    ->where('company_id', $company->getKey())
+                    ->whereIn('id', $branchIds !== [] ? $branchIds : [0])
+                    ->where('doc_num', $filters['payroll_branch_doc_num'])
+                    ->whereNull('deleted_at')
+                    ->value('id');
+                $branchIds = $branchId === null ? [] : [(int) $branchId];
             }
+            $query->assignedToPayrollBranchesDuring(array_map('intval', $branchIds), $filters['payroll_period_start'], $filters['payroll_period_end']);
         }
 
         $terms = $this->searchService->terms(is_string($search) ? $search : null);

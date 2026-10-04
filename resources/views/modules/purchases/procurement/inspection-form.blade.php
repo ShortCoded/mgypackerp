@@ -116,7 +116,7 @@
                                     <td>
                                         <x-forms.numeric-input name="lines[{{ $index }}][rejected_quantity]" :scale="8" min="0" :max="$available" step="0.00000001" :value="old('lines.'.$index.'.rejected_quantity', 0)" required />
                                     </td>
-                                    <td><x-forms.input class="form-control" name="lines[{{ $index }}][supplier_lot_number]" value="{{ old('lines.'.$index.'.supplier_lot_number') }}" /></td>
+                                    <td><x-forms.input class="form-control" name="lines[{{ $index }}][supplier_lot_number]" value="{{ old('lines.'.$index.'.supplier_lot_number') }}" />@if($line->product?->tracks_serials)<x-forms.label :label="__('inventory_serial.accepted_numbers')" /><x-forms.textarea name="lines[{{ $index }}][serial_numbers]" rows="3"  :placeholder="__('inventory_serial.input_help')" >{{ old('lines.'.$index.'.serial_numbers') }}</x-forms.textarea>@endif</td>
                                     <td @if(!$line->product?->tracks_expiry) hidden @endif>
                                         <x-forms.date-input class="form-control js-date-picker" type="text" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" name="lines[{{ $index }}][manufacture_date]" value="{{ old('lines.'.$index.'.manufacture_date') }}" />
                                     </td>

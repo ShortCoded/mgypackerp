@@ -10,6 +10,7 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DateFormatService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
@@ -164,7 +165,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
                     ->whereNull('deleted_at')),
             ],
             'lines.*.quantity' => ['required', 'numeric', 'decimal:0,8', 'regex:/^\d{1,14}(?:\.\d{1,8})?$/D', 'gt:0'],
-            'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
+            'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,8', 'regex:/^\d{1,14}(?:\.\d{1,8})?$/D', 'min:0'],
             'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
             'lines.*.discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,4}(?:\.\d{1,4})?$/D', 'min:0', 'max:100'],
@@ -305,16 +306,26 @@ class StorePurchaseInvoiceRequest extends FormRequest
                 continue;
             }
 
-            $subtotal = app(PurchaseInvoiceCalculationService::class)->number($line['quantity'] ?? 0)
-                * app(PurchaseInvoiceCalculationService::class)->number($line['unit_price'] ?? 0);
+            if ($validator->errors()->has("lines.{$index}.quantity")
+                || $validator->errors()->has("lines.{$index}.unit_price")
+                || $validator->errors()->has("lines.{$index}.discount_value")) {
+                continue;
+            }
+
+            $numbers = app(NumericFormatService::class);
+            $subtotal = bcmul(
+                $numbers->normalizeToScale($line['quantity'] ?? 0, 8),
+                $numbers->normalizeToScale($line['unit_price'] ?? 0, 8),
+                16,
+            );
             $discountValue = app(PurchaseInvoiceCalculationService::class)->number($line['discount_value'] ?? 0);
             $discountType = $line['discount_type'] ?? null;
 
-            if ($discountType === 'percentage' && $discountValue > 100) {
+            if ($discountType === 'percentage' && bccomp($discountValue, '100', 4) > 0) {
                 $validator->errors()->add("lines.{$index}.discount_value", __('purchase_invoices.messages.discount_percentage_invalid'));
             }
 
-            if ($discountType === 'fixed' && $discountValue > $subtotal) {
+            if ($discountType === 'fixed' && bccomp($discountValue, $subtotal, 16) > 0) {
                 $validator->errors()->add("lines.{$index}.discount_value", __('purchase_invoices.messages.line_discount_exceeds_subtotal'));
             }
 
@@ -405,6 +416,10 @@ class StorePurchaseInvoiceRequest extends FormRequest
 
     private function validateDiscountsAndSchedule(Validator $validator): void
     {
+        if ($validator->errors()->isNotEmpty()) {
+            return;
+        }
+
         $calculator = app(PurchaseInvoiceCalculationService::class);
         $calculation = $calculator->calculate(
             $this->input('lines', []),
@@ -415,15 +430,19 @@ class StorePurchaseInvoiceRequest extends FormRequest
         );
         $headerDiscountType = $this->input('header_discount_type');
         $headerDiscountValue = $calculator->number($this->input('header_discount_value'));
-        $headerBase = $calculator->number($calculation['invoice']['subtotal_amount']) - $calculator->number($calculation['invoice']['line_discount_amount']);
-        $total = $calculator->toUnits($calculation['invoice']['total_amount']);
-        $scheduleTotal = collect($this->input('payment_schedules', []))->sum(fn (array $row): int => $calculator->toUnits($row['amount'] ?? 0));
+        $headerBase = bcsub(
+            $calculator->number($calculation['invoice']['subtotal_amount']),
+            $calculator->number($calculation['invoice']['line_discount_amount']),
+            4,
+        );
+        $total = $calculator->number($calculation['invoice']['total_amount']);
+        $scheduleTotal = $calculator->scheduledAmount($this->input('payment_schedules', []));
 
-        if ($headerDiscountType === 'percentage' && $headerDiscountValue > 100) {
+        if ($headerDiscountType === 'percentage' && bccomp($headerDiscountValue, '100', 4) > 0) {
             $validator->errors()->add('header_discount_value', __('purchase_invoices.messages.discount_percentage_invalid'));
         }
 
-        if ($headerDiscountType === 'fixed' && $headerDiscountValue > $headerBase) {
+        if ($headerDiscountType === 'fixed' && bccomp($headerDiscountValue, $headerBase, 4) > 0) {
             $validator->errors()->add('header_discount_value', __('purchase_invoices.messages.header_discount_exceeds_total'));
         }
 
@@ -437,15 +456,20 @@ class StorePurchaseInvoiceRequest extends FormRequest
             $validator->errors()->add('cashbox_doc_num', __('purchase_invoices.messages.cashbox_required_for_cash_invoice'));
         }
 
-        if ($this->input('payment_type') === PurchaseInvoice::PaymentTypeCash && $scheduleTotal > 0 && $scheduleTotal !== $total) {
+        if ($this->input('payment_type') === PurchaseInvoice::PaymentTypeCash
+            && bccomp($scheduleTotal, '0', 4) > 0
+            && ! $calculator->schedulesMatchTotal($this->input('payment_schedules', []), $total)) {
             $validator->errors()->add('payment_schedules', __('purchase_invoices.messages.payment_schedule_total_mismatch'));
         }
 
-        if ($this->input('payment_type') === PurchaseInvoice::PaymentTypePartial && $scheduleTotal !== $total) {
+        if ($this->input('payment_type') === PurchaseInvoice::PaymentTypePartial
+            && ! $calculator->schedulesMatchTotal($this->input('payment_schedules', []), $total)) {
             $validator->errors()->add('payment_schedules', __('purchase_invoices.messages.payment_schedule_total_mismatch'));
         }
 
-        if ($this->input('payment_type') === PurchaseInvoice::PaymentTypeCredit && $scheduleTotal > 0 && $scheduleTotal !== $total) {
+        if ($this->input('payment_type') === PurchaseInvoice::PaymentTypeCredit
+            && bccomp($scheduleTotal, '0', 4) > 0
+            && ! $calculator->schedulesMatchTotal($this->input('payment_schedules', []), $total)) {
             $validator->errors()->add('payment_schedules', __('purchase_invoices.messages.payment_schedule_total_mismatch'));
         }
     }

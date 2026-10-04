@@ -29,41 +29,36 @@ class DefaultAdminSeeder extends Seeder
     {
         app(PermissionRegistrar::class)->forgetCachedPermissions();
 
-        $role = Role::withTrashed()->updateOrCreate(
-            [
-                'name' => 'admin',
-                'guard_name' => 'web',
-            ],
-            [
-                'name' => 'admin',
-                'guard_name' => 'web',
-            ],
-        );
-
-        if ($role->trashed()) {
-            $role->restore();
+        try {
+            DB::transaction(fn () => $this->seedDefaultAdmin());
+        } finally {
+            app(PermissionRegistrar::class)->forgetCachedPermissions();
         }
+    }
 
-        $role->forceFill([
-            'company_access_restricted' => false,
-            'branch_access_restricted' => false,
-            'financial_period_access_restricted' => false,
-        ])->save();
-
+    private function seedDefaultAdmin(): void
+    {
         $admin = User::query()
             ->withTrashed()
             ->where('email', self::AdminEmail)
             ->orWhere('username', self::AdminUsername)
             ->orderByRaw('CASE WHEN email = ? THEN 0 ELSE 1 END', [self::AdminEmail])
-            ->first() ?? new User;
+            ->first();
 
-        if ($admin->trashed()) {
-            $admin->restore();
+        if ($admin instanceof User || User::withTrashed()->exists() || ! app()->environment(['local', 'testing'])) {
+            return;
         }
 
+        $role = Role::withTrashed()->where('name', 'admin')->where('guard_name', 'web')->first();
+        if ($role?->trashed()) {
+            return;
+        }
+        $role ??= Role::query()->create(['name' => 'admin', 'guard_name' => 'web']);
+
+        $admin = new User;
         $admin->forceFill([
             'name' => self::AdminName,
-            'username' => $this->availableUsername(self::AdminUsername, $admin->exists ? $admin->getKey() : null),
+            'username' => self::AdminUsername,
             'email' => self::AdminEmail,
             'phone' => self::AdminPhone,
             'password' => Hash::make(self::AdminPassword),
@@ -73,29 +68,9 @@ class DefaultAdminSeeder extends Seeder
         ])->save();
 
         if ($admin->doc_number === null || $admin->doc_num === null) {
-            DB::transaction(function () use ($admin): void {
-                $admin->forceFill(app(DocumentNumberService::class)->next('users', User::class))->save();
-            });
+            $admin->forceFill(app(DocumentNumberService::class)->next('users', User::class))->save();
         }
 
         $admin->assignRole($role);
-
-        app(PermissionRegistrar::class)->forgetCachedPermissions();
-    }
-
-    private function availableUsername(string $preferred, mixed $exceptUserId = null): string
-    {
-        $candidate = $preferred;
-        $suffix = 2;
-
-        while (User::withTrashed()
-            ->where('username', $candidate)
-            ->when($exceptUserId !== null, fn ($query) => $query->whereKeyNot($exceptUserId))
-            ->exists()) {
-            $candidate = "{$preferred}_{$suffix}";
-            $suffix++;
-        }
-
-        return $candidate;
     }
 }

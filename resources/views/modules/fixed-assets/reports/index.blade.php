@@ -6,6 +6,11 @@
     $currentType = $filters['type'] ?? \Modules\FixedAssets\Services\FixedAssetReportService::Register;
     $advancedFields = ['asset_group_account_doc_num', 'entry_type', 'branch_doc_num', 'branch_hall_uuid', 'cost_center_doc_num', 'status', 'depreciable', 'posting_status', 'movement_type', 'user'];
     $advancedOpen = collect($advancedFields)->contains(fn (string $field): bool => filled($filters[$field] ?? null));
+    $exportOptions = [
+        ['label' => __('reports.export_excel'), 'url' => route('admin.fixed-assets.reports.excel', request()->query()), 'icon' => 'file-excel', 'permission' => 'fixed_assets.export'],
+        ['label' => __('reports.export_csv'), 'url' => route('admin.fixed-assets.reports.csv', request()->query()), 'icon' => 'file-csv', 'permission' => 'fixed_assets.export'],
+        ['label' => __('reports.export_pdf'), 'url' => route('admin.fixed-assets.reports.pdf', request()->query()), 'icon' => 'file-pdf', 'newTab' => true, 'permission' => 'fixed_assets.print'],
+    ];
 @endphp
 
 @section('title', __('fixed_assets.reports.title'))
@@ -94,10 +99,7 @@
     <div class="card">
         <div class="card-header d-flex flex-column flex-sm-row justify-content-between align-items-sm-center gap-3">
             <div><h6 class="mb-1">{{ $report['title'] }}</h6><span class="badge badge-subtle-secondary">{{ trans_choice('fixed_assets.reports.results_count', $report['rows']->count(), ['count' => $report['rows']->count()]) }}</span></div>
-            <div class="d-grid d-sm-flex gap-2">
-                @can('fixed_assets.print')<a target="_blank" class="btn btn-falcon-default btn-sm" href="{{ route('admin.fixed-assets.reports.pdf', request()->query()) }}"><span class="fas fa-file-pdf me-1"></span>{{ __('fixed_assets.pdf.print_pdf') }}</a>@endcan
-                @can('fixed_assets.export')<a class="btn btn-falcon-success btn-sm" href="{{ route('admin.fixed-assets.reports.excel', request()->query()) }}"><span class="fas fa-file-excel me-1"></span>Excel</a>@endcan
-            </div>
+            <x-admin.report.actions-toolbar :show-filters="false" :show-refresh="false" :export-options="$exportOptions" />
         </div>
         <div class="card-body p-0"><x-fixed-asset-report-table :report="$report" /></div>
     </div>

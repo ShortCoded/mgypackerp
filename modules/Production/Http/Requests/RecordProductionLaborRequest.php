@@ -14,7 +14,12 @@ class RecordProductionLaborRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
-        $this->normalizeNumericInput(['labor_details.*.planned_hours', 'labor_details.*.actual_hours']);
+        $this->normalizeNumericInput([
+            'labor_details.*.planned_hours',
+            'labor_details.*.actual_hours',
+            'labor_details.*.piece_quantity',
+            'labor_details.*.work_segments.*.actual_hours',
+        ]);
     }
 
     public function authorize(): bool
@@ -44,6 +49,10 @@ class RecordProductionLaborRequest extends FormRequest
             'labor_details.*.role' => ['nullable', 'string', 'max:255'],
             'labor_details.*.planned_hours' => ['nullable', 'numeric', 'min:0', 'max:10000'],
             'labor_details.*.actual_hours' => ['required', 'numeric', 'gt:0', 'max:10000'],
+            'labor_details.*.piece_quantity' => ['nullable', 'numeric', 'gt:0', 'max:100000000000', 'decimal:0,8'],
+            'labor_details.*.work_segments' => ['nullable', 'array', 'max:366'],
+            'labor_details.*.work_segments.*.work_date' => ['required', 'date_format:Y-m-d'],
+            'labor_details.*.work_segments.*.actual_hours' => ['required', 'numeric', 'gt:0', 'max:24', 'decimal:0,8'],
             'labor_details.*.notes' => ['nullable', 'string', 'max:1000'],
         ];
     }

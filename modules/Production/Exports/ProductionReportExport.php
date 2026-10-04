@@ -5,13 +5,16 @@ namespace Modules\Production\Exports;
 use Illuminate\Support\Collection;
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
+use Maatwebsite\Excel\Concerns\WithCustomValueBinder;
 use Maatwebsite\Excel\Concerns\WithEvents;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithMultipleSheets;
 use Maatwebsite\Excel\Concerns\WithStrictNullComparison;
 use Maatwebsite\Excel\Concerns\WithTitle;
 use Maatwebsite\Excel\Events\AfterSheet;
+use Modules\Core\Services\DateFormatService;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\Cell\StringValueBinder;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
 
@@ -30,7 +33,7 @@ class ProductionReportExport implements WithMultipleSheets
             return $this->controlSheets();
         }
 
-        $runRows = collect($this->report['runs'])->map(fn ($run): array => [$run->run_number, $run->order?->doc_num, $run->order?->salesOrder?->doc_num, $run->stageSnapshot?->stage_name, $run->fixedAsset?->asset_name, $run->product?->doc_num, $run->product?->name, $run->actual_start_at?->format('Y-m-d H:i:s'), $run->actual_end_at?->format('Y-m-d H:i:s'), $run->actualDurationHours(), $run->planned_labor_count, $run->actual_labor_count, $run->totalLaborHours(), $run->planned_base_quantity, $run->good_base_quantity, $run->rejected_base_quantity, $run->rework_base_quantity, $run->scrap_base_quantity, $run->received_base_quantity, $run->yield_percent, __('production_execution.statuses.'.$run->status)]);
+        $runRows = collect($this->report['runs'])->map(fn ($run): array => [$run->run_number, $run->order?->doc_num, $run->order?->salesOrder?->doc_num, $run->stageSnapshot?->stage_name, $run->fixedAsset?->asset_name, $run->product?->doc_num, $run->product?->name, app(DateFormatService::class)->formatDateTime($run->actual_start_at, ''), app(DateFormatService::class)->formatDateTime($run->actual_end_at, ''), $run->actualDurationHours(), $run->planned_labor_count, $run->actual_labor_count, $run->totalLaborHours(), $run->planned_base_quantity, $run->good_base_quantity, $run->rejected_base_quantity, $run->rework_base_quantity, $run->scrap_base_quantity, $run->received_base_quantity, $run->yield_percent, __('production_execution.statuses.'.$run->status)]);
         $runRows->push([__('production_execution.reports.columns.total'), null, null, null, null, null, null, null, null, null, null, null, null, $this->report['kpis']['planned_base_quantity'], $this->report['kpis']['good_base_quantity'], null, null, $this->report['kpis']['loss_base_quantity'], null, null, null]);
         $sheets = [
             'overview' => $this->sheet(
@@ -38,9 +41,9 @@ class ProductionReportExport implements WithMultipleSheets
                 [__('production_execution.reports.columns.metric'), __('production_execution.reports.columns.value')],
                 collect($this->report['kpis'])->map(fn ($value, string $key): array => [__('production_execution.reports.kpis.'.$key), $value]),
             ),
-            'orders' => $this->sheet(__('production_execution.reports.sections.orders'), $this->headings(['order', 'date', 'source', 'sales_order', 'status', 'planned_quantity', 'received_quantity']), collect($this->report['orders'])->map(fn ($order): array => [$order->doc_num, $order->production_order_date?->toDateString(), __('production_execution.source_types.'.$order->source_type), $order->salesOrder?->doc_num, __('production_execution.statuses.'.$order->status), $order->lines->sum('base_quantity'), $order->lines->sum('received_base_quantity')])),
+            'orders' => $this->sheet(__('production_execution.reports.sections.orders'), $this->headings(['order', 'date', 'source', 'sales_order', 'status', 'planned_quantity', 'received_quantity']), collect($this->report['orders'])->map(fn ($order): array => [$order->doc_num, app(DateFormatService::class)->formatDate($order->production_order_date, ''), __('production_execution.source_types.'.$order->source_type), $order->salesOrder?->doc_num, __('production_execution.statuses.'.$order->status), $order->lines->sum('base_quantity'), $order->lines->sum('received_base_quantity')])),
             'runs' => $this->sheet(__('production_execution.reports.sections.runs'), $this->headings(['run', 'order', 'sales_order', 'stage', 'fixed_asset', 'product_code', 'product', 'actual_start', 'actual_end', 'duration_hours', 'planned_labor', 'actual_labor', 'total_labor_hours', 'planned', 'good', 'rejected', 'rework', 'scrap', 'received', 'yield_percent', 'status']), $runRows),
-            'quality' => $this->sheet(__('production_execution.reports.sections.quality'), $this->headings(['inspection', 'sampled_at', 'run', 'order', 'sales_order', 'stage', 'inspection_type', 'result', 'disposition', 'affected_quantity', 'status', 'defect_code', 'notes', 'corrective_action', 'attachments']), collect($this->report['qualityInspections'])->map(fn ($inspection): array => [$inspection->doc_num, $inspection->sampled_at?->format('Y-m-d H:i'), $inspection->run?->run_number, $inspection->run?->order?->doc_num, $inspection->run?->order?->salesOrder?->doc_num, $inspection->stageSnapshot?->stage_name, $inspection->qualityType?->name, __('production_execution.quality_results.'.$inspection->result), $inspection->disposition ? __('production_execution.quality_dispositions.'.$inspection->disposition) : null, $inspection->affected_base_quantity, __('production_execution.statuses.'.$inspection->status), $inspection->defect_code, $inspection->notes, $inspection->corrective_action, count($inspection->evidence ?? [])])),
+            'quality' => $this->sheet(__('production_execution.reports.sections.quality'), $this->headings(['inspection', 'sampled_at', 'run', 'order', 'sales_order', 'stage', 'inspection_type', 'result', 'disposition', 'affected_quantity', 'status', 'defect_code', 'notes', 'corrective_action', 'attachments']), collect($this->report['qualityInspections'])->map(fn ($inspection): array => [$inspection->doc_num, app(DateFormatService::class)->formatDateTime($inspection->sampled_at, ''), $inspection->run?->run_number, $inspection->run?->order?->doc_num, $inspection->run?->order?->salesOrder?->doc_num, $inspection->stageSnapshot?->stage_name, $inspection->qualityType?->name, __('production_execution.quality_results.'.$inspection->result), $inspection->disposition ? __('production_execution.quality_dispositions.'.$inspection->disposition) : null, $inspection->affected_base_quantity, __('production_execution.statuses.'.$inspection->status), $inspection->defect_code, $inspection->notes, $inspection->corrective_action, count($inspection->evidence ?? [])])),
             'materials' => $this->sheet(__('production_execution.reports.sections.materials'), $this->materialHeadings(), collect($this->report['materials'])->map(fn ($line): array => $this->materialRow($line))),
             'receipts' => $this->sheet(__('production_execution.reports.sections.receipts'), $this->finishedGoodsHeadings(), collect($this->report['finishedGoodsReceipts'])->flatMap(fn ($document): Collection => $document->lines->map(fn ($line): array => $this->finishedGoodsRow($document, $line)))),
         ];
@@ -64,7 +67,7 @@ class ProductionReportExport implements WithMultipleSheets
             $run = $row['run'];
 
             return [
-                $row['date'], $run->order?->branch?->name, $run->fixedAsset?->asset_name ?? $run->machine?->name,
+                app(DateFormatService::class)->formatDate($row['date'], ''), __('production_execution.reports.control.date_bases.'.$row['date_basis']), $run->order?->branch?->name, $run->fixedAsset?->asset_name ?? $run->machine?->name,
                 $run->shift?->name, $run->run_number, $run->product?->doc_num, $run->product?->name, $run->output_color_name,
                 $run->order?->salesOrder?->customer?->name, $run->product?->unit?->name,
                 $row['good'], $row['equivalent_good'], $row['good_weight_kg'], $row['production_scrap_weight_kg'],
@@ -72,7 +75,7 @@ class ProductionReportExport implements WithMultipleSheets
             ];
         });
         $dailyMaterialRows = collect($this->report['controlDailyMaterials'])->map(fn (array $row): array => [
-            $row['date'], $row['run']->order?->branch?->name, $row['run']->run_number,
+            app(DateFormatService::class)->formatDate($row['date'], ''), $row['run']->order?->branch?->name, $row['run']->run_number,
             $row['run']->product?->doc_num, $row['run']->product?->name,
             $row['material']?->doc_num, $row['material']?->name, $row['unit'],
             $row['consumed'], $row['waste'], $row['total_used'], $row['waste_percent'], $row['documents'],
@@ -92,7 +95,7 @@ class ProductionReportExport implements WithMultipleSheets
         $materialColumns = ['branch', 'run', 'product', 'material', 'unit', 'basis', 'per_equivalent_unit', 'planned', 'issued', 'returned', 'consumed', 'waste', 'variance', 'status'];
         $runRows = collect($this->report['controlRuns'])->map(fn ($run): array => [
             $run->order?->branch?->name,
-            ($run->actual_start_at ?? $run->planned_start_at)?->format('Y-m-d H:i:s'),
+            app(DateFormatService::class)->formatDateTime($run->actual_start_at ?? $run->planned_start_at, ''),
             $run->shift?->name,
             $run->fixedAsset?->asset_name ?? $run->machine?->name,
             $run->stageSnapshot?->stage_name,
@@ -124,7 +127,7 @@ class ProductionReportExport implements WithMultipleSheets
 
         return [
             $this->sheet(__($control.'product_summary'), $columns(['branch', 'product_code', 'product', 'color', 'customer', 'stage', 'components', 'unit', 'pack_size', 'equivalent_unit', 'runs_count', 'planned', 'good', 'equivalent_good', 'good_weight_kg', 'unit_weight_kg', 'production_scrap_weight_kg', 'production_scrap_percent', 'rejected', 'rework', 'scrap', 'received', 'yield']), $productRows),
-            $this->sheet(__($control.'daily_output'), $columns(['date', 'branch', 'machine', 'shift', 'run', 'product_code', 'product', 'color', 'customer', 'unit', 'good', 'equivalent_good', 'good_weight_kg', 'production_scrap_weight_kg', 'rejected', 'rework', 'scrap']), $dailyRows),
+            $this->sheet(__($control.'daily_output'), $columns(['date', 'date_basis', 'branch', 'machine', 'shift', 'run', 'product_code', 'product', 'color', 'customer', 'unit', 'good', 'equivalent_good', 'good_weight_kg', 'production_scrap_weight_kg', 'rejected', 'rework', 'scrap']), $dailyRows),
             $this->sheet(__($control.'daily_materials'), $columns(['date', 'branch', 'run', 'product_code', 'product', 'material_code', 'material', 'unit', 'consumed', 'waste', 'total_used', 'waste_percent', 'document']), $dailyMaterialRows),
             $this->sheet(__($control.'machine_summary'), $columns(['branch', 'machine', 'stage', 'product_code', 'product', 'color', 'unit', 'runs_count', 'planned', 'good', 'good_weight_kg', 'production_scrap_weight_kg', 'scrap', 'yield']), $machineRows),
             $this->sheet(__($control.'material_summary'), $columns(['branch', 'product_code', 'product', 'color', 'customer', 'stage', 'material_code', 'material', 'unit', 'planned', 'issued', 'returned', 'consumed', 'waste', 'total_used', 'consumed_per_equivalent', 'consumption_unit', 'waste_percent', 'variance']), $materialSummaryRows),
@@ -160,7 +163,7 @@ class ProductionReportExport implements WithMultipleSheets
     /** @return list<mixed> */
     private function finishedGoodsRow($document, $line): array
     {
-        return [$document->doc_num, $document->document_date?->toDateString(), $document->productionRun?->run_number, $document->productionRun?->order?->doc_num, $document->productionRun?->order?->salesOrder?->doc_num, $document->branchStore?->name, $line->product?->doc_num, $line->product?->name, $line->base_quantity];
+        return [$document->doc_num, app(DateFormatService::class)->formatDate($document->document_date, ''), $document->productionRun?->run_number, $document->productionRun?->order?->doc_num, $document->productionRun?->order?->salesOrder?->doc_num, $document->branchStore?->name, $line->product?->doc_num, $line->product?->name, $line->base_quantity];
     }
 
     /** @param list<string> $headings
@@ -172,7 +175,7 @@ class ProductionReportExport implements WithMultipleSheets
     }
 }
 
-class ProductionReportSheet implements FromArray, ShouldAutoSize, WithEvents, WithHeadings, WithStrictNullComparison, WithTitle
+class ProductionReportSheet extends StringValueBinder implements FromArray, ShouldAutoSize, WithCustomValueBinder, WithEvents, WithHeadings, WithStrictNullComparison, WithTitle
 {
     /** @param list<string> $headings @param list<array<int, mixed>> $rows */
     public function __construct(
@@ -210,8 +213,8 @@ class ProductionReportSheet implements FromArray, ShouldAutoSize, WithEvents, Wi
                 $sheet->setAutoFilter("A1:{$lastColumn}{$lastRow}");
                 $sheet->getRowDimension(1)->setRowHeight(27);
                 $sheet->getStyle("A1:{$lastColumn}1")->applyFromArray([
-                    'font' => ['bold' => true, 'color' => ['argb' => 'FFFFFFFF']],
-                    'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FF14335C']],
+                    'font' => ['bold' => true, 'color' => ['argb' => 'FF14335C']],
+                    'fill' => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['argb' => 'FFF1F5F9']],
                     'alignment' => ['vertical' => 'center', 'wrapText' => true],
                 ]);
                 $sheet->getPageSetup()->setOrientation(PageSetup::ORIENTATION_LANDSCAPE);

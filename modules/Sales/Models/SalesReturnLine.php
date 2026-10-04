@@ -29,7 +29,7 @@ class SalesReturnLine extends Model
     protected function casts(): array
     {
         return [
-            'quantity' => 'decimal:8', 'conversion_factor' => 'decimal:8', 'base_quantity' => 'decimal:8', 'unit_price' => 'decimal:4', 'tax_amount' => 'decimal:4',
+            'quantity' => 'decimal:8', 'conversion_factor' => 'decimal:8', 'base_quantity' => 'decimal:8', 'unit_price' => 'decimal:8', 'tax_amount' => 'decimal:4',
             'line_total' => 'decimal:4', 'is_service' => 'boolean', 'saleable_quantity' => 'decimal:8',
             'saleable_base_quantity' => 'decimal:8',
             'quarantine_quantity' => 'decimal:8', 'rework_quantity' => 'decimal:8',

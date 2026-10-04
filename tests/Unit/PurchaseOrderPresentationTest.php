@@ -6,8 +6,10 @@ test('purchase order JavaScript preserves posted display totals and recalculates
     $script = <<<'JS'
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(process.argv[1], 'utf8');
+const numericSource = fs.readFileSync(path.join(path.dirname(process.argv[1]), '../Core/numeric-input.js'), 'utf8');
 for (const readonly of [true, false]) {
     const values = { '#freight_amount': '5', '.js-line-quantity': '10', '.js-line-unit-price': '27', '.js-line-discount-type': 'fixed', '.js-line-discount-value': '10', '.js-line-tax-rate': '14', '.js-line-received': '4' };
     const rendered = {
@@ -33,8 +35,10 @@ for (const readonly of [true, false]) {
         };
     };
     jq.fn = {};
-    const document = { getElementById: () => null, querySelector: () => null, activeElement: null };
-    vm.runInNewContext(source, { jQuery: jq, document, window: { AppNumbers: { number: value => Number(value) || 0, format: value => String(value) } } });
+    const document = { readyState: 'loading', addEventListener() {}, getElementById: () => null, querySelector: () => null, activeElement: null };
+    const browser = {};
+    vm.runInNewContext(numericSource, { window: browser, document, BigInt, Number, String, Math });
+    vm.runInNewContext(source, { jQuery: jq, document, window: browser, BigInt, Number, String, Math });
     if (readonly) {
         assert.equal(rendered['.js-total-subtotal'], '9,990');
         assert.equal(rendered['.js-total-discount'], '20');

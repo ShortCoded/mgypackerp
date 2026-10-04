@@ -12,13 +12,17 @@ use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Select2ResponseService;
 use Modules\Inventory\Http\Requests\StoreSalesIssueRequest;
+use Modules\Inventory\Models\InventoryCostPolicy;
+use Modules\Inventory\Models\InventoryReceiptLayer;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryAvailabilityService;
+use Modules\Inventory\Services\InventoryCostPolicyService;
 use Modules\Sales\Models\SalesIssueOrder;
 use Modules\Sales\Services\SalesIssueOrderService;
 
@@ -30,15 +34,60 @@ class SalesIssueController extends Controller
     {
         $context = $this->requiredContext($request);
         $selected = null;
-        if ($request->filled('issue_order')) {
-            $selected = SalesIssueOrder::query()->with('branchStore')
+        $orderNumber = $request->old('sales_issue_order_doc_num', $request->input('issue_order'));
+        if (is_string($orderNumber) && $orderNumber !== '') {
+            $selected = SalesIssueOrder::query()->with(['branchStore', 'invoice.lines.product'])
                 ->where('company_id', $context['company_id'])
                 ->where('status', SalesIssueOrder::StatusPending)
-                ->where('doc_num', $request->string('issue_order')->toString())
-                ->firstOrFail();
+                ->where('doc_num', $orderNumber)
+                ->first();
+        }
+        $storeUuid = $request->old('branch_store_uuid', $selected?->branchStore?->public_uuid);
+        $store = is_string($storeUuid) ? BranchStore::query()->where('branch_id', $context['branch_id'])->where('public_uuid', $storeUuid)->first() : null;
+
+        return view('modules.inventory.documents.sales-issue', [
+            'selectedOrder' => $selected, 'selectedStore' => $store,
+            'oldLayerSelections' => $this->oldLayerSelections($request, $selected, $store),
+        ]);
+    }
+
+    /** @return array<int, list<array{layer_id: int, quantity: string, text: string}>> */
+    private function oldLayerSelections(Request $request, ?SalesIssueOrder $order, ?BranchStore $store): array
+    {
+        $old = $request->old('layer_selections', []);
+        if ($order === null || $store === null || ! is_array($old)) {
+            return [];
+        }
+        $rows = collect($old)->filter(fn ($row): bool => is_array($row))->take(100);
+        $layerIds = $rows->flatMap(fn (array $row): array => is_array($row['receipt_layers'] ?? null) ? array_slice($row['receipt_layers'], 0, 100) : [])
+            ->filter(fn ($row): bool => is_array($row))->pluck('layer_id')->filter(fn ($id): bool => is_scalar($id) && ctype_digit((string) $id))->unique()->all();
+        $lines = $order->invoice->lines->keyBy('id');
+        $date = app(DateFormatService::class)->normalizeForStorage($request->old('document_date')) ?? now()->toDateString();
+        $policyId = app(InventoryCostPolicyService::class)->resolve((int) $order->company_id, (int) $store->id, $date)['policy_id'];
+        $layers = InventoryReceiptLayer::query()->with('receiptTransaction')
+            ->withBookCostBasis($policyId)
+            ->where('company_id', $order->company_id)->where('branch_store_id', $store->id)->where('stock_status', 'available')
+            ->whereIn('product_id', $lines->pluck('product_id'))->whereIn('id', $layerIds)->get()->keyBy('id');
+        $numbers = app(NumericFormatService::class);
+        $result = [];
+        foreach ($rows as $row) {
+            $lineId = $row['invoice_line_id'] ?? null;
+            $line = is_scalar($lineId) && ctype_digit((string) $lineId) ? $lines->get($lineId) : null;
+            if ($line === null || isset($result[$line->id]) || ! is_array($row['receipt_layers'] ?? null)) {
+                continue;
+            }
+            foreach (array_slice($row['receipt_layers'], 0, 100) as $slice) {
+                $layerId = is_array($slice) ? ($slice['layer_id'] ?? null) : null;
+                $layer = is_scalar($layerId) && ctype_digit((string) $layerId) ? $layers->get($layerId) : null;
+                if ($layer === null || (int) $layer->product_id !== (int) $line->product_id || ! is_scalar($slice['quantity'] ?? null) || ! is_numeric($slice['quantity'])) {
+                    continue;
+                }
+                $result[$line->id][] = ['layer_id' => $layer->id, 'quantity' => (string) $slice['quantity'],
+                    'text' => $layer->receiptTransaction?->source_doc_num.' — '.($layer->batch_lot ?? __('inventory_cost_policy.no_batch')).' — '.$numbers->format($layer->remaining_quantity).' — '.$numbers->format($layer->bookUnitCostForPolicy($policyId))];
+            }
         }
 
-        return view('modules.inventory.documents.sales-issue', ['selectedOrder' => $selected]);
+        return $result;
     }
 
     public function orders(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
@@ -74,11 +123,13 @@ class SalesIssueController extends Controller
     ): JsonResponse {
         $context = $this->requiredContext($request);
         $store = $this->storeForContext($request, $context);
+        $request->validate(['document_date' => ['nullable', 'string', 'max:50']]);
+        $documentDate = app(DateFormatService::class)->normalizeForStorage($request->input('document_date')) ?? now()->toDateString();
         abort_unless((int) $salesIssueOrder->company_id === $context['company_id']
             && $salesIssueOrder->status === SalesIssueOrder::StatusPending
             && ($salesIssueOrder->branch_store_id === null || (int) $salesIssueOrder->branch_store_id === (int) $store->getKey()), 404);
 
-        $invoice = $salesIssueOrder->invoice->load(['lines.product', 'lines.unit', 'deliveries.lines']);
+        $invoice = $salesIssueOrder->invoice->load(['lines.product.unit', 'lines.unit', 'deliveries.lines']);
         $remaining = $issues->remainingLines($invoice);
         $productIds = [];
         $sourceLineIds = [];
@@ -109,7 +160,8 @@ class SalesIssueController extends Controller
             $freeByProduct[$productId] = $stock['available'];
         }
 
-        $lines = collect($remaining)->map(function (array $row) use (&$freeByProduct, &$reservedBySource, $numbers): array {
+        $specificCost = app(InventoryCostPolicyService::class)->resolve((int) $salesIssueOrder->company_id, (int) $store->id, $documentDate)['method'] === InventoryCostPolicy::SpecificIdentification;
+        $lines = collect($remaining)->map(function (array $row) use (&$freeByProduct, &$reservedBySource, $numbers, $specificCost): array {
             $line = $row['line'];
             $productId = (int) $line->product_id;
             $sourceId = (int) $line->sales_order_line_id;
@@ -127,6 +179,13 @@ class SalesIssueController extends Controller
             $freeByProduct[$productId] = bccomp($fromFree, $free, 8) >= 0 ? '0' : bcsub($free, $fromFree, 8);
 
             return [
+                'invoice_line_id' => $line->id,
+                'product_doc_num' => $line->product?->doc_num,
+                'tracks_serials' => (bool) $line->product?->tracks_serials,
+                'requires_specific_layer' => $specificCost || $line->product?->tracks_serials,
+                'base_quantity' => $required,
+                'base_quantity_display' => $numbers->format($required),
+                'base_unit' => $line->product?->unit?->name,
                 'product' => trim($line->product?->doc_num.' — '.$line->product?->name, ' —'),
                 'quantity' => $numbers->format($row['remaining']),
                 'unit' => $line->unit?->name,
@@ -140,6 +199,7 @@ class SalesIssueController extends Controller
             'invoice' => $invoice->doc_num,
             'lines' => $lines,
             'can_issue' => $lines->isNotEmpty() && $lines->every(fn (array $line): bool => $line['enough']),
+            'requires_specific_layer' => $lines->contains(fn (array $line): bool => $line['requires_specific_layer']),
         ]]);
     }
 
@@ -153,8 +213,13 @@ class SalesIssueController extends Controller
         $store = $this->storeForContext($request, $context);
 
         try {
-            $issue = $issues->issue($order, $store, $request->validated('document_date'));
+            $choices = collect($request->validated('layer_selections', []))->mapWithKeys(fn (array $line): array => [$line['invoice_line_id'] => $line['receipt_layers']])->all();
+            $issue = $issues->issue($order, $store, $request->validated('document_date'), $choices);
         } catch (DomainException $exception) {
+            if ($request->expectsJson()) {
+                throw ValidationException::withMessages(['layer_selections' => $exception->getMessage()]);
+            }
+
             return back()->withInput()->withErrors(['sales_issue_order_doc_num' => $exception->getMessage()]);
         }
 

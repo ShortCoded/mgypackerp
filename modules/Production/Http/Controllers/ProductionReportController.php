@@ -3,8 +3,10 @@
 namespace Modules\Production\Http\Controllers;
 
 use App\Http\Controllers\Controller;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 use Maatwebsite\Excel\Facades\Excel;
@@ -15,6 +17,7 @@ use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
+use Modules\Core\Services\Select2ResponseService;
 use Modules\Production\Exports\ProductionReportExport;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Services\ProductionReportService;
@@ -34,7 +37,59 @@ class ProductionReportController extends Controller
         private readonly SalesCycleReadService $salesCycle,
         private readonly NumericFormatService $numbers,
         private readonly DateFormatService $dates,
+        private readonly Select2ResponseService $select2,
     ) {}
+
+    public function controlLookup(Request $request, string $kind): JsonResponse
+    {
+        $this->authorizeSection($request, 'control', 'view');
+        abort_unless(in_array($kind, ['product', 'machine', 'shift', 'stage', 'order'], true), 404);
+        $context = $this->context->snapshot($request);
+        abort_unless($context['company_id'] && $context['financial_period_id'], 422, __('production_execution.messages.operating_context_required'));
+        $input = $request->validate([
+            'q' => ['nullable', 'string', 'max:100'],
+            'branch_doc_num' => ['nullable', 'string', 'max:50'],
+        ]);
+        $branches = $this->context->allowedBranchQueryForCurrentCompany($request)
+            ->where('branches.type', Branch::TypeFactory)
+            ->get(['branches.id', 'branches.doc_num']);
+        $branch = filled($input['branch_doc_num'] ?? null)
+            ? $branches->firstWhere('doc_num', $input['branch_doc_num'])
+            : null;
+        abort_if(filled($input['branch_doc_num'] ?? null) && $branch === null, 403);
+
+        $query = DB::table('production_runs as runs')
+            ->where('runs.company_id', $context['company_id'])
+            ->where('runs.financial_period_id', $context['financial_period_id'])
+            ->whereIn('runs.branch_id', $branch ? [(int) $branch->getKey()] : ($branches->modelKeys() ?: [0]))
+            ->whereNull('runs.deleted_at');
+        [$column, $label] = match ($kind) {
+            'product' => ['products.doc_num', 'products.name'],
+            'machine' => ['coalesce(fixed_assets.asset_name, production_machines.name)', 'coalesce(fixed_assets.asset_name, production_machines.name)'],
+            'shift' => ['production_shifts.name', 'production_shifts.name'],
+            'stage' => ['production_order_stage_snapshots.stage_name', 'production_order_stage_snapshots.stage_name'],
+            'order' => ['production_orders.doc_num', 'production_orders.doc_num'],
+        };
+        $query = match ($kind) {
+            'product' => $query->join('products', 'products.id', '=', 'runs.product_id'),
+            'machine' => $query->leftJoin('fixed_assets', 'fixed_assets.id', '=', 'runs.fixed_asset_id')
+                ->leftJoin('production_machines', 'production_machines.id', '=', 'runs.production_machine_id'),
+            'shift' => $query->join('production_shifts', 'production_shifts.id', '=', 'runs.production_shift_id'),
+            'stage' => $query->join('production_order_stage_snapshots', 'production_order_stage_snapshots.id', '=', 'runs.production_order_stage_snapshot_id'),
+            'order' => $query->join('production_orders', 'production_orders.id', '=', 'runs.production_order_id'),
+        };
+        $search = trim((string) ($input['q'] ?? ''));
+        if ($search !== '') {
+            $query->whereRaw('lower('.$column.') like ?', ['%'.mb_strtolower(addcslashes($search, '%_\\')).'%']);
+        }
+
+        return response()->json($this->select2->paginated(
+            $query->whereNotNull(DB::raw($column))->selectRaw($column.' as id, '.$label.' as label')
+                ->distinct()->orderBy('id'),
+            $request,
+            fn (object $row): array => ['id' => (string) $row->id, 'text' => (string) $row->id.($row->label !== $row->id ? ' — '.$row->label : '')],
+        ));
+    }
 
     public function index(Request $request): View
     {

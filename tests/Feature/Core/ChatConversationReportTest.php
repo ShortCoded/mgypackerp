@@ -260,6 +260,17 @@ test('all and single conversation exports produce real excel pdf and print outpu
     expect($allPdf->getContent())->toStartWith('%PDF-')
         ->and($singlePdf->getContent())->toStartWith('%PDF-');
 
+    if ($directory = getenv('MGYPACK_REPORT_PRINT_SAMPLES')) {
+        foreach (['en', 'ar'] as $locale) {
+            $reportViewer->forceFill(['locale' => $locale])->save();
+            app()->setLocale($locale);
+            foreach (['all' => route('admin.chat.reports.pdf'), 'single' => route('admin.chat.reports.conversation.pdf', $fixture['conversation'])] as $group => $url) {
+                $sample = $this->withSession(['locale' => $locale])->get($url)->assertOk()->assertHeader('content-type', 'application/pdf');
+                file_put_contents($directory.'/chat-'.$group.'-'.$locale.'.pdf', $sample->getContent());
+            }
+        }
+    }
+
     $this->actingAs($reportViewer)
         ->get(route('admin.chat.reports.print'))
         ->assertOk()

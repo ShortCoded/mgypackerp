@@ -176,6 +176,12 @@
                                             <div class="small text-600 ms-4">{{ __('Sold') }} {{ $numbers->format($line->quantity) }} · {{ __('Previously returned') }} {{ $numbers->format($previouslyReturned) }} · {{ __('Returnable') }} {{ $numbers->format($returnable) }} {{ $line->unit?->name }}</div>
                                             @if($line->deliveryLine?->document)<div class="small text-600 ms-4">{{ __('Delivery') }}: {{ $line->deliveryLine->document->doc_num }}</div>@endif
                                             <x-forms.input type="hidden" name="lines[{{ $index }}][invoice_line_public_id]" value="{{ $line->public_id }}" disabled />
+                                            @if($line->product?->tracks_serials)
+                                                <x-forms.label :label="__('inventory_serial.numbers')" />
+                                                <x-forms.select variant="ajax" :name="'lines['.$index.'][delivery_line_ids][]'" multiple disabled
+                                                    :url="route('admin.sales.select2.returnable-serial-deliveries', ['invoice_doc_num' => $record->doc_num, 'invoice_line_public_id' => $line->public_id])"
+                                                    :placeholder="__('inventory_serial.source_selection')" />
+                                            @endif
                                         </div>
                                         <div class="col-md-4"><x-forms.label :for="$returnQuantityId" :label="__('sales_ui.return_quantity')" required /><x-forms.input class="form-control form-control-sm text-end" id="{{ $returnQuantityId }}" name="lines[{{ $index }}][quantity]" value="{{ $numbers->formatForInput($returnable) }}" inputmode="decimal" min="0.00000001" max="{{ $returnable }}" disabled required /></div>
                                     </div>
@@ -215,4 +221,38 @@
 
 @if($kind === 'sales_return' && in_array($record->status, ['pending_authorization', 'authorized'], true))
 @can('sales_returns.cancel')<form data-sales-ui class="js-sales-cycle-action border rounded p-3 my-3" method="POST" action="{{ route('admin.sales.sales-returns.cancel', $record) }}">@csrf<label class="form-label">{{ __('Cancellation reason') }}</label><x-forms.textarea class="form-control mb-2" name="reason" required></x-forms.textarea><button class="btn btn-warning btn-sm" type="submit">{{ __('Cancel Return') }}</button></form>@endcan
+@endif
+
+@if($kind === 'sales_return' && $record->status === 'received')
+    @can('sales_returns.correct_receipt')
+        <form data-sales-ui class="js-sales-cycle-action border rounded p-3 my-3" method="POST" action="{{ route('admin.sales.sales-returns.correct-receipt', $record) }}">
+            @csrf
+            <p class="text-700 mb-2">{{ __('sales_return_correction.explanation') }}</p>
+            <label class="form-label" for="return-receipt-correction-reason">{{ __('sales_return_correction.reason') }}</label>
+            <x-forms.textarea class="form-control mb-2" id="return-receipt-correction-reason" name="reason"></x-forms.textarea>
+            <button class="btn btn-outline-warning btn-sm" type="submit">{{ __('sales_return_correction.action') }}</button>
+        </form>
+    @endcan
+@endif
+@if($kind === 'sales_return' && $record->status === 'inspected')
+    @can('sales_returns.correct_disposition')
+        <form data-sales-ui class="js-sales-cycle-action border rounded p-3 my-3" method="POST" action="{{ route('admin.sales.sales-returns.correct-disposition', $record) }}">
+            @csrf
+            <p class="text-700 mb-2">{{ __('sales_return_correction.inspected_explanation') }}</p>
+            <label class="form-label" for="return-disposition-correction-reason">{{ __('sales_return_correction.reason') }}</label>
+            <x-forms.textarea id="return-disposition-correction-reason" class="form-control mb-2" name="reason"></x-forms.textarea>
+            <button class="btn btn-outline-warning btn-sm" type="submit">{{ __('sales_return_correction.inspected_action') }}</button>
+        </form>
+    @endcan
+@endif
+@if($kind === 'sales_return' && $record->status === 'closed')
+    @can('sales_returns.correct_closed')
+        <form data-sales-ui class="js-sales-cycle-action border rounded p-3 my-3" method="POST" action="{{ route('admin.sales.sales-returns.correct-closed', $record) }}">
+            @csrf
+            <p class="text-700 mb-2">{{ __('sales_return_correction.closed_explanation') }}</p>
+            <label class="form-label" for="return-closed-correction-reason">{{ __('sales_return_correction.reason') }}</label>
+            <x-forms.textarea id="return-closed-correction-reason" class="form-control mb-2" name="reason"></x-forms.textarea>
+            <button class="btn btn-outline-warning btn-sm" type="submit">{{ __('sales_return_correction.closed_action') }}</button>
+        </form>
+    @endcan
 @endif

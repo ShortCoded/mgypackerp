@@ -22,15 +22,11 @@
   }
 
   function formatAmount(value) {
-    const fixed = (Math.round((number(value) + Number.EPSILON) * 10000) / 10000).toFixed(4);
-
-    return window.AppNumbers.format(fixed.replace(/\.?0+$/, '') || '0');
+    return window.AppNumbers.format(window.AppNumbers.round(value, 4) || '0');
   }
 
   function formatQuantity(value) {
-    const fixed = (Math.round((number(value) + Number.EPSILON) * 100000000) / 100000000).toFixed(8);
-
-    return window.AppNumbers.format(fixed.replace(/\.?0+$/, '') || '0');
+    return window.AppNumbers.format(window.AppNumbers.round(value, 8) || '0');
   }
 
   function showToast(icon, title) {
@@ -395,44 +391,52 @@
       return;
     }
 
-    let totalOrdered = 0;
-    let totalReceived = 0;
-    let totalRemaining = 0;
-    let subtotalAmount = 0;
-    let totalDiscount = 0;
-    let totalTaxable = 0;
-    let totalTax = 0;
-    const freightAmount = number($('#freight_amount').val() || $('#freight_amount').text() || '0');
+    const decimals = window.AppNumbers;
+    const value = (raw) => decimals.normalize(raw || '0') || '0';
+    const nonNegative = (raw) => decimals.compare(raw, '0') < 0 ? '0' : raw;
+    const rate = (raw) => decimals.compare(raw, '100') > 0 ? '100' : nonNegative(raw);
+    const sum = (left, right) => decimals.add(left, right) || '0';
+    const product = (left, right) => decimals.multiply(left, right) || '0';
+    const money = (raw) => decimals.round(raw, 4) || '0';
+    let totalOrdered = '0';
+    let totalReceived = '0';
+    let totalRemaining = '0';
+    let subtotalAmount = '0';
+    let totalDiscount = '0';
+    let totalTaxable = '0';
+    let totalTax = '0';
+    const freightAmount = nonNegative(value($('#freight_amount').val() || $('#freight_amount').text()));
     let totalAmount = freightAmount;
 
     $('.js-purchase-order-line').each(function () {
       const $row = $(this);
-      const quantity = number($row.find('.js-line-quantity').val() || $row.find('td').eq(3).text());
-      const price = number($row.find('.js-line-unit-price').val() || $row.find('td').eq(4).text());
+      const quantity = value($row.find('.js-line-quantity').val() || $row.find('td').eq(3).text());
+      const price = value($row.find('.js-line-unit-price').val() || $row.find('td').eq(4).text());
       const discountType = String($row.find('.js-line-discount-type').val() || 'fixed');
-      const discountValue = number($row.find('.js-line-discount-value').val() || '0');
-      const taxRate = Math.min(100, Math.max(0, number($row.find('.js-line-tax-rate').val() || '0')));
-      const received = number($row.find('.js-line-received').text());
-      const remaining = Math.max(0, quantity - received);
-      const subtotal = quantity * price;
+      const discountValue = nonNegative(value($row.find('.js-line-discount-value').val()));
+      const taxRate = rate(value($row.find('.js-line-tax-rate').val()));
+      const received = value($row.find('.js-line-received').text());
+      const remaining = nonNegative(decimals.subtract(quantity, received) || '0');
+      const subtotal = money(product(quantity, price));
       const discountAmount = discountType === 'percentage'
-        ? subtotal * Math.min(100, Math.max(0, discountValue)) / 100
-        : Math.min(subtotal, Math.max(0, discountValue));
-      const lineTaxable = Math.max(0, subtotal - discountAmount);
-      const lineTax = lineTaxable * taxRate / 100;
-      const lineTotal = lineTaxable + lineTax;
+        ? money(product(subtotal, product(rate(discountValue), '0.01')))
+        : discountValue;
+      const cappedDiscount = decimals.compare(discountAmount, subtotal) > 0 ? subtotal : discountAmount;
+      const lineTaxable = nonNegative(decimals.subtract(subtotal, cappedDiscount) || '0');
+      const lineTax = money(product(lineTaxable, product(taxRate, '0.01')));
+      const lineTotal = sum(lineTaxable, lineTax);
 
       $row.find('.js-line-total').text(formatAmount(lineTotal));
       $row.find('.js-line-remaining').text(formatQuantity(remaining));
 
-      totalOrdered += quantity;
-      totalReceived += received;
-      totalRemaining += remaining;
-      subtotalAmount += subtotal;
-      totalDiscount += discountAmount;
-      totalTaxable += lineTaxable;
-      totalTax += lineTax;
-      totalAmount += lineTotal;
+      totalOrdered = sum(totalOrdered, quantity);
+      totalReceived = sum(totalReceived, received);
+      totalRemaining = sum(totalRemaining, remaining);
+      subtotalAmount = sum(subtotalAmount, subtotal);
+      totalDiscount = sum(totalDiscount, cappedDiscount);
+      totalTaxable = sum(totalTaxable, lineTaxable);
+      totalTax = sum(totalTax, lineTax);
+      totalAmount = sum(totalAmount, lineTotal);
     });
 
     $('.js-total-ordered').text(formatQuantity(totalOrdered));

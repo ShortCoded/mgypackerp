@@ -34,6 +34,7 @@ use Modules\HR\Models\HrCity;
 use Modules\HR\Models\HrCountry;
 use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrGovernorate;
+use Modules\Inventory\Models\InventoryReceiptLayer;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Inventory\Services\InventoryAvailabilityService;
@@ -1205,7 +1206,7 @@ class ProcurementWorkflowController extends Controller
     {
         $companyId = $this->context()['company_id'];
 
-        return match ($type) {
+        $record = match ($type) {
             'purchase-requisition' => PurchaseRequisition::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['lines.product', 'lines.unit', 'branch', 'branchStore'])->firstOrFail(),
             'request-for-quotation' => RequestForQuotation::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['requisition', 'suppliers', 'lines.product', 'lines.unit'])->firstOrFail(),
             'quotation-comparison' => RequestForQuotation::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['requisition', 'quotations.supplier', 'quotations.currency', 'quotations.lines.product', 'quotations.lines.unit'])->firstOrFail(),
@@ -1225,6 +1226,25 @@ class ProcurementWorkflowController extends Controller
             'supplier-payment' => SupplierPaymentContext::query()->where('company_id', $companyId)->where('doc_num', $docNum)->with(['cashVoucher', 'bankAccount.bank', 'cheque', 'currency', 'supplier', 'purchaseOrder', 'allocations.purchaseInvoice'])->firstOrFail(),
             default => abort(404),
         };
+
+        $this->hydrateSerialReturnDetails($record);
+
+        return $record;
+    }
+
+    private function hydrateSerialReturnDetails(object $record): void
+    {
+        if (! $record instanceof PurchaseReturn) {
+            return;
+        }
+        $ids = $record->lines->flatMap(fn ($line): array => $line->serial_receipt_layer_ids ?? [])->unique()->values()->all();
+        $layers = InventoryReceiptLayer::query()->with('serialIdentity')
+            ->where('company_id', $record->company_id)->whereIn('id', $ids)->get()->keyBy('id');
+        foreach ($record->lines as $line) {
+            $line->setRelation('serialDisplayNumbers', collect($line->serial_receipt_layer_ids ?? [])
+                ->map(fn (int $id) => $layers->get($id))->filter(fn ($layer): bool => $layer !== null && (int) $layer->product_id === (int) $line->product_id)
+                ->map(fn ($layer): ?string => $layer->serialIdentity?->serial_number)->filter()->values());
+        }
     }
 
     private function pricesVisibleFor(string $type, Request $request): bool
@@ -1364,6 +1384,7 @@ class ProcurementWorkflowController extends Controller
 
     private function showView(string $type, object $record, bool $commercial): View
     {
+        $this->hydrateSerialReturnDetails($record);
         $activeBranchId = $this->context()['branch_id'];
         $isAdministrativeBranch = $this->isAdministrativeBranch();
 

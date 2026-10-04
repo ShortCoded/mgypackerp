@@ -186,20 +186,39 @@
     return window.AppNumbers.number(value, 0);
   }
 
-  function formatAmount(value) {
-    const fixed = (Math.round((number(value) + Number.EPSILON) * 10000) / 10000).toFixed(4);
+  function decimalValue(value) {
+    return window.AppNumbers.normalize(value) || '0';
+  }
 
-    return window.AppNumbers.format(fixed.replace(/\.?0+$/, '') || '0');
+  function nonNegative(value) {
+    return window.AppNumbers.compare(value, '0') < 0 ? '0' : value;
+  }
+
+  function formatAmount(value) {
+    return window.AppNumbers.format(window.AppNumbers.round(value, 4) || '0');
+  }
+
+  function percentageOf(base, rate) {
+    const numbers = window.AppNumbers;
+    const intermediate = numbers.divide(numbers.multiply(base, rate), '1', 8);
+    return numbers.round(numbers.divide(intermediate, '100', 8), 4);
   }
 
   function discountAmount(type, value, base) {
-    const discount = number(value);
+    const numbers = window.AppNumbers;
+    const discount = nonNegative(decimalValue(value));
 
     if (String(type || '') === 'percentage') {
-      return Math.min(base, Math.max(0, base * (discount / 100)));
+      const rate = numbers.compare(discount, '100') > 0 ? '100' : discount;
+      const amount = percentageOf(base, rate);
+      return numbers.compare(amount, base) > 0 ? base : amount;
     }
 
-    return Math.min(base, Math.max(0, discount));
+    if (String(type || '') === 'fixed') {
+      return numbers.compare(discount, base) > 0 ? base : discount;
+    }
+
+    return '0';
   }
 
   function columnName(column) {
@@ -635,13 +654,15 @@
   }
 
   function calculateLine($row) {
-    const qty = number($row.find('.js-purchase-invoice-quantity').val());
-    const price = number($row.find('.js-purchase-invoice-unit-price').val());
-    const subtotal = qty * price;
+    const numbers = window.AppNumbers;
+    const qty = decimalValue($row.find('.js-purchase-invoice-quantity').val());
+    const price = decimalValue($row.find('.js-purchase-invoice-unit-price').val());
+    const subtotal = numbers.round(numbers.multiply(qty, price), 4);
     const lineDiscount = discountAmount($row.find('.js-purchase-invoice-discount-type').val(), $row.find('.js-purchase-invoice-discount-value').val(), subtotal);
-    const totalBeforeTax = Math.max(0, subtotal - lineDiscount);
-    const tax = totalBeforeTax * (number($row.find('.js-purchase-invoice-tax-rate').val()) / 100);
-    const total = totalBeforeTax + tax;
+    const totalBeforeTax = nonNegative(numbers.subtract(subtotal, lineDiscount));
+    const taxRate = nonNegative(decimalValue($row.find('.js-purchase-invoice-tax-rate').val()));
+    const tax = percentageOf(totalBeforeTax, taxRate);
+    const total = numbers.add(totalBeforeTax, tax);
 
     $row.find('.js-purchase-invoice-line-subtotal').text(formatAmount(subtotal));
     $row.find('.js-purchase-invoice-line-discount').text(formatAmount(lineDiscount));
@@ -652,50 +673,56 @@
       subtotal: subtotal,
       lineDiscount: lineDiscount,
       taxable: totalBeforeTax,
+      taxRate: taxRate,
       tax: tax,
       total: total
     };
   }
 
   function calculateTotals($form) {
-    let subtotal = 0;
-    let lineDiscount = 0;
-    let taxableBeforeHeader = 0;
-    let tax = 0;
+    const numbers = window.AppNumbers;
+    let subtotal = '0';
+    let lineDiscount = '0';
+    let taxableBeforeHeader = '0';
+    let tax = '0';
     const calculatedLines = [];
 
     $form.find('.js-purchase-invoice-line').each(function () {
       const $row = $(this);
       const line = calculateLine($row);
-      subtotal += line.subtotal;
-      lineDiscount += line.lineDiscount;
-      taxableBeforeHeader += line.taxable;
+      subtotal = numbers.add(subtotal, line.subtotal);
+      lineDiscount = numbers.add(lineDiscount, line.lineDiscount);
+      taxableBeforeHeader = numbers.add(taxableBeforeHeader, line.taxable);
       calculatedLines.push({ $row: $row, line: line });
     });
 
     const headerDiscount = discountAmount($form.find('.js-purchase-invoice-header-discount-type').val(), $form.find('.js-purchase-invoice-header-discount-value').val(), taxableBeforeHeader);
-    let allocatedHeaderDiscount = 0;
+    let allocatedHeaderDiscount = '0';
     calculatedLines.forEach(function (entry, index) {
-      let share = taxableBeforeHeader > 0 ? headerDiscount * (entry.line.taxable / taxableBeforeHeader) : 0;
+      let share = numbers.compare(taxableBeforeHeader, '0') > 0
+        ? numbers.round(numbers.divide(numbers.multiply(headerDiscount, entry.line.taxable), taxableBeforeHeader, 8), 4)
+        : '0';
+      const remainingShare = nonNegative(numbers.subtract(headerDiscount, allocatedHeaderDiscount));
       if (index === calculatedLines.length - 1) {
-        share = headerDiscount - allocatedHeaderDiscount;
+        share = remainingShare;
       }
-      allocatedHeaderDiscount += share;
-      const lineTaxable = Math.max(0, entry.line.taxable - share);
-      const taxRate = entry.line.taxable > 0 ? entry.line.tax / entry.line.taxable : 0;
-      const lineTax = lineTaxable * taxRate;
-      tax += lineTax;
+      share = numbers.compare(share, remainingShare) > 0 ? remainingShare : share;
+      allocatedHeaderDiscount = numbers.add(allocatedHeaderDiscount, share);
+      const lineTaxable = nonNegative(numbers.subtract(entry.line.taxable, share));
+      const lineTax = percentageOf(lineTaxable, entry.line.taxRate);
+      tax = numbers.add(tax, lineTax);
       entry.$row.find('.js-purchase-invoice-line-tax').text(formatAmount(lineTax));
-      entry.$row.find('.js-purchase-invoice-line-total').text(formatAmount(lineTaxable + lineTax));
+      entry.$row.find('.js-purchase-invoice-line-total').text(formatAmount(numbers.add(lineTaxable, lineTax)));
     });
 
-    const freight = number($form.find('.js-purchase-invoice-freight').val());
-    const freightTaxRate = number($form.find('.js-purchase-invoice-freight-tax-rate').val());
-    const freightTax = freight * Math.max(0, Math.min(100, freightTaxRate)) / 100;
-    tax += freightTax;
-    const taxable = Math.max(0, taxableBeforeHeader - headerDiscount) + freight;
-    const total = taxable + tax;
-    const paid = number($form.find('.js-purchase-invoice-paid').text());
+    const freight = nonNegative(decimalValue($form.find('.js-purchase-invoice-freight').val()));
+    const freightRate = nonNegative(decimalValue($form.find('.js-purchase-invoice-freight-tax-rate').val()));
+    const freightTaxRate = numbers.compare(freightRate, '100') > 0 ? '100' : freightRate;
+    const freightTax = percentageOf(freight, freightTaxRate);
+    tax = numbers.add(tax, freightTax);
+    const taxable = numbers.add(nonNegative(numbers.subtract(taxableBeforeHeader, headerDiscount)), freight);
+    const total = numbers.add(taxable, tax);
+    const paid = decimalValue($form.find('.js-purchase-invoice-paid').text());
     const scheduleTotal = calculateScheduleTotals($form, total);
 
     $form.find('.js-purchase-invoice-subtotal').text(formatAmount(subtotal));
@@ -706,9 +733,9 @@
     $form.find('.js-purchase-invoice-taxable').text(formatAmount(taxable));
     $form.find('.js-purchase-invoice-tax').text(formatAmount(tax));
     $form.find('.js-purchase-invoice-total').text(formatAmount(total));
-    $form.find('.js-purchase-invoice-remaining').text(formatAmount(Math.max(0, total - paid)));
+    $form.find('.js-purchase-invoice-remaining').text(formatAmount(nonNegative(numbers.subtract(total, paid))));
     $form.find('.js-purchase-invoice-schedule-total').text(formatAmount(scheduleTotal));
-    $form.find('.js-purchase-invoice-schedule-difference').text(formatAmount(total - scheduleTotal));
+    $form.find('.js-purchase-invoice-schedule-difference').text(formatAmount(numbers.subtract(total, scheduleTotal)));
   }
 
   function updateFreightMatch($form, fillRemaining) {
@@ -728,10 +755,10 @@
   }
 
   function calculateScheduleTotals($form) {
-    let scheduleTotal = 0;
+    let scheduleTotal = '0';
 
     $form.find('.js-purchase-invoice-schedule-amount').each(function () {
-      scheduleTotal += number($(this).val());
+      scheduleTotal = window.AppNumbers.add(scheduleTotal, decimalValue($(this).val()));
     });
 
     return scheduleTotal;

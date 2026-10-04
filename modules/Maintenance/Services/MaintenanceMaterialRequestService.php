@@ -12,6 +12,7 @@ use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryLayerAllocation;
 use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Inventory\Services\InventoryLayerService;
 use Modules\Inventory\Services\InventoryMovementService;
 use Modules\Maintenance\Models\MaintenanceMaterialRequest;
 use Modules\Maintenance\Models\MaintenanceMaterialRequestLine;
@@ -23,6 +24,7 @@ class MaintenanceMaterialRequestService
         private readonly DocumentNumberService $documents,
         private readonly OperatingContextService $context,
         private readonly InventoryMovementService $movements,
+        private readonly InventoryLayerService $layers,
     ) {}
 
     /** @param array<string, mixed> $data */
@@ -218,9 +220,13 @@ class MaintenanceMaterialRequestService
                     if (bccomp($allocRemaining, '0', 8) <= 0) {
                         break;
                     }
-                    $quantity = bccomp((string) $allocation->quantity, $allocRemaining, 8) > 0
+                    $returnable = $this->layers->remainingReturnQuantity($allocation);
+                    if (bccomp($returnable, '0', 8) <= 0) {
+                        continue;
+                    }
+                    $quantity = bccomp($returnable, $allocRemaining, 8) > 0
                         ? $allocRemaining
-                        : (string) $allocation->quantity;
+                        : $returnable;
                     $layer = $allocation->layer;
                     $positionLines[] = [
                         'product_id' => $line->product_id,

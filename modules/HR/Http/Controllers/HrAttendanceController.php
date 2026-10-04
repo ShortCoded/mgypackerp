@@ -5,20 +5,26 @@ namespace Modules\HR\Http\Controllers;
 use DomainException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Maatwebsite\Excel\Facades\Excel;
 use Modules\Core\Models\Branch;
 use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingScopeAccessService;
+use Modules\Core\Services\Reports\ReportPdfService;
+use Modules\HR\Exports\HrAttendanceReportExport;
 use Modules\HR\Http\Requests\Attendance\HrAttendanceReportRequest;
 use Modules\HR\Http\Requests\Attendance\StoreManualAttendanceEventRequest;
 use Modules\HR\Models\HrAttendanceEvent;
+use Modules\HR\Models\HrAttendanceSession;
 use Modules\HR\Models\HrEmployee;
 use Modules\HR\Services\HrAttendanceReportService;
 use Modules\HR\Services\HrAttendanceService;
 use Modules\HR\Services\HrLifecycleAuditLogger;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class HrAttendanceController extends Controller
@@ -68,13 +74,48 @@ class HrAttendanceController extends Controller
 
     public function exportCsv(HrAttendanceReportRequest $request): StreamedResponse
     {
+        [$companyId, $branchIds] = $this->exportScope($request);
+
+        return $this->reports->exportCsv($companyId, $request->filters(), $branchIds);
+    }
+
+    public function exportXlsx(HrAttendanceReportRequest $request): BinaryFileResponse
+    {
+        [$companyId, $branchIds] = $this->exportScope($request);
+
+        return Excel::download(
+            new HrAttendanceReportExport($this->reports, $companyId, $request->filters(), $branchIds),
+            'employee-attendance-'.now()->format('Ymd-His').'.xlsx',
+        );
+    }
+
+    public function exportPdf(HrAttendanceReportRequest $request, ReportPdfService $pdf): Response
+    {
+        [$companyId, $branchIds] = $this->exportScope($request);
+        $filters = $request->filters();
+        $rows = $this->reports->exportQuery($companyId, $filters, $branchIds)
+            ->get()
+            ->map(fn (HrAttendanceSession $session): array => $this->reports->row($session));
+        $summary = $this->reports->summary($companyId, $filters, $branchIds);
+
+        return $pdf->stream('reports.hr.attendance', [
+            'title' => __('hr_attendance.admin.title'),
+            'rows' => $rows,
+            'summaryRows' => $this->reports->summaryRows($summary),
+            'filters' => $filters,
+        ], 'employee-attendance-'.now()->format('Ymd-His').'.pdf', 'L');
+    }
+
+    /** @return array{int, list<int>|null} */
+    private function exportScope(HrAttendanceReportRequest $request): array
+    {
         $company = $this->companies->currentCompany($request);
         abort_if($company === null, 404);
         $branchIds = $this->scope->hasUnrestrictedBranchAccess($request->user())
             ? null
             : $this->scope->allowedBranchQuery($request->user(), [(string) $company->doc_num])->pluck('branches.id')->all();
 
-        return $this->reports->exportCsv((int) $company->getKey(), $request->filters(), $branchIds);
+        return [(int) $company->getKey(), $branchIds];
     }
 
     public function storeManual(StoreManualAttendanceEventRequest $request): RedirectResponse

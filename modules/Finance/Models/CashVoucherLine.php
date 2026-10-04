@@ -5,6 +5,7 @@ namespace Modules\Finance\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\CostCenter;
 
 class CashVoucherLine extends Model
 {
@@ -12,6 +13,7 @@ class CashVoucherLine extends Model
         'cash_voucher_id',
         'line_number',
         'account_id',
+        'cost_center_id',
         'amount',
         'amount_base',
         'description',
@@ -36,5 +38,10 @@ class CashVoucherLine extends Model
     public function account(): BelongsTo
     {
         return $this->belongsTo(Account::class)->withTrashed();
+    }
+
+    public function costCenter(): BelongsTo
+    {
+        return $this->belongsTo(CostCenter::class)->withTrashed();
     }
 }

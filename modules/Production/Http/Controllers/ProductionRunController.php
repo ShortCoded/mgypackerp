@@ -16,7 +16,9 @@ use Modules\Core\Models\BranchStore;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\NumericFormatService;
+use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Core\Services\Select2ResponseService;
 use Modules\FixedAssets\Models\FixedAsset;
@@ -31,6 +33,7 @@ use Modules\Production\Models\ProductionOrderLine;
 use Modules\Production\Models\ProductionOrderStageSnapshot;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Models\ProductionRunBatch;
+use Modules\Production\Services\ProductionCorrectionContextService;
 use Modules\Production\Services\ProductionCycleService;
 
 class ProductionRunController extends Controller
@@ -264,7 +267,7 @@ class ProductionRunController extends Controller
         }
 
         return response()->json($select2->paginated($query, $request, fn (HrEmployee $worker): array => [
-            'id' => $worker->doc_num,
+            'id' => $request->string('identifier')->toString() === 'id' ? (string) $worker->id : $worker->doc_num,
             'text' => trim($worker->doc_num.' — '.($worker->full_name ?: $worker->name)),
         ]));
     }
@@ -393,7 +396,7 @@ class ProductionRunController extends Controller
 
     public function show(Request $request, ProductionRun $productionRun): View
     {
-        $this->assertRunInCurrentContext($request, $productionRun);
+        $this->assertRunInCurrentContext($request, $productionRun, true);
 
         return view('modules.production.runs.show', [
             'record' => $productionRun->load([
@@ -402,7 +405,8 @@ class ProductionRunController extends Controller
                 'inventoryDocuments.journalEntry', 'materialRequests', 'expenseRequests',
             ]),
             'stores' => BranchStore::query()->where('branch_id', $productionRun->branch_id)->orderBy('position')->get(),
-            'workers' => $this->workers((int) $productionRun->company_id, (int) $productionRun->branch_id),
+            'workers' => HrEmployee::withTrashed()->where('company_id', $productionRun->company_id)->where('branch_id', $productionRun->branch_id)
+                ->whereIn('id', collect(old('labor_details', $productionRun->labor_details ?? []))->pluck('employee_id'))->get()->keyBy('id'),
         ]);
     }
 
@@ -441,14 +445,19 @@ class ProductionRunController extends Controller
             && (int) $productionRunBatch->branch_id === (int) $context['branch_id'],
             404,
         );
+        $this->normalizeMaterialLayerInput($request);
         $validated = $request->validate([
             'branch_store_id' => ['required', 'integer', Rule::exists(BranchStore::class, 'id')->where('branch_id', $context['branch_id'])],
             'warehouse_location_id' => ['prohibited'],
+            'lines' => ['nullable', 'array', 'max:100'],
+            'lines.*.requirement_id' => ['required', 'integer', 'distinct'],
+            ...$this->receiptLayerRules(),
         ]);
         $document = $this->guard(fn (): InventoryDocument => $this->cycle->issueRunBatchMaterials(
             $productionRunBatch,
             (int) $validated['branch_store_id'],
             null,
+            $this->receiptLayersByRequirement($validated['lines'] ?? []),
         ));
 
         return $this->respond($request, ['doc_num' => $document->doc_num], route('admin.production.runs.batches.show', $productionRunBatch));
@@ -476,7 +485,7 @@ class ProductionRunController extends Controller
 
     private function printRunDocument(Request $request, ProductionRun $productionRun, string $view, string $documentTitle, string $filenamePrefix): Response
     {
-        $this->assertRunInCurrentContext($request, $productionRun);
+        $this->assertRunInCurrentContext($request, $productionRun, true);
         $record = $productionRun->load([
             'order.company', 'order.salesOrder', 'orderLine.product.unit', 'orderLine.product.equivalentUnit', 'product', 'fixedAsset', 'stageSnapshot', 'shift',
             'requirements.product', 'requirements.unit', 'progressEntries', 'inspections.results',
@@ -509,13 +518,16 @@ class ProductionRunController extends Controller
     public function issue(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
         $this->assertRunInCurrentContext($request, $productionRun);
-        $validated = $request->validate($this->materialRules());
+        $this->normalizeMaterialLayerInput($request);
+        $validated = $request->validate([...$this->materialRules(), ...$this->receiptLayerRules()]);
         $document = $this->guard(fn () => $this->cycle->issueMaterials(
             $productionRun,
             $validated['branch_store_id'],
             $this->quantitiesByRequirement($validated['lines'] ?? []),
             $request->boolean('additional'),
             null,
+            [],
+            $this->receiptLayersByRequirement($validated['lines'] ?? []),
         ));
 
         return $this->respond($request, ['doc_num' => $document->doc_num], route('admin.production.runs.show', $productionRun));
@@ -530,6 +542,7 @@ class ProductionRunController extends Controller
             $validated['branch_store_id'],
             $this->quantitiesByRequirement($validated['lines']),
             null,
+            collect($validated['lines'])->mapWithKeys(fn (array $line): array => [$line['requirement_id'] => $line['serial_receipt_layer_ids'] ?? []])->all(),
         ));
 
         return $this->respond($request, ['doc_num' => $document->doc_num], route('admin.production.runs.show', $productionRun));
@@ -610,11 +623,17 @@ class ProductionRunController extends Controller
             'lines.*.requirement_id' => ['required', 'integer', 'exists:production_material_requirements,id'],
             'lines.*.consumed_quantity' => ['required', 'numeric', 'min:0'],
             'lines.*.waste_quantity' => ['required', 'numeric', 'min:0'],
+            'lines.*.consumed_receipt_layer_ids' => ['nullable', 'array', 'max:10000'],
+            'lines.*.consumed_receipt_layer_ids.*' => ['required', 'integer', 'min:1', 'distinct'],
+            'lines.*.waste_receipt_layer_ids' => ['nullable', 'array', 'max:10000'],
+            'lines.*.waste_receipt_layer_ids.*' => ['required', 'integer', 'min:1', 'distinct'],
         ]);
         $accounting = collect($validated['lines'])->mapWithKeys(fn (array $line): array => [
             $line['requirement_id'] => [
                 'consumed_quantity' => $line['consumed_quantity'],
                 'waste_quantity' => $line['waste_quantity'],
+                'consumed_receipt_layer_ids' => $line['consumed_receipt_layer_ids'] ?? [],
+                'waste_receipt_layer_ids' => $line['waste_receipt_layer_ids'] ?? [],
             ],
         ])->all();
         $documents = $this->guard(fn (): array => $this->cycle->accountMaterials(
@@ -634,12 +653,14 @@ class ProductionRunController extends Controller
             'branch_store_id' => ['required', 'integer', 'exists:branch_stores,id'],
             'warehouse_location_id' => ['prohibited'],
             'base_quantity' => ['required', 'numeric', 'gt:0'],
+            'serial_numbers' => ['nullable', 'string', 'max:1000000'],
         ]);
         $document = $this->guard(fn () => $this->cycle->receiveFinishedGoods(
             $productionRun,
             $validated['branch_store_id'],
             (string) $validated['base_quantity'],
             null,
+            array_values(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', $validated['serial_numbers'] ?? '')))),
         ));
 
         return $this->respond($request, ['doc_num' => $document->doc_num], route('admin.production.runs.show', $productionRun));
@@ -677,16 +698,29 @@ class ProductionRunController extends Controller
             'production.runs.plan',
             'production.runs.edit',
             'production.runs.clone',
+            'production.runs.labor',
         ]), 403);
     }
 
-    private function assertRunInCurrentContext(Request $request, ProductionRun $productionRun): void
+    private function assertRunInCurrentContext(Request $request, ProductionRun $productionRun, bool $allowCorrectionRead = false): void
     {
         $context = $this->requiredContext($request);
+        $periodId = (int) $productionRun->financial_period_id;
+        if ($periodId !== (int) $context['financial_period_id']) {
+            $periodId = app(ProductionCorrectionContextService::class)->executionPeriodId($productionRun);
+            if ($periodId !== (int) $context['financial_period_id'] && $allowCorrectionRead
+                && $request->user()?->can('production.runs.correct_later_period')
+                && $request->user()?->canAny(['production.runs.correct', 'production.runs.correct_approve'])) {
+                $company = app(OperatingCompanyContextService::class)->currentCompany();
+                abort_unless($company !== null && app(OperatingScopeAccessService::class)
+                    ->allowedFinancialPeriodQuery($request->user(), [$company->doc_num])->where('financial_periods.id', $productionRun->financial_period_id)->exists(), 404);
+                $periodId = (int) $context['financial_period_id'];
+            }
+        }
 
         abort_unless(
             (int) $productionRun->company_id === (int) $context['company_id']
-            && (int) $productionRun->financial_period_id === (int) $context['financial_period_id']
+            && $periodId === (int) $context['financial_period_id']
             && (int) $productionRun->branch_id === (int) $context['branch_id'],
             404,
         );
@@ -767,10 +801,57 @@ class ProductionRunController extends Controller
             'branch_store_id' => ['required', 'integer', 'exists:branch_stores,id'],
             'warehouse_location_id' => ['prohibited'],
             'additional' => ['nullable', 'boolean'],
-            'lines' => ['nullable', 'array'],
-            'lines.*.requirement_id' => ['required', 'integer', 'exists:production_material_requirements,id'],
+            'lines' => ['nullable', 'array', 'max:100'],
+            'lines.*.requirement_id' => ['required', 'integer', 'distinct', 'exists:production_material_requirements,id'],
             'lines.*.quantity' => ['nullable', 'numeric', 'gt:0'],
+            'lines.*.serial_receipt_layer_ids' => ['nullable', 'array', 'max:10000'],
+            'lines.*.serial_receipt_layer_ids.*' => ['required', 'integer', 'min:1', 'distinct'],
         ];
+    }
+
+    /** @return array<string, mixed> */
+    private function receiptLayerRules(): array
+    {
+        return [
+            'lines.*.receipt_layers' => ['nullable', 'array', 'max:100'],
+            'lines.*.receipt_layers.*' => ['array'],
+            'lines.*.receipt_layers.*.layer_id' => ['required_with:lines.*.receipt_layers.*.quantity', 'nullable', 'integer', 'min:1'],
+            'lines.*.receipt_layers.*.quantity' => ['required_with:lines.*.receipt_layers.*.layer_id', 'nullable', 'numeric', 'gt:0'],
+        ];
+    }
+
+    private function normalizeMaterialLayerInput(Request $request): void
+    {
+        if (! is_array($request->input('lines'))) {
+            return;
+        }
+        $numbers = app(NumericFormatService::class);
+        $request->merge(['lines' => array_map(function (mixed $line) use ($numbers): mixed {
+            if (! is_array($line)) {
+                return $line;
+            }
+            if (array_key_exists('quantity', $line)) {
+                $line['quantity'] = $numbers->normalizeForValidation($line['quantity']);
+            }
+            if (is_array($line['receipt_layers'] ?? null)) {
+                $line['receipt_layers'] = array_map(function (mixed $selection) use ($numbers): mixed {
+                    if (is_array($selection)) {
+                        $selection['quantity'] = $numbers->normalizeForValidation($selection['quantity'] ?? null);
+                    }
+
+                    return $selection;
+                }, $line['receipt_layers']);
+            }
+
+            return $line;
+        }, $request->input('lines'))]);
+    }
+
+    /** @param list<array<string, mixed>> $lines @return array<int, list<array<string, mixed>>> */
+    private function receiptLayersByRequirement(array $lines): array
+    {
+        return collect($lines)->mapWithKeys(fn (array $line): array => [(int) $line['requirement_id'] => collect($line['receipt_layers'] ?? [])
+            ->filter(fn (array $selection): bool => filled($selection['layer_id'] ?? null))->values()->all()])->all();
     }
 
     /** @param list<array<string, mixed>> $lines @return array<int, mixed> */

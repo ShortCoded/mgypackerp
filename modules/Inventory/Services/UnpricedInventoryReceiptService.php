@@ -150,12 +150,15 @@ class UnpricedInventoryReceiptService
                 }
             }
 
+            $approvedAt = now();
             $locked->forceFill([
                 'approved' => true,
-                'approved_at' => now(),
+                'approved_at' => $approvedAt,
                 'approved_by' => auth()->id(),
-                'is_closed' => false,
-                'status' => UnpricedInventoryReceipt::StatusApproved,
+                'is_closed' => true,
+                'status' => UnpricedInventoryReceipt::StatusClosed,
+                'closed_at' => $approvedAt,
+                'closed_by' => auth()->id(),
                 'pricing_status' => UnpricedInventoryReceipt::PricingStatusUnpriced,
                 'updated_by' => auth()->id(),
             ])->save();

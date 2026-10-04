@@ -70,7 +70,7 @@ class PurchaseOrderLine extends Model
             'ordered_quantity' => 'decimal:8',
             'received_quantity' => 'decimal:8',
             'remaining_quantity' => 'decimal:8',
-            'unit_price' => 'decimal:4',
+            'unit_price' => 'decimal:8',
             'line_total' => 'decimal:4',
             'discount_value' => 'decimal:4',
             'discount_amount' => 'decimal:4',

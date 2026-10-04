@@ -16,7 +16,7 @@
             'approved' => [
                 'closed' => ['cancel', __('Close')],
             ],
-            'converted', 'partially_converted' => ['closed' => ['cancel', __('Close')]],
+            'partially_converted' => ['closed' => ['cancel', __('Close')]],
             default => [],
         };
         if ($record->approved_at !== null || $record->closed_at !== null
@@ -29,11 +29,7 @@
         foreach ($states as $status => [$permission, $label]) {
             $workflow[] = ['url' => route($prefix.'.transition', $record), 'permission' => $kind.'.'.$permission, 'label' => $label, 'status' => $status, 'reason' => in_array($status, ['rejected', 'cancelled', 'closed'], true)];
         }
-        $canReopenRequest = $record->status === 'approved'
-            && ! (bool) $record->getAttribute('has_converted_lines')
-            && ! (bool) $record->getAttribute('has_quotations')
-            && ! (bool) $record->getAttribute('has_orders')
-            && ! (bool) $record->getAttribute('has_direct_invoices');
+        $canReopenRequest = in_array($record->status, ['approved', 'partially_converted', 'converted'], true);
         if ($canReopenRequest) {
             $openDocumentType = 'sales_requests';
         }
@@ -75,6 +71,15 @@
         }
         if (in_array($record->status, ['pending_authorization', 'authorized'], true)) {
             $workflow[] = ['url' => route($prefix.'.cancel', $record), 'permission' => 'sales_returns.cancel', 'label' => __('Cancel'), 'reason' => true];
+        }
+        if ($record->status === 'received') {
+            $workflow[] = ['url' => route($prefix.'.correct-receipt', $record), 'permission' => 'sales_returns.correct_receipt', 'label' => __('sales_return_correction.action'), 'reason' => true];
+        }
+        if ($record->status === 'inspected') {
+            $workflow[] = ['url' => route($prefix.'.correct-disposition', $record), 'permission' => 'sales_returns.correct_disposition', 'label' => __('sales_return_correction.inspected_action'), 'reason' => true];
+        }
+        if ($record->status === 'closed') {
+            $workflow[] = ['url' => route($prefix.'.correct-closed', $record), 'permission' => 'sales_returns.correct_closed', 'label' => __('sales_return_correction.closed_action'), 'reason' => true];
         }
     }
     if (!$trashed && $kind === 'customer_receipts' && $record->status === 'approved') {

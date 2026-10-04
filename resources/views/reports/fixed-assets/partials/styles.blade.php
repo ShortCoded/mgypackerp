@@ -143,7 +143,7 @@
 
     .fa-pdf-filter-item {
         display: inline-block;
-        font-size: 7.8px;
+        font-size: 10.5px;
         margin-right: 12px;
         margin-bottom: 2px;
     }
@@ -169,15 +169,15 @@
     .fa-pdf-report-table th,
     .fa-pdf-report-table td {
         border: 1px solid #cbd5e1;
-        font-size: 7.1px;
-        line-height: 1.25;
+        font-size: 12px;
+        line-height: 1.3;
         overflow-wrap: break-word;
         padding: 3.5px;
         vertical-align: top;
     }
 
     .fa-pdf-report-table th {
-        background: #dfe7f1;
+        background: #f1f5f9;
         color: #26384d;
         font-weight: 700;
     }
@@ -205,6 +205,11 @@
 
     .fa-pdf-totals-table th {
         width: 65%;
+    }
+
+    .fa-pdf-totals .fa-pdf-totals-table th,
+    .fa-pdf-totals .fa-pdf-totals-table td {
+        font-size: 12px;
     }
 
     .fa-pdf-authorization {

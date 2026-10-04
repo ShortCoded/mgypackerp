@@ -161,6 +161,7 @@ return [
         'close_requires_approved' => 'Only approved purchase orders can be closed.',
         'already_cancelled' => 'This purchase order is already cancelled.',
         'closed_cancel_forbidden' => 'Closed purchase orders cannot be cancelled.',
+        'reopened_cancel_forbidden' => 'A purchase order reopened after approval cannot be cancelled.',
         'received_cancel_forbidden' => 'Purchase orders with received quantities cannot be cancelled.',
         'received_line_remove_forbidden' => 'Lines with received quantities cannot be removed.',
         'restore_not_allowed' => 'Only deleted purchase orders can be restored.',

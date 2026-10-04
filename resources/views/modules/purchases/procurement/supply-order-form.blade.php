@@ -53,7 +53,7 @@
             @foreach($sourceLines as $index => $line)
                 @php
                     $savedLine = $record?->lines->firstWhere('purchase_order_line_id', $line->getKey());
-                    $remaining = (float) $line->getAttribute('supply_available_quantity');
+                    $remaining = (string) $line->getAttribute('supply_available_quantity');
                     $quantity = old('lines.'.$index.'.ordered_quantity', $savedLine?->ordered_quantity ?? $remaining);
                 @endphp
                 <div class="col-12">
@@ -67,7 +67,7 @@
                             <div class="row g-3 align-items-end">
                                 <div class="col-12 col-md-5"><label class="form-label">{{ __('Item') }}</label><x-forms.input class="form-control" value="{{ $line->product?->doc_num }} / {{ $line->product?->name }}" readonly /></div>
                                 <div class="col-6 col-md-2"><label class="form-label">{{ __('Unit') }}</label><x-forms.input class="form-control" value="{{ $line->unit?->name }}" readonly /></div>
-                                <div class="col-6 col-md-2"><label class="form-label">{{ __('PO Remaining') }}</label><x-forms.input class="form-control" value="{{ $numbers->format($line->quantityProgress()['remaining']) }}" dir="ltr" readonly /></div>
+                                <div class="col-6 col-md-2"><label class="form-label">{{ __('PO Remaining') }}</label><x-forms.input class="form-control" value="{{ $numbers->format($line->getAttribute('purchase_order_remaining_quantity')) }}" dir="ltr" readonly /></div>
                                 <div class="col-12 col-md-3"><label class="form-label" for="supply_quantity_{{ $index }}">{{ __('Supply quantity') }}</label><x-forms.numeric-input id="supply_quantity_{{ $index }}" name="lines[{{ $index }}][ordered_quantity]" :scale="8" min="0" step="0.00000001" :value="$quantity" required /></div>
                                 <div class="col-12"><label class="form-label" for="supply_notes_{{ $index }}">{{ __('Notes') }}</label><x-forms.input class="form-control" id="supply_notes_{{ $index }}" name="lines[{{ $index }}][notes]" value="{{ old('lines.'.$index.'.notes', $savedLine?->notes) }}" /></div>
                                 <div class="col-12">

@@ -390,7 +390,7 @@
                                         @if($isReadonly)
                                             <div class="text-end" dir="ltr">{{ $numbers->format($line['unit_price'] ?? 0) }}</div>
                                         @else
-                                            <x-forms.numeric-input class="text-end js-line-unit-price" :name="'lines['.$index.'][unit_price]'" :value="$line['unit_price'] ?? ''" :scale="4" min="0" step="0.0001" required />
+                                            <x-forms.numeric-input class="text-end js-line-unit-price" :name="'lines['.$index.'][unit_price]'" :value="$line['unit_price'] ?? ''" :scale="8" min="0" step="0.00000001" required />
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_price"></div>
                                         @endif
                                     </td>
@@ -588,7 +588,7 @@
                 <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.ordered_quantity"></div>
             </td>
             <td>
-                <x-forms.numeric-input class="text-end js-line-unit-price" name="lines[__INDEX__][unit_price]" :scale="4" min="0" step="0.0001" required />
+                <x-forms.numeric-input class="text-end js-line-unit-price" name="lines[__INDEX__][unit_price]" :scale="8" min="0" step="0.00000001" required />
                 <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_price"></div>
             </td>
             <td>

@@ -538,6 +538,17 @@ test('all partner report exports apply filters and emit clean localized files', 
         $pdf = $this->get(route("admin.reports.{$report}.export.pdf", ['name' => $term]));
         $pdf->assertOk()->assertHeader('content-type', 'application/pdf');
         expect($pdf->getContent())->toStartWith('%PDF-');
+        if ($directory = getenv('MGYPACK_REPORT_PRINT_SAMPLES')) {
+            file_put_contents($directory.'/partner-'.$report.'-en.pdf', $pdf->getContent());
+            $actor->forceFill(['locale' => 'ar'])->save();
+            app()->setLocale('ar');
+            $arabicPdf = $this->withSession(['locale' => 'ar'])->get(route("admin.reports.{$report}.export.pdf", ['name' => $term]))
+                ->assertOk()->assertHeader('content-type', 'application/pdf');
+            file_put_contents($directory.'/partner-'.$report.'-ar.pdf', $arabicPdf->getContent());
+            $actor->forceFill(['locale' => 'en'])->save();
+            app()->setLocale('en');
+            $this->withSession(['locale' => 'en']);
+        }
     }
 });
 

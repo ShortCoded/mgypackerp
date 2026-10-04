@@ -24,8 +24,8 @@ class QuotationCalculationService
 
         foreach ($lines as $line) {
             $quantity = $this->numbers->normalizeToScale($line['quantity'] ?? 0, 8) ?? '0.00000000';
-            $unitPrice = $this->decimal($line['unit_price'] ?? 0);
-            $lineSubtotal = $this->amounts->multiply($quantity, $unitPrice);
+            $unitPrice = $this->unitPrice($line['unit_price'] ?? 0);
+            $lineSubtotal = $this->amounts->round($this->amounts->multiply($quantity, $unitPrice, 16));
             $lineDiscount = $this->discountAmount($lineSubtotal, $line['discount_type'] ?? null, $line['discount_value'] ?? 0);
             $taxBase = $this->amounts->subtract($lineSubtotal, $lineDiscount);
             $taxRate = $this->decimal($line['tax_rate'] ?? 0);
@@ -39,7 +39,7 @@ class QuotationCalculationService
             $calculatedLines[] = [
                 ...$line,
                 'quantity' => $quantity,
-                'unit_price' => $this->numbers->normalizeToScale($line['unit_price'] ?? 0, 4) ?? '0.0000',
+                'unit_price' => $unitPrice,
                 'discount_value' => $this->numbers->normalizeToScale($line['discount_value'] ?? 0, 4) ?? '0.0000',
                 'discount_amount' => $lineDiscount,
                 'tax_rate' => $this->numbers->normalizeToScale($line['tax_rate'] ?? 0, 4) ?? '0.0000',
@@ -90,5 +90,12 @@ class QuotationCalculationService
     private function decimal(mixed $value): string
     {
         return $this->numbers->normalizeToScale(str_replace(',', '', (string) ($value ?? 0)), 4) ?? '0.0000';
+    }
+
+    private function unitPrice(mixed $value): string
+    {
+        $this->numbers->normalizeToScale($value ?? 0, 8);
+
+        return $this->numbers->normalize($value ?? 0) ?? '0';
     }
 }

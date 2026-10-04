@@ -31,6 +31,27 @@ class SalesRequest extends Model
 
     protected $attributes = ['status' => 'draft', 'priority' => 'normal', 'exchange_rate' => 1];
 
+    protected static function booted(): void
+    {
+        static::saving(function (self $request): void {
+            if (! $request->isDirty('status')) {
+                return;
+            }
+
+            if ($request->status === 'converted') {
+                $request->closed_at ??= now();
+                $request->closed_by ??= auth()->id();
+
+                return;
+            }
+
+            if (in_array($request->status, [self::StatusApproved, 'partially_converted', self::StatusReopened], true)) {
+                $request->closed_at = null;
+                $request->closed_by = null;
+            }
+        });
+    }
+
     protected function casts(): array
     {
         return ['request_date' => 'date', 'required_delivery_date' => 'date', 'exchange_rate' => 'decimal:6', 'status_history' => 'array', 'print_identity_snapshot' => 'array', 'submitted_at' => 'datetime', 'approved_at' => 'datetime', 'rejected_at' => 'datetime', 'cancelled_at' => 'datetime', 'closed_at' => 'datetime'];
@@ -45,18 +66,54 @@ class SalesRequest extends Model
 
     public function isEditable(): bool
     {
-        return in_array($this->status, [self::StatusDraft, self::StatusRejected, self::StatusReopened], true);
+        if (in_array($this->status, [self::StatusDraft, self::StatusRejected], true)) {
+            return $this->approved_at === null && $this->closed_at === null;
+        }
+
+        if ($this->status !== self::StatusReopened) {
+            return false;
+        }
+
+        $latestTransition = collect($this->status_history ?? [])
+            ->reverse()
+            ->first(fn (mixed $event): bool => is_array($event) && ($event['event'] ?? null) !== 'amended');
+
+        return is_array($latestTransition)
+            && ($latestTransition['event'] ?? null) === 'reopened'
+            && ($latestTransition['to'] ?? null) === self::StatusReopened
+            && filled($latestTransition['reopen_revision_id'] ?? null);
+    }
+
+    public function hasReopenSinceLastApproval(): bool
+    {
+        foreach (array_reverse($this->status_history ?? []) as $event) {
+            if (! is_array($event)) {
+                continue;
+            }
+
+            if (in_array($event['to'] ?? null, [self::StatusApproved, 'partially_converted', 'converted'], true)) {
+                return false;
+            }
+
+            if (($event['event'] ?? null) === 'reopened' && filled($event['reopen_revision_id'] ?? null)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function canReopenSafely(): bool
     {
-        if ($this->status !== self::StatusApproved || $this->lines()->where('converted_quantity', '>', 0)->exists()) {
-            return false;
-        }
+        return in_array($this->status, [self::StatusApproved, 'partially_converted', 'converted'], true);
+    }
 
-        return ! $this->quotations()->withTrashed()->exists()
-            && ! $this->orders()->withTrashed()->exists()
-            && ! CustomerInvoice::query()->withTrashed()
+    public function hasConversionHistory(): bool
+    {
+        return $this->lines()->where('converted_quantity', '>', 0)->exists()
+            || $this->quotations()->withTrashed()->exists()
+            || $this->orders()->withTrashed()->exists()
+            || CustomerInvoice::query()->withTrashed()
                 ->where('source_type', 'sales_request')
                 ->where('source_id', $this->getKey())
                 ->exists();

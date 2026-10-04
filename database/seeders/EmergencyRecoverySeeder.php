@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Models\User;
+use DomainException;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Seeder;
@@ -12,12 +13,14 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Schema;
 use Modules\Accounting\Database\Seeders\AccountClassificationsSeeder;
 use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
+use Modules\Accounting\Models\Account;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
 use Modules\Core\Database\Seeders\CurrencySeeder;
 use Modules\Core\Database\Seeders\SettingSeeder;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
+use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\DocumentNumberService;
 use Spatie\Permission\Models\Permission;
@@ -42,29 +45,52 @@ class EmergencyRecoverySeeder extends Seeder
      */
     public function run(): void
     {
-        app(PermissionRegistrar::class)->forgetCachedPermissions();
+        if (! app()->environment(['local', 'development', 'testing'])) {
+            throw new DomainException('Emergency recovery with a built-in credential is limited to local and test environments.');
+        }
 
-        $this->call(SettingSeeder::class);
-        $this->call(PermissionSeeder::class);
-        $this->call(DefaultOperatingContextSeeder::class);
-        $this->call(AccountClassificationsSeeder::class);
-        $this->call(DefaultChartOfAccountsSeeder::class);
-        $this->call(CurrencySeeder::class);
+        if (! self::isOperationallyEmpty()) {
+            $this->command?->warn('Emergency recovery skipped because operational records already exist.');
 
-        DB::transaction(function (): void {
-            $role = $this->ensureAdminRole();
-            $user = $this->ensureAdminUser($role);
-            $context = $this->defaultOperatingContext();
-
-            $this->ensureRoleOperatingAccess($role, $context['company'], $context['branch'], $context['period']);
-            $user->assignRole($role);
-        });
+            return;
+        }
 
         app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        try {
+            DB::transaction(function (): void {
+                $this->call(SettingSeeder::class);
+                $this->call(PermissionSeeder::class);
+                $this->call(DefaultOperatingContextSeeder::class);
+                $this->call(AccountClassificationsSeeder::class);
+                $this->call(DefaultChartOfAccountsSeeder::class);
+                $this->call(CurrencySeeder::class);
+
+                $role = $this->ensureAdminRole();
+                $user = $this->ensureAdminUser($role);
+                $context = $this->defaultOperatingContext();
+
+                $this->ensureRoleOperatingAccess($role, $context['company'], $context['branch'], $context['period']);
+                $user->assignRole($role);
+            });
+        } finally {
+            app(PermissionRegistrar::class)->forgetCachedPermissions();
+        }
 
         $this->command?->warn('Emergency recovery admin credentials were ensured. Change this password immediately after login.');
         $this->command?->line('Login: '.self::AdminEmail);
         $this->command?->line('Password: '.self::AdminPassword);
+    }
+
+    public static function isOperationallyEmpty(): bool
+    {
+        return ! Company::withTrashed()->exists()
+            && ! Branch::withTrashed()->exists()
+            && ! FinancialPeriod::withTrashed()->exists()
+            && ! User::withTrashed()->exists()
+            && ! Role::withTrashed()->exists()
+            && ! Account::withTrashed()->exists()
+            && ! Currency::withTrashed()->exists();
     }
 
     private function ensureAdminRole(): Role

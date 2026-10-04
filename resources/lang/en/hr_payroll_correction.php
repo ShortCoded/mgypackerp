@@ -1,0 +1,27 @@
+<?php
+
+return [
+    'title' => 'Payroll correction',
+    'intro' => 'Prepare a dated correction for independent approval. Approval reverses the original journal and restores applied salary advances. The original payslips remain frozen; calculate, review and approve a replacement payroll for the same period.',
+    'original_journal' => 'Original journal', 'reversal_journal' => 'Reversal journal', 'frozen_slips' => 'Original payslips',
+    'date' => 'Reversal date', 'reason' => 'Correction reason', 'propose' => 'Prepare correction', 'approve' => 'Approve reversal',
+    'reject' => 'Reject proposal', 'recalculate' => 'Calculate replacement payroll', 'history' => 'Correction history',
+    'payments' => 'Linked payment vouchers', 'open_voucher' => 'Open voucher', 'empty' => 'No correction proposals.',
+    'prepared' => 'Correction prepared for independent approval.', 'approved' => 'Payroll reversed. A replacement payroll can now be calculated.', 'rejected' => 'Correction proposal rejected.',
+    'states' => ['prepared' => 'Awaiting approval', 'approved' => 'Approved', 'rejected' => 'Rejected'],
+    'reason_required' => 'Enter a correction reason of up to 2000 characters.',
+    'independent_approval' => 'A different authorized user must approve this correction.',
+    'invalid_state' => 'Only a posted payroll with an unreversed journal can be corrected. The reversal date must be on or after its period end.',
+    'original_period_closed' => 'The original financial period is closed. Select a later-period correction with its separate permission and an authorized later open posting period.',
+    'mode' => 'Correction method',
+    'modes' => ['original_period' => 'Correction while the original financial period is open', 'later_period' => 'Correction in a later financial period'],
+    'later_period_intro' => 'A later-period correction preserves the closed financial period and original payslips. Its reversal and replacement are posted on the approved date in the selected later open period. Resolve all payment vouchers and cost allocations first.',
+    'invalid_mode' => 'Select a supported correction method with an existing original financial period.',
+    'later_period_required' => 'Select an authorized open financial period starting after the original financial period, with a correction date inside it.',
+    'cancel_payments_first' => 'Delete unpaid draft vouchers or cancel approved vouchers through Finance and complete their reversals before preparing the payroll correction.',
+    'reject_existing' => 'Reject the existing pending proposal before preparing a changed correction.',
+    'advance_changed' => 'The salary advance balance no longer permits restoring this application. Review its transactions.',
+    'period_changed' => 'Select an authorized open financial period covering the reversal date and matching the prepared proposal.',
+    'stale' => 'Payroll, payments or advance balances changed. Reload the preview and prepare a new correction.',
+    'journal' => 'Reversal of payroll run #:run',
+];

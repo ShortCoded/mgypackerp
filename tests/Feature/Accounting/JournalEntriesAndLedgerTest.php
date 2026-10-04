@@ -12,6 +12,7 @@ use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\FinancialAnalyticsReportService;
 use Modules\Accounting\Services\FinancialStatementQueryService;
 use Modules\Accounting\Services\LedgerQueryService;
+use Modules\Accounting\Services\ReconciliationCenterService;
 use Modules\Accounting\Services\TrialBalanceQueryService;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Models\Role;
@@ -27,6 +28,8 @@ use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\OpeningBalance;
 use Modules\Purchases\Models\Supplier;
 use Modules\Sales\Models\Customer;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 use Symfony\Component\Process\Process;
@@ -43,6 +46,33 @@ function accountingPdfText(string $content): string
         return $process->getOutput();
     } finally {
         @unlink($path);
+    }
+}
+
+/** @param array<string, mixed> $query @param list<string> $expected */
+function accountingPrintSamples(string $name, string $route, array $query, User $actor, array $expected = []): void
+{
+    if (! ($directory = getenv('MGYPACK_REPORT_PRINT_SAMPLES'))) {
+        return;
+    }
+    $originalLocale = app()->getLocale();
+    $actorLocale = $actor->locale;
+    try {
+        foreach (['en', 'ar'] as $locale) {
+            $actor->forceFill(['locale' => $locale])->save();
+            app()->setLocale($locale);
+            $pdf = test()->actingAs($actor)->withSession(['locale' => $locale])->get(route($route, $query))
+                ->assertOk()->assertHeader('content-type', 'application/pdf');
+            expect($pdf->getContent())->toStartWith('%PDF-');
+            file_put_contents($directory.'/'.$name.'-'.$locale.'.pdf', $pdf->getContent());
+            foreach ($expected as $token) {
+                expect(accountingPdfText($pdf->getContent()))->toContain($token);
+            }
+        }
+    } finally {
+        $actor->forceFill(['locale' => $actorLocale])->save();
+        app()->setLocale($originalLocale);
+        test()->withSession(['locale' => $originalLocale]);
     }
 }
 
@@ -510,12 +540,18 @@ test('general journal reports only posted lines by accounting date with matching
         ->assertOk()
         ->assertDownload('general-journal.csv');
 
+    $excel = $this->actingAs($actor)->get(route('admin.accounting.reports.general-journal.export.excel', $query))
+        ->assertOk()->assertDownload('general-journal.xlsx');
+    $excelRows = IOFactory::load($excel->baseResponse->getFile()->getPathname())->getActiveSheet()->toArray();
+    expect(json_encode($excelRows, JSON_THROW_ON_ERROR))->toContain($posted->doc_num, '125.0000')->not->toContain('JE-99121');
+
     $pdf = $this->actingAs($actor)
         ->get(route('admin.accounting.reports.general-journal.export.pdf', $query))
         ->assertOk()
         ->assertHeader('content-type', 'application/pdf');
 
     expect(strlen($pdf->getContent()))->toBeGreaterThan(1000);
+    accountingPrintSamples('general-journal', 'admin.accounting.reports.general-journal.export.pdf', $query, $actor, [$posted->doc_num, '125']);
 });
 
 test('trial balance uses posted journals across periods without double counting hierarchy totals', function (): void {
@@ -668,12 +704,18 @@ test('trial balance uses posted journals across periods without double counting 
         ->assertOk()
         ->assertDownload('trial-balance.csv');
 
+    $excel = $this->actingAs($actor)->get(route('admin.accounting.reports.trial-balance.export.excel', $query))
+        ->assertOk()->assertDownload('trial-balance.xlsx');
+    $excelRows = IOFactory::load($excel->baseResponse->getFile()->getPathname())->getActiveSheet()->toArray();
+    expect(json_encode($excelRows, JSON_THROW_ON_ERROR))->toContain('Trial Balance Debit')->not->toContain('Trial Balance Zero');
+
     $pdf = $this->actingAs($actor)
         ->get(route('admin.accounting.reports.trial-balance.export.pdf', $query))
         ->assertOk()
         ->assertHeader('content-type', 'application/pdf');
 
     expect(strlen($pdf->getContent()))->toBeGreaterThan(1000);
+    accountingPrintSamples('trial-balance', 'admin.accounting.reports.trial-balance.export.pdf', $query, $actor, ['Trial Balance Debit']);
 
     $debitAccount->delete();
     $this->actingAs($actor)
@@ -1217,6 +1259,11 @@ test('financial statements reconcile the required numeric example without duplic
         ->get(route('admin.accounting.reports.financial-statements.export.pdf', $cashFlowQuery))
         ->assertOk()
         ->assertHeader('content-type', 'application/pdf');
+    foreach ([FinancialStatementQueryService::FinancialPosition, FinancialStatementQueryService::IncomeStatement,
+        FinancialStatementQueryService::EquityChanges, FinancialStatementQueryService::CashFlowDirect,
+        FinancialStatementQueryService::CashFlowIndirect] as $type) {
+        accountingPrintSamples('financial-'.$type, 'admin.accounting.reports.financial-statements.export.pdf', [...$query, 'statement_type' => $type], $actor);
+    }
 });
 
 test('expense analysis and financial ratios use posted journals with filters drilldown comparison and safe unavailable states', function (): void {
@@ -1265,6 +1312,9 @@ test('expense analysis and financial ratios use posted journals with filters dri
         'reports.financial_analytics.financial_ratios.view', 'reports.financial_analytics.financial_ratios.export',
         'journal_entries.view',
     ]);
+    $actor->forceFill(['locale' => 'en'])->save();
+    $this->withSession(['locale' => 'en']);
+    app()->setLocale('en');
     $selectedOptions = $service->filterOptions($context['company']->getKey(), [
         'account_doc_num' => $expense->doc_num,
         'cost_center_doc_num' => $costCenter->doc_num,
@@ -1298,6 +1348,78 @@ test('expense analysis and financial ratios use posted journals with filters dri
         'financial_analytics_format' => 'pdf', 'from_date' => '2026-01-01', 'to_date' => '2026-12-31',
     ]))->assertOk()->assertHeader('content-type', 'application/pdf');
     expect(str_starts_with($pdf->getContent(), '%PDF-'))->toBeTrue();
+
+    foreach (['csv', 'excel', 'pdf'] as $format) {
+        $ratiosExport = $this->actingAs($actor)->get(route('admin.accounting.reports.financial-analytics.financial-ratios.export', [
+            'financial_analytics_format' => $format, 'from_date' => '2026-01-01', 'to_date' => '2026-12-31',
+        ]))->assertOk();
+        $contents = match ($format) {
+            'csv' => file_get_contents($ratiosExport->baseResponse->getFile()->getPathname()),
+            'excel' => json_encode(IOFactory::load($ratiosExport->baseResponse->getFile()->getPathname())->getActiveSheet()->toArray(), JSON_THROW_ON_ERROR),
+            'pdf' => accountingPdfText($ratiosExport->getContent()),
+        };
+        expect($contents)->toContain('60.00%', '50.00%', '0.666666');
+        if ($format === 'pdf') {
+            expect($contents)->not->toContain(__('reports.report_title'))
+                ->and(substr_count($contents, __('financial_analytics.types.financial_ratios.title')))->toBeGreaterThanOrEqual(2);
+        }
+    }
+    accountingPrintSamples('financial-ratios', 'admin.accounting.reports.financial-analytics.financial-ratios.export', [
+        'financial_analytics_format' => 'pdf', 'from_date' => '2026-01-01', 'to_date' => '2026-12-31',
+    ], $actor, ['60.00%', '50.00%']);
+
+    $actor->revokePermissionTo('reports.financial_analytics.financial_ratios.export');
+    $this->actingAs($actor)->get(route('admin.accounting.reports.financial-analytics.financial-ratios.export', [
+        'financial_analytics_format' => 'csv',
+    ]))->assertForbidden();
+});
+
+test('reconciliation routes preserve an actual ledger difference in screen CSV XLSX and bilingual PDF', function (): void {
+    $context = journalEntryContext();
+    [$receivable, $counterpart] = journalEntryAccounts($context['company']);
+    $customer = Customer::query()->create([
+        'doc_number' => 99870, 'doc_num' => 'CUS-99870', 'company_id' => $context['company']->getKey(),
+        'account_id' => $receivable->getKey(), 'name' => 'Synthetic Reconciliation Customer', 'status' => 'active',
+    ]);
+    $entry = journalPostedMovement($context, $receivable, $counterpart, 99870, '2026-04-03', '125.0001', '0.0000');
+    $entry->lines()->where('account_id', $receivable->getKey())->update(['customer_id' => $customer->getKey()]);
+    $actor = journalEntryActor(['reports.reconciliation_center.view', 'reports.reconciliation_center.export']);
+    $query = ['run' => 1, 'from_date' => '2026-04-01', 'to_date' => '2026-04-30', 'type' => ReconciliationCenterService::Customers];
+    $screen = $this->actingAs($actor)->get(route('admin.accounting.reports.reconciliation-center', $query))->assertOk();
+    $report = $screen->viewData('report');
+    expect($report['mismatch_count'])->toBe(1)->and($report['absolute_difference_total'])->toBe('125.0001');
+    expect($report['results']->sole()['rows']->sole())->toMatchArray([
+        'source_ending' => '0.0000', 'gl_ending' => '125.0001', 'ending_difference' => '-125.0001',
+    ]);
+    $screen->assertSee('Synthetic Reconciliation Customer')->assertSee('-125.0001');
+
+    foreach (['csv', 'excel'] as $format) {
+        $export = $this->actingAs($actor)->get(route('admin.accounting.reports.reconciliation-center.export.'.$format, $query))
+            ->assertOk()->assertDownload('reconciliation-center.'.($format === 'csv' ? 'csv' : 'xlsx'));
+        $content = $format === 'csv' ? file_get_contents($export->baseResponse->getFile()->getPathname())
+            : json_encode(IOFactory::load($export->baseResponse->getFile()->getPathname())->getActiveSheet()->toArray(), JSON_THROW_ON_ERROR);
+        expect($content)->toContain('Synthetic Reconciliation Customer', '125.0001', '-125.0001');
+    }
+    $pdf = $this->actingAs($actor)->get(route('admin.accounting.reports.reconciliation-center.export.pdf', $query))
+        ->assertOk()->assertHeader('content-type', 'application/pdf');
+    expect(accountingPdfText($pdf->getContent()))->toContain('Synthetic Reconciliation Customer', '-125.0001',
+        app(DateFormatService::class)->formatDate('2026-04-01'), app(DateFormatService::class)->formatDate('2026-04-30'));
+    accountingPrintSamples('reconciliation-center', 'admin.accounting.reports.reconciliation-center.export.pdf', $query, $actor,
+        ['CUS-99870', 'Synthetic', 'Reconciliation', 'Customer', '-125.0001', app(DateFormatService::class)->formatDate('2026-04-01')]);
+
+    $empty = $this->actingAs($actor)->get(route('admin.accounting.reports.reconciliation-center', [
+        ...$query, 'from_date' => '2026-01-01', 'to_date' => '2026-01-31',
+    ]))->assertOk()->viewData('report');
+    expect($empty['mismatch_count'])->toBe(0)->and($empty['absolute_difference_total'])->toBe('0.0000')
+        ->and($empty['results']->sole()['rows'])->toBeEmpty();
+    $this->actingAs($actor)->get(route('admin.accounting.reports.reconciliation-center', [...$query, 'branch_doc_num' => 'FOREIGN-BRANCH']))
+        ->assertSessionHasErrors('branch_doc_num');
+    $this->actingAs($actor)->get(route('admin.accounting.reports.reconciliation-center', [...$query, 'from_date' => '2025-01-01']))
+        ->assertSessionHasErrors('from_date');
+    $actor->revokePermissionTo('reports.reconciliation_center.export');
+    foreach (['csv', 'excel', 'pdf'] as $format) {
+        $this->actingAs($actor)->get(route('admin.accounting.reports.reconciliation-center.export.'.$format, $query))->assertForbidden();
+    }
 });
 
 test('expense analysis filter lookups require the report permission', function (): void {
@@ -1664,17 +1786,95 @@ test('account ledger PDF export uses the standard report renderer', function ():
     $actor = journalEntryActor(['reports.account_ledger.export']);
     journalPostedMovement($context, $subject, $counterpart, 99111, '2026-01-10', '75.0000', '0.0000');
 
-    $response = $this->actingAs($actor)
-        ->get(route('admin.accounting.reports.account-ledger.export.pdf', [
-            'run' => 1,
-            'account_doc_num' => $subject->doc_num,
-            'from_date' => '2026-01-01',
-            'to_date' => '2026-01-31',
-        ]))
+    foreach (['en', 'ar'] as $locale) {
+        $response = $this->actingAs($actor)->withSession(['locale' => $locale])
+            ->get(route('admin.accounting.reports.account-ledger.export.pdf', [
+                'run' => 1,
+                'account_doc_num' => $subject->doc_num,
+                'from_date' => '2026-01-01',
+                'to_date' => '2026-01-31',
+            ]))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
+
+        expect(strlen($response->getContent()))->toBeGreaterThan(1000);
+        $text = accountingPdfText($response->getContent());
+        expect($text)->toContain($subject->doc_num, '75', app(DateFormatService::class)->formatDate('2026-01-10'));
+    }
+});
+
+test('account ledger exports every filtered movement and repeats the PDF heading across pages', function (): void {
+    $context = journalEntryContext();
+    [$subject, $counterpart] = journalEntryAccounts($context['company']);
+    $actor = journalEntryActor(['reports.account_ledger.view', 'reports.account_ledger.export']);
+
+    foreach (range(99200, 99279) as $number) {
+        journalPostedMovement(
+            $context,
+            $subject,
+            $counterpart,
+            $number,
+            '2026-01-10',
+            $number === 99200 ? '1000.1234' : '1.0000',
+            '0.0000',
+        );
+    }
+
+    $query = [
+        'run' => 1,
+        'account_doc_num' => $subject->doc_num,
+        'from_date' => '2026-01-01',
+        'to_date' => '2026-01-31',
+    ];
+
+    $screen = $this->actingAs($actor)->get(route('admin.accounting.reports.account-ledger', $query))->assertOk();
+    expect($screen->viewData('result')['period']['debit'])->toBe('1079.1234');
+
+    $csv = $this->actingAs($actor)
+        ->get(route('admin.accounting.reports.account-ledger.export.csv', $query))
+        ->assertOk()
+        ->assertDownload('account-ledger.csv');
+    $csvContent = file_get_contents($csv->baseResponse->getFile()->getPathname());
+    expect($csvContent)->toBeString()
+        ->toContain('JE-99200', 'JE-99279', '1000.1234', '1079.1234')
+        ->and(substr_count($csvContent, 'JE-99'))->toBe(80);
+
+    $excel = $this->actingAs($actor)
+        ->get(route('admin.accounting.reports.account-ledger.export.excel', $query))
+        ->assertOk()
+        ->assertDownload('account-ledger.xlsx');
+    $spreadsheet = IOFactory::load($excel->baseResponse->getFile()->getPathname());
+    $rows = $spreadsheet->getActiveSheet()->toArray();
+    expect(count($rows))->toBe(83)
+        ->and($rows[2][2])->toBe('JE-99200')
+        ->and($rows[2][7])->toBe('1000.1234')
+        ->and($rows[81][2])->toBe('JE-99279')
+        ->and($rows[82][7])->toBe('1079.1234')
+        ->and($spreadsheet->getActiveSheet()->getCell('H3')->getDataType())->toBe(DataType::TYPE_STRING);
+
+    $pdf = $this->actingAs($actor)->withSession(['locale' => 'ar'])
+        ->get(route('admin.accounting.reports.account-ledger.export.pdf', $query))
         ->assertOk()
         ->assertHeader('content-type', 'application/pdf');
+    $pdfText = accountingPdfText($pdf->getContent());
+    expect($pdfText)->toContain('JE-99200', 'JE-99279', '1,079.1234');
+    $pdfPath = tempnam(sys_get_temp_dir(), 'accounting-ledger-pages-');
+    file_put_contents($pdfPath, $pdf->getContent());
 
-    expect(strlen($response->getContent()))->toBeGreaterThan(1000);
+    try {
+        $info = new Process(['pdfinfo', $pdfPath]);
+        $info->mustRun();
+        preg_match('/Pages:\s+(\d+)/', $info->getOutput(), $pageCount);
+        expect((int) ($pageCount[1] ?? 0))->toBeGreaterThan(1);
+
+        foreach (range(1, (int) $pageCount[1]) as $page) {
+            $text = new Process(['pdftotext', '-f', (string) $page, '-l', (string) $page, '-layout', $pdfPath, '-']);
+            $text->mustRun();
+            expect($text->getOutput())->toContain(app(DateFormatService::class)->formatDate(now()));
+        }
+    } finally {
+        @unlink($pdfPath);
+    }
 });
 
 test('customer statement uses only the selected customer linked account movements', function (): void {

@@ -46,6 +46,24 @@ Route::middleware('auth')
             return response()->json($select2->cashboxes($request));
         })->name('select2.cash-voucher-cashboxes');
 
+        Route::get('/select2/cash-voucher-cost-centers', function (Request $request, FinanceSelect2Service $select2) {
+            abort_unless($request->user()?->canAny([
+                'cash_receipt_vouchers.view', 'cash_receipt_vouchers.create', 'cash_receipt_vouchers.edit',
+                'cash_payment_vouchers.view', 'cash_payment_vouchers.create', 'cash_payment_vouchers.edit',
+            ]), 403);
+
+            return response()->json($select2->cashVoucherCostCenters($request));
+        })->name('select2.cash-voucher-cost-centers');
+
+        Route::get('/select2/cash-voucher-accounts', function (Request $request, FinanceSelect2Service $select2) {
+            abort_unless($request->user()?->canAny([
+                'cash_receipt_vouchers.view', 'cash_receipt_vouchers.create', 'cash_receipt_vouchers.edit',
+                'cash_payment_vouchers.view', 'cash_payment_vouchers.create', 'cash_payment_vouchers.edit',
+            ]), 403);
+
+            return response()->json($select2->accounts($request));
+        })->name('select2.cash-voucher-accounts');
+
         Route::get('/select2/cashboxes', function (Request $request, FinanceSelect2Service $select2) {
             abort_unless(
                 (bool) $request->user()?->can('fund_transfers.view')
@@ -202,6 +220,8 @@ Route::middleware('auth')
             Route::put('/document-number-settings', 'updateDocumentNumberSettings')->middleware('can:cash_payment_vouchers.document_number_settings.update')->name('document-number-settings.update');
             Route::post('/{cashVoucher}/approve', 'approve')->middleware('can:cash_payment_vouchers.approve')->name('approve');
             Route::post('/{cashVoucher}/cancel', 'cancel')->middleware('can:cash_payment_vouchers.cancel')->name('cancel');
+            Route::post('/{cashVoucher}/correct-purchase-payment', 'correctPurchasePayment')
+                ->middleware(['can:cash_payment_vouchers.cancel', 'can:purchase_invoices.reverse', 'can:purchases.prices.view'])->name('correct-purchase-payment');
             Route::patch('/{cashVoucher}/restore', 'restore')->middleware('can:cash_payment_vouchers.restore')->name('restore');
             Route::get('/{cashVoucher}/clone', 'clone')->middleware('can:cash_payment_vouchers.clone')->name('clone');
             Route::get('/{cashVoucher}/print', 'print')->middleware('can:cash_payment_vouchers.print')->name('print');
@@ -258,6 +278,7 @@ Route::middleware('auth')
             Route::get('/', 'index')->middleware('can:opening_balances.view')->name('index');
             Route::get('/data', 'data')->middleware('can:opening_balances.view')->name('data');
             Route::get('/create', 'create')->middleware('can:opening_balances.create')->name('create');
+            Route::get('/inventory-valuation', 'inventoryValuation')->name('inventory-valuation');
             Route::post('/', 'store')->name('store');
             Route::delete('/bulk-delete', 'bulkDelete')->middleware('can:opening_balances.delete')->name('bulk-delete');
             Route::post('/bulk-approve', 'bulkApprove')->middleware('can:opening_balances.approve')->name('bulk-approve');

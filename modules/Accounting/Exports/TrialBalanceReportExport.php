@@ -4,10 +4,12 @@ namespace Modules\Accounting\Exports;
 
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
+use Maatwebsite\Excel\Concerns\WithCustomValueBinder;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithStrictNullComparison;
+use PhpOffice\PhpSpreadsheet\Cell\StringValueBinder;
 
-class TrialBalanceReportExport implements FromArray, ShouldAutoSize, WithHeadings, WithStrictNullComparison
+class TrialBalanceReportExport extends StringValueBinder implements FromArray, ShouldAutoSize, WithCustomValueBinder, WithHeadings, WithStrictNullComparison
 {
     /** @param array<string, mixed> $result */
     public function __construct(private readonly array $result) {}

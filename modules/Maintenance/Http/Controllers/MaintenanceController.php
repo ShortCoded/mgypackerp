@@ -27,6 +27,7 @@ use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\Maintenance\DataTables\MaintenanceDataTable;
+use Modules\Maintenance\Exports\MaintenanceOperationsReportExport;
 use Modules\Maintenance\Exports\MaintenanceWorkOrderExport;
 use Modules\Maintenance\Http\Requests\RecordMaintenanceCompletionRequest;
 use Modules\Maintenance\Http\Requests\RecordMaintenanceWorkOrderEventRequest;
@@ -459,8 +460,18 @@ class MaintenanceController extends Controller
         $report = $this->maintenanceReport($request);
 
         return Excel::download(
-            new MaintenanceWorkOrderExport($report['orders'], $report['canViewFinancial']),
+            new MaintenanceOperationsReportExport($report),
             'maintenance-operations-'.now()->format('Ymd-His').'.xlsx',
+        );
+    }
+
+    public function exportReportCsv(Request $request): BinaryFileResponse
+    {
+        $report = $this->maintenanceReport($request);
+
+        return Excel::download(
+            new MaintenanceOperationsReportExport($report, forCsv: true)->sheets()[0],
+            'maintenance-operations-'.now()->format('Ymd-His').'.csv',
         );
     }
 
@@ -938,13 +949,31 @@ class MaintenanceController extends Controller
             ->orderBy('due_at')
             ->get();
         $materialLines = $orders->flatMap(fn (MaintenanceWorkOrder $order) => $order->materialRequests->flatMap->lines);
+        $materialQuantityTotals = $materialLines->groupBy(fn ($line): string => (string) ($line->unit_id ?? 'none'))
+            ->map(function ($lines): array {
+                $quantity = fn (string $field): string => $lines->reduce(
+                    fn (string $carry, $line): string => bcadd($carry, (string) $line->{$field}, 8),
+                    '0.00000000',
+                );
+                $issued = $quantity('issued_quantity');
+                $returned = $quantity('returned_quantity');
+
+                return [
+                    'unit' => $lines->first()->unit?->name ?? '—',
+                    'requested' => $quantity('requested_quantity'),
+                    'issued' => $issued,
+                    'consumed' => $quantity('consumed_quantity'),
+                    'returned' => $returned,
+                    'net' => bcsub($issued, $returned, 8),
+                ];
+            })->values();
         $expenses = $orders->flatMap->expenses;
         $expenseTotals = $expenses
             ->groupBy(fn (ProductionExpenseRequest $expense): string => $expense->currency?->code ?: '—')
             ->map(fn ($rows, string $currency): array => [
                 'currency' => $currency,
-                'requested' => $rows->sum(fn (ProductionExpenseRequest $expense): float => (float) $expense->amount),
-                'paid' => $rows->where('status', ProductionExpenseRequest::StatusPaid)->sum(fn (ProductionExpenseRequest $expense): float => (float) $expense->amount),
+                'requested' => $rows->reduce(fn (string $carry, ProductionExpenseRequest $expense): string => bcadd($carry, (string) $expense->amount, 4), '0.0000'),
+                'paid' => $rows->where('status', ProductionExpenseRequest::StatusPaid)->reduce(fn (string $carry, ProductionExpenseRequest $expense): string => bcadd($carry, (string) $expense->amount, 4), '0.0000'),
                 'count' => $rows->count(),
             ])->values();
         $downtimeMinutes = $orders->sum(function (MaintenanceWorkOrder $order): int {
@@ -967,6 +996,7 @@ class MaintenanceController extends Controller
             'orders' => $orders,
             'requests' => $requests,
             'planDues' => $planDues,
+            'materialQuantityTotals' => $materialQuantityTotals,
             'expenseTotals' => $expenseTotals,
             'canViewFinancial' => (bool) $request->user()?->can('maintenance.reports.financial'),
             'kpis' => [
@@ -990,10 +1020,6 @@ class MaintenanceController extends Controller
                 'downtime_hours' => round($downtimeMinutes / 60, 2),
                 'wait_hours' => round($waitMinutes / 60, 2),
                 'active_repair_hours' => round(max(0, $downtimeMinutes - $waitMinutes) / 60, 2),
-                'requested_material_quantity' => $materialLines->reduce(fn (string $carry, $line): string => bcadd($carry, (string) $line->requested_quantity, 8), '0.00000000'),
-                'issued_material_quantity' => $materialLines->reduce(fn (string $carry, $line): string => bcadd($carry, (string) $line->issued_quantity, 8), '0.00000000'),
-                'consumed_material_quantity' => $materialLines->reduce(fn (string $carry, $line): string => bcadd($carry, (string) $line->consumed_quantity, 8), '0.00000000'),
-                'returned_material_quantity' => $materialLines->reduce(fn (string $carry, $line): string => bcadd($carry, (string) $line->returned_quantity, 8), '0.00000000'),
             ],
         ];
     }

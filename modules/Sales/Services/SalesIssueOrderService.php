@@ -5,6 +5,7 @@ namespace Modules\Sales\Services;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Company;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerInvoiceLine;
@@ -18,7 +19,7 @@ class SalesIssueOrderService
     public function ensureForPostedInvoice(CustomerInvoice $invoice): ?SalesIssueOrder
     {
         $invoice->loadMissing(['lines', 'order', 'deliveries.lines']);
-        if ($invoice->document_type !== CustomerInvoice::TypeInvoice || $invoice->posting_status !== CustomerInvoice::StatusPosted) {
+        if ($invoice->document_type !== CustomerInvoice::TypeInvoice || $invoice->posting_status !== CustomerInvoice::StatusPosted || $invoice->hasApprovedCorrection()) {
             throw new DomainException(__('sales_issue.messages.posted_invoice_required'));
         }
         if (! $invoice->lines->contains(fn (CustomerInvoiceLine $line): bool => ! $line->is_service)) {
@@ -46,6 +47,9 @@ class SalesIssueOrderService
     public function remainingLines(CustomerInvoice $invoice): array
     {
         $invoice->loadMissing(['lines', 'deliveries.lines']);
+        if ($invoice->hasApprovedCorrection()) {
+            return [];
+        }
         $postedLines = $invoice->deliveries
             ->filter(fn (InventoryDocument $document): bool => $document->status === InventoryDocument::StatusPosted)
             ->flatMap->lines;
@@ -75,15 +79,17 @@ class SalesIssueOrderService
         return $remaining;
     }
 
-    public function issue(SalesIssueOrder $order, BranchStore $store, string $documentDate): InventoryDocument
+    public function issue(SalesIssueOrder $order, BranchStore $store, string $documentDate, array $selectedLayersByInvoiceLineId = []): InventoryDocument
     {
-        return DB::transaction(function () use ($order, $store, $documentDate): InventoryDocument {
+        return DB::transaction(function () use ($order, $store, $documentDate, $selectedLayersByInvoiceLineId): InventoryDocument {
+            Company::query()->whereKey($order->company_id)->lockForUpdate()->firstOrFail();
             $locked = SalesIssueOrder::query()->lockForUpdate()->findOrFail($order->getKey());
             $invoice = CustomerInvoice::query()->with(['lines', 'order', 'deliveries.lines'])->lockForUpdate()->findOrFail($locked->customer_invoice_id);
             $store = BranchStore::query()->with('branch')->lockForUpdate()->findOrFail($store->getKey());
 
             if ($locked->status !== SalesIssueOrder::StatusPending
                 || $invoice->posting_status !== CustomerInvoice::StatusPosted
+                || $invoice->hasApprovedCorrection()
                 || $invoice->document_type !== CustomerInvoice::TypeInvoice
                 || (int) $invoice->company_id !== (int) $locked->company_id
                 || (int) $invoice->branch_id !== (int) $locked->branch_id
@@ -96,12 +102,16 @@ class SalesIssueOrderService
             if ($remaining === []) {
                 throw new DomainException(__('sales_issue.messages.order_already_issued'));
             }
+            if (array_diff(array_map('intval', array_keys($selectedLayersByInvoiceLineId)), array_map(fn (array $row): int => (int) $row['line']->id, $remaining)) !== []) {
+                throw new DomainException(__('inventory_cost_policy.errors.layer_selection'));
+            }
 
             $issue = $this->fulfillment->deliverInvoice(
                 $invoice,
                 array_map(fn (array $row): array => [
                     'customer_invoice_line_id' => $row['line']->getKey(),
                     'quantity' => $row['remaining'],
+                    'receipt_layers' => $selectedLayersByInvoiceLineId[$row['line']->id] ?? [],
                 ], $remaining),
                 ['branch_store_uuid' => $store->public_uuid, 'document_date' => $documentDate],
                 allowCompanyWarehouse: true,

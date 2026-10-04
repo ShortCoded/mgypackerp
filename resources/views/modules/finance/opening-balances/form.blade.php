@@ -35,7 +35,7 @@
 @endphp
 @section('title', $title)
 @section('content')
-<form class="js-finance-form js-crud-form js-opening-balance-form" action="{{ $action }}" method="{{ $method }}" data-resource="opening_balances" data-primary-focus="description" data-mode="{{ $mode }}" data-account-url="{{ route('admin.finance.select2.accounts') }}" data-main-currency-doc-num="{{ $mainCurrencyDocNum ?? '' }}" novalidate>
+<form class="js-finance-form js-crud-form js-opening-balance-form" action="{{ $action }}" method="{{ $method }}" data-resource="opening_balances" data-primary-focus="description" data-mode="{{ $mode }}" data-account-url="{{ route('admin.finance.select2.accounts') }}" data-inventory-valuation-url="{{ route('admin.finance.opening-balances.inventory-valuation') }}" data-main-currency-doc-num="{{ $mainCurrencyDocNum ?? '' }}" novalidate>
     @csrf
     @if($method !== 'POST')
         @method($method)
@@ -159,6 +159,9 @@
             </div>
         </div>
         <div class="card-body p-0">
+            <div class="alert alert-info m-3 js-opening-inventory-hint" role="status" @if(! $record?->inventory_valuation_snapshot) hidden @endif>
+                {{ __('opening_balances.js.inventory_loaded') }}
+            </div>
             <div class="table-responsive">
                 <table class="table table-sm table-hover align-middle mb-0 js-opening-balance-lines">
                     <thead class="bg-200">

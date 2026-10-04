@@ -62,6 +62,9 @@
     const required = requiredTypes.indexOf(String($form.find('[name="document_type"]').val() || '')) !== -1;
 
     $reason.prop('required', required).attr('aria-required', required ? 'true' : 'false');
+    const sourcePeriodSupported = ['purchase_receipts', 'purchase_invoices', 'production_runs', 'inventory_movement_corrections'].indexOf(String($form.find('[name="document_type"]').val() || '')) !== -1;
+    $form.find('.js-purchase-source-period').toggleClass('d-none', !sourcePeriodSupported);
+    $form.find('[name="source_period_doc_num"]').prop('disabled', !sourcePeriodSupported);
   }
 
   function showToast(icon, title) {
@@ -161,6 +164,134 @@
     $alert.find('.js-open-documents-result-list').empty();
   }
 
+  function selectionKey($form) {
+    return JSON.stringify($form.serializeArray().filter(function (field) {
+      return field.name !== 'preview_token' && field.name !== '_token' && field.name !== 'reason';
+    }));
+  }
+
+  function clearPreview($form) {
+    const $preview = $form.find('.js-open-documents-preview');
+    $preview.addClass('d-none').removeData('selection').removeData('navigationOnly');
+    $preview.find('.js-open-documents-preview-rows').empty();
+    $form.find('[name="preview_token"]').val('');
+    $form.find('.js-open-documents-action-text').text($form.data('preview-label') || '');
+  }
+
+  function showPreview($form, response) {
+    const $preview = $form.find('.js-open-documents-preview');
+    const $rows = $preview.find('.js-open-documents-preview-rows');
+    $rows.empty();
+
+    (response.documents || []).forEach(function (row) {
+      const $tr = $('<tr></tr>');
+      const $document = $('<td></td>');
+      if (row.source_url) {
+        $('<a></a>').attr('href', row.source_url).attr('target', '_blank').attr('rel', 'noopener').text(row.doc_num || '').appendTo($document);
+      } else {
+        $document.text(row.doc_num || '');
+      }
+      $tr.append($document);
+      $('<td></td>').text(row.status_label || row.status || '').appendTo($tr);
+      const $decision = $('<td></td>').append($('<div></div>').text(row.decision_label || ''));
+      if (row.correction_url) {
+        $('<a class="btn btn-sm btn-outline-primary mt-1"></a>')
+          .attr('href', row.correction_url).attr('target', '_blank').attr('rel', 'noopener')
+          .text(messages.reviewCorrection || '').appendTo($decision);
+      }
+      $decision.appendTo($tr);
+      $('<td></td>').text(row.current_total === null ? '—' : row.current_total).appendTo($tr);
+      $('<td></td>').text(row.line_count === null ? '—' : row.line_count).appendTo($tr);
+      const dependencies = Object.keys(row.dependent_documents || {}).map(function (label) {
+        return label + ': ' + row.dependent_documents[label].join(', ');
+      });
+      $('<td></td>').text(dependencies.join(' · ') || '—').appendTo($tr);
+      $('<td></td>').text(row.posting_effect || '').appendTo($tr);
+      $rows.append($tr);
+      if (Array.isArray(row.correction_steps) && row.correction_steps.length > 0) {
+        const $steps = $('<td colspan="7"></td>');
+        $('<h6></h6>').text(messages.correctionSteps || '').appendTo($steps);
+        $('<p class="small text-muted"></p>').text(messages.correctionHelp || '').appendTo($steps);
+        const $list = $('<ol class="mb-0"></ol>').appendTo($steps);
+        row.correction_steps.forEach(function (step) {
+          const $item = $('<li class="mb-2"></li>').appendTo($list);
+          $('<span></span>').text((step.doc_num || '') + ' — ' + (step.action || '')).appendTo($item);
+          $('<small class="d-block text-muted"></small>').text(step.context_label || '').appendTo($item);
+          if (step.source_url) {
+            $('<a class="ms-2"></a>').attr('href', step.source_url).attr('target', '_blank').attr('rel', 'noopener')
+              .text(step.doc_num || '').appendTo($item);
+          }
+          if (step.correction_url) {
+            $('<a class="btn btn-sm btn-outline-primary ms-2"></a>').attr('href', step.correction_url)
+              .attr('target', '_blank').attr('rel', 'noopener').text(messages.reviewCorrection || '').appendTo($item);
+          }
+          if (!step.permitted) {
+            $('<small class="d-block text-muted"></small>').text(messages.correctionPermission || '').appendTo($item);
+          }
+        });
+        $rows.append($('<tr></tr>').append($steps));
+      }
+
+      if (Array.isArray(row.correction_lines) && row.correction_lines.length > 0) {
+        const $details = $('<tr class="table-light"></tr>');
+        const $cell = $('<td colspan="7"></td>');
+        const $table = $('<table class="table table-sm table-bordered align-middle mb-0"></table>');
+        const $head = $('<thead><tr></tr></thead>');
+        const columns = [
+          ['product', messages.correctionItem],
+          ['quantity', messages.correctionQuantity],
+          ['before_quantity', messages.correctionBefore],
+          ['after_quantity', messages.correctionAfter],
+          ['layer_available', messages.correctionLayer],
+          ['value_delta', messages.correctionValue]
+        ];
+        columns.forEach(function (column) { $('<th></th>').text(column[1] || '').appendTo($head.find('tr')); });
+        $table.append($head);
+        const $body = $('<tbody></tbody>');
+        row.correction_lines.forEach(function (line) {
+          const $line = $('<tr></tr>');
+          columns.forEach(function (column) {
+            const value = line[column[0]];
+            $('<td></td>').text(value === null || value === undefined ? '—' : value).appendTo($line);
+          });
+          $body.append($line);
+        });
+        $table.append($body);
+        $('<div class="table-responsive"></div>').append($table).appendTo($cell);
+        $details.append($cell);
+        $rows.append($details);
+      }
+    });
+
+    const periodText = String(messages.previewPeriod || '').replace(':period', response.period || '');
+    $preview.find('.js-open-documents-preview-context').text(periodText + (response.range_hint ? ' · ' + response.range_hint : ''));
+    $preview.find('.js-open-documents-preview-missing').text(String(messages.previewNotFound || '').replace(':count', response.not_found || 0));
+    $form.find('[name="preview_token"]').val(response.preview_token || '');
+    $preview.data('selection', selectionKey($form)).data('navigationOnly', response.navigation_only === true).removeClass('d-none');
+    $form.find('.js-open-documents-action-text').text($form.data(response.navigation_only ? 'preview-label' : 'confirm-label') || '');
+  }
+
+  function previewForm($form) {
+    const $buttons = $form.find('.js-open-documents-submit');
+    $buttons.prop('disabled', true);
+
+    $.ajax({
+      url: $form.data('preview-url'),
+      method: 'POST',
+      data: $form.serialize(),
+      headers: headers()
+    }).done(function (response) {
+      showPreview($form, response || {});
+    }).fail(function (xhr) {
+      if (xhr.status === 422 && xhr.responseJSON && xhr.responseJSON.errors) {
+        showErrors($form, xhr.responseJSON.errors);
+      }
+      showFailure($form, (xhr.responseJSON && xhr.responseJSON.message) || $form.data('error-message') || messages.unexpectedError || '');
+    }).always(function () {
+      $buttons.prop('disabled', false);
+    });
+  }
+
   function submitForm($form) {
     const $buttons = $form.find('.js-open-documents-submit');
 
@@ -173,6 +304,7 @@
       headers: headers()
     }).done(function (response) {
       showResult($form, response || {});
+      clearPreview($form);
     }).fail(function (xhr) {
       if (xhr.status === 422 && xhr.responseJSON && xhr.responseJSON.errors) {
         showErrors($form, xhr.responseJSON.errors);
@@ -195,7 +327,11 @@
     });
 
     $(document).on('input change', '.js-open-documents-form :input[name]', function () {
-      clearFieldError($(this).closest('.js-open-documents-form'), $(this).attr('name'));
+      const $form = $(this).closest('.js-open-documents-form');
+      clearFieldError($form, $(this).attr('name'));
+      if ($(this).attr('name') !== 'preview_token' && $(this).attr('name') !== 'reason') {
+        clearPreview($form);
+      }
     });
 
     $(document).on('submit', '.js-open-documents-form', function (event) {
@@ -205,8 +341,9 @@
 
       clearErrors($form);
 
-      if (!$form[0].checkValidity()) {
-        $form[0].reportValidity();
+      if ($form.find('.js-open-documents-preview').data('selection') !== selectionKey($form)
+          || $form.find('.js-open-documents-preview').data('navigationOnly') === true) {
+        previewForm($form);
         return;
       }
 

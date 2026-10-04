@@ -5,10 +5,13 @@ namespace Modules\Finance\Exports;
 use Illuminate\Support\Collection;
 use Maatwebsite\Excel\Concerns\FromCollection;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
+use Maatwebsite\Excel\Concerns\WithCustomValueBinder;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithMapping;
+use Maatwebsite\Excel\Concerns\WithStrictNullComparison;
+use PhpOffice\PhpSpreadsheet\Cell\StringValueBinder;
 
-class FinanceReportExport implements FromCollection, ShouldAutoSize, WithHeadings, WithMapping
+class FinanceReportExport extends StringValueBinder implements FromCollection, ShouldAutoSize, WithCustomValueBinder, WithHeadings, WithMapping, WithStrictNullComparison
 {
     /** @param array{columns: array<string, string>, rows: Collection<int, array<string, mixed>>, currency_totals?: array<string, array<string, string>>} $report */
     public function __construct(private readonly array $report) {}

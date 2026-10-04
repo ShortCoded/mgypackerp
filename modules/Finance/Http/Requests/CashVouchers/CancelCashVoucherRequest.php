@@ -14,9 +14,8 @@ class CancelCashVoucherRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
-        $this->merge([
-            'cancel_reason' => $this->filled('cancel_reason') ? trim((string) $this->input('cancel_reason')) : null,
-        ]);
+        $reason = $this->input('cancel_reason');
+        $this->merge(['cancel_reason' => is_string($reason) ? trim($reason) : $reason]);
     }
 
     public function rules(): array

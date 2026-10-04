@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\LedgerQueryService;
+use Modules\Accounting\Services\ReconciliationCenterService;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
@@ -24,6 +25,7 @@ use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryAvailabilityService;
+use Modules\Inventory\Services\InventoryGlReconciliationService;
 use Modules\Inventory\Services\InventoryReportService;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionOrderLine;
@@ -69,6 +71,7 @@ function activateSalesCycleOperatingContext(array $fixture): void
 test('a sales order cannot be cancelled after a linked production order was cancelled or deleted', function (): void {
     $fixture = salesCycleFixture();
     $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    activateSalesCycleOperatingContext($fixture);
     $orders = app(SalesOrderService::class);
     $order = $orders->approve($orders->create(salesCycleOrderPayload($fixture)));
     $productionOrder = $order->productionOrders()->create([
@@ -85,12 +88,32 @@ test('a sales order cannot be cancelled after a linked production order was canc
 
     expect($order->fresh()->canCancelSafely())->toBeFalse();
     expect(fn () => $orders->cancel($order->fresh(), 'The linked production order is cancelled.'))->toThrow(DomainException::class);
-    expect($order->fresh()->canReopenSafely())->toBeFalse();
-    expect(fn () => $orders->reopen($order->fresh(), 'The linked production order is cancelled.'))->toThrow(DomainException::class);
+    expect($order->fresh()->canReopenSafely())->toBeTrue();
     $productionOrder->delete();
     expect(fn () => $orders->cancel($order->fresh(), 'The linked production order is soft deleted.'))->toThrow(DomainException::class)
-        ->and(fn () => $orders->reopen($order->fresh(), 'The linked production order is soft deleted.'))->toThrow(DomainException::class)
         ->and($order->fresh()->status)->toBe(SalesOrder::StatusApproved);
+    $reopened = $orders->reopen($order->fresh(), 'Amend future demand while retaining cancelled production history.');
+    expect($reopened->productionOrders()->withTrashed()->sole()->getKey())->toBe($productionOrder->getKey())
+        ->and($reopened->canCancelSafely())->toBeFalse()
+        ->and(fn () => $orders->cancel($reopened, 'Cancellation remains forbidden.'))->toThrow(DomainException::class);
+});
+
+test('an approved sales order remains locked against cancellation before downstream conversion', function (): void {
+    $fixture = salesCycleFixture();
+    Permission::findOrCreate('sales_orders.cancel', 'web');
+    $fixture['user']->givePermissionTo('sales_orders.cancel');
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    $orders = app(SalesOrderService::class);
+    $order = $orders->approve($orders->create(salesCycleOrderPayload($fixture)));
+
+    expect($order->status)->toBe(SalesOrder::StatusApproved)
+        ->and($order->canCancelSafely())->toBeFalse()
+        ->and($order->canReopenSafely())->toBeTrue();
+    expect(fn () => $orders->cancel($order->fresh(), 'Do not cancel an approved order.'))
+        ->toThrow(DomainException::class, __('The sales order cannot be cancelled from its current status.'));
+    $this->postJson(route('admin.sales.sales-orders.cancel', $order), ['reason' => 'Do not cancel an approved order.'])
+        ->assertUnprocessable();
+    expect($order->fresh()->status)->toBe(SalesOrder::StatusApproved);
 });
 
 test('approved sales requests require reopen permission before amendment and must be reapproved', function (): void {
@@ -187,15 +210,24 @@ test('approved sales requests require reopen permission before amendment and mus
     expect($record->fresh()->status)->toBe(SalesRequest::StatusApproved)
         ->and($record->fresh()->status_history)->toHaveCount(6)
         ->and($record->fresh()->status_history[2]['approved_snapshot'])->toBe($approvedSnapshot);
+    $record->forceFill(['status' => SalesRequest::StatusReopened])->save();
+    expect($record->fresh()->isEditable())->toBeFalse()
+        ->and(fn () => $service->transition($record->fresh(), 'submitted'))
+        ->toThrow(DomainException::class);
 });
 
-test('approved sales requests cannot reopen after conversion or downstream lineage exists', function (): void {
+test('converted sales requests reopen for append-only amendments while preserving converted line lineage', function (): void {
     $fixture = salesCycleFixture();
+    Permission::findOrCreate('sales_requests.edit', 'web');
+    $fixture['user']->givePermissionTo('sales_requests.edit');
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
     activateSalesCycleOperatingContext($fixture);
     $service = app(SalesRequestService::class);
     $record = $service->save([
         'company_id' => $fixture['company']->getKey(),
         'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'customer_id' => $fixture['customer']->getKey(),
         'currency_id' => $fixture['currency']->getKey(),
         'request_date' => now()->toDateString(),
         'lines' => [[
@@ -206,21 +238,343 @@ test('approved sales requests cannot reopen after conversion or downstream linea
     ]);
     $service->transition($record, 'submitted');
     $service->transition($record->fresh(), 'approved');
-    $record->lines()->update(['converted_quantity' => '1']);
+    $sourceLine = $record->fresh()->lines->sole();
+    $sourceIdentity = [
+        'id' => $sourceLine->getKey(),
+        'public_id' => $sourceLine->public_id,
+        'quantity' => $sourceLine->quantity,
+        'conversion_factor' => $sourceLine->conversion_factor,
+        'base_quantity' => $sourceLine->base_quantity,
+    ];
+    $order = app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
+        'sales_request_id' => $record->getKey(),
+        'lines' => [[
+            'sales_request_line_id' => $sourceLine->getKey(),
+            'product_id' => $fixture['finished']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Converted request line',
+            'quantity' => '10',
+            'unit_price' => '10',
+            'discount_amount' => '0',
+            'tax_amount' => '0',
+        ]],
+        'payment_schedules' => [[
+            'title' => 'Converted request line',
+            'amount' => '100',
+            'due_date' => now()->addMonth()->toDateString(),
+        ]],
+    ]));
+    $sourceLine->forceFill(['converted_quantity' => '10'])->save();
+    $record->forceFill(['status' => 'converted'])->save();
 
-    expect(fn () => $service->reopen($record->fresh(), 'Unsafe conversion amendment.'))
-        ->toThrow(DomainException::class, __('A sales request with conversions or downstream documents cannot be reopened.'));
-    expect($record->fresh()->status)->toBe(SalesRequest::StatusApproved);
+    expect($record->fresh()->status)->toBe('converted')
+        ->and($record->fresh()->closed_at)->not->toBeNull()
+        ->and($order->lines->sole()->sales_request_line_id)->toBe($sourceIdentity['id']);
 
-    $record->lines()->update(['converted_quantity' => '0']);
-    app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, ['sales_request_id' => $record->getKey()]));
+    $reopened = $service->reopen($record->fresh(), 'Customer requested an additional item.');
+    expect($reopened->status)->toBe(SalesRequest::StatusReopened)
+        ->and($reopened->closed_at)->toBeNull()
+        ->and(collect($reopened->status_history)->last()['from'])->toBe('converted');
+    $this->get(route('admin.sales.customer-requests.edit', $reopened))
+        ->assertOk()
+        ->assertSee('data-amendment-locked-line', false)
+        ->assertSee(__('Locked'))
+        ->assertSee('data-sales-add-line', false);
 
-    expect(fn () => $service->reopen($record->fresh(), 'Unsafe downstream amendment.'))
-        ->toThrow(DomainException::class, __('A sales request with conversions or downstream documents cannot be reopened.'));
-    expect($record->fresh()->status)->toBe(SalesRequest::StatusApproved);
+    $immutableHeaderAndLine = [
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'customer_id' => $fixture['customer']->getKey(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'request_date' => now()->toDateString(),
+        'lines' => [[
+            'product_id' => $fixture['finished']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'quantity' => '10',
+        ]],
+    ];
+    expect(fn () => $service->save([
+        ...$immutableHeaderAndLine,
+        'lines' => [[
+            ...$immutableHeaderAndLine['lines'][0],
+            'quantity' => '11',
+        ]],
+    ], $reopened))->toThrow(DomainException::class, __('Converted sales requests only permit adding new lines; the approved header and existing lines are immutable.'));
+    expect(fn () => $service->save([
+        ...$immutableHeaderAndLine,
+        'lines' => [[
+            ...$immutableHeaderAndLine['lines'][0],
+            'description' => 'Attempted silent description replacement',
+        ]],
+    ], $reopened))->toThrow(DomainException::class, __('Converted sales requests only permit adding new lines; the approved header and existing lines are immutable.'));
+    expect(fn () => $service->save([
+        ...$immutableHeaderAndLine,
+        'lines' => [[
+            ...$immutableHeaderAndLine['lines'][0],
+            'specifications' => ['customer_specification' => 'Attempted replacement'],
+        ]],
+    ], $reopened))->toThrow(DomainException::class, __('Converted sales requests only permit adding new lines; the approved header and existing lines are immutable.'));
+    expect(fn () => $service->save([
+        ...$immutableHeaderAndLine,
+        'lines' => [[
+            ...$immutableHeaderAndLine['lines'][0],
+            'notes' => 'Attempted silent notes replacement',
+        ]],
+    ], $reopened))->toThrow(DomainException::class, __('Converted sales requests only permit adding new lines; the approved header and existing lines are immutable.'));
+    expect(fn () => $service->save([
+        ...$immutableHeaderAndLine,
+        'lines' => [[
+            ...$immutableHeaderAndLine['lines'][0],
+            'conversion_factor' => '2',
+        ]],
+    ], $reopened))->toThrow(DomainException::class, __('Converted sales requests only permit adding new lines; the approved header and existing lines are immutable.'));
+    expect(fn () => $service->save([
+        ...$immutableHeaderAndLine,
+        'request_date' => now()->addDay()->toDateString(),
+    ], $reopened))->toThrow(DomainException::class, __('Converted sales requests only permit adding new lines; the approved header and existing lines are immutable.'));
+
+    $amended = $service->save([
+        ...$immutableHeaderAndLine,
+        'lines' => [
+            ...$immutableHeaderAndLine['lines'],
+            [
+                'product_id' => $fixture['service']->getKey(),
+                'unit_id' => $fixture['unit']->getKey(),
+                'quantity' => '2',
+            ],
+        ],
+    ], $reopened);
+    $preservedLine = $amended->lines->firstWhere('id', $sourceIdentity['id']);
+    $newLine = $amended->lines->firstWhere('id', '!=', $sourceIdentity['id']);
+    $amendment = collect($amended->status_history)->last();
+
+    expect($amended->lines)->toHaveCount(2)
+        ->and($preservedLine->public_id)->toBe($sourceIdentity['public_id'])
+        ->and($preservedLine->quantity)->toBe($sourceIdentity['quantity'])
+        ->and($preservedLine->converted_quantity)->toBe('10.00000000')
+        ->and($preservedLine->conversion_factor)->toBe($sourceIdentity['conversion_factor'])
+        ->and($preservedLine->base_quantity)->toBe($sourceIdentity['base_quantity'])
+        ->and($newLine->converted_quantity)->toBe('0.00000000')
+        ->and($order->fresh()->lines->sole()->sales_request_line_id)->toBe($sourceIdentity['id'])
+        ->and($amendment['event'])->toBe('amended')
+        ->and($amendment['before_snapshot']['lines'][0]['public_id'])->toBe($sourceIdentity['public_id'])
+        ->and($amendment['after_snapshot']['lines'])->toHaveCount(2);
+    expect(fn () => $service->transition($amended->fresh(), 'cancelled', 'Historical request must remain available.'))
+        ->toThrow(DomainException::class, __('A sales request with conversions or downstream documents cannot be cancelled.'));
+
+    $service->transition($amended->fresh(), 'submitted');
+    $reapproved = $service->transition($amended->fresh(), 'approved');
+    expect($reapproved->status)->toBe('partially_converted')
+        ->and($reapproved->closed_at)->toBeNull()
+        ->and($reapproved->lines->firstWhere('id', $sourceIdentity['id'])->converted_quantity)->toBe('10.00000000');
+
+    $secondReopen = $service->reopen($reapproved->fresh(), 'Add another line through the form.');
+    $this->get(route('admin.sales.customer-requests.edit', $secondReopen))
+        ->assertOk()
+        ->assertSee('name="branch_store_uuid" value="'.$fixture['store']->public_uuid.'"', false);
+    $amendmentPayload = [
+        'request_type' => 'customer',
+        'customer_doc_num' => $fixture['customer']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'branch_store_uuid' => $fixture['store']->public_uuid,
+        'request_date' => now()->toDateString(),
+        'exchange_rate' => '1',
+        'lines' => [
+            ['product_doc_num' => $fixture['finished']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num, 'quantity' => '10'],
+            ['product_doc_num' => $fixture['service']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num, 'quantity' => '2'],
+            ['product_doc_num' => $fixture['finished']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num, 'quantity' => '1'],
+        ],
+    ];
+    $historyCount = count($secondReopen->status_history);
+    $otherPeriod = FinancialPeriod::query()->create([
+        'doc_number' => 99011,
+        'doc_num' => 'Period-REQUEST-AMEND-OTHER',
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Other amendment period',
+        'from_date' => now()->addYear()->startOfYear()->toDateString(),
+        'to_date' => now()->addYear()->endOfYear()->toDateString(),
+        'is_closed' => false,
+    ]);
+    $this->withSession([
+        ...salesCycleSession($fixture),
+        OperatingContextService::FinancialPeriodIdKey => $otherPeriod->getKey(),
+        OperatingContextService::FinancialPeriodDocNumKey => $otherPeriod->doc_num,
+    ])->putJson(route('admin.sales.customer-requests.update', $secondReopen), $amendmentPayload)
+        ->assertUnprocessable()
+        ->assertJsonPath('message', __('The document is outside the active operating context.'));
+    expect($secondReopen->fresh()->lines)->toHaveCount(2)
+        ->and($secondReopen->fresh()->status_history)->toHaveCount($historyCount);
+
+    $this->withSession(salesCycleSession($fixture))
+        ->putJson(route('admin.sales.customer-requests.update', $secondReopen), $amendmentPayload)
+        ->assertOk();
+    expect($secondReopen->fresh()->lines)->toHaveCount(3)
+        ->and($secondReopen->fresh()->branch_store_id)->toBe($fixture['store']->getKey())
+        ->and($secondReopen->fresh()->lines->firstWhere('id', $sourceIdentity['id'])->converted_quantity)->toBe('10.00000000');
 });
 
-test('soft deleted sales request descendants remain reopen blockers', function (): void {
+test('direct invoice conversion and rollback synchronize sales request closure fields', function (): void {
+    $fixture = salesCycleFixture();
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    activateSalesCycleOperatingContext($fixture);
+    createSalesPriceList($fixture, null, [[
+        'product' => $fixture['finished'],
+        'price' => '25',
+    ]]);
+
+    $requests = app(SalesRequestService::class);
+    $salesRequest = $requests->save([
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'customer_id' => $fixture['customer']->getKey(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'request_date' => now()->toDateString(),
+        'lines' => [[
+            'product_id' => $fixture['finished']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'quantity' => '2',
+        ]],
+    ]);
+    $requests->transition($salesRequest, 'submitted');
+    $requests->transition($salesRequest->fresh(), 'approved');
+    $sourceLine = $salesRequest->fresh()->lines->sole();
+
+    $invoices = app(CustomerInvoiceService::class);
+    $invoicePayload = [
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'source_request_doc_num' => $salesRequest->doc_num,
+        'customer_doc_num' => $fixture['customer']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'invoice_date' => now()->toDateString(),
+        'due_date' => now()->toDateString(),
+        'exchange_rate' => '1',
+        'lines' => [[
+            'source_request_line_public_id' => $sourceLine->public_id,
+            'product_doc_num' => $fixture['finished']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'quantity' => '2',
+            'discount_amount' => '0',
+            'tax_amount' => '0',
+        ]],
+    ];
+    $invoice = $invoices->createDirect($invoicePayload, $salesRequest->fresh());
+
+    expect($salesRequest->fresh()->status)->toBe('converted')
+        ->and($salesRequest->fresh()->closed_at)->not->toBeNull()
+        ->and($salesRequest->fresh()->closed_by)->toBe($fixture['user']->getKey());
+
+    $invoiceLine = $invoice->lines()->sole();
+    $invoices->amend($invoice, [[
+        'invoice_line_public_id' => $invoiceLine->public_id,
+        'quantity' => '1',
+    ]], [['due_date' => now()->toDateString(), 'amount' => '25']]);
+    expect($sourceLine->fresh()->converted_quantity)->toBe('1.00000000')
+        ->and($salesRequest->fresh()->status)->toBe('partially_converted')
+        ->and($salesRequest->fresh()->closed_at)->toBeNull()
+        ->and(collect($salesRequest->fresh()->status_history)->last()['event'])->toBe('conversion_amended');
+    $invoices->amend($invoice->fresh(), [[
+        'invoice_line_public_id' => $invoiceLine->public_id,
+        'quantity' => '2',
+    ]], [['due_date' => now()->toDateString(), 'amount' => '50']]);
+    expect($sourceLine->fresh()->converted_quantity)->toBe('2.00000000')
+        ->and($salesRequest->fresh()->status)->toBe('converted')
+        ->and($salesRequest->fresh()->closed_at)->not->toBeNull()
+        ->and(DB::table(config('activitylog.table_name', 'activity_log'))
+            ->where('event', 'sales_request.conversion_amended')
+            ->where('subject_id', $salesRequest->getKey())->count())->toBe(2);
+    expect(fn () => $invoices->amend($invoice->fresh(), [[
+        'invoice_line_public_id' => $invoiceLine->public_id,
+        'quantity' => '3',
+    ]], [['due_date' => now()->toDateString(), 'amount' => '75']]))
+        ->toThrow(DomainException::class, __('Invoice quantity exceeds the remaining request quantity.'));
+    expect($invoiceLine->fresh()->quantity)->toBe('2.00000000')
+        ->and($sourceLine->fresh()->converted_quantity)->toBe('2.00000000');
+    $invoices->amend($invoice->fresh(), [[
+        'invoice_line_public_id' => $invoiceLine->public_id,
+        'quantity' => '2',
+    ]], [['due_date' => now()->addDays(2)->toDateString(), 'amount' => '50']]);
+    $invoices->amend($invoice->fresh(), [[
+        'invoice_line_public_id' => $invoiceLine->public_id,
+        'quantity' => '2',
+    ]], [['due_date' => now()->addDays(2)->toDateString(), 'amount' => '50']]);
+    expect(DB::table(config('activitylog.table_name', 'activity_log'))
+        ->where('event', 'sales_request.conversion_amended')
+        ->where('subject_id', $salesRequest->getKey())->count())->toBe(2);
+
+    $originalSnapshot = $invoiceLine->source_snapshot;
+    $invoiceLine->forceFill(['source_snapshot' => ['sales_request_line_public_id' => 'missing-line']])->save();
+    expect(fn () => $invoices->deleteDraft($invoice))->toThrow(DomainException::class, __('The sales request source line for this invoice is missing or invalid.'));
+    expect($invoice->fresh()->trashed())->toBeFalse()
+        ->and($sourceLine->fresh()->converted_quantity)->toBe('2.00000000')
+        ->and($salesRequest->fresh()->status)->toBe('converted');
+
+    $invoiceLine->forceFill(['source_snapshot' => $originalSnapshot])->save();
+    $sourceLine->forceFill(['converted_quantity' => '1'])->save();
+    expect(fn () => $invoices->deleteDraft($invoice))->toThrow(DomainException::class, __('The sales request converted quantity is less than the invoice quantity.'));
+    expect($invoice->fresh()->trashed())->toBeFalse()
+        ->and($sourceLine->fresh()->converted_quantity)->toBe('1.00000000')
+        ->and($salesRequest->fresh()->status)->toBe('converted');
+    $sourceLine->forceFill(['converted_quantity' => '2'])->save();
+
+    $invoices->deleteDraft($invoice);
+    expect($salesRequest->fresh()->status)->toBe(SalesRequest::StatusApproved)
+        ->and($salesRequest->fresh()->closed_at)->toBeNull()
+        ->and($salesRequest->fresh()->closed_by)->toBeNull()
+        ->and($sourceLine->fresh()->converted_quantity)->toBe('0.00000000')
+        ->and(collect($salesRequest->fresh()->status_history)->last()['event'])->toBe('conversion_reversed')
+        ->and(DB::table(config('activitylog.table_name', 'activity_log'))
+            ->where('event', 'sales_request.conversion_reversed')
+            ->where('subject_id', $salesRequest->getKey())
+            ->count())->toBe(1);
+
+    $secondInvoice = $invoices->createDirect($invoicePayload, $salesRequest->fresh());
+    $reopened = $requests->reopen($salesRequest->fresh(), 'Add a line before invoice correction.');
+    $requests->save([
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'customer_id' => $fixture['customer']->getKey(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'request_date' => now()->toDateString(),
+        'lines' => [
+            ['product_id' => $fixture['finished']->getKey(), 'unit_id' => $fixture['unit']->getKey(), 'quantity' => '2'],
+            ['product_id' => $fixture['service']->getKey(), 'unit_id' => $fixture['unit']->getKey(), 'quantity' => '1'],
+        ],
+    ], $reopened);
+
+    $newRequestLine = $salesRequest->fresh()->lines->last();
+    $secondInvoiceLine = $secondInvoice->lines()->sole();
+    $secondInvoiceSnapshot = $secondInvoiceLine->source_snapshot;
+    $secondInvoiceLine->forceFill(['source_snapshot' => [
+        'sales_request_line_id' => $newRequestLine->getKey(),
+        'sales_request_line_public_id' => $newRequestLine->public_id,
+    ]])->save();
+    expect(fn () => $invoices->deleteDraft($secondInvoice))->toThrow(DomainException::class, __('The sales request source line for this invoice is missing or invalid.'));
+    expect($sourceLine->fresh()->converted_quantity)->toBe('2.00000000');
+    $secondInvoiceLine->forceFill(['source_snapshot' => $secondInvoiceSnapshot])->save();
+    $duplicateSourceLine = $secondInvoiceLine->replicate(['public_id']);
+    $duplicateSourceLine->forceFill(['line_number' => 2, 'quantity' => '1', 'base_quantity' => '1'])->save();
+    expect(fn () => $invoices->deleteDraft($secondInvoice))->toThrow(DomainException::class, __('The sales request source line for this invoice is missing or invalid.'));
+    expect($sourceLine->fresh()->converted_quantity)->toBe('2.00000000');
+    $duplicateSourceLine->delete();
+    $ambiguousRequestLine = $sourceLine->replicate(['public_id']);
+    $ambiguousRequestLine->forceFill(['line_number' => 3, 'converted_quantity' => '0'])->save();
+    $legacySnapshot = $secondInvoiceSnapshot;
+    unset($legacySnapshot['sales_request_line_id']);
+    $secondInvoiceLine->forceFill(['source_snapshot' => $legacySnapshot])->save();
+    expect(fn () => $invoices->deleteDraft($secondInvoice))->toThrow(DomainException::class, __('The sales request source line for this invoice is missing or invalid.'));
+    $secondInvoiceLine->forceFill(['source_snapshot' => $secondInvoiceSnapshot])->save();
+    $ambiguousRequestLine->delete();
+    $invoices->deleteDraft($secondInvoice);
+    expect($salesRequest->fresh()->status)->toBe(SalesRequest::StatusReopened)
+        ->and($salesRequest->fresh()->closed_at)->toBeNull()
+        ->and($salesRequest->fresh()->lines)->toHaveCount(2)
+        ->and($sourceLine->fresh()->converted_quantity)->toBe('0.00000000')
+        ->and(collect($salesRequest->fresh()->status_history)->last()['event'])->toBe('conversion_reversed');
+});
+
+test('soft deleted sales request descendants remain immutable history during append-only reopen', function (): void {
     $fixture = salesCycleFixture();
     activateSalesCycleOperatingContext($fixture);
     $service = app(SalesRequestService::class);
@@ -255,14 +609,14 @@ test('soft deleted sales request descendants remain reopen blockers', function (
         'status' => Quotation::StatusDraft,
     ]);
     $quotation->delete();
-    expect(fn () => $service->reopen($quotationRequest->fresh(), 'Unsafe historical quotation amendment.'))
-        ->toThrow(DomainException::class, __('A sales request with conversions or downstream documents cannot be reopened.'));
+    expect($quotationRequest->fresh()->hasConversionHistory())->toBeTrue()
+        ->and($service->reopen($quotationRequest->fresh(), 'Append after historical quotation.')->status)->toBe(SalesRequest::StatusReopened);
 
     $orderRequest = $approvedRequest();
     $order = app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, ['sales_request_id' => $orderRequest->getKey()]));
     $order->delete();
-    expect(fn () => $service->reopen($orderRequest->fresh(), 'Unsafe historical order amendment.'))
-        ->toThrow(DomainException::class, __('A sales request with conversions or downstream documents cannot be reopened.'));
+    expect($orderRequest->fresh()->hasConversionHistory())->toBeTrue()
+        ->and($service->reopen($orderRequest->fresh(), 'Append after historical order.')->status)->toBe(SalesRequest::StatusReopened);
 
     $invoiceRequest = $approvedRequest();
     $invoice = CustomerInvoice::query()->create([
@@ -279,8 +633,8 @@ test('soft deleted sales request descendants remain reopen blockers', function (
         'source_doc_num' => $invoiceRequest->doc_num,
     ]);
     $invoice->delete();
-    expect(fn () => $service->reopen($invoiceRequest->fresh(), 'Unsafe historical direct invoice amendment.'))
-        ->toThrow(DomainException::class, __('A sales request with conversions or downstream documents cannot be reopened.'));
+    expect($invoiceRequest->fresh()->hasConversionHistory())->toBeTrue()
+        ->and($service->reopen($invoiceRequest->fresh(), 'Append after historical direct invoice.')->status)->toBe(SalesRequest::StatusReopened);
 });
 
 test('sales request reopen rolls back in a closed period and remains company and branch isolated', function (): void {
@@ -573,6 +927,8 @@ test('sales reservations and deliveries preserve warehouse batch positions', fun
 
 test('stock sale, mixed service, installments, collection, and quality returns remain line-traceable', function () {
     $fixture = salesCycleFixture();
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    activateSalesCycleOperatingContext($fixture);
     $orders = app(SalesOrderService::class);
     $fulfillment = app(SalesFulfillmentService::class);
     $invoices = app(CustomerInvoiceService::class);
@@ -605,6 +961,22 @@ test('stock sale, mixed service, installments, collection, and quality returns r
         ['due_date' => now()->addWeek()->toDateString(), 'amount' => '500'],
         ['due_date' => now()->addMonth()->toDateString(), 'amount' => '600'],
     ], $firstDelivery);
+    $invoiceLines = $invoice->lines()->orderBy('line_number')->get();
+    $invoices->amend($invoice, [
+        ['invoice_line_public_id' => $invoiceLines[0]->public_id, 'quantity' => '50'],
+        ['invoice_line_public_id' => $invoiceLines[1]->public_id, 'quantity' => '40'],
+        ['invoice_line_public_id' => $invoiceLines[2]->public_id, 'quantity' => '1'],
+    ], [['due_date' => now()->addWeek()->toDateString(), 'amount' => '1000']]);
+    expect($goodsLine->fresh()->invoiced_quantity)->toBe('90.00000000');
+    $invoices->amend($invoice->fresh(), [
+        ['invoice_line_public_id' => $invoiceLines[0]->public_id, 'quantity' => '60'],
+        ['invoice_line_public_id' => $invoiceLines[1]->public_id, 'quantity' => '40'],
+        ['invoice_line_public_id' => $invoiceLines[2]->public_id, 'quantity' => '1'],
+    ], [
+        ['due_date' => now()->addWeek()->toDateString(), 'amount' => '500'],
+        ['due_date' => now()->addMonth()->toDateString(), 'amount' => '600'],
+    ]);
+    expect($goodsLine->fresh()->invoiced_quantity)->toBe('100.00000000');
     $invoice = $invoices->post($invoice);
     expect($invoice->posting_status)->toBe('posted')->and($invoice->lines)->toHaveCount(3)->and($invoice->paymentSchedules)->toHaveCount(2);
     expect($invoice->deliveries()->pluck('inventory_documents.id')->sort()->values()->all())
@@ -734,8 +1106,10 @@ test('fully paid invoice credit remains a customer credit and conserves every re
     $invoice = $invoice->fresh();
     expect($invoice->remaining_amount)->toBe('0.0000')
         ->and($invoice->paid_amount)->toBe('1140.0000');
-    expect(fn () => $orders->reopen($order->fresh(), 'Unsafe fulfilled-order mutation.'))
-        ->toThrow(DomainException::class, __('The sales order cannot be reopened from its current status.'));
+    activateSalesCycleOperatingContext($fixture);
+    $reopenedOrder = $orders->reopen($order->fresh(), 'Amend future demand while retaining completed deliveries.');
+    expect($reopenedOrder->status)->toBe(SalesOrder::StatusReopened)
+        ->and($reopenedOrder->lines->sole()->delivered_quantity)->toBe('10000.00000000');
     expect(fn () => $invoices->reopen($invoice, 'Unsafe paid-invoice mutation.'))
         ->toThrow(DomainException::class, __('Only an unsettled posted invoice may be reopened.'));
 
@@ -914,6 +1288,10 @@ test('available customer credit allocates and refunds exactly once without dupli
         ->and($creditNote->fresh()->credit_available_amount)->toBe('800.0000')
         ->and($creditNote->fresh()->credit_allocated_amount)->toBe('1200.0000');
     expect(fn () => $credits->allocate(
+        $creditNote, $targetInvoice, '1', now()->toDateString(),
+        idempotencyKey: '8f2de8ec-1fe8-4adc-8172-403b3c876a19',
+    ))->toThrow(DomainException::class);
+    expect(fn () => $credits->allocate(
         $creditNote,
         $targetInvoice,
         '1',
@@ -952,6 +1330,18 @@ test('available customer credit allocates and refunds exactly once without dupli
         ->and($creditNote->fresh()->credit_refunded_amount)->toBe('800.0000')
         ->and((float) $refundJournal->lines->firstWhere('account_id', $fixture['customer']->account_id)?->debit_amount)->toBe(800.0)
         ->and((float) $refundJournal->lines->firstWhere('account_id', $fixture['cashbox']->account_id)?->credit_amount)->toBe(800.0);
+    $cashReconciliation = app(ReconciliationCenterService::class)->report(
+        $fixture['company']->getKey(),
+        $fixture['period']->getKey(),
+        $fixture['branch']->getKey(),
+        now()->toDateString(),
+        now()->toDateString(),
+        ReconciliationCenterService::CashSafes,
+    )['results'][0];
+    expect($cashReconciliation['summary']['mismatch_count'])->toBe(0);
+    expect(fn () => $credits->refund($creditNote->fresh(), [
+        ...$refundData, 'amount' => '1',
+    ]))->toThrow(DomainException::class);
 
     Permission::findOrCreate('customer_credits.refund', 'web');
     $fixture['user']->givePermissionTo('customer_credits.refund');
@@ -1362,6 +1752,10 @@ test('posted invoice must be explicitly reopened before amendment and reposts a 
         ->and($invoice->journalEntry->source_type)->toBe('customer_invoice_post_1')
         ->and($invoices->post($invoice)->journal_entry_id)->toBe($invoice->journal_entry_id);
 
+    $invoice->forceFill(['status' => CustomerInvoice::StatusDraft, 'posting_status' => 'unposted'])->save();
+    expect($invoice->fresh()->isEditable())->toBeFalse();
+    $invoice->forceFill(['status' => CustomerInvoice::StatusPosted, 'posting_status' => 'posted'])->save();
+
     $fulfillment->deliverInvoice($invoice, [[
         'customer_invoice_line_id' => $invoice->lines->first()->getKey(),
         'quantity' => '8',
@@ -1418,6 +1812,8 @@ test('an issued sales issue order prevents reopening its posted invoice even bef
 
 test('full invoice CRUD feature can be disabled and safely deletes only unused drafts', function () {
     $fixture = salesCycleFixture();
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    activateSalesCycleOperatingContext($fixture);
     $invoices = app(CustomerInvoiceService::class);
     $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
         'lines' => [[
@@ -1443,6 +1839,65 @@ test('full invoice CRUD feature can be disabled and safely deletes only unused d
 
     expect($draft->canDeleteDraft())->toBeTrue()
         ->and($orderLine->fresh()->invoiced_quantity)->toBe('2.00000000');
+    $draft->forceFill(['reopened_at' => now(), 'posting_revision' => 1])->save();
+    expect($draft->fresh()->canDeleteDraft())->toBeFalse()
+        ->and($draft->fresh()->isEditable())->toBeFalse()
+        ->and(fn () => $invoices->deleteDraft($draft->fresh()))
+        ->toThrow(DomainException::class, __('Only an unused draft sales invoice can be deleted.'));
+    $draft->forceFill(['reopened_at' => null, 'posting_revision' => 0])->save();
+    $correction = [['invoice_line_public_id' => $draft->lines()->sole()->public_id, 'quantity' => '2']];
+    $schedule = [['due_date' => now()->toDateString(), 'amount' => '100']];
+    Permission::findOrCreate('customer_invoices.delete', 'web');
+    $fixture['user']->givePermissionTo('customer_invoices.delete');
+
+    $otherBranch = Branch::query()->create([
+        'doc_number' => 99013,
+        'doc_num' => 'Branch-INVOICE-DELETE-OTHER',
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Other invoice delete branch',
+        'type' => Branch::TypeShowroom,
+        'status' => 'active',
+    ]);
+    $draft->forceFill(['branch_id' => $otherBranch->getKey()])->save();
+    expect(fn () => $invoices->amend($draft->fresh(), $correction, $schedule))
+        ->toThrow(DomainException::class, __('The document is outside the active operating context.'));
+    expect(fn () => $invoices->deleteDraft($draft->fresh()))
+        ->toThrow(DomainException::class, __('The document is outside the active operating context.'));
+    $this->deleteJson(route('admin.sales.sales-invoices.destroy', $draft))
+        ->assertStatus(409)
+        ->assertJsonPath('message', __('The document is outside the active operating context.'));
+
+    $otherPeriod = FinancialPeriod::query()->create([
+        'doc_number' => 99013,
+        'doc_num' => 'Period-INVOICE-DELETE-OTHER',
+        'company_id' => $fixture['company']->getKey(),
+        'name' => 'Other invoice delete period',
+        'from_date' => now()->addYear()->startOfYear()->toDateString(),
+        'to_date' => now()->addYear()->endOfYear()->toDateString(),
+        'is_closed' => false,
+    ]);
+    $draft->forceFill(['branch_id' => $fixture['branch']->getKey(), 'financial_period_id' => $otherPeriod->getKey()])->save();
+    expect(fn () => $invoices->amend($draft->fresh(), $correction, $schedule))
+        ->toThrow(DomainException::class, __('The document is outside the active operating context.'));
+    expect(fn () => $invoices->deleteDraft($draft->fresh()))
+        ->toThrow(DomainException::class, __('The document is outside the active operating context.'));
+
+    $draft->forceFill(['financial_period_id' => $fixture['period']->getKey()])->save();
+    $fixture['period']->forceFill(['is_closed' => true])->save();
+    expect(fn () => $invoices->amend($draft->fresh(), $correction, $schedule))
+        ->toThrow(DomainException::class, __('journal_entries.messages.period_closed'));
+    expect(fn () => $invoices->deleteDraft($draft->fresh()))
+        ->toThrow(DomainException::class, __('journal_entries.messages.period_closed'));
+    $this->deleteJson(route('admin.sales.sales-invoices.destroy', $draft))
+        ->assertStatus(409)
+        ->assertJsonPath('message', __('journal_entries.messages.period_closed'));
+    $fixture['period']->forceFill(['is_closed' => false])->save();
+
+    $orderLine->forceFill(['invoiced_quantity' => '1', 'invoiced_base_quantity' => '1'])->save();
+    expect(fn () => $invoices->deleteDraft($draft))->toThrow(DomainException::class, __('The sales order invoiced quantity is less than the invoice quantity.'));
+    expect($draft->fresh()->trashed())->toBeFalse()
+        ->and($orderLine->fresh()->invoiced_quantity)->toBe('1.00000000');
+    $orderLine->forceFill(['invoiced_quantity' => '2', 'invoiced_base_quantity' => '2'])->save();
     $invoices->deleteDraft($draft);
     expect(CustomerInvoice::withTrashed()->findOrFail($draft->getKey())->trashed())->toBeTrue()
         ->and($orderLine->fresh()->invoiced_quantity)->toBe('0.00000000');
@@ -1503,6 +1958,176 @@ test('production demand preserves order-line lineage and has no direct completio
 
 });
 
+test('a sales sourced production run reaches quality receipt delivery invoice and collection with one cost lineage', function (string $productionVariant): void {
+    $fixture = salesCycleFixture();
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    activateSalesCycleOperatingContext($fixture);
+    $fixture['branch']->forceFill(['type' => Branch::TypeFactory])->save();
+    InventoryTransaction::query()->where('posting_key', 'sales-cycle-opening-stock')->delete();
+    ProductComponent::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'product_id' => $fixture['finished']->getKey(),
+        'component_product_id' => $fixture['raw']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'calculation_method' => ProductComponent::CalculationDirect,
+        'quantity' => '2',
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+    $expectedProductionCost = '8.00000000';
+    if ($productionVariant === 'cover') {
+        $fixture['finished']->update(['name' => 'Synthetic Printed Cover']);
+        $wrapper = Product::query()->create([
+            'company_id' => $fixture['company']->getKey(),
+            'doc_number' => 8099,
+            'doc_num' => 'PACK-COVER-WRAPPER',
+            'name' => 'Synthetic Printed Wrapper',
+            'item_classification' => Product::ClassificationPackaging,
+            'item_unit_id' => $fixture['unit']->getKey(),
+            'status' => 'active',
+        ]);
+        ProductComponent::query()->create([
+            'company_id' => $fixture['company']->getKey(),
+            'product_id' => $fixture['finished']->getKey(),
+            'component_product_id' => $wrapper->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'calculation_method' => ProductComponent::CalculationDirect,
+            'quantity' => '1',
+            'created_by' => $fixture['user']->getKey(),
+        ]);
+        InventoryTransaction::query()->create([
+            'posting_key' => 'synthetic-cover-wrapper',
+            'company_id' => $fixture['company']->getKey(),
+            'financial_period_id' => $fixture['period']->getKey(),
+            'branch_id' => $fixture['branch']->getKey(),
+            'branch_store_id' => $fixture['store']->getKey(),
+            'transaction_date' => now()->toDateString(),
+            'transaction_type' => 'opening_stock',
+            'stock_status' => InventoryTransaction::StatusAvailable,
+            'product_id' => $wrapper->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'quantity_in' => '2',
+            'quantity_out' => '0',
+            'source_type' => 'synthetic_fixture',
+            'source_id' => 2,
+            'source_doc_num' => 'SYNTHETIC-WRAPPER',
+            'unit_cost' => '1',
+            'total_cost' => '2',
+            'created_by' => $fixture['user']->getKey(),
+        ]);
+        $expectedProductionCost = '10.00000000';
+    }
+    InventoryTransaction::query()->create([
+        'posting_key' => 'synthetic-sales-production-raw',
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(),
+        'transaction_date' => now()->toDateString(),
+        'transaction_type' => 'opening_stock',
+        'stock_status' => InventoryTransaction::StatusAvailable,
+        'product_id' => $fixture['raw']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'quantity_in' => '4',
+        'quantity_out' => '0',
+        'source_type' => 'synthetic_fixture',
+        'source_id' => 1,
+        'source_doc_num' => 'SYNTHETIC-RAW',
+        'unit_cost' => '2',
+        'total_cost' => '8',
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+
+    $order = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
+        'lines' => [[
+            'product_id' => $fixture['finished']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'description' => 'Synthetic injection output',
+            'quantity' => '2',
+            'unit_price' => '10',
+            'discount_amount' => '0',
+            'tax_amount' => '0',
+        ]],
+        'payment_schedules' => [['title' => 'Final collection', 'amount' => '20', 'due_date' => now()->toDateString()]],
+    ])));
+    $salesLine = $order->lines->sole();
+    $production = app(SalesProductionDemandService::class)->create($order, [[
+        'sales_order_line_id' => $salesLine->getKey(),
+        'quantity' => '2',
+    ]]);
+    $cycle = app(ProductionCycleService::class);
+    $productionLine = $cycle->releaseOrder($production)->lines->sole();
+    $run = $cycle->createRun($productionLine, [
+        'planned_quantity' => '2',
+        'planned_start_at' => now()->addHour(),
+        'planned_end_at' => now()->addHours(2),
+        'batch_lot' => $productionVariant === 'cover' ? 'SYNTHETIC-COVER-001' : 'SYNTHETIC-INJECTION-001',
+    ]);
+    $cycle->reserveRun($run, $fixture['store']->getKey());
+    $cycle->issueMaterials($run, $fixture['store']->getKey());
+    $cycle->startSetup($run);
+    $cycle->completeSetup($run->fresh());
+    $cycle->startRun($run->fresh());
+    $cycle->recordProgress($run->fresh(), ['good_base_quantity' => '2']);
+    $accounting = $run->fresh()->requirements->mapWithKeys(fn ($requirement): array => [
+        $requirement->getKey() => [
+            'consumed_quantity' => (string) $requirement->issued_quantity,
+            'waste_quantity' => '0',
+        ],
+    ])->all();
+    $cycle->accountMaterials($run->fresh(), $fixture['store']->getKey(), $accounting);
+    $inspection = $cycle->recordInspection($run->fresh(), ['result' => 'passed']);
+    $cycle->reviewInspection($inspection, true);
+    $cycle->receiveFinishedGoods($run->fresh(), $fixture['store']->getKey(), '2');
+    $cycle->completeRun($run->fresh());
+
+    $delivery = app(SalesFulfillmentService::class)->deliver($order->fresh(), [[
+        'sales_order_line_id' => $salesLine->getKey(), 'quantity' => '2',
+    ]]);
+    $invoice = app(CustomerInvoiceService::class)->post(app(CustomerInvoiceService::class)->createFromOrder(
+        $order->fresh(),
+        [[
+            'sales_order_line_id' => $salesLine->getKey(),
+            'delivery_line_id' => $delivery->lines->sole()->getKey(),
+            'quantity' => '2',
+        ]],
+        [['due_date' => now()->toDateString(), 'amount' => '20']],
+        $delivery,
+    ));
+    $receipt = app(CustomerReceiptService::class)->createAndApprove([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'customer_id' => $fixture['customer']->getKey(),
+        'receipt_date' => now()->toDateString(),
+        'currency_id' => $fixture['currency']->getKey(),
+        'exchange_rate' => '1',
+        'payment_method' => 'cash',
+        'cashbox_id' => $fixture['cashbox']->getKey(),
+        'amount' => '20',
+        'receipt_type' => CustomerReceipt::TypeCollection,
+    ], [['customer_invoice_payment_schedule_id' => $invoice->paymentSchedules()->sole()->getKey(), 'amount' => '20']]);
+    $finishedReceipt = InventoryDocument::query()->where('production_run_id', $run->getKey())
+        ->where('document_type', InventoryDocument::TypeProductionReceipt)->sole();
+    $deliveryMovement = InventoryTransaction::query()->where('transaction_type', 'sales_delivery')
+        ->where('product_id', $fixture['finished']->getKey())->sole();
+
+    expect($production->fresh()->sales_order_id)->toBe($order->getKey())
+        ->and($run->fresh()->status)->toBe('completed')
+        ->and($salesLine->fresh()->produced_quantity)->toBe('2.00000000')
+        ->and($salesLine->fresh()->delivered_quantity)->toBe('2.00000000')
+        ->and($invoice->fresh()->remaining_amount)->toBe('0.0000')
+        ->and($receipt->unallocated_amount)->toBe('0.0000')
+        ->and($finishedReceipt->lines()->sole()->total_cost)->toBe($expectedProductionCost)
+        ->and($deliveryMovement->total_cost)->toBe($expectedProductionCost)
+        ->and(InventoryTransaction::query()->where('transaction_type', 'sales_delivery')->sum('quantity_out'))->toEqual(2)
+        ->and(InventoryTransaction::query()->where('transaction_type', InventoryDocument::TypeProductionReceipt)->sum('quantity_in'))->toEqual(2);
+    $reconciliation = collect(app(InventoryGlReconciliationService::class)->reconcile(
+        $fixture['company']->getKey(), $fixture['period']->getKey(),
+    ))->keyBy('key');
+    expect($reconciliation['wip']['difference'])->toBe('0.0000')
+        ->and($reconciliation['finished_goods']['difference'])->toBe('0.0000');
+})->with(['injection', 'cover']);
+
 test('linked production orders cannot collectively exceed the sales source quantity', function (): void {
     $fixture = salesCycleFixture();
     $salesOrder = app(SalesOrderService::class)->approve(app(SalesOrderService::class)->create(salesCycleOrderPayload($fixture, [
@@ -1546,6 +2171,268 @@ test('linked production orders cannot collectively exceed the sales source quant
         ->where('sales_order_line_id', $sourceLine->getKey())
         ->whereHas('order')
         ->sum('base_quantity'))->toBe('10');
+});
+
+test('a controlled sales amendment preserves produced source identity and offers only the added quantity', function (): void {
+    $fixture = salesCycleFixture();
+    Permission::findOrCreate('sales_orders.edit', 'web');
+    $fixture['user']->givePermissionTo('sales_orders.edit');
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    activateSalesCycleOperatingContext($fixture);
+    $orders = app(SalesOrderService::class);
+    $demand = app(SalesProductionDemandService::class);
+    $payload = salesCycleOrderPayload($fixture, [
+        'lines' => [[
+            'product_id' => $fixture['finished']->getKey(),
+            'unit_id' => $fixture['unit']->getKey(),
+            'quantity' => '2',
+            'unit_price' => '10',
+        ]],
+        'payment_schedules' => [['title' => 'Due', 'amount' => '20', 'due_date' => now()->addMonth()->toDateString()]],
+    ]);
+    $order = $orders->approve($orders->create($payload));
+    $sourceLine = $order->lines()->sole();
+    $firstProduction = $demand->create($order, [[
+        'sales_order_line_id' => $sourceLine->getKey(), 'quantity' => '2',
+    ]]);
+
+    $amendedPayload = $payload;
+    $amendedPayload['lines'][0]['public_id'] = $sourceLine->public_id;
+    $amendedPayload['lines'][0]['quantity'] = '3';
+    $amendedPayload['lines'][] = [
+        'product_id' => $fixture['finished']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'quantity' => '1',
+        'unit_price' => '10',
+    ];
+    $amendedPayload['payment_schedules'][0]['amount'] = '40';
+    expect(fn () => $orders->update($order, $amendedPayload))
+        ->toThrow(DomainException::class, __('Released sales orders must be reopened before amendment.'));
+
+    $order = $orders->reopen($order, 'Customer requested one additional unit.');
+    $amendedPayload['amendment_token'] = $order->amendmentToken();
+    $this->get(route('admin.sales.sales-orders.edit', $order))
+        ->assertOk()
+        ->assertSee('lines[0][public_id]', false)
+        ->assertSee($sourceLine->public_id);
+    $missingSource = $amendedPayload;
+    $missingSource['lines'] = [[
+        'product_id' => $fixture['finished']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'quantity' => '3',
+        'unit_price' => '10',
+    ]];
+    expect(fn () => $orders->update($order, $missingSource))->toThrow(DomainException::class);
+    $changedPrice = $amendedPayload;
+    $changedPrice['lines'][0]['unit_price'] = '11';
+    expect(fn () => $orders->update($order, $changedPrice))->toThrow(DomainException::class);
+    $reducedSource = $amendedPayload;
+    $reducedSource['lines'][0]['quantity'] = '1';
+    expect(fn () => $orders->update($order, $reducedSource))->toThrow(DomainException::class)
+        ->and($sourceLine->fresh()->quantity)->toBe('2.00000000');
+    createSalesPriceList($fixture, null, [['product' => $fixture['finished'], 'price' => '10']]);
+    $this->putJson(route('admin.sales.sales-orders.update', $order), [
+        'amendment_token' => $order->fresh()->amendmentToken(),
+        'customer_doc_num' => $fixture['customer']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'order_date' => now()->toDateString(),
+        'expected_delivery_date' => now()->addWeek()->toDateString(),
+        'lines' => [[
+            'public_id' => $sourceLine->public_id,
+            'product_doc_num' => $fixture['finished']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'description' => $fixture['finished']->name,
+            'quantity' => '3',
+            'unit_price' => '10',
+            'discount_amount' => '0',
+            'tax_amount' => '0',
+        ], [
+            'product_doc_num' => $fixture['finished']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'quantity' => '1',
+            'unit_price' => '10',
+            'discount_amount' => '0',
+            'tax_amount' => '0',
+        ]],
+        'payment_schedules' => $amendedPayload['payment_schedules'],
+    ])->assertOk();
+    $amended = $order->fresh();
+    $approved = $orders->approve($orders->submit($amended));
+    $remaining = $approved->lines()->where('public_id', $sourceLine->public_id)->firstOrFail();
+    $added = $approved->lines()->where('public_id', '!=', $sourceLine->public_id)->sole();
+    $secondProduction = $demand->create($approved, [[
+        'sales_order_line_id' => $remaining->getKey(), 'quantity' => '1',
+    ]]);
+    $addedProduction = $demand->create($approved, [[
+        'sales_order_line_id' => $added->getKey(), 'quantity' => '1',
+    ]]);
+
+    expect($remaining->getKey())->toBe($sourceLine->getKey())
+        ->and($remaining->fresh()->production_requested_quantity)->toBe('3.00000000')
+        ->and($remaining->fresh()->remainingProductionDemandQuantity())->toBe('0.00000000')
+        ->and($firstProduction->lines()->sole()->sales_order_line_id)->toBe($sourceLine->getKey())
+        ->and($secondProduction->lines()->sole()->base_quantity)->toBe('1.00000000')
+        ->and($addedProduction->lines()->sole()->sales_order_line_id)->toBe($added->getKey())
+        ->and($approved->lines()->count())->toBe(2)
+        ->and(fn () => $demand->create($approved, [[
+            'sales_order_line_id' => $sourceLine->getKey(), 'quantity' => '0.00000001',
+        ]]))->toThrow(DomainException::class, __('production_execution.messages.source_quantity_exceeds_remaining'));
+});
+
+test('request sourced sales orders amend quantities after invoicing without rewriting linked documents', function (): void {
+    $fixture = salesCycleFixture();
+    Permission::findOrCreate('sales_orders.edit', 'web');
+    $fixture['user']->givePermissionTo('sales_orders.edit');
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    activateSalesCycleOperatingContext($fixture);
+    $requests = app(SalesRequestService::class);
+    $request = $requests->save([
+        'company_id' => $fixture['company']->getKey(), 'branch_id' => $fixture['branch']->getKey(),
+        'branch_store_id' => $fixture['store']->getKey(), 'customer_id' => $fixture['customer']->getKey(),
+        'currency_id' => $fixture['currency']->getKey(), 'request_date' => now()->toDateString(),
+        'lines' => [['product_id' => $fixture['finished']->getKey(), 'unit_id' => $fixture['unit']->getKey(), 'quantity' => '10']],
+    ]);
+    $requests->transition($request, 'submitted');
+    $requests->transition($request->fresh(), 'approved');
+    $requestLine = $request->fresh()->lines->sole();
+    $orders = app(SalesOrderService::class);
+    $payload = salesCycleOrderPayload($fixture, [
+        'sales_request_id' => $request->getKey(),
+        'lines' => [[
+            'sales_request_line_id' => $requestLine->getKey(),
+            'product_id' => $fixture['finished']->getKey(), 'unit_id' => $fixture['unit']->getKey(),
+            'quantity' => '10', 'unit_price' => '22.54545123',
+        ]],
+        'payment_schedules' => [['title' => 'Due', 'amount' => '225.4545', 'due_date' => now()->addMonth()->toDateString()]],
+    ]);
+    $order = $orders->approve($orders->create($payload));
+    $line = $order->lines()->sole();
+    $production = app(SalesProductionDemandService::class)->create($order, [['sales_order_line_id' => $line->getKey(), 'quantity' => '4']]);
+    $invoice = app(CustomerInvoiceService::class)->createFromOrder($order, [
+        ['sales_order_line_id' => $line->getKey(), 'quantity' => '2'],
+    ], [['due_date' => now()->toDateString(), 'amount' => '45.0909']]);
+    $invoiceSnapshot = $invoice->lines()->sole()->attributesToArray();
+    $productionSnapshot = $production->lines()->sole()->attributesToArray();
+    $order = $orders->reopen($order->fresh(), 'Synthetic customer quantity amendment.');
+    $this->get(route('admin.sales.sales-orders.edit', $order))->assertOk()->assertSee($line->public_id);
+    $httpPayload = [
+        'amendment_token' => $order->fresh()->amendmentToken(),
+        'customer_doc_num' => $fixture['customer']->doc_num, 'currency_doc_num' => $fixture['currency']->doc_num,
+        'order_date' => now()->toDateString(), 'expected_delivery_date' => now()->addWeek()->toDateString(),
+        'lines' => [[
+            'public_id' => $line->public_id, 'product_doc_num' => $fixture['finished']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num, 'quantity' => '12',
+            'unit_price' => '22.54545123', 'discount_amount' => '0', 'tax_amount' => '0',
+        ]],
+        'payment_schedules' => [['title' => 'Due', 'amount' => '270.5454', 'due_date' => now()->addMonth()->toDateString()]],
+    ];
+    $this->putJson(route('admin.sales.sales-orders.update', $order), $httpPayload)->assertOk();
+    expect($line->fresh()->quantity)->toBe('12.00000000')
+        ->and($line->fresh()->unit_price)->toBe('22.54545123')
+        ->and($line->fresh()->remainingProductionDemandQuantity())->toBe('8.00000000')
+        ->and($line->fresh()->sales_request_line_id)->toBe($requestLine->getKey())
+        ->and($invoice->lines()->sole()->attributesToArray())->toBe($invoiceSnapshot)
+        ->and($production->lines()->sole()->attributesToArray())->toBe($productionSnapshot);
+    $this->putJson(route('admin.sales.sales-orders.update', $order), $httpPayload)->assertStatus(422);
+    expect($line->fresh()->quantity)->toBe('12.00000000');
+    $httpPayload['amendment_token'] = $order->fresh()->amendmentToken();
+    $httpPayload['lines'][0]['quantity'] = '5';
+    $httpPayload['payment_schedules'][0]['amount'] = '112.7273';
+    $this->putJson(route('admin.sales.sales-orders.update', $order), $httpPayload)->assertOk();
+    $httpPayload['amendment_token'] = $order->fresh()->amendmentToken();
+    $httpPayload['lines'][0]['quantity'] = '3';
+    $httpPayload['payment_schedules'][0]['amount'] = '67.6364';
+    $this->putJson(route('admin.sales.sales-orders.update', $order), $httpPayload)->assertStatus(422);
+    expect($line->fresh()->quantity)->toBe('5.00000000')
+        ->and($line->fresh()->remainingProductionDemandQuantity())->toBe('1.00000000')
+        ->and($line->fresh()->getKey())->toBe($line->getKey())
+        ->and(fn () => $orders->cancel($order->fresh(), 'Forbidden cancellation'))->toThrow(DomainException::class);
+    $approved = $orders->approve($orders->submit($order->fresh()));
+    expect($approved->isEditable())->toBeFalse()
+        ->and($invoice->lines()->sole()->attributesToArray())->toBe($invoiceSnapshot)
+        ->and($production->lines()->sole()->attributesToArray())->toBe($productionSnapshot);
+});
+
+test('sales amendment commitments exclude credit notes and retain original posted invoice values', function (): void {
+    $fixture = salesCycleFixture();
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    activateSalesCycleOperatingContext($fixture);
+    $invoice = salesPostedServiceInvoice($fixture, '100', '0', '10');
+    $returns = app(SalesReturnService::class);
+    $return = $returns->create($invoice, $returns->reasonCodes()[0], 'Synthetic service correction', [
+        ['customer_invoice_line_id' => $invoice->lines->sole()->getKey(), 'quantity' => '2'],
+    ]);
+    $credit = $returns->close($returns->authorize($return))->creditNote;
+    $invoiceSnapshot = $invoice->fresh()->attributesToArray();
+    $creditSnapshot = $credit->attributesToArray();
+    $orders = app(SalesOrderService::class);
+    $order = $orders->reopen(SalesOrder::query()->findOrFail($invoice->sales_order_id), 'Keep quantity unchanged after a credit note.');
+    $line = $order->lines()->sole();
+    $payload = salesCycleOrderPayload($fixture, [
+        'lines' => [[
+            'public_id' => $line->public_id, 'product_id' => $line->product_id, 'unit_id' => $line->unit_id,
+            'description' => $line->description, 'quantity' => '10', 'unit_price' => '10',
+        ]],
+        'payment_schedules' => [['title' => 'Due', 'amount' => '100', 'due_date' => now()->addMonth()->toDateString()]],
+    ]);
+    $orders->update($order, [...$payload, 'amendment_token' => $order->amendmentToken()]);
+    expect($line->fresh()->quantity)->toBe('10.00000000')
+        ->and($invoice->fresh()->attributesToArray())->toBe($invoiceSnapshot)
+        ->and($credit->fresh()->attributesToArray())->toBe($creditSnapshot);
+});
+
+test('reapproving delivered sales orders restores their fulfillment state', function (): void {
+    $fixture = salesCycleFixture();
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    activateSalesCycleOperatingContext($fixture);
+    $orders = app(SalesOrderService::class);
+    $payload = salesCycleOrderPayload($fixture, [
+        'lines' => [['product_id' => $fixture['finished']->getKey(), 'unit_id' => $fixture['unit']->getKey(), 'quantity' => '10', 'unit_price' => '10']],
+        'payment_schedules' => [['title' => 'Due', 'amount' => '100', 'due_date' => now()->addMonth()->toDateString()]],
+    ]);
+    $order = $orders->approve($orders->create($payload));
+    $line = $order->lines()->sole();
+    $invoice = app(CustomerInvoiceService::class)->post(app(CustomerInvoiceService::class)->createFromOrder($order, [
+        ['sales_order_line_id' => $line->getKey(), 'quantity' => '10'],
+    ], [['due_date' => now()->toDateString(), 'amount' => '100']]));
+    $delivery = app(SalesFulfillmentService::class)->deliver($order->fresh(), [['sales_order_line_id' => $line->getKey(), 'quantity' => '10']]);
+    $snapshot = $delivery->lines()->get()->map->attributesToArray()->all();
+    expect($order->fresh()->status)->toBe(SalesOrder::StatusFulfilled);
+    $payload['lines'][0]['public_id'] = $line->public_id;
+    $reopened = $orders->reopen($order->fresh(), 'Review completed order.');
+    $unchanged = $orders->update($reopened, [...$payload, 'amendment_token' => $reopened->amendmentToken()]);
+    $approved = $orders->approve($orders->submit($unchanged));
+    expect($approved->status)->toBe(SalesOrder::StatusFulfilled);
+    $payload['lines'][0]['quantity'] = '12';
+    $payload['payment_schedules'][0]['amount'] = '120';
+    $reopened = $orders->reopen($approved, 'Add two units to the completed order.');
+    $increased = $orders->update($reopened, [...$payload, 'amendment_token' => $reopened->amendmentToken()]);
+    $approved = $orders->approve($orders->submit($increased));
+    expect($approved->status)->toBe(SalesOrder::StatusPartiallyFulfilled)
+        ->and($delivery->lines()->get()->map->attributesToArray()->all())->toBe($snapshot)
+        ->and($invoice->fresh()->total_amount)->toBe('100.0000');
+});
+
+test('sales amendments reject a different branch and roll back incomplete source identities', function (): void {
+    $fixture = salesCycleFixture();
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+    activateSalesCycleOperatingContext($fixture);
+    $orders = app(SalesOrderService::class);
+    $order = $orders->approve($orders->create(salesCycleOrderPayload($fixture)));
+    $line = $order->lines()->firstOrFail();
+    app(SalesProductionDemandService::class)->create($order, [['sales_order_line_id' => $line->getKey(), 'quantity' => '1']]);
+    $order = $orders->reopen($order->fresh(), 'Synthetic rollback and branch acceptance.');
+    $snapshot = [$order->attributesToArray(), $order->lines()->get()->map->attributesToArray()->all(), $order->paymentSchedules()->get()->map->attributesToArray()->all(), DB::table('activity_log')->count()];
+    $payload = salesCycleOrderPayload($fixture);
+    $payload['amendment_token'] = $order->amendmentToken();
+    $payload['lines'][0]['public_id'] = $line->public_id;
+    $payload['branch_id'] = $fixture['branch']->getKey() + 900;
+    expect(fn () => $orders->update($order, $payload))->toThrow(DomainException::class);
+    $payload['branch_id'] = $fixture['branch']->getKey();
+    $payload['lines'][0]['quantity'] = '101';
+    $payload['lines'][1] = ['product_id' => $fixture['finished']->getKey(), 'unit_id' => $fixture['unit']->getKey(), 'quantity' => '1', 'unit_price' => '10'];
+    expect(fn () => $orders->update($order, $payload))->toThrow(DomainException::class);
+    expect([$order->fresh()->attributesToArray(), $order->lines()->get()->map->attributesToArray()->all(), $order->paymentSchedules()->get()->map->attributesToArray()->all(), DB::table('activity_log')->count()])->toBe($snapshot);
 });
 
 test('approved sales demand can start production before a finished goods warehouse is chosen', function (): void {
@@ -1644,7 +2531,7 @@ test('credit hold requires a separately audited authorized override reason', fun
         ->and($order->creditOverrides->first()->overridden_by)->toBe($fixture['user']->getKey());
 });
 
-test('released orders require controlled reopen and cannot be amended after fulfillment planning starts', function () {
+test('released orders require controlled reopen and preserve reserved quantities during amendment', function () {
     $fixture = salesCycleFixture();
     activateSalesCycleOperatingContext($fixture);
     $orders = app(SalesOrderService::class);
@@ -1653,13 +2540,25 @@ test('released orders require controlled reopen and cannot be amended after fulf
     expect(fn () => $orders->update($order, salesCycleOrderPayload($fixture)))
         ->toThrow(DomainException::class, __('Released sales orders must be reopened before amendment.'));
 
-    $order = $orders->update($orders->reopen($order, 'Customer confirmed an amended requested date.'), salesCycleOrderPayload($fixture));
+    $reopened = $orders->reopen($order, 'Customer confirmed an amended requested date.');
+    $order = $orders->update($reopened, [...salesCycleOrderPayload($fixture), 'amendment_token' => $reopened->amendmentToken()]);
     $order = $orders->approve($orders->submit($order));
     $goodsLine = $order->lines->firstWhere('product_id', $fixture['finished']->getKey());
     app(SalesFulfillmentService::class)->reserve($goodsLine, '1');
 
-    expect(fn () => $orders->reopen($order->fresh(), 'Attempt to change an already planned order.'))
-        ->toThrow(DomainException::class, __('An order with reservations, production, deliveries, or invoices cannot be amended; use controlled downstream reversal documents.'));
+    $reopened = $orders->reopen($order->fresh(), 'Amend the unreserved remainder.');
+    $payload = salesCycleOrderPayload($fixture);
+    $payload['amendment_token'] = $reopened->amendmentToken();
+    foreach ($reopened->lines as $index => $line) {
+        $payload['lines'][$index]['public_id'] = $line->public_id;
+    }
+    $amended = $orders->update($reopened, $payload);
+    expect($goodsLine->fresh()->reserved_quantity)->toBe('1.00000000')
+        ->and($amended->lines->first()->getKey())->toBe($goodsLine->getKey());
+    $payload['lines'][0]['quantity'] = '0.5';
+    $payload['amendment_token'] = $amended->amendmentToken();
+    expect(fn () => $orders->update($amended, $payload))->toThrow(DomainException::class)
+        ->and($goodsLine->fresh()->reserved_quantity)->toBe('1.00000000');
 });
 
 test('implemented sales cycle routes are not shadowed by UI shell placeholders', function () {
@@ -1842,8 +2741,8 @@ test('authorized users can load the concrete create edit collection reporting an
         ->assertOk()->assertSee('Edit Sales Order')->assertDontSee('Customer reference / PO');
     $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.sales-invoices.edit', $invoice))
         ->assertOk()->assertSee('Correct Sales Invoice')->assertSee('Corrected quantity');
-    $invoiceLineTotal = app(NumericFormatService::class)->format($invoice->lines->first()->line_total);
-    $orderLineTotal = app(NumericFormatService::class)->format($approved->lines->first()->line_total);
+    $invoiceLineTotal = app(NumericFormatService::class)->formatWithMinimumDecimals($invoice->lines->first()->line_total, 2);
+    $orderLineTotal = app(NumericFormatService::class)->formatWithMinimumDecimals($approved->lines->first()->line_total, 2);
     $this->actingAs($fixture['user'])->withSession($session)->get(route('admin.sales.sales-orders.show', $approved))
         ->assertOk()
         ->assertSee('<th>Unit</th>', false)
@@ -1892,6 +2791,8 @@ test('every formal sales document streams canonical inline mPDF with operational
     $preparer = $fixture['user'];
     $preparer->update(['name' => 'HistoricalPreparer']);
     $editor = User::factory()->create(['name' => 'EditActor']);
+    $editor->givePermissionTo('sales_orders.edit');
+    activateSalesCycleOperatingContext($fixture);
     $approver = User::factory()->create(['name' => 'ApprovalActor']);
     $reviewer = User::factory()->create(['name' => 'ReturnReviewer']);
     $printer = User::factory()->create(['name' => 'CurrentPrinter']);
@@ -2401,7 +3302,7 @@ test('sales analysis keeps filtered browser drilldown and export totals consiste
         ->and($ledger->getHighestDataRow())->toBe(3)
         ->and($ledger->getCell('C2')->getValue())->toBe($invoice->doc_num)
         ->and((float) $ledger->getCell('J2')->getValue())->toBe(105.0)
-        ->and($ledger->getCell('C3')->getValue())->toBe('TOTAL (1)')
+        ->and($ledger->getCell('C3')->getValue())->toBe(__('sales_ui.reports.export.row_types.total').' (1)')
         ->and((float) $ledger->getCell('J3')->getValue())->toBe(105.0);
 
     $fixture['customer']->update(['country_id' => null]);

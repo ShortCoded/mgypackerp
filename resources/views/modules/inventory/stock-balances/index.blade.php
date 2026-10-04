@@ -170,6 +170,14 @@
         @unless ($reservationsAreHallScoped)
             <div class="alert alert-info py-2 mb-3" role="status">{{ __('stock_balance_inquiry.reservations_hall_note') }}</div>
         @endunless
+        @if ($totals['mixed_units'])
+            <div class="alert alert-info py-2 mb-3" role="status">
+                {{ __('inventory_accounting.book_valuation.mixed_units_warning') }}
+                @foreach ($totals['quantity_by_unit'] as $unitTotal)
+                    <span class="d-inline-block mx-2">{{ $unitTotal['unit_name'] }}: {{ $numbers->format($unitTotal['on_hand']) }} · {{ __('stock_balance_inquiry.metrics.available') }} {{ $numbers->format($unitTotal['available']) }}</span>
+                @endforeach
+            </div>
+        @endif
 
         <div class="row g-2 mb-3">
             @foreach ([
@@ -183,7 +191,7 @@
                     <div class="card h-100">
                         <div class="card-body py-2 px-3">
                             <div class="text-600 fs-11">{{ $metric['label'] }}</div>
-                            <div class="fw-semibold fs-8" dir="ltr">{{ $numbers->format($metric['value']) }}</div>
+                            <div class="fw-semibold fs-8" dir="ltr">{{ $totals['mixed_units'] ? '—' : $numbers->format($metric['value']) }}</div>
                         </div>
                     </div>
                 </div>
@@ -230,6 +238,13 @@
                             $product?->decal?->name,
                             $product?->originCountry?->name,
                         ])->filter()->implode(' • ');
+                        $productContext = \Modules\Core\Models\Product::contextForClassification($product?->item_classification);
+                        $productViewPermission = $productContext.'.view';
+                        $productShowRoute = match ($productContext) {
+                            \Modules\Core\Models\Product::ContextRawMaterials => 'admin.raw-materials.show',
+                            \Modules\Core\Models\Product::ContextPackagingMaterials => 'admin.packaging-materials.show',
+                            default => 'admin.products.show',
+                        };
                     @endphp
                     <tr>
                         <td>
@@ -257,9 +272,9 @@
                         <td class="text-end d-none d-lg-table-cell" dir="ltr">{{ $numbers->format($row->held_stock) }}</td>
                         @if ($canViewFinancial)<td class="text-end d-none d-xl-table-cell" dir="ltr">{{ $numbers->format($row->inventory_value) }}</td>@endif
                         <td class="text-end text-nowrap">
-                            @can('products.view')
-                                <a class="btn btn-link btn-sm p-1" href="{{ route('admin.products.show', $product) }}" title="{{ __('stock_balance_inquiry.open_item') }}" aria-label="{{ __('stock_balance_inquiry.open_item') }}"><span class="fas fa-box-open"></span></a>
-                            @endcan
+                            @if($product && auth()->user()?->can($productViewPermission))
+                                <a class="btn btn-link btn-sm p-1" href="{{ route($productShowRoute, $product) }}" title="{{ __('stock_balance_inquiry.open_item') }}" aria-label="{{ __('stock_balance_inquiry.open_item') }}"><span class="fas fa-box-open"></span></a>
+                            @endif
                             @if ((int) $context['branch_id'] === (int) $row->branch_id)
                                 <a class="btn btn-link btn-sm p-1" href="{{ route('admin.inventory.reports.index', ['product_id' => $row->product_id, 'branch_store_id' => $row->branch_store_id]) }}" title="{{ __('stock_balance_inquiry.open_stock_card') }}" aria-label="{{ __('stock_balance_inquiry.open_stock_card') }}"><span class="fas fa-list-alt"></span></a>
                             @endif
@@ -272,10 +287,10 @@
             <tfoot>
                 <tr class="fw-semibold">
                     <td colspan="6">{{ __('stock_balance_inquiry.total') }} · {{ __('stock_balance_inquiry.position_count', ['count' => $totals['positions']]) }} · {{ __('stock_balance_inquiry.product_count', ['count' => $totals['products']]) }}</td>
-                    <td class="text-end" dir="ltr">{{ $numbers->format($totals['on_hand']) }}</td>
-                    <td class="text-end" dir="ltr">{{ $numbers->format($totals['reserved']) }}</td>
-                    <td class="text-end" dir="ltr">{{ $numbers->format($totals['available']) }}</td>
-                    <td class="text-end d-none d-lg-table-cell" dir="ltr">{{ $numbers->format($totals['held_stock']) }}</td>
+                    <td class="text-end" dir="ltr">{{ $totals['mixed_units'] ? '—' : $numbers->format($totals['on_hand']) }}</td>
+                    <td class="text-end" dir="ltr">{{ $totals['mixed_units'] ? '—' : $numbers->format($totals['reserved']) }}</td>
+                    <td class="text-end" dir="ltr">{{ $totals['mixed_units'] ? '—' : $numbers->format($totals['available']) }}</td>
+                    <td class="text-end d-none d-lg-table-cell" dir="ltr">{{ $totals['mixed_units'] ? '—' : $numbers->format($totals['held_stock']) }}</td>
                     @if ($canViewFinancial)<td class="text-end d-none d-xl-table-cell" dir="ltr">{{ $numbers->format($totals['inventory_value']) }}</td>@endif
                     <td></td>
                 </tr>

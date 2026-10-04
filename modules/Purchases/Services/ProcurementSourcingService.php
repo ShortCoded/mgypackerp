@@ -14,6 +14,7 @@ use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\HR\Models\HrEmployee;
@@ -128,9 +129,10 @@ class ProcurementSourcingService
                     throw new DomainException(__('Cancellation reason is required.'));
                 }
                 if ($locked->closed_at !== null
+                    || ($locked->approved_at !== null && $locked->status !== PurchaseRequisition::StatusApproved)
                     || in_array($locked->status, [PurchaseRequisition::StatusPartiallyConverted, PurchaseRequisition::StatusFullyConverted], true)
                     || $locked->hasDownstreamDocuments()) {
-                    throw new DomainException(__('A closed or converted purchase request cannot be cancelled.'));
+                    throw new DomainException(__('A closed, converted, or reopened purchase request cannot be cancelled.'));
                 }
                 $values = ['cancelled_by' => auth()->id(), 'cancelled_at' => now(), 'cancel_reason' => trim($reason)];
             } else {
@@ -212,7 +214,8 @@ class ProcurementSourcingService
         $kept = [];
         $changed = false;
         foreach (array_values($data['lines']) as $index => $input) {
-            if ((float) $input['requested_quantity'] <= 0) {
+            $requestedQuantity = $this->quantity($input['requested_quantity']);
+            if (bccomp($requestedQuantity, '0', 8) <= 0) {
                 throw new DomainException(__('Requested quantity must be positive.'));
             }
             $product = $this->product($context['company_id'], $input['product_doc_num']);
@@ -230,7 +233,7 @@ class ProcurementSourcingService
                 'line_number' => $index + 1,
                 'product_id' => $product->getKey(),
                 'unit_id' => $unit->getKey(),
-                'requested_quantity' => $this->quantity($input['requested_quantity']),
+                'requested_quantity' => $requestedQuantity,
                 'approved_quantity' => 0,
                 'required_date' => $input['required_date'] ?? $data['required_by_date'] ?? null,
                 'source_type' => $input['source_type'] ?? 'manual',
@@ -300,18 +303,19 @@ class ProcurementSourcingService
             }
             $this->requireStatus($locked->status, [PurchaseRequisition::StatusSubmitted]);
 
+            $hasApprovedQuantity = false;
             foreach ($locked->lines as $line) {
-                $approved = $approvedQuantities[$line->public_id] ?? $line->requested_quantity;
-                $approved = (float) $approved;
+                $approved = $this->quantity($approvedQuantities[$line->public_id] ?? $line->requested_quantity);
 
-                if ($approved < 0 || $approved > (float) $line->requested_quantity) {
+                if (bccomp($approved, '0', 8) < 0 || bccomp($approved, (string) $line->requested_quantity, 8) > 0) {
                     throw new DomainException(__('Approved quantity must be between zero and the requested quantity.'));
                 }
 
-                $line->forceFill(['approved_quantity' => $this->quantity($approved), 'updated_by' => auth()->id()])->save();
+                $hasApprovedQuantity = $hasApprovedQuantity || bccomp($approved, '0', 8) > 0;
+                $line->forceFill(['approved_quantity' => $approved, 'updated_by' => auth()->id()])->save();
             }
 
-            if ($locked->lines->sum(fn (PurchaseRequisitionLine $line): float => (float) $line->approved_quantity) <= 0) {
+            if (! $hasApprovedQuantity) {
                 throw new DomainException(__('At least one line must have an approved quantity.'));
             }
 
@@ -436,14 +440,14 @@ class ProcurementSourcingService
                     throw new DomainException(__('The selected purchase requirement line is invalid.'));
                 }
 
-                $alreadyRequested = (float) RequestForQuotationLine::query()
+                $alreadyRequested = app(NumericFormatService::class)->normalizeScientificNotation((string) RequestForQuotationLine::query()
                     ->where('purchase_requisition_line_id', $line->getKey())
                     ->where('request_for_quotation_id', '<>', $rfq->getKey())
                     ->whereHas('requestForQuotation', fn ($query) => $query->whereNotIn('status', ['cancelled', 'rejected']))
-                    ->sum('quantity');
-                $quantity = (float) $input['quantity'];
+                    ->sum('quantity')) ?? '0';
+                $quantity = $this->quantity($input['quantity']);
 
-                if ($quantity <= 0 || $alreadyRequested + $quantity > (float) $line->approved_quantity + 0.00000001) {
+                if (bccomp($quantity, '0', 8) <= 0 || bccomp(bcadd($alreadyRequested, $quantity, 8), (string) $line->approved_quantity, 8) > 0) {
                     throw new DomainException(__('RFQ quantity exceeds the remaining approved requirement.'));
                 }
 
@@ -453,7 +457,7 @@ class ProcurementSourcingService
                     'line_number' => $index + 1,
                     'product_id' => $line->product_id,
                     'unit_id' => $line->unit_id,
-                    'quantity' => $this->quantity($quantity),
+                    'quantity' => $quantity,
                     'specification' => $line->specification,
                     'notes' => $input['notes'] ?? null,
                 ]);
@@ -594,9 +598,9 @@ class ProcurementSourcingService
                 $changed = true;
             }
 
-            $subtotal = 0.0;
-            $discount = 0.0;
-            $tax = 0.0;
+            $subtotal = '0.0000';
+            $discount = '0.0000';
+            $tax = '0.0000';
 
             foreach (array_values($data['lines']) as $index => $input) {
                 $sourceLine = $locked->lines->firstWhere('public_id', $input['source_line_public_id'] ?? $input['rfq_line_public_id'] ?? null);
@@ -605,17 +609,21 @@ class ProcurementSourcingService
                     throw new DomainException(__('The selected supplier quotation source line is invalid.'));
                 }
 
-                $quantity = (float) $input['offered_quantity'];
+                $numbers = app(NumericFormatService::class);
+                $quantity = $numbers->normalizeToScale($input['offered_quantity'], 8);
                 $sourceQuantity = $this->supplierQuotationSourceQuantity($sourceLine);
-                $unitPrice = (float) $input['unit_price'];
-                $lineDiscount = (float) ($input['discount_amount'] ?? 0);
-                $lineSubtotal = $quantity * $unitPrice;
-                $taxable = max(0, $lineSubtotal - $lineDiscount);
-                $taxRate = (float) ($input['tax_rate'] ?? 0);
-                $lineTax = $taxable * $taxRate / 100;
-                $lineTotal = $taxable + $lineTax;
+                $unitPrice = $numbers->normalizeToScale($input['unit_price'], 8);
+                $lineDiscount = $numbers->normalizeToScale($input['discount_amount'] ?? 0, 4);
+                $lineSubtotal = bcround(bcmul($quantity, $unitPrice, 16), 4);
+                $taxable = bccomp($lineSubtotal, $lineDiscount, 4) > 0
+                    ? bcsub($lineSubtotal, $lineDiscount, 4)
+                    : '0.0000';
+                $taxRate = $numbers->normalizeToScale($input['tax_rate'] ?? 0, 4);
+                $lineTax = bcround(bcdiv(bcmul($taxable, $taxRate, 12), '100', 12), 4);
+                $lineTotal = bcadd($taxable, $lineTax, 4);
 
-                if ($quantity <= 0 || $quantity > $sourceQuantity + 0.00000001 || $unitPrice < 0 || $lineDiscount > $lineSubtotal) {
+                if (bccomp($quantity, '0', 8) <= 0 || bccomp($quantity, $sourceQuantity, 8) > 0
+                    || bccomp($unitPrice, '0', 8) < 0 || bccomp($lineDiscount, $lineSubtotal, 4) > 0) {
                     throw new DomainException(__('Supplier quotation line values are invalid.'));
                 }
 
@@ -632,12 +640,12 @@ class ProcurementSourcingService
                     'line_number' => $index + 1,
                     'product_id' => $sourceLine->product_id,
                     'unit_id' => $sourceLine->unit_id,
-                    'offered_quantity' => $this->quantity($quantity),
-                    'unit_price' => $this->amount($unitPrice),
-                    'discount_amount' => $this->amount($lineDiscount),
-                    'tax_rate' => $this->amount($taxRate),
-                    'tax_amount' => $this->amount($lineTax),
-                    'line_total' => $this->amount($lineTotal),
+                    'offered_quantity' => $quantity,
+                    'unit_price' => $unitPrice,
+                    'discount_amount' => $lineDiscount,
+                    'tax_rate' => $taxRate,
+                    'tax_amount' => $lineTax,
+                    'line_total' => $lineTotal,
                     'delivery_date' => $input['delivery_date'] ?? null,
                     'notes' => $input['notes'] ?? null,
                 ]);
@@ -652,17 +660,17 @@ class ProcurementSourcingService
                 ) || $changed;
                 $keptLineIds[] = $savedLine->getKey();
 
-                $subtotal += $lineSubtotal;
-                $discount += $lineDiscount;
-                $tax += $lineTax;
+                $subtotal = bcadd($subtotal, $lineSubtotal, 4);
+                $discount = bcadd($discount, $lineDiscount, 4);
+                $tax = bcadd($tax, $lineTax, 4);
             }
 
-            $freight = (float) $quotation->freight_amount;
+            $freight = (string) $quotation->freight_amount;
             $quotation->forceFill([
-                'subtotal_amount' => $this->amount($subtotal),
-                'discount_amount' => $this->amount($discount),
-                'tax_amount' => $this->amount($tax),
-                'total_amount' => $this->amount($subtotal - $discount + $tax + $freight),
+                'subtotal_amount' => $subtotal,
+                'discount_amount' => $discount,
+                'tax_amount' => $tax,
+                'total_amount' => bcadd(bcadd(bcsub($subtotal, $discount, 4), $tax, 4), $freight, 4),
             ]);
             if ($quotation->isDirty()) {
                 $quotation->save();
@@ -708,9 +716,9 @@ class ProcurementSourcingService
         };
     }
 
-    private function supplierQuotationSourceQuantity(Model $line): float
+    private function supplierQuotationSourceQuantity(Model $line): string
     {
-        return (float) match (true) {
+        return (string) match (true) {
             $line instanceof PurchaseRequisitionLine => $line->approved_quantity,
             $line instanceof PurchaseOrderLine => $line->ordered_quantity,
             default => $line->quantity,
@@ -771,18 +779,26 @@ class ProcurementSourcingService
                     throw new DomainException(__('Only submitted quotation lines from this RFQ may be selected.'));
                 }
 
-                $quantity = (float) $input['selected_quantity'];
-                if ($quantity <= 0 || $quantity > (float) $quotationLine->offered_quantity + 0.00000001) {
+                $quantityDecimal = $this->quantity($input['selected_quantity']);
+                if (bccomp($quantityDecimal, '0', 8) <= 0 || bccomp($quantityDecimal, (string) $quotationLine->offered_quantity, 8) > 0) {
                     throw new DomainException(__('Selected quantity exceeds the supplier offer.'));
                 }
 
                 $requirementLine = $quotationLine->rfqLine->requisitionLine;
-                $pendingByRequirement[$requirementLine->getKey()] = ($pendingByRequirement[$requirementLine->getKey()] ?? 0) + $quantity;
+                $pendingByRequirement[$requirementLine->getKey()] = bcadd(
+                    $pendingByRequirement[$requirementLine->getKey()] ?? '0',
+                    $quantityDecimal,
+                    8,
+                );
                 $this->assertSelectionCapacity($requirementLine, $selection, $pendingByRequirement[$requirementLine->getKey()]);
-                $discountPerUnit = (float) $quotationLine->discount_amount / (float) $quotationLine->offered_quantity;
-                $discount = $discountPerUnit * $quantity;
-                $subtotal = $quantity * (float) $quotationLine->unit_price;
-                $tax = max(0, $subtotal - $discount) * (float) $quotationLine->tax_rate / 100;
+                $discount = bcround(bcdiv(
+                    bcmul((string) $quotationLine->discount_amount, $quantityDecimal, 16),
+                    (string) $quotationLine->offered_quantity,
+                    16,
+                ), 4);
+                $subtotal = bcround(bcmul($quantityDecimal, (string) $quotationLine->unit_price, 16), 4);
+                $taxable = bccomp($subtotal, $discount, 4) > 0 ? bcsub($subtotal, $discount, 4) : '0.0000';
+                $tax = bcround(bcdiv(bcmul($taxable, (string) $quotationLine->tax_rate, 12), '100', 12), 4);
 
                 $selection->lines()->create([
                     'supplier_quotation_line_id' => $quotationLine->getKey(),
@@ -790,12 +806,12 @@ class ProcurementSourcingService
                     'supplier_id' => $quotationLine->quotation->supplier_id,
                     'product_id' => $quotationLine->product_id,
                     'unit_id' => $quotationLine->unit_id,
-                    'selected_quantity' => $this->quantity($quantity),
+                    'selected_quantity' => $quantityDecimal,
                     'unit_price' => $quotationLine->unit_price,
-                    'discount_amount' => $this->amount($discount),
+                    'discount_amount' => $discount,
                     'tax_rate' => $quotationLine->tax_rate,
-                    'tax_amount' => $this->amount($tax),
-                    'line_total' => $this->amount($subtotal - $discount + $tax),
+                    'tax_amount' => $tax,
+                    'line_total' => bcadd($taxable, $tax, 4),
                     'reason' => $input['reason'] ?? null,
                 ]);
             }
@@ -917,16 +933,16 @@ class ProcurementSourcingService
             ->get();
     }
 
-    private function assertSelectionCapacity(PurchaseRequisitionLine $line, SupplierSelection $selection, float $pendingQuantity): void
+    private function assertSelectionCapacity(PurchaseRequisitionLine $line, SupplierSelection $selection, string $pendingQuantity): void
     {
         PurchaseRequisitionLine::query()->lockForUpdate()->findOrFail($line->getKey());
-        $committed = (float) SupplierSelectionLine::query()
+        $committed = app(NumericFormatService::class)->normalizeScientificNotation((string) SupplierSelectionLine::query()
             ->where('purchase_requisition_line_id', $line->getKey())
             ->where('supplier_selection_id', '<>', $selection->getKey())
             ->whereHas('selection', fn ($query) => $query->whereNotIn('status', ['cancelled', 'rejected']))
-            ->sum('selected_quantity');
+            ->sum('selected_quantity')) ?? '0';
 
-        if ($committed + $pendingQuantity > (float) $line->approved_quantity + 0.00000001) {
+        if (bccomp(bcadd($committed, $pendingQuantity, 8), (string) $line->approved_quantity, 8) > 0) {
             throw new DomainException(__('Selected quantities exceed the approved purchase requirement.'));
         }
     }
@@ -1126,11 +1142,13 @@ class ProcurementSourcingService
 
     private function quantity(mixed $value): string
     {
-        return number_format((float) $value, 8, '.', '');
+        return app(NumericFormatService::class)->normalizeToScale($value, 8)
+            ?? throw new DomainException(__('Requested quantity must be positive.'));
     }
 
     private function amount(mixed $value): string
     {
-        return number_format((float) $value, 4, '.', '');
+        return app(NumericFormatService::class)->normalizeToScale($value, 4)
+            ?? throw new DomainException(__('Supplier quotation line values are invalid.'));
     }
 }

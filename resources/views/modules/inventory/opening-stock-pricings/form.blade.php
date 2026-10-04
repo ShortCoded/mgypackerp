@@ -121,6 +121,9 @@
                 @if(! $isCreateLike && $record?->isLockedForEditing())
                     <div class="alert alert-warning">{{ __('inventory.opening_stock_pricings.messages.closed_edit_forbidden') }}</div>
                 @endif
+                @if($record?->pricing_basis === \Modules\Inventory\Models\OpeningStockPricing::BasisEstimate && ! $record->isClosed())
+                    <div class="alert alert-info">{{ __('inventory.opening_stock_pricings.messages.estimate_pending') }}</div>
+                @endif
 
                 <h6 class="text-700 mb-3">{{ __('inventory.opening_stock_pricings.sections.header') }}</h6>
                 <div class="row g-3 opening-stock-pricing-header-fields">
@@ -204,6 +207,55 @@
                     </div>
 
                     <div class="col-12">
+                        <x-forms.label for="pricing_basis" :label="__('inventory.opening_stock_pricings.attributes.pricing_basis')" required />
+                        @if($isReadonly || ! $isCreateLike)
+                            <x-forms.view-field for="pricing_basis" :value="__('inventory.opening_stock_pricings.pricing_bases.'.($record?->pricing_basis ?? 'documented'))" />
+                            @unless($isReadonly)
+                                <x-forms.input type="hidden" name="pricing_basis" value="{{ $record?->pricing_basis }}" />
+                            @endunless
+                        @else
+                            <x-forms.select class="form-select" id="pricing_basis" name="pricing_basis">
+                                <option value="documented" @selected(old('pricing_basis', $record?->pricing_basis ?? 'documented') === 'documented')>{{ __('inventory.opening_stock_pricings.pricing_bases.documented') }}</option>
+                                <option value="estimate" @selected(old('pricing_basis', $record?->pricing_basis ?? 'documented') === 'estimate')>{{ __('inventory.opening_stock_pricings.pricing_bases.estimate') }}</option>
+                            </x-forms.select>
+                        @endif
+                        <div class="invalid-feedback d-block" data-error-for="pricing_basis"></div>
+                    </div>
+
+                    <div class="col-12 col-md-6">
+                        <x-forms.label for="source_reference" :label="__('inventory.opening_stock_pricings.attributes.source_reference')" />
+                        @if($isReadonly)
+                            <x-forms.view-field for="source_reference" :value="$record?->source_reference" />
+                        @else
+                            <x-forms.input class="form-control" id="source_reference" name="source_reference" type="text" value="{{ old('source_reference', $value('source_reference')) }}" maxlength="160" />
+                        @endif
+                        <div class="invalid-feedback d-block" data-error-for="source_reference"></div>
+                    </div>
+
+                    <div class="col-12 col-md-6">
+                        <x-forms.label for="estimate_basis_note" :label="__('inventory.opening_stock_pricings.attributes.estimate_basis_note')" />
+                        @if($isReadonly)
+                            <x-forms.view-field for="estimate_basis_note" :value="$record?->estimate_basis_note" />
+                        @else
+                            <x-forms.input class="form-control" id="estimate_basis_note" name="estimate_basis_note" type="text" value="{{ old('estimate_basis_note', $value('estimate_basis_note')) }}" maxlength="2000" />
+                        @endif
+                        <div class="invalid-feedback d-block" data-error-for="estimate_basis_note"></div>
+                    </div>
+
+                    @if($record?->approval_reference)
+                        <div class="col-12 col-md-6">
+                            <x-forms.view-field for="approval_reference" :label="__('inventory.opening_stock_pricings.attributes.approval_reference')" :value="$record->approval_reference" />
+                        </div>
+                    @endif
+                    @if($record?->source_file_path)
+                        <div class="col-12 col-md-6">
+                            <div class="form-label">{{ __('inventory.opening_stock_pricings.attributes.source_file') }}</div>
+                            <a href="{{ route($routePrefix.'.source-file', $record->doc_num) }}">{{ $record->source_file_name }}</a>
+                            <div class="small text-600" dir="ltr">{{ $record->source_file_sha256 }}</div>
+                        </div>
+                    @endif
+
+                    <div class="col-12">
                         <label class="form-label" for="notes">{{ __('inventory.opening_stock_pricings.attributes.notes') }}</label>
                         <x-forms.textarea class="form-control" id="notes" name="notes" rows="2" :readonly='$isReadonly'>{{ old('notes', $value('notes')) }}</x-forms.textarea>
                         <div class="invalid-feedback d-block" data-error-for="notes"></div>
@@ -285,7 +337,7 @@
                                         @if($isReadonly)
                                             <div class="form-control-plaintext text-center" dir="ltr">{{ $numbers->format($line['unit_price'] ?? 0) }}</div>
                                         @else
-                                            <x-forms.numeric-input class="text-center js-opening-stock-pricing-unit-price" :name="'lines['.$index.'][unit_price]'" :value="$line['unit_price'] ?? ''" :scale="4" min="0.0001" step="0.0001" />
+                                            <x-forms.numeric-input class="text-center js-opening-stock-pricing-unit-price" :name="'lines['.$index.'][unit_price]'" :value="$line['unit_price'] ?? ''" :scale="8" min="0.00000001" step="0.00000001" />
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_price"></div>
                                         @endif
                                     </td>
@@ -354,6 +406,30 @@
         @endif
     </form>
 
+    @if($mode === 'view' && $record?->pricing_basis === \Modules\Inventory\Models\OpeningStockPricing::BasisEstimate && ! $record->isClosed() && auth()->user()?->can('inventory.opening_stock_pricings.approve_estimate') && (int) $record->created_by !== (int) auth()->id())
+        <div class="card mb-3">
+            <div class="card-header"><h6 class="mb-0">{{ __('inventory.opening_stock_pricings.pricing_bases.estimate') }}</h6></div>
+            <div class="card-body">
+                <form action="{{ route($routePrefix.'.approve-estimate', $record->doc_num) }}" method="POST" novalidate>
+                    @csrf
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <x-forms.label for="approval_source_reference" :label="__('inventory.opening_stock_pricings.attributes.source_reference')" required />
+                            <x-forms.input class="form-control" id="approval_source_reference" name="source_reference" type="text" value="{{ old('source_reference') }}" maxlength="160" />
+                            @error('source_reference')<div class="text-danger small">{{ $message }}</div>@enderror
+                        </div>
+                        <div class="col-md-6">
+                            <x-forms.label for="approval_reference_input" :label="__('inventory.opening_stock_pricings.attributes.approval_reference')" required />
+                            <x-forms.input class="form-control" id="approval_reference_input" name="approval_reference" type="text" value="{{ old('approval_reference') }}" maxlength="160" />
+                            @error('approval_reference')<div class="text-danger small">{{ $message }}</div>@enderror
+                        </div>
+                    </div>
+                    <button class="btn btn-primary mt-3" type="submit">{{ __('inventory.opening_stock_pricings.actions.approve_estimate') }}</button>
+                </form>
+            </div>
+        </div>
+    @endif
+
     @unless($isReadonly)
         <template id="opening-stock-pricing-line-template">
             <tr class="js-opening-stock-pricing-line" data-index="__INDEX__">
@@ -374,7 +450,7 @@
                 <td><div class="opening-stock-pricing-unit-display js-opening-stock-pricing-unit text-700" data-unit-display></div></td>
                 <td class="text-center"><x-forms.input class="form-control-plaintext text-center js-opening-stock-pricing-quantity" type="text" value="" dir="ltr" readonly /></td>
                 <td class="text-center">
-                    <x-forms.numeric-input class="text-center js-opening-stock-pricing-unit-price" name="lines[__INDEX__][unit_price]" :scale="4" min="0.0001" step="0.0001" />
+                    <x-forms.numeric-input class="text-center js-opening-stock-pricing-unit-price" name="lines[__INDEX__][unit_price]" :scale="8" min="0.00000001" step="0.00000001" />
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.unit_price"></div>
                 </td>
                 <td class="text-center"><x-forms.input class="form-control-plaintext text-center js-opening-stock-pricing-line-total" type="text" value="" dir="ltr" readonly /></td>

@@ -1,0 +1,33 @@
+<?php
+
+return [
+    'field' => 'Field',
+    'allocation_from' => 'Allocation from', 'allocation_to' => 'Allocation to',
+    'expense_sources' => 'Frozen production expense sources', 'base_amount' => 'Base currency amount',
+    'allocation_sources' => 'Frozen payroll and overhead allocations', 'labor_hours' => 'Allocated labor hours', 'run_share' => 'Run allocated cost',
+    'wip_sources' => 'Source account reconciliation', 'before_settlement' => 'Run WIP before settlement', 'capitalization' => 'Legacy production expense capitalization',
+    'source_statuses' => ['draft' => 'Draft', 'posted' => 'Posted', 'reversed' => 'Reversed', 'superseded' => 'Superseded'],
+    'title' => 'Standard costs and variances', 'help' => 'Dated approved unit standards for materials, labor and overhead. Completed runs are provisionally valued at actual cost; independent settlement posts the standard value and source-linked component variances.',
+    'versions' => 'Standard cost versions', 'settlements' => 'Run variance settlements', 'components' => 'Cost components', 'component' => 'Component',
+    'materials' => 'Materials', 'labor' => 'Direct labor', 'overhead' => 'Other direct costs and overhead', 'variance_account' => 'Variance account',
+    'from' => 'Effective from', 'to' => 'Effective to', 'source' => 'Standard basis and source reference', 'reference' => 'Decision reference',
+    'version' => 'Approved standard version', 'prepare' => 'Prepare standard version', 'settle' => 'Prepare run settlement', 'approve' => 'Approve', 'reject' => 'Reject',
+    'posting_date' => 'Adjustment posting date', 'reason' => 'Settlement reason', 'standard' => 'Standard total', 'actual' => 'Actual total', 'variance' => 'Actual less standard',
+    'previous' => 'Previously posted variance', 'accounting' => 'Source-linked accounting effects', 'clearing' => 'Approved inventory rounding clearing account',
+    'statuses' => ['prepared' => 'Awaiting independent approval', 'approved' => 'Approved standard', 'finalized' => 'Finalized settlement', 'rejected' => 'Rejected'],
+    'effects' => ['stock' => 'Inventory value', 'expense' => 'Expense / COGS', 'wip' => 'Work in progress', 'standard_variance' => 'Component variance', 'gl_precision' => 'GL precision'],
+    'errors' => [
+        'inputs' => 'Enter valid dated non-negative component costs with at most eight decimal places and a documented standard basis.',
+        'accounts' => 'Choose three distinct authorized expense accounts for material, labor and overhead variances.',
+        'overlap' => 'A prepared or approved standard already covers this product, branch and date range. Use a non-overlapping dated version.',
+        'approval' => 'An independent approver and a valid decision reference are required for a prepared record.',
+        'immutable' => 'The standard, decision and accounting history are immutable. Prepare a new dated version or an incremental settlement.',
+        'stale' => 'The standard mapping or source cost inputs changed after preparation. Reject and prepare a current plan.',
+        'run' => 'The run must be completed, fully received, and backed by posted original finished-goods receipts.',
+        'costs' => 'Complete and reconcile the posted material, labor and expense sources before preparing final variances.',
+        'duplicate' => 'There is already a pending settlement, or no new value or variance remains to post.',
+        'scope' => 'Select the authorized company, branch and open adjustment posting period.',
+        'unbalanced' => 'Actual, standard, downstream stock and component variances do not reconcile. No adjustment was posted.',
+        'missing' => 'No independently approved standard covers this product, branch and every finished-goods receipt date.',
+    ],
+];

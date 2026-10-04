@@ -6,6 +6,7 @@ use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\DateFormatService;
@@ -37,6 +38,7 @@ class StoreCashVoucherRequest extends FormRequest
             ->filter(fn ($line): bool => is_array($line))
             ->map(fn (array $line): array => [
                 'account_doc_num' => isset($line['account_doc_num']) ? trim((string) $line['account_doc_num']) : null,
+                'cost_center_doc_num' => isset($line['cost_center_doc_num']) ? trim((string) $line['cost_center_doc_num']) : null,
                 'amount' => isset($line['amount']) ? trim((string) $line['amount']) : null,
                 'description' => isset($line['description']) ? trim((string) $line['description']) : null,
                 'notes' => isset($line['notes']) ? trim((string) $line['notes']) : null,
@@ -110,6 +112,8 @@ class StoreCashVoucherRequest extends FormRequest
                         ->whereNull('deleted_at')),
             ],
             'lines.*.amount' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
+            'lines.*.cost_center_doc_num' => ['nullable', 'string', Rule::exists('cost_centers', 'doc_num')->where(fn ($query) => $query
+                ->where('company_id', $this->input('company_id'))->where('status', 'active')->where('is_group', false)->whereNull('deleted_at'))],
             'lines.*.description' => ['nullable', 'string'],
             'lines.*.notes' => ['nullable', 'string'],
             'submit_action' => ['nullable', 'string'],
@@ -178,6 +182,7 @@ class StoreCashVoucherRequest extends FormRequest
             'lines' => $this->attribute('lines'),
             'lines.*.account_doc_num' => $this->attribute('account'),
             'lines.*.amount' => $this->attribute('line_amount'),
+            'lines.*.cost_center_doc_num' => __('cost_centers.singular'),
             'lines.*.description' => $this->attribute('line_description'),
             'lines.*.notes' => $this->attribute('line_notes'),
         ];
@@ -278,6 +283,11 @@ class StoreCashVoucherRequest extends FormRequest
                 ->where('doc_num', $line['account_doc_num'] ?? null)
                 ->first();
             $lineUnits = $this->toUnits($line['amount'] ?? 0);
+            if (filled($line['cost_center_doc_num'] ?? null) && ! CostCenter::query()
+                ->forCompany((int) $this->input('company_id'))->where('doc_num', $line['cost_center_doc_num'])
+                ->whereHas('accounts', fn ($query) => $query->where('accounts.id', $account?->id))->exists()) {
+                $validator->errors()->add("lines.{$index}.cost_center_doc_num", __('cash_payment_vouchers.messages.cost_center_unavailable'));
+            }
 
             if ($account instanceof Account && ($account->status !== 'active' || $account->trashed() || $account->is_group || ! $account->is_postable)) {
                 $validator->errors()->add("lines.{$index}.account_doc_num", $this->message('account_not_postable'));

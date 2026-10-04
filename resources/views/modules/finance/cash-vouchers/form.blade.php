@@ -15,10 +15,13 @@
     $selectedCurrencyDocNum = old('currency_doc_num', $currencyOption['id'] ?? '');
     $isMainCurrencySelected = ($mainCurrencyDocNum ?? null) && $selectedCurrencyDocNum === $mainCurrencyDocNum;
     $existingLines = old('lines');
+    $record?->loadMissing('lines.costCenter');
     if (! is_array($existingLines)) {
         $existingLines = $record?->lines?->map(fn($line) => [
             'account_doc_num' => $line->account?->doc_num,
             'account_label' => $line->account?->codeNameLabel(),
+            'cost_center_doc_num' => $line->costCenter?->doc_num,
+            'cost_center_label' => $line->costCenter?->codeNameLabel(),
             'amount' => $line->amount,
             'description' => $line->description,
             'notes' => $line->notes,
@@ -43,9 +46,11 @@
     data-resource="{{ $resource }}"
     data-primary-focus="cashbox_doc_num"
     data-mode="{{ $mode }}"
+    data-readonly="{{ $isReadonly ? '1' : '0' }}"
     data-cashbox-url="{{ route('admin.finance.select2.cash-voucher-cashboxes') }}"
     data-currency-url="{{ route('admin.finance.select2.cash-voucher-currencies') }}"
-    data-account-url="{{ route('admin.finance.select2.accounts') }}"
+    data-account-url="{{ route('admin.finance.select2.cash-voucher-accounts') }}"
+    data-cost-center-url="{{ route('admin.finance.select2.cash-voucher-cost-centers') }}"
     data-main-currency-doc-num="{{ $mainCurrencyDocNum ?? '' }}"
     data-cashbox-account-doc-num="{{ $selectedCashboxAccountDocNum }}"
     novalidate>
@@ -257,6 +262,7 @@
                             <thead class="bg-200">
                                 <tr>
                                     <th style="width: 38%">{{ __($translationKey.'.attributes.account') }}</th>
+                                    <th>{{ __('cost_centers.singular') }}</th>
                                     <th style="width: 16%">{{ __($translationKey.'.attributes.line_amount') }}</th>
                                     <th>{{ __($translationKey.'.attributes.line_description') }}</th>
                                     <th>{{ __($translationKey.'.attributes.line_notes') }}</th>
@@ -272,12 +278,22 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext">{{ $line['account_label'] ?? null }}</div>
                                             @else
-                                                <x-forms.select class="form-select js-select2-ajax js-cash-voucher-account" name="lines[{{ $index }}][account_doc_num]" data-url="{{ route('admin.finance.select2.accounts') }}" data-placeholder="{{ __($translationKey.'.js.select_account') }}" data-allow-clear="true" :data-extra-params="json_encode(['exclude' => '#cashbox_account_doc_num_filter'])" required>
+                                                <x-forms.select class="form-select js-select2-ajax js-cash-voucher-account" name="lines[{{ $index }}][account_doc_num]" data-url="{{ route('admin.finance.select2.cash-voucher-accounts') }}" data-placeholder="{{ __($translationKey.'.js.select_account') }}" data-allow-clear="true" :data-extra-params="json_encode(['exclude' => '#cashbox_account_doc_num_filter'])" required>
                                                     @if(! empty($line['account_doc_num']))
                                                         <option value="{{ $line['account_doc_num'] }}" selected>{{ $line['account_label'] ?? $line['account_doc_num'] }}</option>
                                                     @endif
                                                 </x-forms.select>
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.account_doc_num"></div>
+                                            @endif
+                                        </td>
+                                        <td>
+                                            @if($isReadonly)
+                                                <div class="form-control-plaintext">{{ $line['cost_center_label'] ?? '—' }}</div>
+                                            @else
+                                                <x-forms.select variant="ajax" class="js-cash-voucher-cost-center" :name="'lines['.$index.'][cost_center_doc_num]'" :url="route('admin.finance.select2.cash-voucher-cost-centers')" :placeholder="__($translationKey.'.js.select_cost_center')" :data-extra-params="json_encode(['account' => '[name='.json_encode('lines['.$index.'][account_doc_num]').']'])">
+                                                    @if(filled($line['cost_center_doc_num'] ?? null))<option value="{{ $line['cost_center_doc_num'] }}" selected>{{ $line['cost_center_label'] ?? $line['cost_center_doc_num'] }}</option>@endif
+                                                </x-forms.select>
+                                                <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.cost_center_doc_num"></div>
                                             @endif
                                         </td>
                                         <td>
@@ -320,6 +336,7 @@
                             <tfoot class="bg-light">
                                 <tr>
                                     <th class="text-end">{{ __($translationKey.'.attributes.total_distributed') }}</th>
+                                    <th></th>
                                     <th class="text-end js-cash-voucher-total-distributed" dir="ltr">{{ $numbers->format($distributedAmount) }}</th>
                                     <th class="text-end">{{ __($translationKey.'.attributes.remaining_amount') }}</th>
                                     <th class="text-end js-cash-voucher-remaining" dir="ltr">{{ $numbers->format($remainingAmount) }}</th>

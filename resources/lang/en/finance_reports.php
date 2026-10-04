@@ -54,7 +54,7 @@ return [
         'customer_receipt' => 'Customer receipt', 'supplier_payment' => 'Supplier payment', 'cheque' => 'Cheque', 'opening_balance' => 'Opening balance',
         'customer' => 'Customer', 'supplier' => 'Supplier', 'received' => 'Received', 'issued' => 'Issued', 'deposited' => 'Deposited',
         'collected' => 'Collected', 'delivered' => 'Delivered', 'cleared' => 'Cleared', 'clearing_reversed' => 'Clearing reversed',
-        'returned' => 'Returned', 'cancelled' => 'Cancelled', 'draft' => 'Draft', 'approved' => 'Approved', 'reversed' => 'Reversed',
+        'returned' => 'Returned', 'cancelled' => 'Cancelled', 'draft' => 'Draft', 'approved' => 'Approved', 'posted' => 'Posted', 'reversed' => 'Reversed',
         'overdue' => 'Overdue', 'due_today' => 'Due today', 'upcoming' => 'Upcoming', 'current' => 'Current',
         'days_1_30' => '1–30 days', 'days_31_60' => '31–60 days', 'days_61_90' => '61–90 days', 'days_over_90' => 'Over 90 days',
     ],

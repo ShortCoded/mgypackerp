@@ -6,6 +6,7 @@ use Illuminate\Support\Str;
 use Modules\Accounting\Database\Seeders\DefaultChartOfAccountsSeeder;
 use Modules\Core\Database\Seeders\CurrencySeeder;
 use Modules\Core\Models\Branch;
+use Modules\Core\Models\BranchHall;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
@@ -15,6 +16,7 @@ use Modules\Core\Models\Product;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Exports\InventoryBookValuationExport;
 use Modules\Inventory\Exports\InventoryValuationComparisonExport;
+use Modules\Inventory\Models\InventoryCostPolicy;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryLayerAllocation;
 use Modules\Inventory\Models\InventoryReceiptLayer;
@@ -22,7 +24,10 @@ use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Inventory\Models\OpeningStockPricing;
 use Modules\Inventory\Models\WarehouseLocation;
+use Modules\Inventory\Services\InventoryCostPolicyService;
+use Modules\Inventory\Services\InventoryDocumentPostingService;
 use Modules\Inventory\Services\InventoryGlReconciliationService;
+use Modules\Inventory\Services\InventoryLayerService;
 use Modules\Inventory\Services\InventoryMovementService;
 use Modules\Inventory\Services\InventoryOpeningStockPostingService;
 use Modules\Inventory\Services\InventoryReportService;
@@ -67,6 +72,8 @@ function inventoryBookValuationFixture(): array
         'name' => 'Book valuation item', 'item_classification' => Product::ClassificationFinishedProduct,
         'item_unit_id' => $unit->getKey(), 'status' => 'active',
     ]);
+    request()->setLaravelSession(app('session.store'));
+    request()->session()->put(inventoryBookSession(compact('company', 'branch', 'period')));
 
     return compact('user', 'company', 'branch', 'period', 'store', 'otherStore', 'unit', 'alternateUnit', 'product');
 }
@@ -108,6 +115,160 @@ function inventoryBookSession(array $fixture): array
     ];
 }
 
+function authorizeInventoryCostPolicyManagement(User $user): void
+{
+    Permission::findOrCreate('inventory.cost_policies.manage', 'web');
+    $user->givePermissionTo('inventory.cost_policies.manage');
+}
+
+test('book valuation and comparison do not present a combined unit quantity or unit cost for different item units', function (): void {
+    $fixture = inventoryBookValuationFixture();
+    $kilogram = ItemUnit::query()->create([
+        'company_id' => $fixture['company']->getKey(), 'doc_number' => 991003, 'doc_num' => 'BOOK-KG',
+        'name' => 'Kilogram', 'status' => 'active',
+    ]);
+    $raw = Product::query()->create([
+        'company_id' => $fixture['company']->getKey(), 'doc_number' => 991003, 'doc_num' => 'BOOK-RAW',
+        'name' => 'Book raw material', 'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $kilogram->getKey(), 'status' => 'active',
+    ]);
+    $date = $fixture['period']->from_date->copy()->addDay()->toDateString();
+    inventoryBookTransaction($fixture, [
+        'transaction_date' => $date, 'quantity_in' => '10', 'unit_cost' => '5', 'total_cost' => '50',
+    ]);
+    inventoryBookTransaction($fixture, [
+        'transaction_date' => $date, 'product_id' => $raw->getKey(), 'unit_id' => $kilogram->getKey(),
+        'quantity_in' => '3', 'unit_cost' => '7', 'total_cost' => '21',
+    ]);
+
+    $report = app(InventoryReportService::class)->bookValuation(
+        $fixture['company']->getKey(), [$fixture['branch']->getKey()], ['as_of' => $date],
+    );
+    $comparison = app(InventoryValuationService::class)->comparisonForStockScope(
+        $fixture['company']->getKey(), $report['rows'], $date,
+    );
+    $export = new InventoryBookValuationExport($report['rows'], $report['totals'], 'EGP');
+    $pdfRows = view('reports.inventory.book-valuation', [
+        'rows' => $report['rows'], 'totals' => $report['totals'], 'currencyCode' => 'EGP',
+        'filterSummary' => ['As of' => $date],
+    ])->render();
+
+    expect($report['totals']['mixed_units'])->toBeTrue()
+        ->and($report['totals']['book_value'])->toBe('71.00000000')
+        ->and(collect($report['totals']['quantity_by_unit'])->pluck('quantity', 'unit_name')->all())
+        ->toBe(['Book base unit' => '10.00000000', 'Kilogram' => '3.00000000'])
+        ->and($comparison['methods']['moving_average']['ending_value'])->toBe('71.00000000')
+        ->and($comparison['methods']['moving_average']['ending_unit_cost'])->toBeNull()
+        ->and($export->array()[2][6])->toBeNull()
+        ->and($export->array()[3][6])->toBe(10.0)
+        ->and($export->array()[4][6])->toBe(3.0)
+        ->and($pdfRows)->toContain(__('inventory_accounting.book_valuation.mixed_units_warning'))
+        ->and($pdfRows)->toContain(__('inventory_accounting.book_valuation.unit_subtotal', ['unit' => 'Kilogram']));
+
+    Permission::findOrCreate('inventory.reports.valuation.view', 'web');
+    $fixture['user']->givePermissionTo('inventory.reports.valuation.view');
+    $this->actingAs($fixture['user'])->withSession(inventoryBookSession($fixture))
+        ->get(route('admin.inventory.reports.valuation', ['as_of' => $date]))
+        ->assertOk()
+        ->assertSee(__('inventory_accounting.book_valuation.mixed_units_warning'))
+        ->assertSee(__('inventory_accounting.valuation_report.multiple_products_note'));
+});
+
+test('partial valuation comparison separates excluded quantities by unit', function (): void {
+    $fixture = inventoryBookValuationFixture();
+    $kilogram = ItemUnit::query()->create([
+        'company_id' => $fixture['company']->getKey(), 'doc_number' => 991004, 'doc_num' => 'BOOK-UNPRICED-KG',
+        'name' => 'Kilogram', 'status' => 'active',
+    ]);
+    $raw = Product::query()->create([
+        'company_id' => $fixture['company']->getKey(), 'doc_number' => 991004, 'doc_num' => 'BOOK-UNPRICED-RAW',
+        'name' => 'Unpriced raw material', 'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $kilogram->getKey(), 'status' => 'active',
+    ]);
+    $date = $fixture['period']->from_date->copy()->addDay()->toDateString();
+    inventoryBookTransaction($fixture, ['transaction_date' => $date, 'quantity_in' => '10']);
+    inventoryBookTransaction($fixture, [
+        'transaction_date' => $date, 'product_id' => $raw->getKey(), 'unit_id' => $kilogram->getKey(), 'quantity_in' => '3',
+    ]);
+
+    $book = app(InventoryReportService::class)->bookValuation(
+        $fixture['company']->getKey(), [$fixture['branch']->getKey()], ['as_of' => $date],
+    );
+    $comparison = app(InventoryValuationService::class)->comparisonForStockScope(
+        $fixture['company']->getKey(), $book['rows'], $date,
+    );
+    $export = new InventoryValuationComparisonExport($comparison);
+
+    expect($comparison['excluded_mixed_units'])->toBeTrue()
+        ->and(collect($comparison['excluded_quantity_by_unit'])->pluck('quantity', 'unit_name')->all())
+        ->toBe(['Book base unit' => '10.00000000', 'Kilogram' => '3.00000000'])
+        ->and($export->array()[6][5])->toBe('');
+});
+
+test('book valuation aggregates historical halls and locations into one warehouse position by default', function (): void {
+    $fixture = inventoryBookValuationFixture();
+    $firstHall = BranchHall::query()->create(['branch_id' => $fixture['branch']->getKey(), 'name' => 'Hall A', 'position' => 1]);
+    $secondHall = BranchHall::query()->create(['branch_id' => $fixture['branch']->getKey(), 'name' => 'Hall B', 'position' => 2]);
+    $firstLocation = WarehouseLocation::query()->create(['branch_store_id' => $fixture['store']->getKey(), 'code' => 'OLD-A', 'name' => 'Old position A', 'is_active' => true]);
+    $secondLocation = WarehouseLocation::query()->create(['branch_store_id' => $fixture['store']->getKey(), 'code' => 'OLD-B', 'name' => 'Old position B', 'is_active' => true]);
+    inventoryBookTransaction($fixture, ['branch_hall_id' => $firstHall->getKey(), 'warehouse_location_id' => $firstLocation->getKey(), 'quantity_in' => '4', 'unit_cost' => '2', 'total_cost' => '8']);
+    inventoryBookTransaction($fixture, ['branch_hall_id' => $secondHall->getKey(), 'warehouse_location_id' => $secondLocation->getKey(), 'quantity_in' => '6', 'unit_cost' => '3', 'total_cost' => '18']);
+
+    $report = app(InventoryReportService::class)->bookValuation(
+        $fixture['company']->getKey(), [$fixture['branch']->getKey()],
+        ['as_of' => $fixture['period']->to_date->toDateString()],
+    );
+    expect($report['rows'])->toHaveCount(1)
+        ->and($report['rows']->sole()->on_hand)->toBe('10.00000000')
+        ->and($report['rows']->sole()->book_value)->toBe('26.00000000')
+        ->and($report['rows']->sole()->book_unit_cost)->toBe('2.60000000')
+        ->and($report['rows']->sole()->branch_hall_id)->toBeNull()
+        ->and($report['rows']->sole()->warehouse_location_id)->toBeNull();
+
+    $hallReport = app(InventoryReportService::class)->bookValuation(
+        $fixture['company']->getKey(), [$fixture['branch']->getKey()],
+        ['as_of' => $fixture['period']->to_date->toDateString(), 'branch_hall_id' => $firstHall->getKey()],
+    );
+    expect($hallReport['rows']->sole()->on_hand)->toBe('4.00000000')
+        ->and($hallReport['rows']->sole()->branch_hall_id)->toBe($firstHall->getKey());
+});
+
+test('book valuation exposes residual cost even when historical warehouse quantities offset to zero', function (): void {
+    $fixture = inventoryBookValuationFixture();
+    $firstHall = BranchHall::query()->create(['branch_id' => $fixture['branch']->getKey(), 'name' => 'Cost hall A', 'position' => 1]);
+    $secondHall = BranchHall::query()->create(['branch_id' => $fixture['branch']->getKey(), 'name' => 'Cost hall B', 'position' => 2]);
+    inventoryBookTransaction($fixture, ['branch_hall_id' => $firstHall->getKey(), 'quantity_in' => '10', 'unit_cost' => '5', 'total_cost' => '50']);
+    inventoryBookTransaction($fixture, ['branch_hall_id' => $secondHall->getKey(), 'quantity_out' => '10', 'unit_cost' => '10', 'total_cost' => '100']);
+
+    $report = app(InventoryReportService::class)->bookValuation(
+        $fixture['company']->getKey(), [$fixture['branch']->getKey()],
+        ['as_of' => $fixture['period']->to_date->toDateString()],
+    );
+
+    expect($report['rows'])->toHaveCount(1)
+        ->and($report['rows']->sole()->on_hand)->toBe('0.00000000')
+        ->and($report['rows']->sole()->book_value)->toBe('-50.00000000')
+        ->and($report['rows']->sole()->book_unit_cost)->toBeNull()
+        ->and($report['rows']->sole()->valuation_status)->toBe('residual_value')
+        ->and($report['totals']['book_value'])->toBe('-50.00000000');
+
+    $currency = (string) Currency::query()->forCompany($fixture['company']->getKey())->where('is_main', true)->value('code');
+    $export = new InventoryBookValuationExport($report['rows'], $report['totals'], $currency);
+    $pdf = view('reports.inventory.book-valuation', [
+        'rows' => $report['rows'], 'totals' => $report['totals'], 'currencyCode' => $currency,
+        'filterSummary' => ['As of' => $fixture['period']->to_date->toDateString()],
+    ])->render();
+    expect($export->array()[0][8])->toBe(-50.0)
+        ->and($export->array()[0][12])->toBe(__('inventory_accounting.book_valuation.statuses.residual_value'))
+        ->and($pdf)->toContain(__('inventory_accounting.book_valuation.residual_value_warning', ['count' => 1]));
+
+    $positive = app(InventoryReportService::class)->bookValuation(
+        $fixture['company']->getKey(), [$fixture['branch']->getKey()],
+        ['as_of' => $fixture['period']->to_date->toDateString(), 'quantity_state' => 'positive'],
+    );
+    expect($positive['rows'])->toBeEmpty();
+});
+
 test('book valuation uses signed posted costs with chronological snapshots and transfer conservation', function (): void {
     $fixture = inventoryBookValuationFixture();
     $day1 = $fixture['period']->from_date->copy()->addDays(1)->toDateString();
@@ -148,6 +309,216 @@ test('book valuation uses signed posted costs with chronological snapshots and t
     expect($historical['rows']->first()->product->trashed())->toBeTrue()
         ->and($historicalStoreRow->branchStore->trashed())->toBeTrue()
         ->and($historicalStoreRow->branchStore->name)->toBe('Book valuation store');
+});
+
+test('cost policy selects store before branch and company and posts exact FIFO allocation value', function (): void {
+    $fixture = inventoryBookValuationFixture();
+    authorizeInventoryCostPolicyManagement($fixture['user']);
+    test()->seed(DefaultChartOfAccountsSeeder::class);
+    $policies = app(InventoryCostPolicyService::class);
+    $day = fn (int $offset): string => $fixture['period']->from_date->copy()->addDays($offset)->toDateString();
+
+    $policies->createVersion($fixture['company']->getKey(), [
+        'method' => InventoryCostPolicy::MovingAverage, 'effective_from' => $day(1),
+    ], $fixture['user']->getKey());
+    $policies->createVersion($fixture['company']->getKey(), [
+        'branch_id' => $fixture['branch']->getKey(), 'method' => InventoryCostPolicy::MovingAverage,
+        'effective_from' => $day(2),
+    ], $fixture['user']->getKey());
+    $fifo = $policies->createVersion($fixture['company']->getKey(), [
+        'branch_store_id' => $fixture['store']->getKey(), 'method' => InventoryCostPolicy::Fifo,
+        'effective_from' => $day(3),
+    ], $fixture['user']->getKey());
+
+    expect($policies->resolve($fixture['company']->getKey(), $fixture['store']->getKey(), $day(3)))
+        ->toBe(['method' => InventoryCostPolicy::Fifo, 'policy_id' => $fifo->getKey()])
+        ->and($policies->resolve($fixture['company']->getKey(), $fixture['otherStore']->getKey(), $day(3))['method'])
+        ->toBe(InventoryCostPolicy::MovingAverage);
+
+    $movement = app(InventoryMovementService::class);
+    $header = [
+        'company_id' => $fixture['company']->getKey(), 'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(), 'branch_store_id' => $fixture['store']->getKey(),
+        'source_stock_status' => InventoryTransaction::StatusAvailable,
+    ];
+    $movement->createAndPost([...$header, 'document_date' => $day(4), 'document_type' => InventoryDocument::TypeAdjustmentIn], [
+        ['product_id' => $fixture['product']->getKey(), 'quantity' => '10', 'unit_cost' => '10'],
+    ]);
+    $movement->createAndPost([...$header, 'document_date' => $day(5), 'document_type' => InventoryDocument::TypeAdjustmentIn], [
+        ['product_id' => $fixture['product']->getKey(), 'quantity' => '10', 'unit_cost' => '20'],
+    ]);
+    $issue = $movement->createAndPost([...$header, 'document_date' => $day(6), 'document_type' => InventoryDocument::TypeIssue], [
+        ['product_id' => $fixture['product']->getKey(), 'quantity' => '12', 'unit_cost' => '99'],
+    ]);
+    $issueTransaction = $issue->transactions->sole();
+
+    expect($issueTransaction->cost_method)->toBe(InventoryCostPolicy::Fifo)
+        ->and($issueTransaction->cost_policy_id)->toBe($fifo->getKey())
+        ->and($issueTransaction->unit_cost)->toBe('11.66666666')
+        ->and($issueTransaction->total_cost)->toBe('140.00000000')
+        ->and($issue->lines->sole()->total_cost)->toBe('140.00000000')
+        ->and(InventoryLayerAllocation::query()->where('issue_transaction_id', $issueTransaction->getKey())->orderBy('id')->pluck('quantity')->all())
+        ->toBe(['10.00000000', '2.00000000']);
+
+    $policies->createVersion($fixture['company']->getKey(), [
+        'branch_store_id' => $fixture['store']->getKey(), 'method' => InventoryCostPolicy::MovingAverage,
+        'effective_from' => $day(7),
+    ], $fixture['user']->getKey());
+    app(InventoryDocumentPostingService::class)->reverse($issue);
+    $reversal = InventoryTransaction::query()->where('reversal_of_id', $issueTransaction->getKey())->sole();
+
+    expect($reversal->cost_method)->toBe(InventoryCostPolicy::Fifo)
+        ->and($reversal->cost_policy_id)->toBe($fifo->getKey())
+        ->and($reversal->total_cost)->toBe('140.00000000')
+        ->and(InventoryReceiptLayer::query()->where('receipt_transaction_id', $reversal->getKey())->orderBy('id')->pluck('unit_cost')->all())->toBe(['10.00000000', '20.00000000'])
+        ->and(InventoryReceiptLayer::query()->where('receipt_transaction_id', $reversal->getKey())->orderBy('id')->pluck('original_quantity')->all())->toBe(['10.00000000', '2.00000000'])
+        ->and($policies->resolve($fixture['company']->getKey(), $fixture['store']->getKey(), $day(7))['method'])
+        ->toBe(InventoryCostPolicy::MovingAverage);
+});
+
+test('FIFO allocation follows receipt date instead of expiry priority and repeat returns consume distinct original slices', function (): void {
+    $fixture = inventoryBookValuationFixture();
+    $fixture['product']->forceFill(['tracks_expiry' => true])->save();
+    $day = fn (int $offset): string => $fixture['period']->from_date->copy()->addDays($offset)->toDateString();
+    $layers = app(InventoryLayerService::class);
+
+    $first = inventoryBookTransaction($fixture, [
+        'transaction_date' => $day(1), 'quantity_in' => '5', 'unit_cost' => '10', 'total_cost' => '50',
+        'expiry_date' => $day(100),
+    ]);
+    $second = inventoryBookTransaction($fixture, [
+        'transaction_date' => $day(2), 'quantity_in' => '5', 'unit_cost' => '20', 'total_cost' => '100',
+        'expiry_date' => $day(50),
+    ]);
+    $layers->recordInbound($first);
+    $layers->recordInbound($second);
+    $issue = inventoryBookTransaction($fixture, [
+        'transaction_date' => $day(3), 'transaction_type' => InventoryDocument::TypeIssue,
+        'quantity_out' => '7', 'cost_method' => InventoryCostPolicy::Fifo,
+    ]);
+    $layers->allocateIssue($issue);
+    $allocations = InventoryLayerAllocation::query()->where('issue_transaction_id', $issue->getKey())->orderBy('id')->get();
+
+    expect($allocations->pluck('quantity')->all())->toBe(['5.00000000', '2.00000000'])
+        ->and($allocations->first()->layer->receipt_transaction_id)->toBe($first->getKey())
+        ->and($layers->allocatedIssueCost($issue)['total_cost'])->toBe('90.00000000');
+
+    $returnOne = inventoryBookTransaction($fixture, [
+        'transaction_date' => $day(4), 'transaction_type' => InventoryDocument::TypeSalesReturnReceipt,
+        'quantity_in' => '3', 'unit_cost' => '10', 'total_cost' => '30',
+    ]);
+    $planOne = $layers->planRestoration($issue, '3', limitToUnreturned: true);
+    $layers->recordInbound($returnOne, $issue, restorationPlan: $planOne);
+    $returnTwo = inventoryBookTransaction($fixture, [
+        'transaction_date' => $day(5), 'transaction_type' => InventoryDocument::TypeSalesReturnReceipt,
+        'quantity_in' => '4', 'unit_cost' => '15', 'total_cost' => '60',
+    ]);
+    $planTwo = $layers->planRestoration($issue, '4', limitToUnreturned: true);
+    $costTwo = $layers->restorationCost($planTwo, '4');
+    $layers->recordInbound($returnTwo, $issue, restorationPlan: $planTwo);
+
+    expect($planTwo->pluck('quantity')->all())->toBe(['2.00000000', '2.00000000'])
+        ->and($costTwo['total_cost'])->toBe('60.00000000')
+        ->and(InventoryReceiptLayer::query()->where('receipt_transaction_id', $returnTwo->getKey())->orderBy('id')->pluck('unit_cost')->all())
+        ->toBe(['10.00000000', '20.00000000'])
+        ->and(fn () => $layers->planRestoration($issue, '1', limitToUnreturned: true))->toThrow(DomainException::class);
+});
+
+test('cost policy refuses retroactive or nonzero stock FIFO transitions', function (): void {
+    $fixture = inventoryBookValuationFixture();
+    authorizeInventoryCostPolicyManagement($fixture['user']);
+    $policies = app(InventoryCostPolicyService::class);
+    $day = fn (int $offset): string => $fixture['period']->from_date->copy()->addDays($offset)->toDateString();
+    inventoryBookTransaction($fixture, [
+        'transaction_date' => $day(3), 'quantity_in' => '5', 'unit_cost' => '10', 'total_cost' => '50',
+    ]);
+
+    expect(fn () => $policies->createVersion($fixture['company']->getKey(), [
+        'branch_store_id' => $fixture['store']->getKey(), 'method' => InventoryCostPolicy::Fifo,
+        'effective_from' => $day(3),
+    ], $fixture['user']->getKey()))->toThrow(DomainException::class);
+
+    expect(fn () => $policies->createVersion($fixture['company']->getKey(), [
+        'branch_store_id' => $fixture['store']->getKey(), 'method' => InventoryCostPolicy::Fifo,
+        'effective_from' => $day(4),
+    ], $fixture['user']->getKey()))->toThrow(DomainException::class);
+});
+
+test('a future FIFO transition blocks later backdated stock posting before its effective day', function (): void {
+    $fixture = inventoryBookValuationFixture();
+    authorizeInventoryCostPolicyManagement($fixture['user']);
+    test()->seed(DefaultChartOfAccountsSeeder::class);
+    $day = fn (int $offset): string => $fixture['period']->from_date->copy()->addDays($offset)->toDateString();
+    app(InventoryCostPolicyService::class)->createVersion($fixture['company']->getKey(), [
+        'branch_store_id' => $fixture['store']->getKey(), 'method' => InventoryCostPolicy::Fifo,
+        'effective_from' => $day(3),
+    ], $fixture['user']->getKey());
+    $header = [
+        'company_id' => $fixture['company']->getKey(), 'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(), 'branch_store_id' => $fixture['store']->getKey(),
+        'document_type' => InventoryDocument::TypeAdjustmentIn,
+    ];
+
+    expect(fn () => app(InventoryMovementService::class)->createAndPost(
+        [...$header, 'document_date' => $day(2)],
+        [['product_id' => $fixture['product']->getKey(), 'quantity' => '2', 'unit_cost' => '5']],
+    ))->toThrow(DomainException::class);
+    expect(InventoryTransaction::query()->where('company_id', $fixture['company']->getKey())->count())->toBe(0);
+
+    $posted = app(InventoryMovementService::class)->createAndPost(
+        [...$header, 'document_date' => $day(3)],
+        [['product_id' => $fixture['product']->getKey(), 'quantity' => '2', 'unit_cost' => '5']],
+    );
+    expect($posted->transactions->sole()->cost_method)->toBe(InventoryCostPolicy::Fifo);
+});
+
+test('inventory costing migration refuses rollback after policy evidence is saved', function (): void {
+    $fixture = inventoryBookValuationFixture();
+    authorizeInventoryCostPolicyManagement($fixture['user']);
+    $day = $fixture['period']->from_date->copy()->addDay()->toDateString();
+    app(InventoryCostPolicyService::class)->createVersion($fixture['company']->getKey(), [
+        'method' => InventoryCostPolicy::MovingAverage,
+        'effective_from' => $day,
+        'reason' => 'Guard rollback evidence',
+    ], $fixture['user']->getKey());
+
+    $migration = require base_path('modules/Inventory/Database/Migrations/2026_09_30_045513_create_inventory_cost_policies_and_snapshot_transactions.php');
+    expect(fn () => $migration->down())->toThrow(RuntimeException::class)
+        ->and(InventoryCostPolicy::query()->count())->toBe(1);
+});
+
+test('inventory cost policy management is permission protected and saves company scope from the shared controls', function (): void {
+    $fixture = inventoryBookValuationFixture();
+    $date = $fixture['period']->from_date->copy()->addDays(1)->toDateString();
+    $session = inventoryBookSession($fixture);
+
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.inventory.cost-policies.index'))->assertForbidden();
+    foreach (['inventory.cost_policies.view', 'inventory.cost_policies.manage'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $fixture['user']->givePermissionTo('inventory.cost_policies.view');
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.inventory.cost-policies.index'))
+        ->assertOk()->assertSee(__('inventory_cost_policy.title'));
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.inventory.cost-policies.store'), [
+            'method' => InventoryCostPolicy::MovingAverage,
+            'effective_from' => $date,
+        ])->assertForbidden();
+    $fixture['user']->givePermissionTo('inventory.cost_policies.manage');
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->post(route('admin.inventory.cost-policies.store'), [
+            'method' => InventoryCostPolicy::MovingAverage,
+            'effective_from' => $date,
+            'reason' => 'New company policy',
+        ])->assertRedirect();
+
+    expect(InventoryCostPolicy::query()->where('company_id', $fixture['company']->getKey())
+        ->where('scope_key', 'company')->where('method', InventoryCostPolicy::MovingAverage)->exists())->toBeTrue();
+    $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.inventory.cost-policies.select2.stores', ['q' => 'Book valuation']))
+        ->assertOk()->assertJsonStructure(['results' => [['id', 'text']], 'pagination' => ['more']]);
 });
 
 test('valuation comparison excludes a reversed receipt and its reversal from effective stock', function (): void {
@@ -536,7 +907,7 @@ test('posting rejects a linked source issue from another product', function (): 
     ))->toThrow(DomainException::class, __('The linked source issue does not match this inventory return line.'));
 });
 
-test('sales return resolves the canonical issue for a later delivery line without trusting its snapshot id', function (): void {
+test('sales return binds the canonical later delivery issue and its original allocation despite differing sales order line ids', function (): void {
     $fixture = salesCycleFixture();
     $deliveryLocation = WarehouseLocation::query()->create([
         'branch_store_id' => $fixture['store']->getKey(), 'code' => 'SALES-RETURN-SOURCE',
@@ -587,7 +958,9 @@ test('sales return resolves the canonical issue for a later delivery line withou
         ->all();
 
     expect($laterDelivery->lines->sole()->getKey())->not->toBe($goodsLine->getKey())
-        ->and($returnDocument->lines->sole()->product_snapshot['source_issue_transaction_id'] ?? null)->not->toBe($sourceIssue->getKey())
+        ->and($returnDocument->lines->sole()->product_snapshot['source_issue_transaction_id'] ?? null)->toBe($sourceIssue->getKey())
+        ->and($sourceIssue->getKey())->not->toBe($firstDelivery->transactions()->where('quantity_out', '>', 0)->sole()->getKey())
+        ->and($receiptLayer->sourceAllocation->issue_transaction_id)->toBe($sourceIssue->getKey())
         ->and($sourceIssue->warehouse_location_id)->toBe($deliveryLocation->getKey())
         ->and($receipt->warehouse_location_id)->toBeNull()
         ->and($receiptLayer->warehouse_location_id)->toBeNull()

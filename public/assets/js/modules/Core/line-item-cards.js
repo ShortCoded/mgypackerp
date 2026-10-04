@@ -128,7 +128,6 @@
         }, true);
         form.addEventListener('input', event => {
             const field = event.target;
-            if (!field.validity?.valid) return;
             const key = field.name?.replace(/\[([^\]]+)\]/g, '.$1');
             const error = field.closest('[data-line-card]')?.querySelector(`[data-error-for="${CSS.escape(key || '')}"]`);
             if (error?.textContent === marker.dataset.invalidLabel) {
@@ -136,17 +135,6 @@
                 field.classList.remove('is-invalid');
             }
         });
-        form.addEventListener('submit', event => {
-            const invalid = Array.from(form.querySelectorAll('[data-line-card] input, [data-line-card] select, [data-line-card] textarea'))
-                .filter(field => field.willValidate && !field.checkValidity());
-            if (invalid.length) {
-                event.preventDefault();
-                event.stopPropagation();
-                const first = invalid[0];
-                const visibleSelect = first.nextElementSibling?.querySelector('.select2-selection');
-                (visibleSelect || first).focus();
-            }
-        }, true);
         enhance();
         form.dataset.lineCardsReady = '1';
         const observer = new MutationObserver(() => { observer.disconnect(); enhance(); observer.observe(form, { childList: true, subtree: true }); });

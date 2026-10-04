@@ -136,6 +136,8 @@ class HrFoundationService
                 ];
             }
 
+            $this->assertStatutoryPolicyUnused($record, $changes);
+
             if (array_diff($changedFields, ['tax_brackets', 'insurance_components']) !== []) {
                 $this->crudAudit->saveUpdate($record, $newValues);
             }
@@ -173,6 +175,10 @@ class HrFoundationService
     public function delete(HrFoundationModel $record): void
     {
         DB::transaction(function () use ($record): void {
+            if ($record instanceof HrSocialInsurancePolicy || $record instanceof HrEmploymentTaxPolicy) {
+                $this->lockPolicyCompany((int) $record->getAttribute('company_id'));
+            }
+            $this->assertStatutoryPolicyUnused($record);
             $this->crudAudit->softDelete($record);
         });
     }
@@ -205,12 +211,58 @@ class HrFoundationService
             $deleted = 0;
 
             foreach ($records as $record) {
+                if ($record instanceof HrSocialInsurancePolicy || $record instanceof HrEmploymentTaxPolicy) {
+                    $this->lockPolicyCompany((int) $record->getAttribute('company_id'));
+                }
+                $this->assertStatutoryPolicyUnused($record);
                 $this->crudAudit->softDelete($record);
                 $deleted++;
             }
 
             return $deleted;
         });
+    }
+
+    /** @param array<string, array{old: mixed, new: mixed}> $changes */
+    private function assertStatutoryPolicyUnused(HrFoundationModel $record, array $changes = []): void
+    {
+        $type = match (true) {
+            $record instanceof HrSocialInsurancePolicy => 'insurance',
+            $record instanceof HrEmploymentTaxPolicy => 'tax',
+            default => null,
+        };
+        if ($type === null) {
+            return;
+        }
+
+        $usages = DB::table('hr_payroll_statutory_policy_usages')
+            ->where('company_id', $record->getAttribute('company_id'))
+            ->where('policy_type', $type)
+            ->where('policy_id', $record->getKey())
+            ->get(['source_snapshot']);
+        if ($usages->isEmpty()) {
+            return;
+        }
+
+        if (array_keys($changes) === ['effective_to']) {
+            $newEnd = $changes['effective_to']['new'];
+            if ($newEnd === null || $newEnd === '') {
+                return;
+            }
+            $latestUsedDate = $usages->reduce(function (?string $latest, object $usage): ?string {
+                $source = json_decode((string) $usage->source_snapshot, true, 512, JSON_THROW_ON_ERROR);
+                $end = (string) ($source['to'] ?? '');
+
+                return $end > (string) $latest ? $end : $latest;
+            });
+            if ((string) $newEnd >= (string) $latestUsedDate) {
+                return;
+            }
+        }
+
+        throw ValidationException::withMessages([
+            'effective_from' => __('hr_payroll.messages.statutory_policy_used', ['policy' => $record->doc_num]),
+        ]);
     }
 
     /**

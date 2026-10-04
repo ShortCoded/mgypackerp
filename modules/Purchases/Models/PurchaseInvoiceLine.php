@@ -67,7 +67,7 @@ class PurchaseInvoiceLine extends Model
         return [
             'quantity' => 'decimal:8',
             'matched_quantity' => 'decimal:8',
-            'unit_price' => 'decimal:4',
+            'unit_price' => 'decimal:8',
             'discount_value' => 'decimal:4',
             'discount_amount' => 'decimal:4',
             'tax_rate' => 'decimal:4',

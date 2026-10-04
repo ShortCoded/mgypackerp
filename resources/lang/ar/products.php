@@ -38,6 +38,7 @@ return [
             'updated_successfully' => 'تم تحديث إعدادات رقم مستند الخامات بنجاح.',
         ],
         'messages' => [
+            'classification_has_inventory_history' => 'لا يمكن تغيير تصنيف صنف له حركات مخزون؛ استخدم صنفًا مستقلًا للتصنيف الجديد حفاظًا على الحسابات والتاريخ.',
             'bulk_deleted' => 'تم حذف :count خامة بنجاح.',
             'bulk_delete_confirm_text' => 'أنت على وشك حذف :count خامة.',
             'bulk_delete_confirm_title' => 'حذف الخامات المحددة؟',
@@ -89,6 +90,7 @@ return [
             'updated_successfully' => 'تم تحديث إعدادات رقم مستند مواد التعبئة والتغليف بنجاح.',
         ],
         'messages' => [
+            'classification_has_inventory_history' => 'لا يمكن تغيير تصنيف صنف له حركات مخزون؛ استخدم صنفًا مستقلًا للتصنيف الجديد حفاظًا على الحسابات والتاريخ.',
             'bulk_deleted' => 'تم حذف :count مادة تعبئة وتغليف بنجاح.',
             'bulk_delete_confirm_text' => 'أنت على وشك حذف :count مادة تعبئة وتغليف.',
             'bulk_delete_confirm_title' => 'حذف مواد التعبئة والتغليف المحددة؟',
@@ -138,6 +140,7 @@ return [
         'group' => 'المجموعة',
         'cost_as_inventory' => 'تكلفة المخزون',
         'tracks_expiry' => 'تتبع الصلاحية',
+        'tracks_serials' => 'تتبع الرقم المسلسل لكل وحدة',
         'default_shelf_life_days' => 'مدة الصلاحية الافتراضية (يوم)',
         'is_displayable' => 'قابل للعرض',
         'options' => 'الخيارات',
@@ -287,6 +290,7 @@ return [
         'help' => 'حدد طريقة التعامل مع المنتج في التخزين والتكلفة وشاشات التشغيل.',
         'cost_as_inventory' => 'يدخل ضمن تكلفة المخزون.',
         'tracks_expiry' => 'يلزم تاريخ صلاحية للدفعة ويمنع صرف المخزون منتهي الصلاحية.',
+        'tracks_serials' => 'لكل وحدة أساسية رقم مستقل يتم اختياره عند الصرف وتتبع نقله ومرتجعه.',
         'is_displayable' => 'يظهر في شاشات التشغيل والاختيار.',
     ],
     'document_number_control' => [
@@ -308,6 +312,7 @@ return [
         'no_next_record' => 'لا يوجد سجل منتج تالٍ.',
     ],
     'messages' => [
+        'classification_has_inventory_history' => 'لا يمكن تغيير تصنيف صنف له حركات مخزون؛ استخدم صنفًا مستقلًا للتصنيف الجديد حفاظًا على الحسابات والتاريخ.',
         'active_document_delete_blocked' => 'هذا المنتج مستخدم في مستند مبيعات نشط :document. أغلق المستند أو ألغِه قبل حذف المنتج.',
         'action_forbidden' => 'ليس لديك صلاحية لاستخدام إجراء الحفظ هذا.',
         'bulk_deleted' => 'تم حذف :count منتج بنجاح.',

@@ -199,6 +199,65 @@ test('supply order drives partial warehouse receipts without duplicate inventory
         ->assertOk()->assertHeader('content-type', 'application/pdf');
 });
 
+test('supply order allocations reject one eight decimal unit beyond the purchase order', function (): void {
+    $fixture = procurementFixture();
+    $purchaseOrders = app(PurchaseOrderService::class);
+    $supplyOrders = app(SupplyOrderService::class);
+    $purchaseOrder = $purchaseOrders->approve($purchaseOrders->create([
+        'document_date' => now()->toDateString(),
+        'supplier_doc_num' => $fixture['firstSupplier']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'exchange_rate' => 1,
+        'branch_store_uuid' => $fixture['store']->public_uuid,
+        'direct_procurement_override' => true,
+        'direct_procurement_reason' => 'Synthetic supply precision regression',
+        'lines' => [[
+            'product_doc_num' => $fixture['raw']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'ordered_quantity' => '1.00000000',
+            'unit_price' => '22.54545123',
+        ]],
+    ])['record']);
+    $line = $purchaseOrder->lines->sole();
+    $payload = [
+        'source_type' => SupplyOrder::SourcePurchaseOrder,
+        'source_doc_num' => $purchaseOrder->doc_num,
+        'issue_date' => now()->toDateString(),
+        'lines' => [[
+            'purchase_order_line_public_id' => $line->public_id,
+            'ordered_quantity' => '0.50000000',
+        ]],
+    ];
+    $first = $supplyOrders->create($payload);
+    expect($supplyOrders->sourceLines($purchaseOrder->fresh())->sole()->getAttribute('supply_available_quantity'))->toBe('0.50000000')
+        ->and($supplyOrders->remainingToSupply($line))->toBe('0.50000000');
+    $payload['lines'][0]['ordered_quantity'] = '0.50000001';
+    expect(fn () => $supplyOrders->create($payload))
+        ->toThrow(DomainException::class, __('Supply order quantity exceeds the remaining source quantity.'));
+
+    $payload['lines'][0]['ordered_quantity'] = '0.50000000';
+    $second = $supplyOrders->create($payload);
+    expect($first->lines->sole()->ordered_quantity)->toBe('0.50000000')
+        ->and($second->lines->sole()->ordered_quantity)->toBe('0.50000000')
+        ->and($second->total_ordered_quantity)->toBe('0.50000000');
+
+    $first = $supplyOrders->issue($first);
+    $receiving = app(ProcurementReceivingService::class);
+    $inspection = $receiving->inspectPurchaseSource($first, ['lines' => [[
+        'supply_order_line_public_id' => $first->lines->sole()->public_id,
+        'delivered_quantity' => '0.49999999',
+        'accepted_quantity' => '0.49999999',
+        'rejected_quantity' => '0',
+    ]]]);
+    $receipt = $receiving->createReceiptFromInspection($inspection, [
+        'document_date' => now()->toDateString(),
+        'lines' => [['inspection_line_public_id' => $inspection->lines->sole()->public_id]],
+    ]);
+    $receiving->postReceipt($receipt);
+    expect($first->fresh()->status)->toBe(SupplyOrder::StatusPartiallyReceived)
+        ->and($first->fresh()->fulfillmentStatus())->toBe(SupplyOrder::StatusPartiallyReceived);
+});
+
 test('purchase item selector excludes services and finished products across the cycle', function (): void {
     $fixture = procurementFixture();
     $this->seed(PermissionSeeder::class);

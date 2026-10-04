@@ -100,7 +100,11 @@ class CalculatePayrollRequest extends FormRequest
             $employeeDocNums = $adjustments->pluck('employee_doc_num')->filter()->unique()->values();
             $employees = HrEmployee::query()
                 ->where('company_id', $company->getKey())
-                ->when($branchId !== null, fn ($query) => $query->where('branch_id', $branchId))
+                ->when($branchId !== null, fn ($query) => $query->assignedToPayrollBranchesDuring(
+                    [(int) $branchId],
+                    $this->string('period_start')->toString(),
+                    $this->string('period_end')->toString(),
+                ))
                 ->eligibleForPayrollPeriod($this->string('period_start')->toString(), $this->string('period_end')->toString())
                 ->whereIn('doc_num', $employeeDocNums)
                 ->pluck('id', 'doc_num');

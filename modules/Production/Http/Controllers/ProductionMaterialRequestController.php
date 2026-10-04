@@ -185,6 +185,15 @@ class ProductionMaterialRequestController extends Controller
                 if (is_array($line) && array_key_exists('quantity', $line)) {
                     $line['quantity'] = $numbers->normalizeForValidation($line['quantity']);
                 }
+                if (is_array($line) && is_array($line['receipt_layers'] ?? null)) {
+                    $line['receipt_layers'] = collect($line['receipt_layers'])->map(function (mixed $selection) use ($numbers): mixed {
+                        if (is_array($selection)) {
+                            $selection['quantity'] = $numbers->normalizeForValidation($selection['quantity'] ?? null);
+                        }
+
+                        return $selection;
+                    })->all();
+                }
 
                 return $line;
             })->all(),
@@ -193,10 +202,15 @@ class ProductionMaterialRequestController extends Controller
             'lines' => ['nullable', 'array'],
             'lines.*.request_line_id' => ['required', 'integer', 'distinct'],
             'lines.*.quantity' => ['nullable', 'numeric', 'gte:0'],
+            'lines.*.receipt_layers' => ['nullable', 'array', 'max:100'],
+            'lines.*.receipt_layers.*' => ['array'],
+            'lines.*.receipt_layers.*.layer_id' => ['required_with:lines.*.receipt_layers.*.quantity', 'nullable', 'integer', 'min:1'],
+            'lines.*.receipt_layers.*.quantity' => ['required_with:lines.*.receipt_layers.*.layer_id', 'nullable', 'numeric', 'gt:0'],
         ]);
         $document = $this->guard(fn () => $this->service->issue(
             $productionMaterialRequest,
             $this->issueQuantities($data['lines'] ?? []),
+            collect($data['lines'] ?? [])->mapWithKeys(fn (array $line): array => [$line['request_line_id'] => collect($line['receipt_layers'] ?? [])->filter(fn (array $selection): bool => filled($selection['layer_id'] ?? null))->values()->all()])->all(),
         ));
         $returnToInventory = $request->input('return_to') === 'inventory_document'
             && (bool) $request->user()?->can('inventory.documents.view');
@@ -213,6 +227,21 @@ class ProductionMaterialRequestController extends Controller
                 : 'admin.production.material-requests.show',
                 $returnToInventory ? $document : $productionMaterialRequest)
                 ->with('success', __('production_execution.messages.material_issue_created_with_number', ['number' => $document->doc_num]));
+    }
+
+    public function reconcileReservations(Request $request, ProductionMaterialRequest $productionMaterialRequest): JsonResponse|RedirectResponse
+    {
+        $this->assertProductionRequest($request, $productionMaterialRequest);
+        $data = $request->validate(['reason' => ['required', 'string', 'max:1000']]);
+        $record = $this->guard(fn (): ProductionMaterialRequest => $this->service->reconcileReservationStore(
+            $productionMaterialRequest,
+            $data['reason'],
+        ));
+
+        return $request->expectsJson()
+            ? response()->json(['success' => true, 'doc_num' => $record->doc_num, 'message' => __('production_execution.messages.material_request_reservation_repaired')])
+            : to_route('admin.inventory.documents.production-material-issue.create', ['material_request' => $record->doc_num])
+                ->with('success', __('production_execution.messages.material_request_reservation_repaired'));
     }
 
     public function allocateShortage(Request $request, ProductionMaterialRequest $productionMaterialRequest): JsonResponse

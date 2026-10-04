@@ -6,6 +6,7 @@ use Illuminate\Contracts\View\Factory as ViewFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Storage;
 use Modules\Core\Models\Company;
 use Modules\Core\Services\BrandingService;
 use Modules\Core\Services\CompanyPrintIdentityService;
@@ -122,6 +123,9 @@ class ReportPdfService
     {
         $record->loadMissing('lines.product');
         $type = $record->document_type;
+        if ($type === InventoryDocument::TypeSalesDelivery) {
+            return __('inventory.movements.types.sales_delivery');
+        }
         if ($type === InventoryDocument::TypeMaterialReturn) {
             return __('Material Return Note');
         }
@@ -149,7 +153,23 @@ class ReportPdfService
         }
 
         if (! is_file($source)) {
-            return null;
+            $normalized = str_replace('\\', '/', $source);
+            $marker = '/storage/app/public/';
+            $offset = strpos($normalized, $marker);
+            if ($offset === false || preg_match('#^https?://#i', $normalized)) {
+                return null;
+            }
+            $relative = substr($normalized, $offset + strlen($marker));
+            if (in_array('..', explode('/', $relative), true)) {
+                return null;
+            }
+            $root = realpath(Storage::disk('public')->path(''));
+            $candidate = realpath(Storage::disk('public')->path($relative));
+            if ($root === false || $candidate === false || ! is_file($candidate)
+                || ! str_starts_with($candidate, $root.DIRECTORY_SEPARATOR)) {
+                return null;
+            }
+            $source = $candidate;
         }
 
         $extension = strtolower(pathinfo($source, PATHINFO_EXTENSION));

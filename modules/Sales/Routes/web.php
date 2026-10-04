@@ -6,7 +6,9 @@ use Illuminate\Support\Facades\Route;
 use Modules\Auth\Services\PermissionRegistryService;
 use Modules\Finance\Services\FinanceSelect2Service;
 use Modules\Sales\Http\Controllers\CustomerController;
+use Modules\Sales\Http\Controllers\CustomerCreditApplicationEvidenceController;
 use Modules\Sales\Http\Controllers\CustomerDataReportController;
+use Modules\Sales\Http\Controllers\CustomerInvoiceCorrectionController;
 use Modules\Sales\Http\Controllers\CustomerTermsController;
 use Modules\Sales\Http\Controllers\PriceListController;
 use Modules\Sales\Http\Controllers\QuotationController;
@@ -15,12 +17,30 @@ use Modules\Sales\Http\Controllers\SalesCycleReportController;
 use Modules\Sales\Http\Controllers\SalesDeliveryReceiptController;
 use Modules\Sales\Http\Controllers\SalesDocumentAttachmentController;
 use Modules\Sales\Http\Controllers\SalesRequestController;
+use Modules\Sales\Http\Controllers\SalesReturnCorrectionController;
 use Modules\Sales\Services\SalesSelect2Service;
 
 Route::middleware('auth')
     ->prefix('admin/sales')
     ->as('admin.sales.')
     ->group(function (): void {
+        Route::controller(CustomerInvoiceCorrectionController::class)->prefix('sales-invoices/{customerInvoice}/corrections')->name('sales-invoices.corrections.')->group(function (): void {
+            Route::get('/', 'index')->name('index');
+            Route::post('/', 'store')->middleware('can:customer_invoices.correct_prepare')->name('store');
+            Route::post('/{correction}/approve', 'approve')->whereNumber('correction')->middleware('can:customer_invoices.correct_approve')->name('approve');
+            Route::post('/{correction}/reject', 'reject')->whereNumber('correction')->middleware('can:customer_invoices.correct_approve')->name('reject');
+        });
+        Route::controller(SalesReturnCorrectionController::class)->prefix('sales-returns/{salesReturn}/corrections')->name('sales-returns.corrections.')->group(function (): void {
+            Route::get('/', 'index')->name('index');
+            Route::post('/', 'store')->middleware('can:sales_returns.correct_prepare')->name('store');
+            Route::post('/{correction}/approve', 'approve')->whereNumber('correction')->middleware('can:sales_returns.correct_approve')->name('approve');
+            Route::post('/{correction}/reject', 'reject')->whereNumber('correction')->middleware('can:sales_returns.correct_approve')->name('reject');
+        });
+        Route::controller(CustomerCreditApplicationEvidenceController::class)->prefix('sales-invoices/{customerInvoice}/application-evidence')->name('sales-invoices.application-evidence.')->group(function (): void {
+            Route::get('/', 'index')->name('index');
+            Route::post('/', 'store')->middleware('can:customer_credits.prepare_application_evidence')->name('store');
+            Route::post('/{evidence}/approve', 'approve')->whereNumber('evidence')->middleware('can:customer_credits.approve_application_evidence')->name('approve');
+        });
         Route::controller(SalesRequestController::class)->prefix('customer-requests')->name('customer-requests.')->group(function (): void {
             Route::get('/', 'index')->middleware('can:sales_requests.view')->name('index');
             Route::get('/create', 'create')->middleware('can:sales_requests.create')->name('create');
@@ -71,7 +91,9 @@ Route::middleware('auth')
             Route::get('/sales-invoices/{customerInvoice}/print', 'printInvoice')->middleware('can:customer_invoices.print')->name('sales-invoices.print');
             Route::post('/sales-invoices/{customerInvoice}/post', 'postInvoice')->middleware('can:customer_invoices.post')->name('sales-invoices.post');
             Route::post('/sales-invoices/{customerInvoice}/credit-allocations', 'allocateCustomerCredit')->middleware('can:customer_credits.allocate')->name('sales-invoices.credit-allocations.store');
+            Route::post('/sales-invoices/{customerInvoice}/credit-allocations/{customerCreditAllocation}/reverse', 'reverseCustomerCreditAllocation')->middleware('can:customer_credits.reverse_allocation')->name('sales-invoices.credit-allocations.reverse');
             Route::post('/sales-invoices/{customerInvoice}/credit-refunds', 'refundCustomerCredit')->middleware('can:customer_credits.refund')->name('sales-invoices.credit-refunds.store');
+            Route::post('/sales-invoices/{customerInvoice}/credit-refunds/{customerCreditRefund}/reverse', 'reverseCustomerCreditRefund')->middleware('can:customer_credits.reverse_refund')->name('sales-invoices.credit-refunds.reverse');
             Route::post('/sales-invoices/{customerInvoice}/electronic-invoice', 'submitElectronicInvoice')->middleware('can:customer_invoices.electronic_invoice.submit')->name('sales-invoices.electronic-invoice.submit');
             Route::post('/sales-invoices/{customerInvoice}/reopen', 'reopenInvoice')->middleware('can:customer_invoices.reopen')->name('sales-invoices.reopen');
             Route::get('/sales-invoices/{customerInvoice}/payment-schedule/print', 'printPaymentSchedule')->middleware('can:customer_invoices.print')->name('sales-invoices.payment-schedule.print');
@@ -99,6 +121,9 @@ Route::middleware('auth')
             Route::post('/sales-returns/{salesReturn}/receive', 'receiveReturn')->middleware('can:sales_returns.receive')->name('sales-returns.receive');
             Route::post('/sales-returns/{salesReturn}/inspect', 'inspectReturn')->middleware('can:sales_returns.inspect')->name('sales-returns.inspect');
             Route::post('/sales-returns/{salesReturn}/cancel', 'cancelReturn')->middleware('can:sales_returns.cancel')->name('sales-returns.cancel');
+            Route::post('/sales-returns/{salesReturn}/correct-receipt', 'correctReturnReceipt')->middleware('can:sales_returns.correct_receipt')->name('sales-returns.correct-receipt');
+            Route::post('/sales-returns/{salesReturn}/correct-disposition', 'correctReturnDisposition')->middleware('can:sales_returns.correct_disposition')->name('sales-returns.correct-disposition');
+            Route::post('/sales-returns/{salesReturn}/correct-closed', 'correctClosedReturn')->middleware('can:sales_returns.correct_closed')->name('sales-returns.correct-closed');
             Route::post('/sales-returns/{salesReturn}/close', 'closeReturn')->middleware('can:sales_returns.close')->name('sales-returns.close');
 
             Route::get('/delivery-notes', 'deliveries')->middleware('can:sales_deliveries.view')->name('delivery-notes.index');
@@ -119,6 +144,7 @@ Route::middleware('auth')
         })->middleware('can:sales_requests.view')->name('select2.convertible-requests');
         Route::get('/select2/deliverable-invoices', fn (Request $request, SalesSelect2Service $select2) => response()->json($select2->deliverableInvoices($request)))->middleware(['can:sales_deliveries.create', 'can:customer_invoices.view'])->name('select2.deliverable-invoices');
         Route::get('/select2/returnable-invoices', fn (Request $request, SalesSelect2Service $select2) => response()->json($select2->returnableInvoices($request)))->middleware('can:sales_returns.create')->name('select2.returnable-invoices');
+        Route::get('/select2/returnable-serial-deliveries', fn (Request $request, SalesSelect2Service $select2) => response()->json($select2->returnableSerialDeliveries($request)))->middleware('can:sales_returns.create')->name('select2.returnable-serial-deliveries');
         Route::get('/select2/credit-target-invoices', fn (Request $request, SalesSelect2Service $select2) => response()->json($select2->creditTargetInvoices($request)))->middleware('can:customer_credits.allocate')->name('select2.credit-target-invoices');
         Route::get('/select2/cashboxes', function (Request $request, FinanceSelect2Service $select2) {
             abort_unless($request->user()?->can('customer_receipts.create') || $request->user()?->can('customer_credits.refund'), 403);

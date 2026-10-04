@@ -153,7 +153,11 @@ return [
                 'actions' => [
                     'delete' => 'customer_invoices.delete',
                     'credit_allocate' => 'customer_credits.allocate',
+                    'credit_reverse_allocation' => 'customer_credits.reverse_allocation',
                     'credit_refund' => 'customer_credits.refund',
+                    'credit_reverse_refund' => 'customer_credits.reverse_refund',
+                    'credit_prepare_application_evidence' => 'customer_credits.prepare_application_evidence',
+                    'credit_approve_application_evidence' => 'customer_credits.approve_application_evidence',
                     'electronic_invoice_submit' => 'customer_invoices.electronic_invoice.submit',
                 ],
                 'keywords' => ['sales invoices', 'credit notes', 'فواتير المبيعات', 'إشعارات الدائن'],

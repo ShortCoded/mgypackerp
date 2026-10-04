@@ -3,6 +3,7 @@
 namespace Modules\Sales\Models;
 
 use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -86,6 +87,17 @@ class SalesReturn extends Model
     public function creditNote(): BelongsTo
     {
         return $this->belongsTo(CustomerInvoice::class, 'credit_note_id');
+    }
+
+    public function corrections(): HasMany
+    {
+        return $this->hasMany(SalesReturnCorrection::class);
+    }
+
+    public function scopeUncancelledAt(Builder $query, string $date): Builder
+    {
+        return $query->where(fn ($source) => $source->where('sales_returns.status', '!=', self::StatusCancelled)
+            ->orWhereHas('corrections', fn ($correction) => $correction->where('operation', 'return')->where('status', 'approved')->whereDate('posting_date', '>', $date)));
     }
 
     public function order(): BelongsTo

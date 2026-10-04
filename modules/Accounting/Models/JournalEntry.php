@@ -86,6 +86,25 @@ class JournalEntry extends Model
         return 'doc_num';
     }
 
+    public function localizedSystemDescription(?string $description = null): string
+    {
+        $description ??= (string) $this->description;
+        if (! $this->is_system_generated) {
+            return $description;
+        }
+        foreach (['opening_stock_cost_correction.title', 'inventory.movements.receipt_completion_title',
+            'inventory_standard_cost.settlements', 'inventory_periodic_cost.title'] as $key) {
+            foreach (['ar', 'en'] as $locale) {
+                $sourceLabel = (string) __($key, [], $locale);
+                if ($description === $sourceLabel || str_starts_with($description, $sourceLabel.' ')) {
+                    return __($key).substr($description, strlen($sourceLabel));
+                }
+            }
+        }
+
+        return $description;
+    }
+
     public function assertManuallyEditable(): void
     {
         if ($this->is_system_generated || $this->source_type !== null || $this->source_id !== null) {

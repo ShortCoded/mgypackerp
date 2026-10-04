@@ -2,6 +2,9 @@
   'use strict';
 
   const inboundTypes = ['inventory_receipt', 'inventory_return', 'inventory_adjustment_in'];
+  let productSelectorSequence = 0;
+  let productionBatchRequestSequence = 0;
+  let batchOldInputApplied = false;
 
   function jsonData(selector, fallback) {
     const element = document.querySelector(selector);
@@ -14,6 +17,46 @@
 
   const ui = jsonData('[data-inventory-movement-ui]', {});
 
+  function renderBatchLayerSelections(materials, hydrateOldInput = false) {
+    const target = document.querySelector('[data-inventory-batch-material-selections]');
+    const template = document.querySelector('[data-inventory-batch-material-template]');
+    if (!target || !template) return;
+    $(target).find('select.select2-hidden-accessible').each(function () { $(this).select2('destroy'); });
+    target.replaceChildren();
+    materials.forEach(function (material, index) {
+      const holder = document.createElement('template');
+      holder.innerHTML = template.innerHTML.replaceAll('__LINE__', String(index));
+      const group = holder.content.firstElementChild;
+      group.querySelector('[data-batch-material-label]').textContent = `${material.run_number} — ${material.product} — ${material.quantity} ${material.unit}`;
+      group.querySelector('[data-batch-requirement-id]').value = material.requirement_id;
+      const layerUrl = new URL(ui.receiptLayersUrl, window.location.origin);
+      layerUrl.searchParams.set('product_doc_num', material.product_doc_num || '');
+      layerUrl.searchParams.set('document_date', document.querySelector('#inventory-document-date')?.value || '');
+      group.querySelectorAll('[data-batch-receipt-layer]').forEach(function (field) { field.dataset.url = layerUrl.toString(); });
+      const nested = group.querySelector('[data-material-layer-template]');
+      nested.content.querySelectorAll('[data-batch-receipt-layer]').forEach(function (field) { field.dataset.url = layerUrl.toString(); });
+      const previous = hydrateOldInput ? (ui.oldBatchSelections || []).find(function (entry) { return String(entry.requirement_id) === String(material.requirement_id); }) : null;
+      if (previous && previous.receipt_layers.length) {
+        const rows = group.querySelector('[data-material-layer-rows]');
+        rows.replaceChildren();
+        previous.receipt_layers.forEach(function (selection, sliceIndex) {
+          const rowTemplate = document.createElement('template');
+          rowTemplate.innerHTML = nested.innerHTML.replaceAll('__SLICE__', String(sliceIndex));
+          const row = rowTemplate.content.firstElementChild;
+          const select = row.querySelector('select');
+          select.add(new Option(selection.text, selection.layer_id, true, true));
+          row.querySelector('[data-numeric-input]')?.setAttribute('value', selection.quantity || '');
+          row.querySelector('input[name$="[quantity]"]').value = selection.quantity || '';
+          rows.appendChild(row);
+        });
+        group.dataset.nextSlice = previous.receipt_layers.length;
+      }
+      target.appendChild(group);
+      window.AppSelect2Ajax?.init(group);
+      window.AppNumbers?.refresh(group);
+    });
+  }
+
   function showProductionRunBatchPreview(message, materials, productLabel) {
     const preview = document.querySelector('[data-production-run-batch-preview]');
     const submit = document.querySelector('[data-production-run-batch-submit]');
@@ -21,6 +64,7 @@
     preview.replaceChildren();
     preview.hidden = false;
     if (!Array.isArray(materials)) {
+      renderBatchLayerSelections([]);
       preview.textContent = message || '';
       if (submit) submit.disabled = true;
       return;
@@ -123,12 +167,14 @@
     }
     const preview = form.querySelector('[data-production-run-batch-preview]');
     if (!enabled && preview) {
+      renderBatchLayerSelections([]);
       preview.hidden = true;
       preview.replaceChildren();
     }
   }
 
   function loadProductionRunBatch() {
+    const sequence = ++productionBatchRequestSequence;
     const form = document.querySelector('[data-inventory-movement-form]');
     const batchSelect = form?.querySelector('[data-production-run-batch]');
     const preview = form?.querySelector('[data-production-run-batch-preview]');
@@ -143,6 +189,7 @@
     const requestUrl = new URL(detailsUrl, window.location.origin);
     requestUrl.searchParams.set('document_type', documentType);
     $.getJSON(requestUrl.toString()).done(function (response) {
+      if (sequence !== productionBatchRequestSequence) return;
       const batch = response.data || {};
       const materials = documentType === 'inventory_receipt' ? batch.outputs : batch.materials;
       if (!Array.isArray(materials) || materials.length === 0) {
@@ -151,7 +198,11 @@
       }
       const title = `${ui.batchTitle || ''} — ${batch.batch_number || ''} / ${ui.batchOrder || ''}: ${batch.order_number || ''}`;
       showProductionRunBatchPreview(title, materials, documentType === 'inventory_receipt' ? ui.batchFinishedProduct : ui.batchMaterial);
+      const hydrate = !batchOldInputApplied && String(ui.oldBatchId || '') === publicId;
+      renderBatchLayerSelections(documentType === 'inventory_issue' ? materials : [], hydrate);
+      batchOldInputApplied = true;
     }).fail(function () {
+      if (sequence !== productionBatchRequestSequence) return;
       showProductionRunBatchPreview(ui.batchLoadFailed || '', null);
     });
   }
@@ -231,12 +282,22 @@
     renumberLines();
 
     const row = afterRow && afterRow.parentElement === tableBody ? afterRow.nextElementSibling : tableBody.lastElementChild;
+    if (row) {
+      const product = row.querySelector('[name$="[product_doc_num]"]');
+      const layer = row.querySelector('[data-selected-receipt-layer]');
+      product.id = `inventory-line-product-${++productSelectorSequence}`;
+      $(layer).data('extra-params', { product_doc_num: `#${product.id}`, branch_store_uuid: '#inventory-source-store', stock_status: '#inventory-source-status', document_date: '#inventory-document-date' });
+    }
     if (row && values) {
       const product = row.querySelector('[name$="[product_doc_num]"]');
       if (product && values.product_doc_num) {
         product.appendChild(new Option(values.product_text || String(values.product_doc_num), values.product_doc_num, true, true));
       }
-      ['quantity', 'batch_lot', 'manufacture_date', 'expiry_date', 'notes'].forEach(function (fieldName) {
+      const layer = row.querySelector('[data-selected-receipt-layer]');
+      if (layer && values.selected_receipt_layer_id) {
+        layer.appendChild(new Option(values.selected_receipt_layer_text || String(values.selected_receipt_layer_id), values.selected_receipt_layer_id, true, true));
+      }
+      ['quantity', 'batch_lot', 'serial_numbers', 'manufacture_date', 'expiry_date', 'notes'].forEach(function (fieldName) {
         const field = row.querySelector(`[name$="[${fieldName}]"]`);
         if (field && values[fieldName] !== null && typeof values[fieldName] !== 'undefined') {
           field.value = values[fieldName];
@@ -331,7 +392,30 @@
   }
 
   $(document).on('change select2:select', '[data-movement-type]', updateMovementFields);
+  $(document).on('select2:select', '[data-selected-receipt-layer]', function (event) {
+    const row = this.closest('[data-inventory-line]');
+    const layer = event.params.data;
+    ['batch_lot', 'manufacture_date', 'expiry_date'].forEach(function (name) {
+      const field = row.querySelector(`[name$="[${name}]"]`);
+      field.value = layer[name] || '';
+      field.readOnly = true;
+      field.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+  $(document).on('change', '[data-selected-receipt-layer]', function () {
+    if (this.value) return;
+    this.closest('[data-inventory-line]').querySelectorAll('[name$="[batch_lot]"], [name$="[manufacture_date]"], [name$="[expiry_date]"]').forEach(function (field) { field.readOnly = false; });
+  });
+  $(document).on('change', '[data-inventory-line] [name$="[product_doc_num]"]', function () {
+    $(this.closest('[data-inventory-line]').querySelector('[data-selected-receipt-layer]')).val(null).trigger('change');
+  });
+  $(document).on('change', '#inventory-source-store, #inventory-source-status, #inventory-document-date, [data-movement-type]', function () {
+    $('[data-selected-receipt-layer]').val(null).trigger('change');
+  });
   $(document).on('change', '[data-production-run-batch]', loadProductionRunBatch);
+  $(document).on('change', '#inventory-source-store, #inventory-document-date', function () {
+    if (document.querySelector('[data-inventory-movement-form]')?.dataset.productionBatchMode === '1') loadProductionRunBatch();
+  });
   $(document).on('click', '[data-add-inventory-line]', function () {
     const activeRow = document.activeElement?.closest?.('[data-inventory-line]');
     addLine({}, activeRow, true);

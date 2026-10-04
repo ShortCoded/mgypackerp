@@ -3,6 +3,7 @@
 namespace Modules\Core\Database\Seeders;
 
 use Illuminate\Database\Seeder;
+use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\BoardList;
 use Modules\Core\Models\UserTask;
 use Modules\Core\Services\DocumentNumberService;
@@ -11,35 +12,24 @@ class BoardListSeeder extends Seeder
 {
     public function run(): void
     {
-        foreach ($this->defaults() as $position => $definition) {
-            $list = BoardList::query()
-                ->withTrashed()
-                ->firstOrNew([
+        DB::transaction(function (): void {
+            foreach ($this->defaults() as $position => $definition) {
+                if (BoardList::withTrashed()->where('type', $definition['type'])->where('slug', $definition['slug'])->exists()) {
+                    continue;
+                }
+
+                BoardList::query()->create([
+                    ...app(DocumentNumberService::class)->next('board_lists', BoardList::class),
                     'type' => $definition['type'],
                     'slug' => $definition['slug'],
+                    'name' => $definition['name'],
+                    'status' => $definition['status'],
+                    'color' => $definition['color'],
+                    'position' => $position,
+                    'is_system' => true,
                 ]);
-
-            if ($list->doc_num === null) {
-                $document = app(DocumentNumberService::class)->next('board_lists', BoardList::class);
-                $list->doc_number = $document['doc_number'];
-                $list->doc_num = $document['doc_num'];
             }
-
-            $list->fill([
-                'name' => $definition['name'],
-                'status' => $definition['status'],
-                'color' => $definition['color'],
-                'position' => $position,
-                'is_system' => true,
-                'deleted_by' => null,
-            ]);
-
-            if ($list->trashed()) {
-                $list->restore();
-            }
-
-            $list->save();
-        }
+        });
     }
 
     /**

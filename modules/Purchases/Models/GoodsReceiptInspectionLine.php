@@ -17,6 +17,7 @@ class GoodsReceiptInspectionLine extends Model
         'purchase_order_line_id', 'supply_order_line_id', 'unit_id', 'supplier_lot_number',
         'delivery_schedule_id',
         'manufacture_date', 'expiry_date', 'notes',
+        'serial_numbers',
         'accepted_quantity', 'rejected_quantity', 'result', 'disposition', 'reason', 'measurements',
     ];
 
@@ -33,6 +34,7 @@ class GoodsReceiptInspectionLine extends Model
             'inspected_quantity' => 'decimal:8', 'accepted_quantity' => 'decimal:8',
             'rejected_quantity' => 'decimal:8', 'measurements' => 'array',
             'manufacture_date' => 'date', 'expiry_date' => 'date',
+            'serial_numbers' => 'array',
         ];
     }
 

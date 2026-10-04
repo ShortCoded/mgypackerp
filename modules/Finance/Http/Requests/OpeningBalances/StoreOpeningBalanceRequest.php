@@ -2,6 +2,7 @@
 
 namespace Modules\Finance\Http\Requests\OpeningBalances;
 
+use DomainException;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
@@ -12,10 +13,13 @@ use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\OpeningBalance;
+use Modules\Finance\Services\OpeningInventoryValuationService;
 
 class StoreOpeningBalanceRequest extends FormRequest
 {
     use NormalizesNumericInput;
+
+    private ?string $inventoryValidationError = null;
 
     public function authorize(): bool
     {
@@ -51,6 +55,17 @@ class StoreOpeningBalanceRequest extends FormRequest
             'notes' => $this->filled('notes') ? trim((string) $this->input('notes')) : null,
             'lines' => $lines,
         ]);
+        if ($context['company_id'] && $context['financial_period_id'] && $context['branch_id']) {
+            try {
+                $prepared = app(OpeningInventoryValuationService::class)->prepare($this->all(), [
+                    'company_id' => (int) $context['company_id'], 'financial_period_id' => (int) $context['financial_period_id'],
+                    'branch_id' => (int) $context['branch_id'],
+                ]);
+                $this->merge(['lines' => $prepared['lines']]);
+            } catch (DomainException $exception) {
+                $this->inventoryValidationError = $exception->getMessage();
+            }
+        }
     }
 
     public function rules(): array
@@ -96,6 +111,7 @@ class StoreOpeningBalanceRequest extends FormRequest
             'lines.*.transaction_type' => ['required', Rule::in(['debit', 'credit'])],
             'lines.*.amount' => ['required', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'gt:0'],
             'lines.*.description' => ['nullable', 'string'],
+            'inventory_source_fingerprint' => ['nullable', 'string', 'size:64'],
             'submit_action' => ['nullable', 'string'],
             'clone_source_token' => ['nullable', 'string'],
         ];
@@ -125,6 +141,10 @@ class StoreOpeningBalanceRequest extends FormRequest
 
     protected function validateBusiness(Validator $validator, ?FinancialPeriod $period, ?Currency $currency, ?OpeningBalance $current = null): void
     {
+        if ($this->inventoryValidationError !== null) {
+            $validator->errors()->add('lines', $this->inventoryValidationError);
+        }
+
         if ($current?->isApproved()) {
             $validator->errors()->add('document', __('opening_balances.messages.approved_edit_forbidden'));
         } elseif ($current?->isClosed()) {
@@ -197,8 +217,8 @@ class StoreOpeningBalanceRequest extends FormRequest
 
     private function validateLines(Validator $validator): void
     {
-        $totalDebit = 0.0;
-        $totalCredit = 0.0;
+        $totalDebit = '0.0000';
+        $totalCredit = '0.0000';
         $seen = [];
 
         foreach ($this->input('lines', []) as $index => $line) {
@@ -210,7 +230,10 @@ class StoreOpeningBalanceRequest extends FormRequest
                 ->where('company_id', $this->input('company_id'))
                 ->where('doc_num', $line['account_doc_num'] ?? null)
                 ->first();
-            $amount = (float) ($line['amount'] ?? 0);
+            $amount = (string) ($line['amount'] ?? '0');
+            if (! preg_match('/^\d{1,14}(?:\.\d{1,4})?$/D', $amount)) {
+                continue;
+            }
             $type = (string) ($line['transaction_type'] ?? '');
 
             if ($account && (! $account->is_postable || $account->is_group || $account->status !== 'active')) {
@@ -218,9 +241,9 @@ class StoreOpeningBalanceRequest extends FormRequest
             }
 
             if ($type === 'debit') {
-                $totalDebit += $amount;
+                $totalDebit = bcadd($totalDebit, $amount, 4);
             } elseif ($type === 'credit') {
-                $totalCredit += $amount;
+                $totalCredit = bcadd($totalCredit, $amount, 4);
             }
 
             $key = implode(':', [
@@ -240,7 +263,7 @@ class StoreOpeningBalanceRequest extends FormRequest
             $seen[$key] = true;
         }
 
-        if (round($totalDebit, 4) !== round($totalCredit, 4)) {
+        if (bccomp($totalDebit, $totalCredit, 4) !== 0) {
             $validator->errors()->add('lines', __('opening_balances.messages.unbalanced'));
         }
     }

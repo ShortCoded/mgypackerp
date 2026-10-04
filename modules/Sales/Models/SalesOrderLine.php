@@ -25,7 +25,7 @@ class SalesOrderLine extends Model
     protected function casts(): array
     {
         return [
-            'quantity' => 'decimal:8', 'unit_price' => 'decimal:4', 'discount_amount' => 'decimal:4',
+            'quantity' => 'decimal:8', 'unit_price' => 'decimal:8', 'discount_amount' => 'decimal:4',
             'conversion_factor' => 'decimal:8', 'base_quantity' => 'decimal:8',
             'tax_amount' => 'decimal:4', 'line_total' => 'decimal:4', 'reserved_quantity' => 'decimal:8',
             'reserved_base_quantity' => 'decimal:8',

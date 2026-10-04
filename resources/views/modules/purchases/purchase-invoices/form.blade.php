@@ -607,7 +607,7 @@
                                         </td>
                                         <td @if(!$sourceReceiptLine) hidden @endif class="line-card-info js-purchase-invoice-source-reference">
                                             @if($sourceReceiptLine)<a href="{{ route('admin.purchases.goods-receipt-notes.show', $sourceReceiptLine->receipt->doc_num) }}">{{ $sourceReceiptLine->receipt->doc_num }}</a>
-                                                <small>{{ __('Accepted') }}: {{ $numbers->format($sourceReceiptLine->product?->cost_as_inventory ? $sourceReceiptLine->inventory_posted_quantity : $sourceReceiptLine->accepted_quantity) }} / {{ __('Remaining to invoice') }}: {{ $numbers->format(app(\Modules\Purchases\Services\PurchaseInvoiceMatchingService::class)->remainingForReceipt($sourceReceiptLine, $record?->exists ? $record->id : null)) }}</small>
+                                                <small>{{ __('Accepted') }}: {{ $numbers->format($sourceReceiptLine->product?->cost_as_inventory ? $sourceReceiptLine->inventory_posted_quantity : $sourceReceiptLine->accepted_quantity) }} / {{ __('Remaining to invoice') }}: {{ $numbers->format(app(\Modules\Purchases\Services\PurchaseInvoiceMatchingService::class)->remainingForReceiptExact($sourceReceiptLine, $record?->exists ? $record->id : null)) }}</small>
                                             @endif
                                             <x-forms.input type="hidden" name="lines[{{ $index }}][receipt_line_public_id]" value="{{ $line['receipt_line_public_id'] ?? '' }}" />
                                         </td>
@@ -651,7 +651,7 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext text-end" dir="ltr">{{ $numbers->format($line['unit_price'] ?? 0) }}</div>
                                             @else
-                                                <x-forms.numeric-input class="text-end js-purchase-invoice-line-number js-purchase-invoice-unit-price" :name="'lines['.$index.'][unit_price]'" :value="$line['unit_price'] ?? ''" :scale="4" min="0" step="0.0001" required />
+                                                <x-forms.numeric-input class="text-end js-purchase-invoice-line-number js-purchase-invoice-unit-price" :name="'lines['.$index.'][unit_price]'" :value="$line['unit_price'] ?? ''" :scale="8" min="0" step="0.00000001" required />
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_price"></div>
                                             @endif
                                         </td>

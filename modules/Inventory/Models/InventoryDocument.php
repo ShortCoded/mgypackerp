@@ -121,9 +121,40 @@ class InventoryDocument extends Model
             && ! $this->transactions()->exists();
     }
 
+    public function movementReasonText(): string
+    {
+        if (filled($this->movement_reason)) {
+            return (string) $this->movement_reason;
+        }
+        $purpose = trim((string) $this->purpose);
+        $generatedPurposes = [
+            self::TypeSalesDelivery => 'Sales delivery',
+            self::TypeMaterialIssue => 'Planned production material issue',
+            self::TypeAdditionalMaterialIssue => 'Additional production material issue',
+            self::TypeMaterialReturn => 'Unused production material return',
+            self::TypeMaterialConsumption => 'Production material consumption',
+            self::TypeProductionWaste => 'Production process waste',
+            self::TypeProductionReceipt => 'Finished production receipt',
+        ];
+        if (($generatedPurposes[$this->document_type] ?? null) === $purpose) {
+            return __('inventory.movements.types.'.$this->document_type);
+        }
+        $batchPrefix = 'Production batch material issue ';
+        if ($this->document_type === self::TypeMaterialIssue && $this->production_run_batch_id !== null && str_starts_with($purpose, $batchPrefix)) {
+            return __('inventory.movements.types.'.self::TypeMaterialIssue).' '.substr($purpose, strlen($batchPrefix));
+        }
+
+        return $purpose !== '' ? $purpose : '—';
+    }
+
     public function company(): BelongsTo
     {
         return $this->belongsTo(Company::class);
+    }
+
+    public function costProposals(): HasMany
+    {
+        return $this->hasMany(InventoryReceiptCostProposal::class, 'inventory_document_id')->orderByDesc('revision');
     }
 
     public function branchStore(): BelongsTo

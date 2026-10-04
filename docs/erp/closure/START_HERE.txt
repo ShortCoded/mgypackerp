@@ -1,0 +1,13 @@
+FAST EXECUTION — IMPLEMENT THE MGYPACK CLOSURE PACK
+
+Continue the same MgyPack repository and working tree. Read MGYPACK_IMPLEMENTATION_DIRECTIVE.md and MGYPACK_ACCEPTANCE_MATRIX.md from this attached pack or docs/erp/closure/ if they have been copied there. Preserve existing changes and follow current AGENTS.md, PROJECT_BUSNIESS_CONTEXT.md, delegation rules and available MCP tools.
+
+This is implementation, not another readiness review. Convert the matrix into a live closure ledger, verify existing work once, then implement every unresolved locally executable requirement. A new guard, a disabled feature, a changed status label, or a green test count is not completion of an absent business workflow.
+
+Complete effective-dated payroll transfers and calculations, safe document correction/reversal paths, the full costing matrix in its correct analytical/posting roles, isolated usable acceptance data, end-to-end business cycles, and all-report print/export verification. Do not narrow scope or repeat the previous blocker list instead of implementing it.
+
+Keep customer approval separate from code completion. Use labeled fixtures for missing test inputs, never fabricated customer history or self-approved financial rates/balances. Preserve historical-source exceptions and implement the import/approval paths. Do not use missing customer evidence as an excuse to leave independent code unfinished.
+
+Run the integrated gate on the final tree and produce ENGINEERING_READY, MIGRATION_REHEARSAL, CUSTOMER_DATA_APPROVAL, CUSTOMER_UAT, and LIVE_RELEASE_DECISION separately, with evidence. Do not commit, push, deploy or modify the live customer database. Do not claim readiness that was not demonstrated.
+
+Start with the bounded preflight and continue into implementation now. If an actual tool/session interruption occurs, save the exact verified progress and next executable action so the next session resumes rather than restarting the audit.

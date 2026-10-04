@@ -38,6 +38,7 @@ return [
             'updated_successfully' => 'Raw material document number settings updated successfully.',
         ],
         'messages' => [
+            'classification_has_inventory_history' => 'An item with inventory history cannot change classification. Use a separate item for the new classification to preserve account attribution.',
             'bulk_deleted' => ':count raw materials deleted successfully.',
             'bulk_delete_confirm_text' => 'You are about to delete :count raw materials.',
             'bulk_delete_confirm_title' => 'Delete selected raw materials?',
@@ -89,6 +90,7 @@ return [
             'updated_successfully' => 'Packaging material document number settings updated successfully.',
         ],
         'messages' => [
+            'classification_has_inventory_history' => 'An item with inventory history cannot change classification. Use a separate item for the new classification to preserve account attribution.',
             'bulk_deleted' => ':count packaging materials deleted successfully.',
             'bulk_delete_confirm_text' => 'You are about to delete :count packaging materials.',
             'bulk_delete_confirm_title' => 'Delete selected packaging materials?',
@@ -138,6 +140,7 @@ return [
         'group' => 'Group',
         'cost_as_inventory' => 'Inventory Cost',
         'tracks_expiry' => 'Track Expiry',
+        'tracks_serials' => 'Track individual serials',
         'default_shelf_life_days' => 'Default Shelf Life (days)',
         'is_displayable' => 'Displayable',
         'options' => 'Options',
@@ -287,6 +290,7 @@ return [
         'help' => 'Set how this product is handled in storage, costing, and operational display.',
         'cost_as_inventory' => 'Included in inventory costing.',
         'tracks_expiry' => 'Require batch expiry dates and block expired stock from issue.',
+        'tracks_serials' => 'Each base unit has a unique serial selected in stock issues and retained in transfers and returns.',
         'is_displayable' => 'Available in operational selectors.',
     ],
     'document_number_control' => [
@@ -308,6 +312,7 @@ return [
         'no_next_record' => 'No next product record.',
     ],
     'messages' => [
+        'classification_has_inventory_history' => 'An item with inventory history cannot change classification. Use a separate item for the new classification to preserve account attribution.',
         'active_document_delete_blocked' => 'This product is used by active sales document :document. Close or cancel that document before deleting the product.',
         'action_forbidden' => 'You do not have permission to use this save action.',
         'bulk_deleted' => ':count products deleted successfully.',

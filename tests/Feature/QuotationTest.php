@@ -354,6 +354,10 @@ test('quotation grouped numeric input persists canonically and displays grouped 
     $actor = quotationActor(['quotations.view', 'quotations.create', 'quotations.edit']);
     quotationSetPrice($product, $context['currency'], '2.5');
     $payload = quotationPayload($product, $unit, $context['currency'], [
+        'quotation_date' => now()->toDateString(),
+        'revision_date' => now()->toDateString(),
+        'valid_until' => now()->addMonth()->toDateString(),
+        'payment_milestones' => [],
         'lines' => [[
             'product_doc_num' => $product->doc_num,
             'description' => 'Grouped numeric line',
@@ -379,7 +383,7 @@ test('quotation grouped numeric input persists canonically and displays grouped 
     $line = $quotation->currentRevision->lines->sole();
 
     expect((string) $line->quantity)->toBe('1250.50000000')
-        ->and((string) $line->unit_price)->toBe('2.5000')
+        ->and((string) $line->unit_price)->toBe('2.50000000')
         ->and((string) $quotation->currentRevision->total)->toBe('3126.2500');
 
     $this->actingAs($actor)
@@ -472,12 +476,12 @@ test('quotation totals stay consistent across save view edit and print without r
         ->getContent();
     $show = HTMLDocument::createFromString($showHtml, LIBXML_NOERROR);
 
-    expect(trim($show->querySelector('.js-quotation-subtotal')->textContent))->toBe('7,625')
-        ->and(trim($show->querySelector('.js-quotation-discount')->textContent))->toBe('0')
+    expect(trim($show->querySelector('.js-quotation-subtotal')->textContent))->toBe('7,625.00')
+        ->and(trim($show->querySelector('.js-quotation-discount')->textContent))->toBe('0.00')
         ->and(trim($show->querySelector('.js-quotation-tax')->textContent))->toBe('381.25')
         ->and(trim($show->querySelector('.js-quotation-total')->textContent))->toBe('8,006.25')
         ->and(collect($show->querySelectorAll('.js-quotation-line-total'))->map(fn ($node): string => trim($node->textContent))->all())
-        ->toBe(['4,200', '3,806.25']);
+        ->toBe(['4,200.00', '3,806.25']);
 
     $this->actingAs($actor)
         ->get(route('admin.sales.quotations.edit', $quotation))
@@ -730,6 +734,197 @@ test('accepted quotation converts once into a fully linked sales order without r
         ->and($quotation->fresh()->canDeleteDraft())->toBeFalse();
     expect(fn () => app(QuotationService::class)->cancel($quotation))->toThrow(DomainException::class);
     expect(fn () => app(QuotationService::class)->delete($quotation))->toThrow(DomainException::class);
+});
+
+test('accepted quotation keeps eight place price and exact total through sales order conversion and print', function (): void {
+    ['actor' => $actor, 'quotation' => $quotation] = createQuotationThroughHttp([
+        'quotations.print',
+        'sales_orders.create',
+        'sales_orders.view',
+        'sales_orders.view_prices',
+        'sales_orders.print',
+    ], [
+        'valid_until' => now()->addMonth()->toDateString(),
+        'payment_milestones' => [],
+        'lines' => [[
+            'product_doc_num' => 'Product-00901',
+            'description' => 'Synthetic exact-price order',
+            'unit_doc_num' => 'Unit-00501',
+            'quantity' => '10000',
+            'unit_price' => '22.54545',
+            'discount_type' => null,
+            'discount_value' => '0',
+            'tax_rate' => '0',
+            'requested_date' => now()->addDays(10)->toDateString(),
+        ]],
+    ]);
+
+    $sourceLine = $quotation->currentRevision->lines()->sole();
+    expect($sourceLine->unit_price)->toBe('22.54545000')
+        ->and($quotation->currentRevision->total)->toBe('225454.5000');
+
+    $this->actingAs($actor)->get(route('admin.sales.quotations.show', $quotation))
+        ->assertOk()->assertSee('22.54545')->assertSee('225,454.50');
+    $quotationPdf = $this->actingAs($actor)->get(route('admin.sales.quotations.print', $quotation))->assertOk();
+    expect(quotationPdfText($quotationPdf->getContent()))->toContain('22.54545')->toContain('225,454.50');
+
+    $this->actingAs($actor)->postJson(route('admin.sales.quotations.mark-sent', $quotation))->assertOk();
+    $this->actingAs($actor)->postJson(route('admin.sales.quotations.accept', $quotation))->assertOk();
+    $this->actingAs($actor)->postJson(route('admin.sales.quotations.convert', $quotation))->assertCreated();
+
+    $order = SalesOrder::query()->with('lines')->sole();
+    expect($order->lines->sole()->unit_price)->toBe('22.54545000')
+        ->and($order->lines->sole()->line_total)->toBe('225454.5000')
+        ->and($order->total_amount)->toBe('225454.5000');
+
+    $this->actingAs($actor)->get(route('admin.sales.sales-orders.show', $order))
+        ->assertOk()->assertSee('22.54545')->assertSee('225,454.50');
+    $orderPdf = $this->actingAs($actor)->get(route('admin.sales.sales-orders.print', $order))->assertOk();
+    expect(quotationPdfText($orderPdf->getContent()))->toContain('22.54545')->toContain('225,454.50');
+});
+
+test('eight place quotation price survives unchanged edit clone preview and order conversion', function (): void {
+    $overrides = [
+        'valid_until' => now()->addMonth()->toDateString(),
+        'payment_milestones' => [],
+        'lines' => [[
+            'product_doc_num' => 'Product-00901',
+            'description' => 'Synthetic eight-place price',
+            'unit_doc_num' => 'Unit-00501',
+            'quantity' => '1',
+            'unit_price' => '22.54545123',
+            'discount_type' => null,
+            'discount_value' => '0',
+            'tax_rate' => '0',
+            'requested_date' => now()->addDays(10)->toDateString(),
+        ]],
+    ];
+    ['actor' => $actor, 'quotation' => $quotation, 'product' => $product, 'unit' => $unit, 'currency' => $currency] = createQuotationThroughHttp([
+        'quotations.clone',
+        'sales_orders.create',
+    ], $overrides);
+
+    expect($quotation->currentRevision->lines()->sole()->unit_price)->toBe('22.54545123');
+    foreach (['show', 'edit', 'clone'] as $action) {
+        $this->actingAs($actor)->get(route('admin.sales.quotations.'.$action, $quotation))
+            ->assertOk()->assertSee('22.54545123');
+    }
+
+    $this->actingAs($actor)->putJson(route('admin.sales.quotations.update', $quotation), quotationPayload($product, $unit, $currency, $overrides))
+        ->assertOk();
+    expect($quotation->fresh()->currentRevision->lines()->sole()->unit_price)->toBe('22.54545123');
+
+    $this->actingAs($actor)->postJson(route('admin.sales.quotations.mark-sent', $quotation))->assertOk();
+    $this->actingAs($actor)->postJson(route('admin.sales.quotations.accept', $quotation))->assertOk();
+    $this->actingAs($actor)->postJson(route('admin.sales.quotations.convert', $quotation))->assertCreated();
+
+    expect(SalesOrder::query()->sole()->lines()->sole()->unit_price)->toBe('22.54545123');
+});
+
+test('quotation accepts localized eight-place price and rejects a ninth entered decimal', function (): void {
+    $context = quotationContext();
+    ['unit' => $unit, 'product' => $product] = quotationProductFixture($context['company']);
+    quotationSetPrice($product, $context['currency'], '22.54545123');
+    $actor = quotationActor(['quotations.create', 'quotations.view']);
+    $payload = quotationPayload($product, $unit, $context['currency'], [
+        'lines' => [[
+            'product_doc_num' => $product->doc_num,
+            'unit_doc_num' => $unit->doc_num,
+            'quantity' => '٢',
+            'unit_price' => '٢٢٫٥٤٥٤٥١٢٣',
+            'discount_value' => '٠',
+            'tax_rate' => '٠',
+            'requested_date' => now()->addDays(10)->toDateString(),
+        ]],
+    ]);
+
+    $this->actingAs($actor)->postJson(route('admin.sales.quotations.store'), $payload)->assertOk();
+    expect(Quotation::query()->sole()->currentRevision->lines()->sole()->unit_price)->toBe('22.54545123');
+
+    $invalid = $payload;
+    $invalid['lines'][0]['unit_price'] = '22.545451234';
+    $this->actingAs($actor)->postJson(route('admin.sales.quotations.store'), $invalid)
+        ->assertUnprocessable()->assertJsonValidationErrors(['lines.0.unit_price']);
+    expect(Quotation::query()->count())->toBe(1);
+});
+
+test('unchanged quotation edit and saved clone retain source price after price list changes', function (): void {
+    $line = [
+        'product_doc_num' => 'Product-00901',
+        'description' => 'Synthetic snapshot price',
+        'unit_doc_num' => 'Unit-00501',
+        'quantity' => '1',
+        'unit_price' => '22.54545123',
+        'discount_type' => null,
+        'discount_value' => '0',
+        'tax_rate' => '0',
+        'requested_date' => now()->addDays(10)->toDateString(),
+    ];
+    $overrides = ['valid_until' => now()->addMonth()->toDateString(), 'payment_milestones' => [], 'lines' => [$line]];
+    ['actor' => $actor, 'quotation' => $quotation, 'product' => $product, 'unit' => $unit, 'currency' => $currency] = createQuotationThroughHttp([
+        'quotations.clone',
+    ], $overrides);
+    $sourceLine = $quotation->currentRevision->lines()->sole();
+    quotationSetPrice($product, $currency, '31.12345678');
+
+    $editPayload = quotationPayload($product, $unit, $currency, $overrides);
+    $editPayload['lines'][0]['source_line_public_uuid'] = $sourceLine->public_uuid;
+    $this->actingAs($actor)->putJson(route('admin.sales.quotations.update', $quotation), $editPayload)->assertOk();
+    expect($quotation->fresh()->currentRevision->lines()->sole()->unit_price)->toBe('22.54545123');
+
+    $clonePage = $this->actingAs($actor)->get(route('admin.sales.quotations.clone', $quotation))->assertOk();
+    $clonePage->assertSee('22.54545123')->assertSee($quotation->doc_num);
+    $clonePayload = quotationPayload($product, $unit, $currency, $overrides);
+    $clonePayload['clone_source_doc_num'] = $quotation->doc_num;
+    $clonePayload['clone_source_token'] = (string) Illuminate\Support\Str::uuid();
+    $clonePayload['lines'][0]['source_line_public_uuid'] = $sourceLine->public_uuid;
+    $this->actingAs($actor)->postJson(route('admin.sales.quotations.store'), $clonePayload)->assertOk();
+
+    $clone = Quotation::query()->whereKeyNot($quotation->getKey())->sole();
+    expect($clone->currentRevision->lines()->sole()->unit_price)->toBe('22.54545123')
+        ->and($clone->currentRevision->total)->toBe('22.5455');
+
+    $mixedSources = $clonePayload;
+    $mixedSources['source_request_doc_num'] = 'SYN-OTHER-SOURCE';
+    $this->actingAs($actor)->postJson(route('admin.sales.quotations.store'), $mixedSources)
+        ->assertUnprocessable()->assertJsonValidationErrors(['source_request_doc_num']);
+    expect(Quotation::query()->count())->toBe(2);
+
+    $changed = $overrides;
+    $changed['lines'][0]['quantity'] = '2';
+    $changed['lines'][0]['source_line_public_uuid'] = $clone->currentRevision->lines()->sole()->public_uuid;
+    $this->actingAs($actor)->putJson(route('admin.sales.quotations.update', $clone), quotationPayload($product, $unit, $currency, $changed))->assertOk();
+    expect($clone->fresh()->currentRevision->lines()->sole()->unit_price)->toBe('31.12345678');
+
+    $forged = $changed;
+    $forged['lines'][0]['source_line_public_uuid'] = (string) Illuminate\Support\Str::uuid();
+    $this->actingAs($actor)->putJson(route('admin.sales.quotations.update', $clone), quotationPayload($product, $unit, $currency, $forged))
+        ->assertUnprocessable()->assertJsonPath('message', __('quotations.messages.source_line_changed'));
+    expect($clone->fresh()->currentRevision->lines()->sole()->unit_price)->toBe('31.12345678');
+
+    $otherBranch = Branch::query()->create([
+        'company_id' => $quotation->company_id,
+        'name' => 'Synthetic other quotation branch',
+        'type' => Branch::TypeWarehouse,
+        'status' => 'active',
+    ]);
+    $quotation->forceFill(['branch_id' => $otherBranch->getKey()])->save();
+    $this->actingAs($actor)->putJson(route('admin.sales.quotations.update', $quotation), $editPayload)->assertNotFound();
+    expect((int) $quotation->fresh()->branch_id)->toBe((int) $otherBranch->getKey());
+    $this->actingAs($actor)->postJson(route('admin.sales.quotations.store'), $clonePayload)->assertNotFound();
+    expect(Quotation::query()->count())->toBe(2);
+});
+
+test('stale quotation model cannot edit a revision accepted after it was loaded', function (): void {
+    ['actor' => $actor, 'quotation' => $quotation] = createQuotationThroughHttp();
+    $staleQuotation = Quotation::query()->with('currentRevision')->findOrFail($quotation->getKey());
+
+    $this->actingAs($actor)->postJson(route('admin.sales.quotations.mark-sent', $quotation))->assertOk();
+    $this->actingAs($actor)->postJson(route('admin.sales.quotations.accept', $quotation))->assertOk();
+
+    expect(fn () => app(QuotationService::class)->update($staleQuotation, []))
+        ->toThrow(DomainException::class, __('quotations.messages.revision_not_draft'));
+    expect($quotation->fresh()->currentRevision->status)->toBe(QuotationRevision::StatusAccepted);
 });
 
 test('25-line quotation remains complete across English and Arabic mPDF pages', function (): void {

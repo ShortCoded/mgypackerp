@@ -1077,7 +1077,7 @@ class IntegratedPlasticFactorySeeder extends Seeder
             'quotation_type' => Quotation::TypeStandard,
             'subject' => 'Finished-product quality release service',
             'quotation_date' => '2026-08-22',
-            'valid_until' => '2026-09-30',
+            'valid_until' => max('2026-09-30', now()->addMonth()->toDateString()),
             'currency_doc_num' => $resources['egp']->doc_num,
             'exchange_rate' => 1,
             'revision_date' => '2026-08-22',

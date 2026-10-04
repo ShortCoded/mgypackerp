@@ -35,6 +35,29 @@ class HrEmployee extends Model
             ->where(fn (Builder $query): Builder => $query->whereNull('termination_date')->orWhereDate('termination_date', '>=', $start));
     }
 
+    /** @param Builder<self> $query @param list<int> $branchIds */
+    public function scopeAssignedToPayrollBranchesDuring(Builder $query, array $branchIds, string $start, string $end): Builder
+    {
+        if ($branchIds === []) {
+            return $query->whereRaw('1 = 0');
+        }
+
+        return $query->where(function (Builder $branches) use ($branchIds, $start, $end): void {
+            $branches->whereExists(fn ($assignments) => $assignments
+                ->selectRaw('1')
+                ->from('hr_employee_organization_assignments')
+                ->whereColumn('employee_id', 'hr_employees.id')
+                ->whereIn('branch_id', $branchIds)
+                ->whereDate('effective_from', '<=', $end)
+                ->where(fn ($dates) => $dates->whereNull('effective_to')->orWhereDate('effective_to', '>=', $start)))
+                ->orWhere(fn (Builder $legacy) => $legacy->whereIn('branch_id', $branchIds)
+                    ->whereNotExists(fn ($assignments) => $assignments
+                        ->selectRaw('1')
+                        ->from('hr_employee_organization_assignments')
+                        ->whereColumn('employee_id', 'hr_employees.id')));
+        });
+    }
+
     protected $table = 'hr_employees';
 
     /**

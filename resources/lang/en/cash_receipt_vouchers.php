@@ -98,6 +98,7 @@ return [
         'select_cashbox' => 'Select Cashbox',
         'select_currency' => 'Select Currency',
         'select_account' => 'Select Account',
+        'select_cost_center' => 'Select Cost Center',
         'add_line_title' => 'Add row',
         'duplicate_line_title' => 'Duplicate row',
         'delete_line_title' => 'Delete row',

@@ -8,6 +8,7 @@ use Modules\Production\Http\Controllers\ProductionOrderController;
 use Modules\Production\Http\Controllers\ProductionQualityController;
 use Modules\Production\Http\Controllers\ProductionReportController;
 use Modules\Production\Http\Controllers\ProductionRunController;
+use Modules\Production\Http\Controllers\ProductionRunCorrectionController;
 use Modules\Production\Http\Controllers\ProductionStageController;
 use Modules\Production\Http\Controllers\ProductProductionStageController;
 
@@ -43,6 +44,7 @@ Route::middleware('auth')
         Route::get('/material-requests/{productionMaterialRequest}/print', [ProductionMaterialRequestController::class, 'print'])->middleware('can:production.material_requests.print')->name('material-requests.print');
         Route::post('/material-requests/{productionMaterialRequest}/approve', [ProductionMaterialRequestController::class, 'approve'])->middleware(['can:production.material_requests.approve', IdempotentDocumentSubmission::class])->name('material-requests.approve');
         Route::post('/material-requests/{productionMaterialRequest}/allocate-shortage', [ProductionMaterialRequestController::class, 'allocateShortage'])->middleware(['can:production.material_requests.approve', IdempotentDocumentSubmission::class.':required'])->name('material-requests.allocate-shortage');
+        Route::post('/material-requests/{productionMaterialRequest}/reconcile-reservations', [ProductionMaterialRequestController::class, 'reconcileReservations'])->middleware(['can:production.material_requests.approve', IdempotentDocumentSubmission::class.':required'])->name('material-requests.reconcile-reservations');
         Route::post('/material-requests/{productionMaterialRequest}/issue', [ProductionMaterialRequestController::class, 'issue'])->middleware(IdempotentDocumentSubmission::class.':required')->name('material-requests.issue');
         Route::get('/material-requests/{productionMaterialRequest}', [ProductionMaterialRequestController::class, 'show'])->middleware('can:production.material_requests.view')->name('material-requests.show');
 
@@ -145,6 +147,10 @@ Route::middleware('auth')
             Route::get('/{productionRun}/print', 'print')->middleware('can:production.runs.print')->name('print');
             Route::get('/{productionRun}/materials/print', 'printMaterials')->middleware('can:production.runs.print')->name('materials.print');
             Route::get('/{productionRun}/quality/print', 'printQuality')->middleware('can:production.runs.print')->name('quality.print');
+            Route::get('/{productionRun}/corrections', [ProductionRunCorrectionController::class, 'index'])->name('corrections.index');
+            Route::post('/{productionRun}/corrections', [ProductionRunCorrectionController::class, 'store'])->name('corrections.store');
+            Route::post('/{productionRun}/corrections/{correction}/approve', [ProductionRunCorrectionController::class, 'approve'])->middleware('can:production.runs.correct_approve')->name('corrections.approve');
+            Route::post('/{productionRun}/corrections/{correction}/reject', [ProductionRunCorrectionController::class, 'reject'])->middleware('can:production.runs.correct_approve')->name('corrections.reject');
             Route::get('/{productionRun}/completion/print', 'printCompletion')->middleware('can:production.runs.print')->name('completion.print');
             Route::post('/{productionRun}/reserve', 'reserve')->middleware(['can:production.runs.reserve', IdempotentDocumentSubmission::class])->name('reserve');
             Route::post('/{productionRun}/issue', 'issue')->middleware(['can:production.runs.issue', IdempotentDocumentSubmission::class.':required'])->name('issue');
@@ -176,6 +182,10 @@ Route::middleware('auth')
             ->defaults('section', 'control')
             ->middleware('can:production.reports.control.view')
             ->name('reports.control');
+        Route::get('/reports/operations/control/select2/{kind}', [ProductionReportController::class, 'controlLookup'])
+            ->whereIn('kind', ['product', 'machine', 'shift', 'stage', 'order'])
+            ->middleware('can:production.reports.control.view')
+            ->name('reports.control.lookup');
         Route::get('/reports/operations/control/runs/{productionRun}', [ProductionReportController::class, 'showControlRun'])
             ->middleware(['can:production.reports.control.view', 'can:production.runs.view'])
             ->name('reports.control.runs.show');

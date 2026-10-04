@@ -27,6 +27,7 @@
 <script src="{{ $erpAsset->url('vendors/sweetalert2/sweetalert2.all.min.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/alerts.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/page-cache-guard.js') }}"></script>
+<script src="{{ $erpAsset->url('assets/js/modules/Core/server-validation.js') }}"></script>
 @auth
     @php
         $appSession = [

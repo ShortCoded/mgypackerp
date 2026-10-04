@@ -6,6 +6,7 @@ test('sales document summary calculates every operational and financial total', 
     $script = <<<'JS'
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const path = require('node:path');
 const vm = require('node:vm');
 const source = fs.readFileSync(process.argv[1], 'utf8').replace(
     "document.addEventListener('DOMContentLoaded', () => {",
@@ -40,18 +41,17 @@ const form = {
     }
 };
 const document = {
+    readyState: 'loading',
     querySelector: () => null,
     addEventListener: () => {}
 };
+const numericSource = fs.readFileSync(path.join(path.dirname(process.argv[1]), '../Core/numeric-input.js'), 'utf8');
 const window = {
     jQuery: {},
-    salesCycleMessages: {},
-    AppNumbers: {
-        number: value => Number(value) || 0,
-        format: value => String(Number(Number(value).toFixed(4)))
-    }
+    salesCycleMessages: {}
 };
-vm.runInNewContext(source, {document, window, console, crypto: {randomUUID: () => 'uuid'}});
+vm.runInNewContext(numericSource, {document, window, BigInt, Number, String, Math});
+vm.runInNewContext(source, {document, window, console, crypto: {randomUUID: () => 'uuid'}, BigInt, Number, String, Math});
 window.__calculateDocumentSummary(form);
 
 assert.equal(outputs['[data-sales-summary-lines]'].textContent, '2');

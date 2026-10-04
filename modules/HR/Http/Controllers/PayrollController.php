@@ -75,7 +75,7 @@ class PayrollController extends Controller
                 'branch.doc_num as branch_doc_num',
                 'branch.name as branch_name',
             ])
-            ->selectRaw('COUNT(payslip.id) as employee_count')
+            ->selectRaw('COUNT(DISTINCT payslip.employee_id) as employee_count')
             ->selectRaw('COALESCE(SUM(payslip.gross_amount), 0) as gross_amount')
             ->selectRaw('COALESCE(SUM(payslip.deduction_amount), 0) as deduction_amount')
             ->selectRaw('COALESCE(SUM(payslip.net_amount), 0) as net_amount')
@@ -272,6 +272,11 @@ class PayrollController extends Controller
         $previousRun = $this->findRunOrFail($request, $payrollRun, $companyId, (string) $company->doc_num);
         $run = $this->guardDomain(fn (): object => DB::transaction(function () use ($request, $payrollRun, $companyId, $previousRun): object {
             $run = $this->lifecycle->submitForReview($payrollRun, $companyId);
+            $reviewCycle = DB::table(config('activitylog.table_name', 'activity_log'))
+                ->where('company_id', $companyId)
+                ->where('action', 'hr.payroll.returned_for_recalculation')
+                ->where('properties->payroll_run_id', $payrollRun)
+                ->count();
             $this->audit->logStrict(
                 $request,
                 'hr.payroll.reviewed',
@@ -282,7 +287,7 @@ class PayrollController extends Controller
                     'status' => $run->status,
                 ],
                 null,
-                'payroll-run:'.$payrollRun.':reviewed',
+                'payroll-run:'.$payrollRun.':reviewed:cycle:'.$reviewCycle,
             );
 
             return $run;
@@ -333,6 +338,35 @@ class PayrollController extends Controller
         ]);
     }
 
+    public function returnForRecalculation(Request $request, int $payrollRun): JsonResponse
+    {
+        abort_unless((bool) $request->user()?->can('hr.payroll_approval.review'), 403);
+        $companyId = $this->companies->requireCompanyId($request);
+        $company = $this->companies->currentCompany($request);
+        abort_unless($company !== null, 409);
+        $this->findRunOrFail($request, $payrollRun, $companyId, (string) $company->doc_num);
+
+        $run = $this->guardDomain(fn (): object => DB::transaction(function () use ($request, $payrollRun, $companyId): object {
+            $run = $this->lifecycle->returnForRecalculation($payrollRun, $companyId);
+            $this->audit->logStrict(
+                $request,
+                'hr.payroll.returned_for_recalculation',
+                $companyId,
+                ['payroll_run_id' => $payrollRun, 'status' => $run->status],
+                null,
+                'payroll-run:'.$payrollRun.':return:'.Str::uuid(),
+            );
+
+            return $run;
+        }));
+
+        return response()->json([
+            'success' => true,
+            'message' => __('hr_payroll.messages.returned_for_recalculation'),
+            'data' => ['status' => $run->status],
+        ]);
+    }
+
     public function storePayment(CreatePayrollPaymentRequest $request, int $payrollRun): JsonResponse
     {
         $companyId = $this->companies->requireCompanyId($request);
@@ -365,7 +399,9 @@ class PayrollController extends Controller
             'data' => [
                 'payment_id' => $result['payment']->id,
                 'voucher_doc_num' => $result['voucher']->doc_num,
-                'voucher_url' => route('admin.finance.cash-payment-vouchers.show', $result['voucher']->doc_num),
+                'voucher_url' => $request->user()?->can('cash_payment_vouchers.view')
+                    ? route('admin.finance.cash-payment-vouchers.show', $result['voucher']->doc_num) : null,
+                'payroll_url' => route('admin.hr.payroll-preparation.index', ['run' => $payrollRun, 'as_of' => $request->validated('payment_date')]),
             ],
         ]);
     }

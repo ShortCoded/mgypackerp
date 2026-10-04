@@ -2,7 +2,6 @@
 
 namespace Database\Seeders;
 
-use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -25,49 +24,36 @@ class DefaultOperatingContextSeeder extends Seeder
         DB::transaction(function (): void {
             $company = $this->seedCompany();
 
+            if (! $company instanceof Company || $company->status !== 'active') {
+                return;
+            }
+
             $this->seedBranch($company);
             $this->seedFinancialPeriod($company);
         });
     }
 
-    private function seedCompany(): Company
+    private function seedCompany(): ?Company
     {
         $company = Company::withTrashed()
             ->where('name', self::CompanyName)
             ->first();
 
         if ($company instanceof Company) {
-            if ($company->trashed()) {
-                $company->restore();
-            }
+            return $company->trashed() ? null : $company;
+        }
 
-            $hasOtherActiveMain = Company::query()
-                ->main()
-                ->whereKeyNot($company->getKey())
-                ->exists();
-
-            $company->forceFill([
-                'name' => $company->name ?: self::CompanyName,
-                'legal_name' => $company->legal_name ?: self::CompanyName,
-                'status' => 'active',
-                'country' => $company->country ?: 'Egypt',
-                'is_main' => ! $hasOtherActiveMain,
-                'notes' => $company->notes ?: 'Seeded default company for fresh ERP setup.',
-            ])->save();
-
-            $this->ensureDocumentNumber($company, 'companies');
-
-            return $company->refresh();
+        if (Company::withTrashed()->exists()) {
+            return null;
         }
 
         /** @var Company $company */
-        $hasActiveMain = Company::query()->main()->exists();
         $company = Company::query()->create([
             ...app(DocumentNumberService::class)->next('companies', Company::class),
             'name' => self::CompanyName,
             'legal_name' => self::CompanyName,
             'status' => 'active',
-            'is_main' => ! $hasActiveMain,
+            'is_main' => true,
             'country' => 'Egypt',
             'notes' => 'Seeded default company for fresh ERP setup.',
         ]);
@@ -83,21 +69,7 @@ class DefaultOperatingContextSeeder extends Seeder
             ->first();
 
         if ($branch instanceof Branch) {
-            if ($branch->trashed()) {
-                $branch->restore();
-            }
-
-            $branch->forceFill([
-                'company_id' => $company->getKey(),
-                'name' => $branch->name ?: self::BranchName,
-                'type' => $branch->type ?: self::BranchType,
-                'status' => 'active',
-                'notes' => $branch->notes ?: 'Seeded default branch for fresh ERP setup.',
-            ])->save();
-
-            $this->ensureDocumentNumber($branch, 'branches');
-
-            return $branch->refresh();
+            return $branch;
         }
 
         /** @var Branch $branch */
@@ -130,28 +102,7 @@ class DefaultOperatingContextSeeder extends Seeder
             ->first();
 
         if ($period instanceof FinancialPeriod) {
-            if ($period->trashed()) {
-                $period->restore();
-            }
-
-            $values = [
-                'company_id' => $company->getKey(),
-                'name' => $period->name ?: $name,
-                'from_date' => $period->from_date ?: $fromDate,
-                'to_date' => $period->to_date ?: $toDate,
-                'is_closed' => false,
-                'notes' => $period->notes ?: 'Seeded default financial period for fresh ERP setup.',
-            ];
-
-            if (Schema::hasColumn('financial_periods', 'allows_opening_entries')) {
-                $values['allows_opening_entries'] = true;
-            }
-
-            $period->forceFill($values)->save();
-
-            $this->ensureDocumentNumber($period, 'financial_periods', $company->getKey());
-
-            return $period->refresh();
+            return $period;
         }
 
         $values = [
@@ -172,18 +123,5 @@ class DefaultOperatingContextSeeder extends Seeder
         $period = FinancialPeriod::query()->create($values);
 
         return $period->refresh();
-    }
-
-    private function ensureDocumentNumber(Model $record, string $key, ?int $companyId = null): void
-    {
-        if ($record->getAttribute('doc_number') !== null && $record->getAttribute('doc_num') !== null) {
-            return;
-        }
-
-        $documentNumber = $companyId === null
-            ? app(DocumentNumberService::class)->next($key, $record::class)
-            : app(DocumentNumberService::class)->nextForCompany($key, $record::class, $companyId);
-
-        $record->forceFill($documentNumber)->save();
     }
 }

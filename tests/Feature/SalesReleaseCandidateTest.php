@@ -178,7 +178,7 @@ test('new delivery invoice and production demand use their date period after sou
 test('approved requests convert partially through quotations without losing source quantities', function (): void {
     $fixture = salesCycleFixture();
     createSalesPriceList($fixture, null, [['product' => $fixture['finished'], 'price' => '10']]);
-    $permissions = ['sales_requests.view', 'sales_requests.create', 'sales_requests.edit', 'sales_requests.approve', 'sales_requests.convert', 'sales_requests.print', 'quotations.create', 'sales_orders.create'];
+    $permissions = ['sales_requests.view', 'sales_requests.create', 'sales_requests.edit', 'sales_requests.approve', 'sales_requests.convert', 'sales_requests.cancel', 'sales_requests.print', 'quotations.create', 'sales_orders.create'];
     foreach ($permissions as $permission) {
         Permission::findOrCreate($permission, 'web');
     }
@@ -209,6 +209,16 @@ test('approved requests convert partially through quotations without losing sour
     expect($second->lines->first()->quantity)->toBe('35.00000000')->and($quotation->fresh()->status)->toBe('converted');
     $this->get(route('admin.sales.customer-requests.show', $request))->assertOk();
     $this->get(route('admin.sales.customer-requests.print', $request))->assertOk()->assertHeader('content-type', 'application/pdf');
+    $this->postJson(route('admin.sales.customer-requests.convert', $request), [
+        'target' => 'quotation',
+        'lines' => [['public_id' => $sourceLine->public_id, 'quantity' => '40']],
+    ])->assertCreated();
+    expect($request->fresh()->status)->toBe('converted')
+        ->and($request->fresh()->closed_at)->not->toBeNull()
+        ->and($sourceLine->fresh()->remainingQuantity())->toBe('0.00000000');
+    $this->postJson(route('admin.sales.customer-requests.transition', $request), [
+        'status' => 'closed', 'reason' => 'Duplicate manual close',
+    ])->assertUnprocessable();
 });
 
 test('request can begin without a customer and no-op save preserves its line identity', function (): void {
@@ -224,6 +234,8 @@ test('request can begin without a customer and no-op save preserves its line ide
 
 test('credit limits fall back to customer currency settings and drafts retain order exposure', function (): void {
     $fixture = salesCycleFixture();
+    request()->setLaravelSession(app('session.store'));
+    request()->session()->put(salesCycleSession($fixture));
     CustomerCommercialAgreement::query()->where('customer_id', $fixture['customer']->id)->delete();
     CustomerCreditLimit::query()->create(['company_id' => $fixture['company']->id, 'customer_id' => $fixture['customer']->id, 'currency_id' => $fixture['currency']->id, 'credit_limit' => '2000']);
     $orders = app(SalesOrderService::class);
@@ -383,7 +395,7 @@ test('price suggestions use the latest applicable price list', function (): void
     $fixture['user']->givePermissionTo('sales_orders.create');
     $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
     $query = ['customer_doc_num' => $fixture['customer']->doc_num, 'product_doc_num' => $fixture['service']->doc_num, 'unit_doc_num' => $fixture['unit']->doc_num, 'currency_doc_num' => $fixture['currency']->doc_num];
-    $this->getJson(route('admin.sales.price-suggestion', $query))->assertOk()->assertJsonPath('data.unit_price', '10.0000')->assertJsonPath('data.source', $list->doc_num);
+    $this->getJson(route('admin.sales.price-suggestion', $query))->assertOk()->assertJsonPath('data.unit_price', '10.00000000')->assertJsonPath('data.source', $list->doc_num);
     $this->getJson(route('admin.sales.price-suggestion', [...$query, 'product_doc_num' => $fixture['finished']->doc_num]))->assertOk()->assertJsonPath('data', null);
 });
 

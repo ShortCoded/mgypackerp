@@ -118,7 +118,8 @@ class PayrollReportService
             ->when(isset($filters['period_from']), fn (Builder $query): Builder => $query->where('period.period_end', '>=', $filters['period_from']))
             ->when(isset($filters['period_to']), fn (Builder $query): Builder => $query->where('period.period_start', '<=', $filters['period_to']))
             ->when(isset($filters['branch_doc_num']), fn (Builder $query): Builder => $query->where('branch.doc_num', $filters['branch_doc_num']))
-            ->when(isset($filters['status']), fn (Builder $query): Builder => $query->where('payslip.status', $filters['status']))
+            ->when(isset($filters['status']), fn (Builder $query): Builder => $query->where('run.status', $filters['status']),
+                fn (Builder $query): Builder => $query->where('run.status', '!=', 'reversed'))
             ->when(isset($filters['run_id']), fn (Builder $query): Builder => $query->where('run.id', $filters['run_id']))
             ->when(isset($filters['employee']), function (Builder $query) use ($filters): Builder {
                 $term = '%'.str_replace(['%', '_'], ['\\%', '\\_'], (string) $filters['employee']).'%';
@@ -210,7 +211,7 @@ class PayrollReportService
             ->select([
                 'payslip.id', 'payslip.payroll_run_id', 'payslip.employee_id', 'payslip.company_id', 'payslip.branch_id', 'payslip.currency_id',
                 'payslip.employee_doc_num', 'payslip.employee_name', 'payslip.gross_amount', 'payslip.deduction_amount',
-                'payslip.net_amount', 'payslip.status', 'payslip.created_at', 'period.period_start', 'period.period_end',
+                'payslip.net_amount', 'run.status', 'payslip.created_at', 'period.period_start', 'period.period_end',
                 'branch.doc_num as branch_doc_num', 'branch.name as branch_name', 'currency.code as currency_code',
             ]);
     }
@@ -262,6 +263,11 @@ class PayrollReportService
             ->get(['item.id', 'item.amount', 'item.direction', 'item.source_type', 'item.source_id', 'item.source_snapshot', 'payroll_item.code', 'payroll_item.name']);
         $input = DB::table('hr_payroll_inputs')->where('payroll_run_id', $payslip->payroll_run_id)->where('employee_id', $payslip->employee_id)->value('payload');
         $attendance = DB::table('hr_payroll_attendance_inputs')->where('payroll_run_id', $payslip->payroll_run_id)->where('employee_id', $payslip->employee_id)->value('payload');
+        $attendanceSnapshot = $this->decodeJson($attendance);
+        $branchAttendance = data_get($attendanceSnapshot, 'branch_summaries.'.(string) $payslip->branch_id);
+        if (count($attendanceSnapshot['branch_summaries'] ?? []) > 1 && is_array($branchAttendance)) {
+            $attendanceSnapshot = $branchAttendance;
+        }
         $payments = collect();
         if ($admin instanceof User && $companyId !== null) {
             $allowedPeriodIds = $this->allowedFinancialPeriodIds($companyId, $admin);
@@ -313,7 +319,7 @@ class PayrollReportService
                 return $item;
             }),
             'input' => $this->decodeJson($input),
-            'attendance' => $this->decodeJson($attendance),
+            'attendance' => $attendanceSnapshot,
             'payments' => $payments,
             'showRunPayments' => $admin instanceof User,
         ];

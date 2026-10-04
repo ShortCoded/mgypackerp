@@ -16,6 +16,7 @@ use Modules\Finance\Models\OpeningBalance;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\FixedAssets\Services\FixedAssetBookValueService;
 use Modules\FixedAssets\Services\FixedAssetDepreciationService;
+use Modules\Inventory\Models\InventoryCostPolicyTransition;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\OpeningStock;
@@ -56,6 +57,7 @@ final class PeriodClosePreflightService
     {
         return [
             $this->overheadAllocationSchemaCheck(),
+            $this->pendingCostPolicyTransitionsCheck($period),
             $this->financialDocumentsCheck($period),
             $this->unpricedReceiptsCheck($period),
             $this->unvaluedMovementsCheck($period),
@@ -64,6 +66,37 @@ final class PeriodClosePreflightService
             $this->grniReconciliationCheck($period),
             $this->costCenterAllocationCheck($period),
             $this->openOperationalDocumentsCheck($period),
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    private function pendingCostPolicyTransitionsCheck(FinancialPeriod $period): array
+    {
+        $count = InventoryCostPolicyTransition::query()
+            ->where('company_id', $period->company_id)
+            ->whereIn('status', [
+                InventoryCostPolicyTransition::StatusPrepared,
+                InventoryCostPolicyTransition::StatusApproved,
+            ])
+            ->whereBetween('effective_from', [
+                $period->from_date->toDateString(),
+                $period->to_date->toDateString(),
+            ])
+            ->count();
+
+        return [
+            'key' => 'pending_inventory_cost_policy_transitions',
+            'status' => $count > 0 ? 'blocker' : 'pass',
+            'message' => $count > 0
+                ? trans_choice('financial_periods.closing.checks.pending_inventory_cost_policy_transitions', $count, ['count' => $count])
+                : __('financial_periods.closing.checks.no_pending_inventory_cost_policy_transitions'),
+            'count' => $count,
+            'details' => $count > 0 ? [$this->detail(
+                __('financial_periods.closing.document_types.inventory_cost_policy_transitions'),
+                $count,
+                'admin.inventory.cost-policies.index',
+                'inventory.cost_policies.view',
+            )] : [],
         ];
     }
 

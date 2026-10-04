@@ -12,7 +12,7 @@ class StoreProductionExpenseRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
-        $this->normalizeNumericInput(['amount']);
+        $this->normalizeNumericInput(['amount', 'exchange_rate']);
     }
 
     public function authorize(): bool
@@ -28,6 +28,7 @@ class StoreProductionExpenseRequest extends FormRequest
             'production_run_id' => ['required', 'integer'],
             'amount' => ['required', 'numeric', 'gt:0'],
             'currency_id' => ['required', 'integer'],
+            'exchange_rate' => ['nullable', 'numeric', 'gt:0', 'decimal:0,6'],
             'payment_channel' => ['required', Rule::in(['cashbox', 'bank'])],
             'cashbox_id' => ['nullable', 'integer', 'required_if:payment_channel,cashbox'],
             'bank_account_id' => ['nullable', 'integer', 'required_if:payment_channel,bank'],

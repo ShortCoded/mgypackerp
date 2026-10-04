@@ -772,7 +772,9 @@
       .catch(function () {
         if (pollIsCurrent(pollVersion)) {
           failureCount += 1;
-          renderHealth(config.messages?.updateFailed || '', true);
+          if (failureCount > 1) {
+            renderHealth(config.messages?.updateFailed || '', true);
+          }
         }
       })
       .finally(function () {

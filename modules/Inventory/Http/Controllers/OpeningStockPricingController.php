@@ -6,8 +6,10 @@ use App\Models\User;
 use DomainException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchHall;
@@ -27,7 +29,10 @@ use Modules\Inventory\Models\OpeningStock;
 use Modules\Inventory\Models\OpeningStockPricing;
 use Modules\Inventory\Models\OpeningStockPricingLine;
 use Modules\Inventory\Services\InventorySelect2Service;
+use Modules\Inventory\Services\OpeningStockEstimateImportService;
 use Modules\Inventory\Services\OpeningStockPricingService;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class OpeningStockPricingController extends Controller
 {
@@ -54,6 +59,62 @@ class OpeningStockPricingController extends Controller
     public function create(Request $request): View
     {
         return $this->form($request, 'create');
+    }
+
+    public function importEstimateForm(Request $request): View
+    {
+        return view('modules.inventory.opening-stock-pricings.import-estimate', [
+            'breadcrumbs' => $this->breadcrumbs->forMenuRoute('admin.inventory.opening-stock-pricings.index'),
+            'dateValue' => $this->defaultDate($request, null, true),
+            'mainCurrency' => $this->mainCurrency($request),
+        ]);
+    }
+
+    public function estimateTemplate(Request $request, OpeningStockEstimateImportService $imports): BinaryFileResponse
+    {
+        $validated = $request->validate(['opening_stock_doc_num' => ['required', 'string', 'max:80']]);
+        $path = $imports->template($request, $validated['opening_stock_doc_num']);
+
+        return response()->download($path, 'opening-stock-estimate-'.$validated['opening_stock_doc_num'].'.xlsx')->deleteFileAfterSend(true);
+    }
+
+    public function importEstimate(Request $request, OpeningStockEstimateImportService $imports): RedirectResponse|JsonResponse
+    {
+        $validated = $request->validate([
+            'opening_stock_doc_num' => ['required', 'string', 'max:80'],
+            'document_date' => ['required', 'string'],
+            'currency_doc_num' => ['required', 'string', 'max:80'],
+            'exchange_rate' => ['required', 'string'],
+            'estimate_basis_note' => ['required', 'string', 'max:2000'],
+            'workbook' => ['required', 'file', 'mimes:xlsx', 'max:5120'],
+        ]);
+        $dates = app(DateFormatService::class);
+        if (! $dates->isValidDate($validated['document_date'])) {
+            throw ValidationException::withMessages(['document_date' => __('inventory.opening_stock_pricings.messages.date_invalid')]);
+        }
+        $validated['document_date'] = $dates->normalizeForStorage($validated['document_date']);
+        $record = $imports->import($request, $request->file('workbook'), $validated);
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'success' => true,
+                'message' => __('inventory.opening_stock_pricings.messages.estimate_pending'),
+                'data' => ['doc_num' => $record->doc_num],
+            ]);
+        }
+
+        return redirect()->route('admin.inventory.opening-stock-pricings.show', $record->doc_num)
+            ->with('success', __('inventory.opening_stock_pricings.messages.estimate_pending'));
+    }
+
+    public function sourceFile(Request $request, string $openingStockPricing): StreamedResponse
+    {
+        $record = $this->findInCurrentContext($request, $openingStockPricing);
+        $path = $record->source_file_path;
+        abort_unless(is_string($path) && str_starts_with($path, 'opening-stock-pricing-sources/')
+            && Storage::disk('local')->exists($path), 404);
+
+        return Storage::disk('local')->download($path, $record->source_file_name ?: 'opening-stock-estimate.xlsx');
     }
 
     public function show(Request $request, string $openingStockPricing): View
@@ -135,6 +196,30 @@ class OpeningStockPricingController extends Controller
         $this->guardDomain(fn (): OpeningStockPricing => $this->service->restore($this->findInCurrentContext($request, $openingStockPricing, true)));
 
         return response()->json(['success' => true, 'message' => __('inventory.opening_stock_pricings.messages.restored')]);
+    }
+
+    public function approveEstimate(Request $request, string $openingStockPricing): JsonResponse|RedirectResponse
+    {
+        $validated = $request->validate([
+            'source_reference' => ['required', 'string', 'max:160'],
+            'approval_reference' => ['required', 'string', 'max:160'],
+        ]);
+        $record = $this->guardDomain(fn (): OpeningStockPricing => $this->service->approveEstimate(
+            $this->findInCurrentContext($request, $openingStockPricing),
+            $validated['source_reference'],
+            $validated['approval_reference'],
+        ));
+
+        if (! $request->expectsJson()) {
+            return redirect()->route('admin.inventory.opening-stock-pricings.show', $record->doc_num)
+                ->with('success', __('inventory.opening_stock_pricings.messages.estimate_approved'));
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => __('inventory.opening_stock_pricings.messages.estimate_approved'),
+            'data' => ['doc_num' => $record->doc_num],
+        ]);
     }
 
     public function updateDocumentNumberSettings(UpdateOpeningStockPricingDocumentNumberSettingsRequest $request, FinanceDocumentNumberSettingsService $settings): JsonResponse
@@ -413,6 +498,7 @@ class OpeningStockPricingController extends Controller
     {
         return (bool) $request->user()?->can('inventory.opening_stock_pricings.view')
             || (bool) $request->user()?->can('inventory.opening_stock_pricings.create')
+            || (bool) $request->user()?->can('inventory.opening_stock_pricings.import_estimate')
             || (bool) $request->user()?->can('inventory.opening_stock_pricings.edit');
     }
 

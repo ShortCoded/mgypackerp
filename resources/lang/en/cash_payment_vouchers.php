@@ -55,6 +55,7 @@ return [
         'save_new' => 'Save & New',
     ],
     'messages' => [
+        'cost_center_unavailable' => 'Choose an active posting cost center in this company linked to the selected line account.',
         'created' => 'Cash payment voucher created successfully.',
         'updated' => 'Cash payment voucher updated successfully.',
         'deleted' => 'Cash payment voucher deleted successfully.',
@@ -98,6 +99,7 @@ return [
         'select_cashbox' => 'Select Cashbox',
         'select_currency' => 'Select Currency',
         'select_account' => 'Select Account',
+        'select_cost_center' => 'Select Cost Center',
         'add_line_title' => 'Add row',
         'duplicate_line_title' => 'Duplicate row',
         'delete_line_title' => 'Delete row',

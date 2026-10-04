@@ -87,6 +87,12 @@
                         <h5 class="mb-0">{{ $title }}</h5>
                     </div>
                     <div class="col-auto">
+                        @if($mode === 'view' && $record?->isApproved() && auth()->user()?->canAny(['inventory.opening_stock_cost_corrections.prepare', 'inventory.opening_stock_cost_corrections.approve']))
+                            <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.inventory.opening-stock-cost-corrections.show', $record) }}">{{ __('opening_stock_cost_correction.title') }}</a>
+                        @endif
+                        @if($mode === 'view' && $record?->isApproved() && auth()->user()?->canAny(['inventory.opening_stock_quantity_corrections.prepare', 'inventory.opening_stock_quantity_corrections.approve']))
+                            <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.inventory.opening-stock-quantity-corrections.show', $record) }}">{{ __('opening_stock_quantity_correction.title') }}</a>
+                        @endif
                         @include('modules.finance.partials.form-actions', [
                             'resource' => 'inventory.opening_stocks',
                             'routePrefix' => $routePrefix,
@@ -295,9 +301,11 @@
                                     <td>
                                         @if($isReadonly)
                                             <div class="form-control-plaintext">{{ $line['batch_lot'] ?? null }}</div>
+                                            <div class="small" dir="ltr">{{ $line['serial_numbers'] ?? '' }}</div>
                                         @else
                                             <x-forms.input class="form-control js-opening-stock-batch" name="lines[{{ $index }}][batch_lot]" type="text" maxlength="100" value="{{ $line['batch_lot'] ?? '' }}" />
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.batch_lot"></div>
+                                            <x-forms.textarea name="lines[{{ $index }}][serial_numbers]" rows="2"  :placeholder="__('inventory_serial.input_help')" >{{ $line['serial_numbers'] ?? '' }}</x-forms.textarea>
                                         @endif
                                     </td>
                                     <td>
@@ -421,6 +429,7 @@
                 <td>
                     <x-forms.input class="form-control js-opening-stock-batch" name="lines[__INDEX__][batch_lot]" type="text" maxlength="100" value="" />
                     <div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.batch_lot"></div>
+                    <x-forms.textarea name="lines[__INDEX__][serial_numbers]" rows="2" :placeholder="__('inventory_serial.input_help')" />
                 </td>
                 <td><x-forms.date-input name="lines[__INDEX__][manufacture_date]" /><div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.manufacture_date"></div></td>
                 <td><x-forms.date-input name="lines[__INDEX__][expiry_date]" /><div class="invalid-feedback d-block" data-error-for="lines.__INDEX__.expiry_date"></div></td>

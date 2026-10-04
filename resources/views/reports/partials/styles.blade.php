@@ -1,7 +1,7 @@
 <style>
     body {
         font-family: {{ $pdfFontFamily ?? 'dejavusans' }}, sans-serif;
-        font-size: 9.5px;
+        font-size: 12px;
         color: #1f2937;
         line-height: 1.35;
     }
@@ -89,8 +89,8 @@
     }
 
     .report-table th {
-        background: #14335c;
-        color: #ffffff;
+        background: #f1f5f9;
+        color: #14335c;
         font-weight: 700;
         white-space: nowrap;
     }
@@ -107,7 +107,7 @@
     }
 
     .report-table tbody tr:nth-child(even) td {
-        background: #f5f9fb;
+        background: #ffffff;
     }
 
     .report-table tbody tr:last-child td {
@@ -115,15 +115,15 @@
     }
 
     .report-table .report-details-cell {
-        background: #eef7f8;
+        background: #fafcfd;
         color: #344050;
-        font-size: 8px;
+        font-size: 9.5px;
         line-height: 1.5;
         padding: 7px 9px;
     }
 
     .report-table .total td {
-        background: #dceef0;
+        background: #f1f5f9;
         color: #14335c;
         font-weight: 700;
     }
@@ -157,7 +157,7 @@
         border: 1px solid #c8e3e4;
         border-radius: 4px;
         color: #344050;
-        font-size: 8.2px;
+        font-size: 10.5px;
         line-height: 1.45;
         margin-bottom: 8px;
         padding: 6px 8px;
@@ -169,7 +169,7 @@
 
     .business-partner-report-table th,
     .business-partner-report-table td {
-        font-size: 7.4px;
+        font-size: 12px;
         line-height: 1.3;
         overflow-wrap: break-word;
         vertical-align: top;

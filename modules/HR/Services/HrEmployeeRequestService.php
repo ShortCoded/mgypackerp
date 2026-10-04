@@ -91,7 +91,12 @@ class HrEmployeeRequestService
     public function review(HrEmployeeServiceRequest $request, User $reviewer, string $decision, ?string $notes): HrEmployeeServiceRequest
     {
         return DB::transaction(function () use ($request, $reviewer, $decision, $notes): HrEmployeeServiceRequest {
+            $company = Company::query()->whereKey($request->company_id)->lockForUpdate()->firstOrFail();
             $locked = HrEmployeeServiceRequest::query()->lockForUpdate()->findOrFail($request->getKey());
+
+            if ((int) $locked->company_id !== (int) $company->getKey()) {
+                throw new DomainException(__('hr_requests.messages.branch_scope_invalid'));
+            }
 
             if ($locked->status !== HrEmployeeServiceRequest::StatusSubmitted) {
                 throw new DomainException(__('hr_requests.messages.already_resolved'));
@@ -101,7 +106,6 @@ class HrEmployeeRequestService
                 throw new DomainException(__('hr_requests.messages.self_review_not_allowed'));
             }
 
-            $company = Company::query()->findOrFail($locked->company_id);
             $canAccessBranch = $locked->branch_id === null
                 ? $this->scope->hasUnrestrictedBranchAccess($reviewer)
                 : $this->scope->allowedBranchQuery($reviewer, [(string) $company->doc_num])
@@ -121,6 +125,7 @@ class HrEmployeeRequestService
             ];
 
             if ($decision === HrEmployeeServiceRequest::StatusApproved && $locked->request_type === 'leave') {
+                $this->assertLeavePeriodNotPosted($locked);
                 $payload = $this->consumeLeaveBalance($locked);
                 $payload = $this->snapshotLeavePaymentStatus($payload);
                 $updates['payload'] = $this->persistCanonicalLeave($locked, $payload, $reviewer);
@@ -130,6 +135,30 @@ class HrEmployeeRequestService
 
             return $locked->refresh();
         });
+    }
+
+    private function assertLeavePeriodNotPosted(HrEmployeeServiceRequest $request): void
+    {
+        $dates = collect($request->payload['chargeable_dates'] ?? [])->filter()->sort()->values();
+        if ($dates->isEmpty()) {
+            return;
+        }
+
+        $posted = DB::table('hr_payslips as slip')
+            ->join('hr_payroll_runs as run', 'run.id', '=', 'slip.payroll_run_id')
+            ->join('hr_payroll_periods as period', 'period.id', '=', 'run.payroll_period_id')
+            ->where('slip.employee_id', $request->employee_id)
+            ->where('period.company_id', $request->company_id)
+            ->whereIn('run.status', ['approved', 'posted'])
+            ->whereNull('run.deleted_at')
+            ->whereNull('period.deleted_at')
+            ->where('period.period_start', '<=', $dates->last())
+            ->where('period.period_end', '>=', $dates->first())
+            ->exists();
+
+        if ($posted) {
+            throw new DomainException(__('hr_requests.messages.leave_posted_payroll_requires_correction'));
+        }
     }
 
     /** @return list<array<string, mixed>> */
@@ -358,7 +387,7 @@ class HrEmployeeRequestService
                 ->whereBetween('work_date', [$from->toDateString(), $to->toDateString()])
                 ->get(['calendar_id', 'work_date', 'day_type'])
                 ->keyBy(fn (object $day): string => $day->calendar_id.'|'.$day->work_date);
-        $nonWorkingDayTypes = ['holiday', 'weekend', 'non_working', 'off'];
+        $nonWorkingDayTypes = ['holiday', 'holiday_paid', 'holiday_unpaid', 'weekend', 'non_working', 'off'];
         $dates = [];
 
         for ($date = $from; $date->lessThanOrEqualTo($to); $date = $date->addDay()) {

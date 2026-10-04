@@ -151,6 +151,17 @@ class RepairReversedInventoryReceiptLayersCommand extends Command
                 }
 
                 if ($apply) {
+                    if (bccomp($misplacedQuantity, '0', 8) === 0 && $this->hasMatchingRepairAudit($document, $expectedQuantity)) {
+                        return [
+                            'document' => $document->doc_num,
+                            'lines' => count($plans),
+                            'misplaced_quantity' => $misplacedQuantity,
+                            'misplaced_allocations' => 0,
+                            'applied' => false,
+                            'already_repaired' => true,
+                        ];
+                    }
+
                     if (bccomp($misplacedQuantity, $expectedQuantity, 8) !== 0) {
                         throw new DomainException('The misplaced quantity changed since the preview; no correction was applied.');
                     }
@@ -212,6 +223,7 @@ class RepairReversedInventoryReceiptLayersCommand extends Command
                     'misplaced_quantity' => $misplacedQuantity,
                     'misplaced_allocations' => collect($plans)->sum(fn (array $plan): int => count($plan['foreignAllocations'])),
                     'applied' => $apply,
+                    'already_repaired' => false,
                 ];
             }, 3);
         } catch (Throwable $exception) {
@@ -223,8 +235,32 @@ class RepairReversedInventoryReceiptLayersCommand extends Command
         $this->table(['Document', 'Lines', 'Misplaced allocations', 'Misplaced quantity', 'Applied'], [[
             $result['document'], $result['lines'], $result['misplaced_allocations'], $result['misplaced_quantity'], $result['applied'] ? 'yes' : 'no',
         ]]);
+        if ($result['already_repaired']) {
+            $this->info('The same expected repair was already applied; no changes were made.');
+        }
 
         return self::SUCCESS;
+    }
+
+    private function hasMatchingRepairAudit(InventoryDocument $document, string $expectedQuantity): bool
+    {
+        $auditRows = DB::table('activity_log')
+            ->where('subject_type', $document->getMorphClass())
+            ->where('subject_id', $document->getKey())
+            ->where('event', 'reversed_receipt_layer_repair')
+            ->orderByDesc('id')
+            ->get(['properties']);
+
+        foreach ($auditRows as $auditRow) {
+            $properties = json_decode((string) $auditRow->properties, true, 512, JSON_THROW_ON_ERROR);
+            if (($properties['document'] ?? null) === $document->doc_num
+                && isset($properties['quantity'])
+                && bccomp((string) $properties['quantity'], $expectedQuantity, 8) === 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private function samePosition(InventoryReceiptLayer $left, InventoryReceiptLayer $right): bool

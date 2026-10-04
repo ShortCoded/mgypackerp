@@ -6,7 +6,6 @@ use Database\Seeders\EmergencyRecoverySeeder;
 use Database\Seeders\RuntimeDemoDataSeeder;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Config;
-use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
@@ -142,7 +141,6 @@ class ResetLocalDatabaseCommand extends Command
     public function seederClasses(bool $includeDemo): array
     {
         $seeders = [
-            PermissionSeeder::class,
             EmergencyRecoverySeeder::class,
         ];
 

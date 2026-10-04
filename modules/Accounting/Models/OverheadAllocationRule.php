@@ -16,6 +16,8 @@ class OverheadAllocationRule extends Model
 
     public const BasisLaborHours = 'labor_hours';
 
+    public const BasisDirectPayrollHours = 'direct_payroll_hours';
+
     public const BasisDirectMaterialCost = 'direct_material_cost';
 
     public const BehaviorVariable = 'variable';

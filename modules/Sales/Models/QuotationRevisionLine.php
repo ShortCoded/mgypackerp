@@ -58,7 +58,7 @@ class QuotationRevisionLine extends Model
             'quantity' => 'decimal:8',
             'conversion_factor' => 'decimal:8',
             'base_quantity' => 'decimal:8',
-            'unit_price' => 'decimal:4',
+            'unit_price' => 'decimal:8',
             'discount_value' => 'decimal:4',
             'discount_amount' => 'decimal:4',
             'tax_rate' => 'decimal:4',

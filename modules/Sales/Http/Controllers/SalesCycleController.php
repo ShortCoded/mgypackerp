@@ -49,6 +49,7 @@ use Modules\Sales\Http\Requests\StoreSalesOrderRequest;
 use Modules\Sales\Http\Requests\StoreSalesReturnRequest;
 use Modules\Sales\Http\Requests\UpdateSalesOrderRequest;
 use Modules\Sales\Models\Customer;
+use Modules\Sales\Models\CustomerCreditAllocation;
 use Modules\Sales\Models\CustomerCreditRefund;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerInvoiceLine;
@@ -383,6 +384,66 @@ class SalesCycleController extends Controller
         ]);
 
         return response()->json(['data' => ['doc_num' => $refund->doc_num, 'url' => route('admin.sales.customer-credit-refunds.print', $refund)]]);
+    }
+
+    public function reverseCustomerCreditAllocation(
+        Request $request,
+        CustomerInvoice $customerInvoice,
+        CustomerCreditAllocation $customerCreditAllocation,
+        CustomerCreditService $service,
+    ): JsonResponse {
+        $context = $this->requiredContext($request);
+        abort_unless((int) $customerInvoice->company_id === $context['company_id']
+            && (int) $customerInvoice->branch_id === $context['branch_id']
+            && (int) $customerCreditAllocation->credit_note_id === (int) $customerInvoice->getKey()
+            && (int) $customerCreditAllocation->company_id === $context['company_id'], 404);
+        $data = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
+
+        try {
+            $allocation = $service->reverseAllocation($customerCreditAllocation, $data['reason']);
+
+            return response()->json(['data' => [
+                'id' => $allocation->getKey(),
+                'status' => $allocation->status,
+                'url' => route('admin.sales.sales-invoices.show', $customerInvoice),
+            ]]);
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+    }
+
+    public function reverseCustomerCreditRefund(
+        Request $request,
+        CustomerInvoice $customerInvoice,
+        CustomerCreditRefund $customerCreditRefund,
+        CustomerCreditService $service,
+    ): JsonResponse {
+        $context = $this->requiredContext($request);
+        abort_unless((int) $customerInvoice->company_id === $context['company_id']
+            && (int) $customerInvoice->branch_id === $context['branch_id']
+            && (int) $customerCreditRefund->credit_note_id === (int) $customerInvoice->getKey()
+            && (int) $customerCreditRefund->company_id === $context['company_id']
+            && (int) $customerCreditRefund->branch_id === $context['branch_id'], 404);
+        $data = $request->validate([
+            'reason' => ['required', 'string', 'max:2000'],
+            'recovery_reference' => ['required', 'string', 'max:255'],
+        ]);
+
+        try {
+            $refund = $service->reverseRefund(
+                $customerCreditRefund,
+                $data['reason'],
+                $data['recovery_reference'],
+            );
+
+            return response()->json(['data' => [
+                'doc_num' => $refund->doc_num,
+                'status' => $refund->status,
+                'url' => route('admin.sales.sales-invoices.show', $customerInvoice),
+            ]]);
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
     }
 
     public function printCustomerCreditRefund(CustomerCreditRefund $customerCreditRefund): Response
@@ -730,7 +791,8 @@ class SalesCycleController extends Controller
             ->where('branch_id', $context['branch_id'])
             ->where('public_uuid', $data['branch_store_uuid'])
             ->valueOrFail('id');
-        $lines = collect($data['lines'])->map(fn (array $row): array => ['customer_invoice_line_id' => CustomerInvoiceLine::query()->where('customer_invoice_id', $customerInvoice->getKey())->where('public_id', $row['invoice_line_public_id'])->firstOrFail()->getKey(), 'quantity' => $row['quantity']])->all();
+        $lines = collect($data['lines'])->map(fn (array $row): array => ['customer_invoice_line_id' => CustomerInvoiceLine::query()->where('customer_invoice_id', $customerInvoice->getKey())->where('public_id', $row['invoice_line_public_id'])->firstOrFail()->getKey(),
+            'quantity' => $row['quantity'], 'delivery_line_ids' => $row['delivery_line_ids'] ?? []])->all();
 
         return $this->created($service->create($customerInvoice, $data['reason_code'], $data['reason_details'] ?? null, $lines, $storeId), 'admin.sales.sales-returns.show');
     }
@@ -763,6 +825,48 @@ class SalesCycleController extends Controller
         $data = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
 
         return response()->json(['data' => $service->cancel($salesReturn, $data['reason'])]);
+    }
+
+    public function correctReturnReceipt(Request $request, SalesReturn $salesReturn, SalesReturnService $service): JsonResponse
+    {
+        $context = $this->requiredContext($request);
+        abort_unless((int) $salesReturn->company_id === $context['company_id']
+            && (int) $salesReturn->branch_id === $context['branch_id'], 404);
+        $data = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
+
+        try {
+            return response()->json(['data' => $service->correctReceived($salesReturn, $data['reason'])]);
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+    }
+
+    public function correctReturnDisposition(Request $request, SalesReturn $salesReturn, SalesReturnService $service): JsonResponse
+    {
+        $context = $this->requiredContext($request);
+        abort_unless((int) $salesReturn->company_id === $context['company_id']
+            && (int) $salesReturn->branch_id === $context['branch_id'], 404);
+        $data = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
+
+        try {
+            return response()->json(['data' => $service->correctInspected($salesReturn, $data['reason'])]);
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+    }
+
+    public function correctClosedReturn(Request $request, SalesReturn $salesReturn, SalesReturnService $service): JsonResponse
+    {
+        $context = $this->requiredContext($request);
+        abort_unless((int) $salesReturn->company_id === $context['company_id']
+            && (int) $salesReturn->branch_id === $context['branch_id'], 404);
+        $data = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
+
+        try {
+            return response()->json(['data' => $service->correctClosed($salesReturn, $data['reason'])]);
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
     }
 
     public function closeReturn(SalesReturn $salesReturn, SalesReturnService $service): JsonResponse
@@ -891,7 +995,9 @@ class SalesCycleController extends Controller
     {
         $customer = Customer::query()->forCompany($context['company_id'])->active()->where('doc_num', $data['customer_doc_num'])->firstOrFail();
         $currency = Currency::query()->forCompany($context['company_id'])->active()->where('doc_num', $data['currency_doc_num'])->firstOrFail();
-        $store = empty($data['branch_store_uuid']) ? null : BranchStore::query()->where('branch_id', $context['branch_id'])->where('public_uuid', $data['branch_store_uuid'])->firstOrFail();
+        $storeId = empty($data['branch_store_uuid'])
+            ? $existingOrder?->branch_store_id
+            : BranchStore::query()->where('branch_id', $context['branch_id'])->where('public_uuid', $data['branch_store_uuid'])->firstOrFail()->getKey();
         $salesEmployeeId = app(SalesSelect2Service::class)->employeeId($context['company_id'], $context['branch_id'], $data['sales_employee_doc_num'] ?? null, $preservedEmployeeId);
         $lines = collect($data['lines'])->map(function (array $line) use ($context): array {
             $product = Product::query()->forCompany($context['company_id'])->active()->where('doc_num', $line['product_doc_num'])->firstOrFail();
@@ -916,7 +1022,7 @@ class SalesCycleController extends Controller
             ...collect($data)->except(['customer_doc_num', 'currency_doc_num', 'branch_store_uuid', 'sales_employee_doc_num', 'lines'])->all(),
             ...$context,
             'customer_id' => $customer->getKey(), 'currency_id' => $currency->getKey(),
-            'branch_store_id' => $store?->getKey(), 'business_employee_id' => $salesEmployeeId, 'lines' => $lines,
+            'branch_store_id' => $storeId, 'business_employee_id' => $salesEmployeeId, 'lines' => $lines,
         ];
     }
 

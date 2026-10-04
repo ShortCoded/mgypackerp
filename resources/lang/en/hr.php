@@ -78,6 +78,8 @@ return [
             'rounding_rule' => 'Rounding Rule',
             'tax_year' => 'Tax Year',
             'annual_exemption_amount' => 'Annual Exemption Amount',
+            'taxable_basis' => 'Taxable Pay Basis',
+            'annualization_method' => 'Annualization Method',
         ],
         'options' => [
             'rounding_rule' => [
@@ -85,6 +87,14 @@ return [
                 'down' => 'Round Down',
                 'up' => 'Round Up',
                 'none' => 'No Rounding',
+            ],
+            'taxable_basis' => [
+                'gross' => 'Gross pay',
+                'gross_after_employee_insurance' => 'Gross less employee insurance',
+            ],
+            'annualization_method' => [
+                'calendar_days' => 'Actual calendar days',
+                'twelve_equal_periods' => 'Twelve equal monthly periods',
             ],
         ],
         'help' => [

@@ -1,0 +1,27 @@
+<?php
+
+return [
+    'legacy_exchange_details' => 'Allocation exchange and unchanged issue costs',
+    'legacy_from_layer' => 'Current issue layer', 'legacy_to_layer' => 'Correct issue layer',
+    'legacy_unit_cost' => 'Recorded issue unit cost', 'legacy_issue_total' => 'Recorded whole issue value',
+    'legacy_invoices' => 'Linked invoices retained at their original amounts', 'legacy_journals' => 'Original journals retained unchanged',
+    'repair_lineage' => 'Repair historical receipt allocations',
+    'legacy_intro' => 'Review the incorrect original receipt reversal and the later issues that used its remaining layer. Approval restores the exact original layer links while retaining all invoice, issue and journal amounts. This does not add stock or reprice an invoice.',
+    'legacy_inconsistent' => 'The original receipt, affected issue costs or layer allocations do not support an exact repair. Review their source records and any existing correction before preparing another proposal.',
+    'legacy_misplaced' => 'Reversal quantity on other layers', 'legacy_exchanged' => 'Later issue quantity to reconnect',
+    'legacy_value' => 'Known layer valuation restored', 'legacy_affected' => 'Affected issue document',
+    'legacy_consistent' => 'The receipt reversal is already linked to its original layers.',
+    'legacy_source_layer' => 'Correct original layer', 'legacy_foreign_layers' => 'Incorrect reversal layers',
+    'sales_delivery_replacement' => 'Recovering an uninvoiced delivery restores stock and releases its sales order quantity. After independent approval, create the replacement delivery in the sales cycle with the corrected quantity.',
+    'action' => 'Action',
+    'title' => 'Inventory document correction', 'intro' => 'Recover dependent movements first. A separate reviewer approves the dated inverse and the replacement together. Original history is retained.',
+    'stale' => 'The correction or its source changed. Refresh and prepare a new proposal.', 'lineage' => 'The stock or accounting lineage is incomplete or inconsistent.',
+    'dependencies' => 'Recover the listed dependent documents first, starting with the first row.', 'source' => 'This correction applies to posted manual inventory movements. Linked movements are corrected through their source workflow.',
+    'target' => 'Choose an authorized open posting period after the closed source period.', 'payload' => 'Check replacement quantities, costs and original receipt layers.',
+    'independent' => 'A different authorized reviewer must approve the correction with a reason.', 'reject_existing' => 'Reject the existing proposal before preparing another.',
+    'prepare' => 'Prepare correction', 'approve' => 'Approve and execute', 'reject' => 'Reject proposal', 'prepared' => 'Prepared', 'approved' => 'Approved', 'rejected' => 'Rejected',
+    'reverse' => 'Recover movement without replacement', 'replace' => 'Correct and post replacement', 'posting_date' => 'Correction posting date', 'reason' => 'Correction reason',
+    'approval_reason' => 'Reviewer reason', 'quantity' => 'Replacement quantity (zero removes line)', 'cost' => 'Receipt unit cost', 'history' => 'Correction history',
+    'preparer' => 'Prepared by', 'approver' => 'Approved by', 'replacement' => 'Posted replacement', 'source_owned' => 'Use the source document workflow',
+    'source_period' => 'Original financial period', 'target_period' => 'Posting financial period', 'review_payload' => 'The quantities and receipt costs below will be posted when approved.',
+];

@@ -67,7 +67,7 @@
     <style>
         .finance-report-totals th,
         .finance-report-totals td {
-            font-size: 7.6px;
+            font-size: 12px;
             white-space: nowrap;
         }
 
@@ -77,7 +77,7 @@
 
         .finance-report-table th,
         .finance-report-table td {
-            font-size: 6.8px;
+            font-size: 12px;
             line-height: 1.25;
             overflow-wrap: break-word;
         }

@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Maatwebsite\Excel\Excel as ExcelFormat;
 use Maatwebsite\Excel\Facades\Excel;
 use Modules\Core\Services\BreadcrumbService;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\Core\Services\Reports\ReportPdfService;
@@ -28,6 +29,7 @@ class HrWorkforceReportController extends Controller
         private readonly OperatingCompanyContextService $companies,
         private readonly OperatingScopeAccessService $scope,
         private readonly BreadcrumbService $breadcrumbs,
+        private readonly DateFormatService $dates,
     ) {}
 
     public function employees(EmployeeReportRequest $request): View
@@ -138,7 +140,7 @@ class HrWorkforceReportController extends Controller
             $row->section_name,
             $row->job_name,
             $row->employment_type_name,
-            $row->hire_date,
+            $this->dates->formatDate($row->hire_date, '—'),
             $row->gender ? __('hr.employees.genders.'.$row->gender) : '',
             __('hr.employees.statuses.'.$row->status),
         ];
@@ -152,15 +154,15 @@ class HrWorkforceReportController extends Controller
             $row->employee_name,
             __('hr_requests.types.'.$row->request_type),
             $row->leave_type_name,
-            $row->requested_from,
-            $row->requested_to,
+            $this->dates->formatDate($row->requested_from, '—'),
+            $this->dates->formatDate($row->requested_to, '—'),
             $row->request_type === 'leave'
                 ? $row->leave_days
                 : ($row->requested_minutes === null ? '' : __('hr_workforce_reports.units.minutes_value', ['value' => $row->requested_minutes])),
             $row->balance_impact,
             __('hr_requests.statuses.'.$row->status),
             $row->approver_name,
-            $row->resolved_at,
+            $this->dates->formatDateTime($row->resolved_at, '—'),
         ];
     }
 
@@ -189,6 +191,8 @@ class HrWorkforceReportController extends Controller
                 'headings' => $headings,
                 'rows' => $rows,
                 'filters' => $filters,
+                'detailRowCount' => $type === 'leave_requests' ? count($rows) - 4 : count($rows),
+                'ltrColumns' => $type === 'employees' ? [0, 7] : [0, 4, 5, 10],
             ], $filename.'.pdf', 'L');
         }
 

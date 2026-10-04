@@ -78,6 +78,8 @@ return [
             'rounding_rule' => 'قاعدة التقريب',
             'tax_year' => 'السنة الضريبية',
             'annual_exemption_amount' => 'قيمة الإعفاء السنوي',
+            'taxable_basis' => 'أساس الأجر الخاضع للضريبة',
+            'annualization_method' => 'طريقة تحويل الأجر إلى سنوي',
         ],
         'options' => [
             'rounding_rule' => [
@@ -85,6 +87,14 @@ return [
                 'down' => 'تقريب لأسفل',
                 'up' => 'تقريب لأعلى',
                 'none' => 'بدون تقريب',
+            ],
+            'taxable_basis' => [
+                'gross' => 'إجمالي الأجر',
+                'gross_after_employee_insurance' => 'الإجمالي بعد حصة الموظف في التأمين',
+            ],
+            'annualization_method' => [
+                'calendar_days' => 'الأيام التقويمية الفعلية',
+                'twelve_equal_periods' => 'اثنتا عشرة فترة شهرية متساوية',
             ],
         ],
         'help' => [

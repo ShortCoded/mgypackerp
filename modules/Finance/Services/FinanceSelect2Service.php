@@ -5,6 +5,7 @@ namespace Modules\Finance\Services;
 use DomainException;
 use Illuminate\Http\Request;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\DataTableSearchService;
@@ -58,6 +59,23 @@ class FinanceSelect2Service
             'text' => $account->codeNameLabel(),
             'normal_balance' => (string) $account->normal_balance,
             'account_nature' => (string) $account->normal_balance,
+        ]);
+    }
+
+    public function cashVoucherCostCenters(Request $request): array
+    {
+        $companyId = $this->operatingContext->snapshot($request)['company_id'];
+        $query = CostCenter::query()->active()->where('is_group', false)
+            ->where('company_id', $companyId)->whereHas('accounts', fn ($accounts) => $accounts
+            ->eligibleForDirectPosting()->where('accounts.company_id', $companyId)
+            ->where('accounts.doc_num', $request->string('account')->toString()));
+        $terms = $this->search->terms($request->input('q', $request->input('term')));
+        if ($terms !== []) {
+            $this->search->applyMultiTermSearch($query, $terms, ['text' => ['doc_num', 'cost_center_code', 'name', 'name_en']]);
+        }
+
+        return $this->select2->paginated($query->orderBy('cost_center_code'), $request, fn (CostCenter $center): array => [
+            'id' => $center->doc_num, 'text' => $center->codeNameLabel(),
         ]);
     }
 

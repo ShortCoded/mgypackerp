@@ -6,6 +6,7 @@ use DomainException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\FinancialPeriodService;
@@ -13,6 +14,7 @@ use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryDocumentLine;
 use Modules\Inventory\Models\InventoryLayerAllocation;
+use Modules\Inventory\Models\InventoryReceiptCostProposal;
 use Modules\Inventory\Models\InventoryReceiptLayer;
 use Modules\Inventory\Models\InventoryTransaction;
 
@@ -34,8 +36,11 @@ class PostedInventoryReceiptPricingService
         string $sourceReference,
         bool $provisional,
         Request $request,
+        ?InventoryReceiptCostProposal $proposal = null,
+        ?string $approvalReference = null,
     ): InventoryDocument {
-        return DB::transaction(function () use ($document, $unitCosts, $sourceReference, $provisional, $request): InventoryDocument {
+        return DB::transaction(function () use ($document, $unitCosts, $sourceReference, $provisional, $request, $proposal, $approvalReference): InventoryDocument {
+            Company::query()->whereKey($document->company_id)->lockForUpdate()->firstOrFail();
             $locked = InventoryDocument::query()->lockForUpdate()->findOrFail($document->getKey());
             $scope = $this->context->snapshot($request);
             if ((int) $locked->company_id !== (int) $scope['company_id']
@@ -49,6 +54,8 @@ class PostedInventoryReceiptPricingService
             if ($locked->status !== InventoryDocument::StatusPosted
                 || $locked->document_type !== InventoryDocument::TypeReceipt
                 || $locked->source_document_type !== null
+                || $locked->source_document_id !== null
+                || $locked->source_doc_num !== null
                 || $locked->production_order_id !== null
                 || $locked->production_run_id !== null
                 || $locked->production_run_batch_id !== null
@@ -68,7 +75,11 @@ class PostedInventoryReceiptPricingService
                 lockForUpdate: true,
             );
 
-            BranchStore::query()->whereKey($locked->branch_store_id)->lockForUpdate()->firstOrFail();
+            $store = BranchStore::query()->with('branch')->whereKey($locked->branch_store_id)->lockForUpdate()->firstOrFail();
+            if ((int) $store->branch_id !== (int) $locked->branch_id
+                || (int) $store->branch?->company_id !== (int) $locked->company_id) {
+                throw new DomainException(__('inventory.movements.messages.context_mismatch'));
+            }
 
             $lines = $locked->lines()->orderBy('id')->lockForUpdate()->get();
             if ($lines->isEmpty()
@@ -99,18 +110,22 @@ class PostedInventoryReceiptPricingService
                 $unitCost = (string) $unitCosts[$line->getKey()];
                 if (! $transaction instanceof InventoryTransaction
                     || (int) $transaction->product_id !== (int) $line->product_id
+                    || (int) $transaction->company_id !== (int) $locked->company_id
+                    || (int) $transaction->branch_id !== (int) $locked->branch_id
                     || (int) $transaction->branch_store_id !== (int) $locked->branch_store_id
                     || bccomp((string) $transaction->quantity_in, (string) $line->quantity, 8) !== 0
                     || bccomp((string) $transaction->quantity_out, '0', 8) !== 0
                     || $transaction->unit_cost !== null
                     || $transaction->total_cost !== null
+                    || ! preg_match('/^\d{1,11}(?:\.\d{1,8})?$/D', $unitCost)
                     || bccomp($unitCost, '0', 8) <= 0) {
                     throw new DomainException(__('inventory.movements.messages.receipt_pricing_lines_changed'));
                 }
-                $hasLaterMovement = InventoryTransaction::query()
+                $hasLaterOutbound = InventoryTransaction::query()
                     ->where('company_id', $locked->company_id)
                     ->where('branch_store_id', $locked->branch_store_id)
                     ->where('product_id', $line->product_id)
+                    ->where('quantity_out', '>', 0)
                     ->where(function ($query) use ($locked, $lastTransactionId): void {
                         $query->whereDate('transaction_date', '>', $locked->document_date)
                             ->orWhere(function ($sameDate) use ($locked, $lastTransactionId): void {
@@ -119,7 +134,7 @@ class PostedInventoryReceiptPricingService
                             });
                     })
                     ->exists();
-                if ($hasLaterMovement) {
+                if ($hasLaterOutbound) {
                     throw new DomainException(__('inventory.movements.messages.receipt_pricing_stock_moved'));
                 }
 
@@ -146,8 +161,11 @@ class PostedInventoryReceiptPricingService
                 }
                 $snapshot = is_array($line->product_snapshot) ? $line->product_snapshot : [];
                 $snapshot['cost_correction'] = [
-                    'basis' => $provisional ? 'local_provisional' : 'documented',
+                    'basis' => $proposal ? ($proposal->basis === InventoryReceiptCostProposal::BasisEstimate ? 'approved_estimate' : 'approved_documented') : ($provisional ? 'local_provisional' : 'documented'),
                     'source_reference' => $sourceReference,
+                    'approval_reference' => $approvalReference,
+                    'proposal_id' => $proposal?->getKey(),
+                    'source_file_sha256' => $proposal?->source_file_sha256,
                     'applied_at' => now()->toIso8601String(),
                     'applied_by' => $request->user()?->getKey(),
                 ];
@@ -180,7 +198,9 @@ class PostedInventoryReceiptPricingService
                 'properties' => [
                     'doc_num' => $locked->doc_num,
                     'source_reference' => $sourceReference,
-                    'basis' => $provisional ? 'local_provisional' : 'documented',
+                    'basis' => $proposal ? $proposal->basis : ($provisional ? 'local_provisional' : 'documented'),
+                    'proposal_id' => $proposal?->getKey(),
+                    'approval_reference' => $approvalReference,
                     'journal_entry_id' => $journal->getKey(),
                     'lines' => $costLog,
                 ],

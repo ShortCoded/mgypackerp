@@ -3,6 +3,7 @@
 @section('report')
 @php
     $numbers = app(\Modules\Core\Services\NumericFormatService::class);
+    $fulfillmentNumbers = app(\Modules\Sales\Services\SalesCycleReadService::class);
     $dates = app(\Modules\Core\Services\DateFormatService::class);
     $dateValue = fn ($value) => $value ? $dates->formatDate($value, '') : '';
     $qualityDispositionLabel = static fn (?string $value): string => collect(explode(',', (string) $value))
@@ -79,7 +80,13 @@
 
 @if(in_array($reportType, ['fulfillment', 'operational'], true) && $openOrders->isNotEmpty())
 <h3>{{ __('Invoice to Delivery Fulfillment') }}</h3>
-<table dir="{{ $direction ?? 'ltr' }}" class="report-table"><thead><tr><th>{{ __('Order') }}</th><th>{{ __('Customer') }}</th><th>{{ __('Required date') }}</th><th>{{ __('Ordered') }}</th><th>{{ __('Invoiced') }}</th><th>{{ __('Delivered') }}</th><th>{{ __('Remaining Delivery') }}</th></tr></thead><tbody>@foreach($openOrders as $order)<tr><td>{{ $order->doc_num }}</td><td>{{ $order->customer?->name }}</td><td>{{ $dateValue($order->expected_delivery_date) }}</td><td>{{ $numbers->format($order->ordered_quantity) }}</td><td>{{ $numbers->format($order->lines->sum('invoiced_quantity')) }}</td><td>{{ $numbers->format($order->delivered_quantity) }}</td><td>{{ $numbers->format(max(0, (float) $order->ordered_quantity - (float) $order->delivered_quantity)) }}</td></tr>@endforeach</tbody></table>
+<table dir="{{ $direction ?? 'ltr' }}" class="report-table"><thead><tr><th>{{ __('Order') }}</th><th>{{ __('Customer') }}</th><th>{{ __('Required date') }}</th><th>{{ __('Ordered') }}</th><th>{{ __('Invoiced') }}</th><th>{{ __('Delivered') }}</th><th>{{ __('Remaining Delivery') }}</th></tr></thead><tbody>@foreach($openOrders as $order)@php($fulfillmentRow = $fulfillmentNumbers->fulfillmentQuantities($order))<tr><td>{{ $order->doc_num }}</td><td>{{ $order->customer?->name }}</td><td>{{ $dateValue($order->expected_delivery_date) }}</td><td>{{ $numbers->format($fulfillmentRow['ordered']) }}</td><td>{{ $numbers->format($fulfillmentRow['invoiced']) }}</td><td>{{ $numbers->format($fulfillmentRow['delivered']) }}</td><td>{{ $numbers->format($fulfillmentRow['remaining']) }}</td></tr>@endforeach</tbody></table>
+@endif
+
+@if(in_array($reportType, ['financial', 'invoices', 'operational'], true) && ($creditMovements ?? collect())->isNotEmpty())
+<p>{{ __('sales_balance_report.cutoff', ['date' => $dateValue($returnCutoff)]) }}</p>
+<h3>{{ __('sales_balance_report.movements') }}</h3>
+<table dir="{{ $direction ?? 'ltr' }}" class="report-table"><thead><tr><th>{{ __('Document') }}</th><th>{{ __('Customer') }}</th><th>{{ __('Date') }}</th><th>{{ __('Type') }}</th><th>{{ __('sales_balance_report.signed_amount') }}</th></tr></thead><tbody>@foreach($creditMovements as $movement)<tr><td>{{ $movement['document'] }}</td><td>{{ $movement['customer'] }}</td><td>{{ $dateValue($movement['posting_date']) }}</td><td>{{ __('sales_balance_report.'.$movement['kind']) }}</td><td dir="ltr">{{ $numbers->format($movement['signed_amount']) }}</td></tr>@endforeach</tbody><tfoot><tr><td colspan="4">{{ __('Totals') }}</td><td dir="ltr">{{ $numbers->format($creditMovements->reduce(fn (string $total, array $row): string => bcadd($total, $row['signed_amount'], 4), '0.0000')) }}</td></tr></tfoot></table>
 @endif
 
 @if($reportType === 'returns')
@@ -102,9 +109,9 @@
 @endif
 
 <style>
-    h3 { margin: 10px 0 4px; font-size: 10px; }
+    h3 { margin: 10px 0 4px; font-size: 13px; }
     .report-table { margin-bottom: 8px; }
-    .report-table th, .report-table td { font-size: 7px; }
+    .report-table th, .report-table td { font-size: 12px; padding: 6px; white-space: normal; }
     .report-table thead { display: table-header-group; }
     .report-table tr { page-break-inside: avoid; }
     .report-empty-state { text-align: center; color: #6c757d; padding: 20px 0; }

@@ -4,11 +4,15 @@ namespace Modules\Inventory\Exports;
 
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
+use Maatwebsite\Excel\Concerns\WithCustomValueBinder;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithStrictNullComparison;
 use Maatwebsite\Excel\Concerns\WithTitle;
+use PhpOffice\PhpSpreadsheet\Cell\Cell;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\Cell\DefaultValueBinder;
 
-class InventorySalesValuationExport implements FromArray, ShouldAutoSize, WithHeadings, WithStrictNullComparison, WithTitle
+class InventorySalesValuationExport extends DefaultValueBinder implements FromArray, ShouldAutoSize, WithCustomValueBinder, WithHeadings, WithStrictNullComparison, WithTitle
 {
     /** @param array<string, mixed> $valuation */
     public function __construct(private readonly array $valuation) {}
@@ -34,16 +38,26 @@ class InventorySalesValuationExport implements FromArray, ShouldAutoSize, WithHe
         $totals = $this->valuation['totals'];
         $data[] = [
             '', '', '', '', __('inventory_accounting.book_valuation.total'), '',
-            $totals['quantity'],
+            $totals['mixed_units'] ? null : $totals['quantity'],
             '',
             $totals['sales_value'],
             '',
         ];
         $data[] = [
             '', '', '', '', __('inventory_accounting.sales_valuation.unpriced'), '',
-            $totals['unpriced_quantity'],
+            $totals['mixed_units'] ? null : $totals['unpriced_quantity'],
             '', '', __('inventory_accounting.sales_valuation.unpriced_product_count').': '.$totals['unpriced_product_count'],
         ];
+
+        if ($totals['mixed_units']) {
+            foreach ($totals['quantity_by_unit'] as $unitTotal) {
+                $data[] = [
+                    '', '', '', '', __('inventory_accounting.book_valuation.unit_subtotal', ['unit' => $unitTotal['unit_name']]),
+                    $unitTotal['unit_name'], $unitTotal['quantity'], '', '',
+                    __('inventory_accounting.sales_valuation.unpriced_quantity').': '.$unitTotal['unpriced_quantity'],
+                ];
+            }
+        }
 
         foreach ($this->valuation['pricedOutsideStockScope'] ?? [] as $line) {
             $data[] = [
@@ -75,5 +89,16 @@ class InventorySalesValuationExport implements FromArray, ShouldAutoSize, WithHe
     public function title(): string
     {
         return mb_substr(__('inventory_accounting.sales_valuation.title'), 0, 31);
+    }
+
+    public function bindValue(Cell $cell, mixed $value): bool
+    {
+        if ($cell->getColumn() === 'H' && $cell->getRow() > 1 && $value !== null) {
+            $cell->setValueExplicit((string) $value, DataType::TYPE_STRING);
+
+            return true;
+        }
+
+        return parent::bindValue($cell, $value);
     }
 }

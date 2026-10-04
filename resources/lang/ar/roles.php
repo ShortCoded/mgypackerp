@@ -63,6 +63,9 @@ return [
         'restored_successfully' => 'تم استعادة السجل بنجاح.',
     ],
     'permission_labels' => [
+        'correct_receipt' => 'تصحيح استلام مرتجع المبيعات',
+        'correct_disposition' => 'تصحيح فحص مرتجع المبيعات',
+        'correct_closed' => 'تصحيح مرتجع مبيعات مغلق بإشعار دائن غير مستخدم',
         'account_materials' => 'تسوية الخامات',
         'adjust' => 'تسوية المخزون',
         'clone' => 'نسخ',

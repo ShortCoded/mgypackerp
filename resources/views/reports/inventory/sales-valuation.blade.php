@@ -12,11 +12,16 @@
 @if($priceList)
 <p><strong>{{ __('inventory_accounting.sales_valuation.price_list') }}:</strong> {{ $priceList->doc_num }} @if($currencyCode) ({{ $currencyCode }})@endif</p>
 @endif
+@if($totals['mixed_units'] ?? false)
+    <p class="report-warning">{{ __('inventory_accounting.book_valuation.mixed_units_warning') }}
+        @foreach($totals['quantity_by_unit'] as $unitTotal){{ $unitTotal['unit_name'] }}: {{ $numbers->format($unitTotal['quantity']) }}@unless($loop->last) · @endunless @endforeach
+    </p>
+@endif
 <table class="document-meta-table"><tr>
     <td><strong>{{ __('stock_balance_inquiry.columns.positions') }}</strong><br>{{ $totals['position_count'] ?? $rows->count() }}</td>
-    <td><strong>{{ __('inventory_accounting.sales_valuation.quantity') }}</strong><br>{{ $numbers->format($totals['quantity']) }}</td>
+    <td><strong>{{ __('inventory_accounting.sales_valuation.quantity') }}</strong><br>{{ ($totals['mixed_units'] ?? false) ? '—' : $numbers->format($totals['quantity']) }}</td>
     <td><strong>{{ __('inventory_accounting.sales_valuation.sales_value') }}</strong><br>{{ $numbers->format($totals['sales_value']) }} @if($currencyCode){{ $currencyCode }}@endif</td>
-    <td><strong>{{ __('inventory_accounting.sales_valuation.unpriced_quantity') }}</strong><br>{{ $numbers->format($totals['unpriced_quantity']) }}</td>
+    <td><strong>{{ __('inventory_accounting.sales_valuation.unpriced_quantity') }}</strong><br>{{ ($totals['mixed_units'] ?? false) ? '—' : $numbers->format($totals['unpriced_quantity']) }}</td>
     <td><strong>{{ __('inventory_accounting.sales_valuation.unpriced_product_count') }}</strong><br>{{ $totals['unpriced_product_count'] ?? 0 }}</td>
     <td><strong>{{ __('inventory_accounting.sales_valuation.priced_outside_stock_scope_count') }}</strong><br>{{ $totals['priced_outside_stock_scope_count'] ?? 0 }}</td>
 </tr></table>
@@ -38,7 +43,13 @@
             <tr><td colspan="8" class="text-center text-muted">{{ __('inventory_accounting.book_valuation.empty') }}</td></tr>
         @endforelse
     </tbody>
-    <tfoot><tr class="total"><td colspan="4">{{ __('inventory_accounting.book_valuation.total') }}</td><td class="number">{{ $numbers->format($totals['quantity']) }}</td><td></td><td class="number">{{ $numbers->format($totals['sales_value']) }} @if($currencyCode){{ $currencyCode }}@endif</td><td></td></tr></tfoot>
+    <tfoot><tr class="total"><td colspan="4">{{ __('inventory_accounting.book_valuation.total') }}</td><td class="number">{{ ($totals['mixed_units'] ?? false) ? '—' : $numbers->format($totals['quantity']) }}</td><td></td><td class="number">{{ $numbers->format($totals['sales_value']) }} @if($currencyCode){{ $currencyCode }}@endif</td><td></td></tr>
+        @if($totals['mixed_units'] ?? false)
+            @foreach($totals['quantity_by_unit'] as $unitTotal)
+                <tr><td colspan="4">{{ __('inventory_accounting.book_valuation.unit_subtotal', ['unit' => $unitTotal['unit_name']]) }}</td><td class="number">{{ $numbers->format($unitTotal['quantity']) }}</td><td colspan="3"></td></tr>
+            @endforeach
+        @endif
+    </tfoot>
 </table>
 @if(($valuation['pricedOutsideStockScope'] ?? collect())->isNotEmpty())
     <h3>{{ __('inventory_accounting.sales_valuation.priced_outside_stock_scope') }}</h3>

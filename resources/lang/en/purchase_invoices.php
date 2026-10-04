@@ -256,6 +256,8 @@ return [
         'close_requires_approved' => 'Only approved purchase invoices can be closed.',
         'closed_not_cancellable' => 'Closed purchase invoices cannot be cancelled.',
         'approved_cancel_requires_reversal' => 'Approved purchase invoices require a reversal workflow before cancellation.',
+        'draft_payment_deleted' => 'The draft purchase invoice linked to this payment was deleted.',
+        'draft_payment_replaced' => 'The draft payment voucher linked to the purchase invoice schedule was removed.',
         'already_cancelled' => 'This purchase invoice is already cancelled.',
         'restore_not_allowed' => 'Only deleted purchase invoices can be restored.',
         'restore_conflict' => 'Cannot restore this purchase invoice because its document number is already used in the same financial period.',

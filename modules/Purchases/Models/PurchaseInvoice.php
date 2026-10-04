@@ -290,7 +290,7 @@ class PurchaseInvoice extends Model
         }
         $totalAmount = (float) $this->total_amount;
         $settledAmount = $paidAmount + $creditedAmount;
-        $remainingAmount = max(0, $totalAmount - $settledAmount);
+        $remainingAmount = $this->isCancelled() ? 0 : max(0, $totalAmount - $settledAmount);
         $paymentStatus = match (true) {
             $totalAmount > 0 && $settledAmount >= $totalAmount - 0.0001 => self::PaymentStatusPaid,
             $settledAmount > 0 => self::PaymentStatusPartiallyPaid,

@@ -13,5 +13,5 @@
         @foreach($record->lines as $line)<tr><td>{{ $line->line_no }}</td><td>{{ $line->product?->doc_num }} / {{ $line->product?->name }}</td><td dir="ltr">{{ $numbers->format($line->quantity) }}</td><td>{{ __(str($line->stock_status ?: 'available')->replace('_', ' ')->title()->toString()) }}</td><td dir="ltr">{{ $line->batch_lot ?: '—' }}</td><td>{{ $line->notes }}</td></tr>@endforeach
     </tbody></table>
     @include('reports.partials.company-authorization')
-    <style>.opening-lines thead{display:table-header-group}.opening-lines tr{page-break-inside:avoid}.opening-lines th,.opening-lines td{font-size:7px}</style>
+    <style>.opening-lines thead{display:table-header-group}.opening-lines tr{page-break-inside:avoid}.opening-lines th,.opening-lines td{font-size: 12px}</style>
 @endsection

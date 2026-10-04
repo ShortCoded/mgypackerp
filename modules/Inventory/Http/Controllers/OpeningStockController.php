@@ -351,6 +351,7 @@ class OpeningStockController extends Controller
                     'quantity' => $this->numbers->format($line->quantity),
                     'stock_status' => $line->stock_status,
                     'batch_lot' => $line->batch_lot,
+                    'serial_numbers' => implode("\n", $line->product_snapshot['serial_numbers'] ?? []),
                     'notes' => $line->notes,
                 ];
             })->values()->all() ?? [];

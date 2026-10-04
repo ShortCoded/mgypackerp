@@ -12,7 +12,7 @@ class ProductionProgressEntry extends Model
         'public_id', 'production_run_id', 'recorded_at', 'good_base_quantity',
         'rejected_base_quantity', 'rework_base_quantity', 'scrap_base_quantity',
         'good_weight_kg', 'production_scrap_weight_kg',
-        'notes', 'recorded_by',
+        'notes', 'recorded_by', 'production_run_correction_id',
     ];
 
     protected static function booted(): void

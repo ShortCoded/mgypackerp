@@ -2,12 +2,16 @@
 
 namespace Modules\Inventory\Services;
 
+use Modules\Core\Services\NumericFormatService;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
 
 class InventoryAvailabilityService
 {
-    public function __construct(private readonly InventoryValuationService $valuation) {}
+    public function __construct(
+        private readonly InventoryValuationService $valuation,
+        private readonly NumericFormatService $numbers,
+    ) {}
 
     /** @return array{on_hand: string, reserved: string, available: string, physical_on_hand: string} */
     public function forProduct(
@@ -33,9 +37,9 @@ class InventoryAvailabilityService
                 fn ($query) => $exactDimensions ? $query->whereNull('batch_lot') : $query,
             );
         $physicalOnHand = (clone $positionQuery)
-            ->selectRaw('coalesce(sum(quantity_in - quantity_out), 0) as on_hand')->value('on_hand') ?? '0';
+            ->selectRaw('round(coalesce(sum(quantity_in - quantity_out), 0), 8) as on_hand')->value('on_hand') ?? '0';
         $stock = $positionQuery->where('stock_status', $stockStatus)
-            ->selectRaw('coalesce(sum(quantity_in - quantity_out), 0) as on_hand')->value('on_hand') ?? '0';
+            ->selectRaw('round(coalesce(sum(quantity_in - quantity_out), 0), 8) as on_hand')->value('on_hand') ?? '0';
 
         $reservedQuery = InventoryReservation::query()
             ->where('company_id', $companyId)->where('branch_store_id', $branchStoreId)->where('product_id', $productId)
@@ -56,15 +60,20 @@ class InventoryAvailabilityService
             )
             ->where('status', InventoryReservation::StatusActive);
         if ($exceptOrderLineId !== null) {
-            $reservedQuery->where('sales_order_line_id', '<>', $exceptOrderLineId);
+            $reservedQuery->where(fn ($query) => $query
+                ->whereNull('sales_order_line_id')
+                ->orWhere('sales_order_line_id', '<>', $exceptOrderLineId));
         }
-        $reserved = $reservedQuery->selectRaw('coalesce(sum(quantity - consumed_quantity - released_quantity), 0) as reserved')->value('reserved') ?? '0';
+        $reserved = $reservedQuery->selectRaw('round(coalesce(sum(quantity - consumed_quantity - released_quantity), 0), 8) as reserved')->value('reserved') ?? '0';
+
+        $stock = $this->quantity($stock);
+        $reserved = $this->quantity($reserved);
 
         return [
-            'on_hand' => bcadd((string) $stock, '0', 8),
-            'reserved' => bcadd((string) $reserved, '0', 8),
-            'available' => bcsub((string) $stock, (string) $reserved, 8),
-            'physical_on_hand' => bcadd((string) $physicalOnHand, '0', 8),
+            'on_hand' => $stock,
+            'reserved' => $reserved,
+            'available' => bcsub($stock, $reserved, 8),
+            'physical_on_hand' => $this->quantity($physicalOnHand),
         ];
     }
 
@@ -76,10 +85,15 @@ class InventoryAvailabilityService
             ->where('branch_store_id', $branchStoreId)
             ->where('product_id', $productId)
             ->groupBy('stock_status')
-            ->selectRaw('stock_status, coalesce(sum(quantity_in - quantity_out), 0) as quantity')
+            ->selectRaw('stock_status, round(coalesce(sum(quantity_in - quantity_out), 0), 8) as quantity')
             ->pluck('quantity', 'stock_status')
-            ->map(fn (mixed $quantity): string => bcadd((string) $quantity, '0', 8))
+            ->map(fn (mixed $quantity): string => $this->quantity($quantity))
             ->all();
+    }
+
+    private function quantity(mixed $value): string
+    {
+        return bcadd($this->numbers->normalizeScientificNotation((string) ($value ?? '0')) ?? '0', '0', 8);
     }
 
     public function averageCost(int $companyId, int $branchStoreId, int $productId): string

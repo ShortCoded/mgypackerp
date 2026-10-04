@@ -26,6 +26,23 @@ final class NumericFormatService
         return $negative ? '-'.$formatted : $formatted;
     }
 
+    public function formatWithMinimumDecimals(mixed $value, int $minimumDecimals): string
+    {
+        if ($minimumDecimals < 0) {
+            throw new InvalidArgumentException('Minimum decimal places cannot be negative.');
+        }
+
+        $formatted = $this->format($value);
+
+        if ($formatted === '' || $minimumDecimals === 0) {
+            return $formatted;
+        }
+
+        [$integer, $fraction] = array_pad(explode('.', $formatted, 2), 2, '');
+
+        return $integer.'.'.str_pad($fraction, $minimumDecimals, '0');
+    }
+
     public function formatForInput(mixed $value): string
     {
         if ($value === null) {
@@ -94,6 +111,11 @@ final class NumericFormatService
         } catch (InvalidArgumentException) {
             return $value;
         }
+    }
+
+    public function normalizeScientificNotation(string $value): ?string
+    {
+        return $this->normalize($this->expandScientificNotation(trim($value)));
     }
 
     public function normalizeToScale(mixed $value, int $scale): ?string

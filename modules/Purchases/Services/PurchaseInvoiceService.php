@@ -7,8 +7,10 @@ use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
+use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\Branch;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
@@ -49,11 +51,13 @@ class PurchaseInvoiceService
         private readonly NumericFormatService $numbers,
         private readonly PostingAccountResolver $accounts,
         private readonly FixedAssetPurchaseIntegrationService $fixedAssetPurchases,
+        private readonly ProcurementSettlementService $settlements,
     ) {}
 
     public function create(array $data): array
     {
         return DB::transaction(function () use ($data): array {
+            Company::query()->whereKey($this->operatingContext->snapshot(request())['company_id'])->lockForUpdate()->firstOrFail();
             $context = $this->context($data);
             app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $data['invoice_date'], $context['financial_period_id'], lockForUpdate: true);
             $calculation = $this->calculator->calculate(
@@ -84,6 +88,7 @@ class PurchaseInvoiceService
     public function update(PurchaseInvoice $record, array $data): array
     {
         return DB::transaction(function () use ($record, $data): array {
+            Company::query()->whereKey($this->operatingContext->snapshot(request())['company_id'])->lockForUpdate()->firstOrFail();
             $record = PurchaseInvoice::query()->lockForUpdate()->findOrFail($record->getKey());
             $this->assertOperatingContext($record);
             $this->assertEditable($record);
@@ -135,6 +140,7 @@ class PurchaseInvoiceService
     public function approve(PurchaseInvoice $record): PurchaseInvoice
     {
         return DB::transaction(function () use ($record): PurchaseInvoice {
+            Company::query()->whereKey($this->operatingContext->snapshot(request())['company_id'])->lockForUpdate()->firstOrFail();
             /** @var PurchaseInvoice $locked */
             $locked = PurchaseInvoice::query()
                 ->with(['lines.product', 'supplier.account', 'financialPeriod', 'currency'])
@@ -197,6 +203,7 @@ class PurchaseInvoiceService
     public function cancel(PurchaseInvoice $record, string $reason): PurchaseInvoice
     {
         return DB::transaction(function () use ($record, $reason): PurchaseInvoice {
+            Company::query()->whereKey($this->operatingContext->snapshot(request())['company_id'])->lockForUpdate()->firstOrFail();
             /** @var PurchaseInvoice $locked */
             $locked = PurchaseInvoice::query()->lockForUpdate()->findOrFail($record->getKey());
 
@@ -213,6 +220,7 @@ class PurchaseInvoiceService
                 throw new DomainException(__('purchase_invoices.messages.already_cancelled'));
             }
 
+            $this->cancelDraftInvoicePaymentLinks($locked, $reason);
             $locked->forceFill([
                 'status' => PurchaseInvoice::StatusCancelled,
                 'cancelled_by' => auth()->id(),
@@ -220,6 +228,7 @@ class PurchaseInvoiceService
                 'cancel_reason' => $reason,
                 'updated_by' => auth()->id(),
             ])->save();
+            $locked->refreshPaymentTotals();
 
             return $this->load($locked->refresh());
         });
@@ -228,42 +237,49 @@ class PurchaseInvoiceService
     public function reverse(PurchaseInvoice $record, string $reason): PurchaseInvoice
     {
         return DB::transaction(function () use ($record, $reason): PurchaseInvoice {
+            Company::query()->whereKey($this->operatingContext->snapshot(request())['company_id'])->lockForUpdate()->firstOrFail();
             $context = $this->operatingContext->snapshot(request());
             $locked = PurchaseInvoice::query()
                 ->with(['journalEntry.lines', 'paymentAllocations.paymentContext', 'paymentSchedules.cashVoucher', 'purchaseReturns'])
                 ->lockForUpdate()
                 ->findOrFail($record->getKey());
 
-            $this->assertOperatingContext($locked);
+            $this->assertReversalOwnership($locked);
             if ($locked->reversal_journal_entry_id !== null) {
                 return $this->load($locked);
             }
-            if ($locked->status !== PurchaseInvoice::StatusApproved
+            if (! in_array($locked->status, [PurchaseInvoice::StatusApproved, PurchaseInvoice::StatusClosed], true)
                 || $locked->reversal_journal_entry_id !== null
                 || ! $locked->journalEntry) {
                 throw new DomainException(__('Only an unreversed posted purchase invoice can be reversed.'));
             }
 
-            if ($locked->paymentAllocations->contains(fn ($allocation): bool => $allocation->paymentContext?->isApproved())
+            if ($locked->paymentAllocations->contains(fn ($allocation): bool => ! $allocation->paymentContext?->isCancelled())
                 || $locked->paymentSchedules->contains(fn ($schedule): bool => (bool) $schedule->cashVoucher?->isApproved())) {
-                throw new DomainException(__('Reverse or cancel approved Supplier payments before reversing this invoice.'));
+                throw new DomainException(__('open_documents.corrections.invoice_payments_active'));
             }
 
-            if ($locked->purchaseReturns->contains(fn (PurchaseReturn $return): bool => $return->status === PurchaseReturn::StatusPosted)) {
-                throw new DomainException(__('Reverse posted Purchase Returns before reversing this invoice.'));
+            if ($locked->purchaseReturns->contains(fn (PurchaseReturn $return): bool => ! in_array($return->status, ['cancelled', PurchaseReturn::StatusReversed], true))) {
+                throw new DomainException(__('open_documents.corrections.invoice_returns_active'));
             }
 
             $this->fixedAssetPurchases->assertReversible($locked);
+
+            if (blank($reason)) {
+                throw new DomainException(__('open_documents.validation.reason_required'));
+            }
 
             if ((int) ($context['company_id'] ?? 0) !== (int) $locked->company_id
                 || empty($context['financial_period_id'])) {
                 throw new DomainException(__('The active accounting context is required for invoice reversal.'));
             }
+            $postingPeriod = $this->reversalPostingPeriod($locked, true);
+            $originalJournal = $this->sourceJournalForCorrection($locked, true);
 
-            $reversal = $this->journalEntries->createPostedReversalFromSource($locked->journalEntry, [
+            $reversal = $this->journalEntries->createPostedReversalFromSource($originalJournal, [
                 'entry_date' => now()->toDateString(),
                 'company_id' => (int) $locked->company_id,
-                'financial_period_id' => (int) $context['financial_period_id'],
+                'financial_period_id' => (int) $postingPeriod->id,
                 'branch_id' => $locked->branch_id,
                 'currency_id' => $locked->currency_id,
                 'exchange_rate' => $locked->exchange_rate,
@@ -287,21 +303,98 @@ class PurchaseInvoiceService
                 'cancel_reason' => $reason,
                 'updated_by' => auth()->id(),
             ])->save();
+            foreach ($locked->paymentSchedules()->orderBy('id')->lockForUpdate()->get() as $schedule) {
+                $schedule->forceFill([
+                    'status' => PurchaseInvoicePaymentSchedule::StatusCancelled,
+                    'updated_by' => auth()->id(),
+                ])->save();
+            }
             $locked->refreshPaymentTotals();
 
             return $this->load($locked->refresh());
         }, 3);
     }
 
+    /** @return array{can_reverse: bool, blockers: list<string>, dependent_documents: array<string, list<string>>, lines: list<array<string, string|null>>} */
+    public function reversalPlan(PurchaseInvoice $record): array
+    {
+        $record->load([
+            'journalEntry', 'lines.product', 'paymentAllocations.paymentContext',
+            'paymentSchedules.cashVoucher', 'purchaseReturns', 'financialPeriod',
+        ]);
+        $blockers = [];
+        if ($record->trashed() || ! in_array($record->status, [PurchaseInvoice::StatusApproved, PurchaseInvoice::StatusClosed], true)
+            || $record->reversal_journal_entry_id !== null || ! $record->journalEntry) {
+            $blockers[] = __('Only an unreversed posted purchase invoice can be reversed.');
+        }
+        try {
+            $this->reversalPostingPeriod($record);
+            $this->sourceJournalForCorrection($record);
+        } catch (DomainException $exception) {
+            $blockers[] = $exception->getMessage();
+        }
+
+        $activePaymentAllocations = $record->paymentAllocations
+            ->filter(fn ($allocation): bool => ! $allocation->paymentContext?->isCancelled());
+        $activePayments = $activePaymentAllocations
+            ->map(fn ($allocation): ?string => $allocation->paymentContext?->doc_num)
+            ->filter()->unique()->values()->all();
+        $approvedVouchers = $record->paymentSchedules
+            ->filter(fn ($schedule): bool => (bool) $schedule->cashVoucher?->isApproved())
+            ->map(fn ($schedule): ?string => $schedule->cashVoucher?->doc_num)
+            ->filter()->unique()->values()->all();
+        if ($activePaymentAllocations->isNotEmpty() || $approvedVouchers !== []) {
+            $blockers[] = __('open_documents.corrections.invoice_payments_active');
+        }
+
+        $activeReturns = $record->purchaseReturns
+            ->filter(fn (PurchaseReturn $return): bool => ! in_array($return->status, ['cancelled', PurchaseReturn::StatusReversed], true))
+            ->pluck('doc_num')->filter()->unique()->values()->all();
+        if ($activeReturns !== []) {
+            $blockers[] = __('open_documents.corrections.invoice_returns_active');
+        }
+
+        if ($blockers === []) {
+            try {
+                $this->fixedAssetPurchases->assertReversible($record);
+            } catch (DomainException $exception) {
+                $blockers[] = $exception->getMessage();
+            }
+        }
+
+        $netAmounts = $this->calculator->netAmountsByLine($record);
+
+        return [
+            'can_reverse' => $blockers === [],
+            'blockers' => $blockers,
+            'dependent_documents' => array_filter([
+                __('open_documents.dependents.supplierPayments') => $activePayments,
+                __('open_documents.dependents.paymentVouchers') => $approvedVouchers,
+                __('open_documents.dependents.purchaseReturns') => $activeReturns,
+            ]),
+            'lines' => $record->lines->map(fn (PurchaseInvoiceLine $line): array => [
+                'product' => (string) ($line->product?->name ?? $line->description ?? $line->product_id),
+                'quantity' => (string) $line->quantity,
+                'before_quantity' => null,
+                'after_quantity' => null,
+                'layer_available' => null,
+                'value_delta' => bcsub('0', (string) ($netAmounts[$line->getKey()] ?? '0'), 4),
+            ])->all(),
+            'correction_steps' => app(ProcurementCorrectionPlanService::class)->forInvoice($record, request()),
+        ];
+    }
+
     public function delete(PurchaseInvoice $record): void
     {
         DB::transaction(function () use ($record): void {
+            Company::query()->whereKey($this->operatingContext->snapshot(request())['company_id'])->lockForUpdate()->firstOrFail();
             $record = PurchaseInvoice::query()->lockForUpdate()->findOrFail($record->getKey());
             $this->assertOperatingContext($record);
             $this->assertDeletable($record);
             if ($record->lines()->where(fn ($query) => $query->whereHas('fixedAssets')->orWhereNotNull('target_fixed_asset_id'))->exists()) {
                 throw new DomainException(__('fixed_assets.purchase_source.remove_assets_first'));
             }
+            $this->cancelDraftInvoicePaymentLinks($record, __('purchase_invoices.messages.draft_payment_deleted'));
             $this->audit->softDelete($record);
 
             $record->lines()->get()->each(function (PurchaseInvoiceLine $line): void {
@@ -855,11 +948,60 @@ class PurchaseInvoiceService
 
     private function deleteDraftLinkedVoucher(PurchaseInvoicePaymentSchedule $schedule): void
     {
-        $schedule->loadMissing('cashVoucher');
+        $schedule->load('cashVoucher');
         $voucher = $schedule->cashVoucher;
 
         if ($voucher instanceof CashVoucher && $voucher->isDraft()) {
-            $this->cashVouchers->delete(CashVoucher::TypePayment, $voucher);
+            $payment = SupplierPaymentContext::query()
+                ->where('cash_voucher_id', $voucher->getKey())
+                ->lockForUpdate()
+                ->first();
+            if ($payment instanceof SupplierPaymentContext && ! $payment->isCancelled()) {
+                if (! $payment->isDraft() || $payment->allocations()->where('purchase_invoice_id', '!=', $schedule->purchase_invoice_id)->exists()) {
+                    throw new DomainException(__('open_documents.corrections.invoice_payments_active'));
+                }
+                $this->settlements->cancelSupplierPayment($payment, __('purchase_invoices.messages.draft_payment_replaced'));
+            } else {
+                $this->cashVouchers->delete(CashVoucher::TypePayment, $voucher);
+            }
+        }
+    }
+
+    private function cancelDraftInvoicePaymentLinks(PurchaseInvoice $invoice, string $reason): void
+    {
+        $allocations = $invoice->paymentAllocations()->orderBy('id')->lockForUpdate()->get();
+        $paymentIds = $allocations->pluck('supplier_payment_context_id')->unique()->sort()->values()->all();
+        $payments = SupplierPaymentContext::query()
+            ->whereKey($paymentIds)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get()
+            ->keyBy('id');
+        if ($payments->count() !== count($paymentIds)) {
+            throw new DomainException(__('open_documents.corrections.invoice_payments_active'));
+        }
+
+        foreach ($payments as $payment) {
+            if ($payment->isCancelled()) {
+                continue;
+            }
+            if (! $payment->isDraft()
+                || $payment->allocations()->where('purchase_invoice_id', '!=', $invoice->getKey())->exists()) {
+                throw new DomainException(__('open_documents.corrections.invoice_payments_active'));
+            }
+            $this->settlements->cancelSupplierPayment($payment, $reason);
+        }
+
+        foreach ($invoice->paymentSchedules()->orderBy('id')->lockForUpdate()->get() as $schedule) {
+            $schedule->load('cashVoucher');
+            if ($schedule->cashVoucher?->isApproved()) {
+                throw new DomainException(__('open_documents.corrections.invoice_payments_active'));
+            }
+            $this->deleteDraftLinkedVoucher($schedule);
+            $schedule->forceFill([
+                'status' => PurchaseInvoicePaymentSchedule::StatusCancelled,
+                'updated_by' => auth()->id(),
+            ])->save();
         }
     }
 
@@ -1150,6 +1292,40 @@ class PurchaseInvoiceService
         }
     }
 
+    private function assertReversalOwnership(PurchaseInvoice $record): void
+    {
+        $context = $this->operatingContext->snapshot(request());
+        if ((int) $record->company_id !== (int) ($context['company_id'] ?? 0)
+            || (int) $record->branch_id !== (int) ($context['branch_id'] ?? 0)) {
+            throw new DomainException(__('The document is outside the active operating context.'));
+        }
+    }
+
+    private function sourceJournalForCorrection(PurchaseInvoice $record, bool $lock = false): JournalEntry
+    {
+        return app(ProcurementSourceJournalService::class)->requireSource($record->journal_entry_id, [
+            'company_id' => (int) $record->company_id, 'branch_id' => $record->branch_id,
+            'financial_period_id' => (int) $record->financial_period_id, 'currency_id' => $record->currency_id,
+            'exchange_rate' => (string) $record->exchange_rate, 'source_type' => 'purchase_invoice',
+            'source_id' => (int) $record->id, 'entry_date' => $record->invoice_date->toDateString(),
+        ], $lock);
+    }
+
+    private function reversalPostingPeriod(PurchaseInvoice $record, bool $lock = false): FinancialPeriod
+    {
+        $this->assertReversalOwnership($record);
+        $context = $this->operatingContext->snapshot(request());
+        $sourcePeriod = FinancialPeriod::query()->where('company_id', $record->company_id)
+            ->when($lock, fn ($query) => $query->lockForUpdate())->findOrFail($record->financial_period_id);
+        if ((int) $sourcePeriod->id !== (int) ($context['financial_period_id'] ?? 0)) {
+            abort_unless(auth()->user()?->can('purchase_invoices.reverse'), 403);
+        }
+
+        return app(FinancialPeriodService::class)->resolveOpenForPostingDate(
+            (int) $record->company_id, now()->toDateString(), (int) ($context['financial_period_id'] ?? 0), lockForUpdate: $lock,
+        );
+    }
+
     private function assertEditable(PurchaseInvoice $record): void
     {
         if ($record->trashed() || $record->isLockedForEditing()) {
@@ -1273,10 +1449,17 @@ class PurchaseInvoiceService
             return null;
         }
 
-        return UnpricedInventoryReceiptLine::query()
+        $line = UnpricedInventoryReceiptLine::query()
+            ->lockForUpdate()
             ->where('purchase_order_line_id', $purchaseOrderLine->getKey())
             ->where('public_id', $publicId)
             ->first();
+        if ($line !== null && (! $line->receipt?->approved || $line->receipt->posting_status !== 'posted'
+            || in_array($line->receipt->status, ['cancelled', 'reversed'], true))) {
+            throw new DomainException(__('open_documents.corrections.receipt_not_invoiceable'));
+        }
+
+        return $line;
     }
 
     /**
@@ -1303,7 +1486,7 @@ class PurchaseInvoiceService
             DB::statement(sprintf('LOCK TABLE %s IN SHARE ROW EXCLUSIVE MODE', DB::getQueryGrammar()->wrapTable('purchase_invoices')));
         }
 
-        $nextNumber = ((int) PurchaseInvoice::query()
+        $nextNumber = ((int) PurchaseInvoice::query()->withTrashed()
             ->where('company_id', $companyId)
             ->where('financial_period_id', $financialPeriodId)
             ->max('doc_number')) + 1;

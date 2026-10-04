@@ -31,7 +31,7 @@ class SupplierSelectionLine extends Model
     {
         return [
             'selected_quantity' => 'decimal:8',
-            'unit_price' => 'decimal:4',
+            'unit_price' => 'decimal:8',
             'discount_amount' => 'decimal:4',
             'tax_rate' => 'decimal:4',
             'tax_amount' => 'decimal:4',

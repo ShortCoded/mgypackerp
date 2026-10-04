@@ -5,17 +5,28 @@
     $rowGroups = $report['type'] === \Modules\FixedAssets\Services\FixedAssetReportService::AdditionsDisposals && $report['rows']->count() > 50
         ? $report['rows']->chunk(50)
         : collect([$report['rows']]);
+    $columnKeys = array_keys($report['columns']);
+    $identityKeys = array_values(array_intersect(['asset', 'name', 'document'], $columnKeys));
+    if ($identityKeys === []) {
+        $identityKeys = [array_shift($columnKeys)];
+    }
+    $valueKeys = array_values(array_diff($columnKeys, $identityKeys));
+    $columnGroups = array_map(fn (array $group): array => [...$identityKeys, ...$group], array_chunk($valueKeys, max(1, 7 - count($identityKeys))));
+    if ($columnGroups === []) {
+        $columnGroups = [$identityKeys];
+    }
 @endphp
 
 @foreach ($rowGroups as $rows)
+    @foreach ($columnGroups as $columnGroup)
     <table class="fa-pdf-report-table">
         <thead>
-            <tr>@foreach ($report['columns'] as $label)<th>{{ $label }}</th>@endforeach</tr>
+            <tr>@foreach ($columnGroup as $key)<th>{{ $report['columns'][$key] }}</th>@endforeach</tr>
         </thead>
         <tbody>
             @forelse ($rows as $row)
                 <tr class="fa-pdf-row-{{ data_get($row, '_row_state', 'normal') }}">
-                    @foreach (array_keys($report['columns']) as $key)
+                    @foreach ($columnGroup as $key)
                         @php($value = data_get($row, $key))
                         <td @class(['fa-pdf-number' => is_numeric($value)])>
                             @if ($value instanceof \DateTimeInterface)
@@ -31,10 +42,11 @@
                     @endforeach
                 </tr>
             @empty
-                <tr><td colspan="{{ max(1, count($report['columns'])) }}" class="fa-pdf-empty">{{ __('reports.no_data') }}</td></tr>
+                <tr><td colspan="{{ max(1, count($columnGroup)) }}" class="fa-pdf-empty">{{ __('reports.no_data') }}</td></tr>
             @endforelse
         </tbody>
     </table>
+    @endforeach
     @if (! $loop->last)
         <pagebreak />
     @endif

@@ -12,6 +12,8 @@
     $canRestore = $isView && $isTrashed && ($record?->isDeletable() ?? false) && auth()->user()?->can($resource.'.restore');
     $canApprove = $isView && ! $isTrashed && ($record?->isDraft() ?? false) && auth()->user()?->can($resource.'.approve');
     $canCancel = $isView && ! $isTrashed && ($record?->isApproved() ?? false) && auth()->user()?->can($resource.'.cancel');
+    $canCorrectPurchase = $canCancel && ($isScheduledPurchasePayment ?? false)
+        && auth()->user()?->can('purchase_invoices.reverse') && auth()->user()?->can('purchases.prices.view');
     $canPrint = $isView && ! $isTrashed && auth()->user()?->can($resource.'.print');
     $canSave = ! $isView;
     $shortcutTitles = [
@@ -56,7 +58,15 @@
                 <span class="fas fa-check me-1"></span>{{ __($translationKey.'.actions.approve') }}
             </button>
         @endif
-        @if ($canCancel)
+        @if ($canCorrectPurchase)
+            <button type="button" class="btn btn-warning btn-sm js-cash-voucher-cancel"
+                data-url="{{ route($routePrefix.'.correct-purchase-payment', $record->doc_num) }}"
+                data-confirm-title="{{ __('open_documents.actions.correct_purchase_voucher') }}"
+                data-confirm-text="{{ __('open_documents.messages.purchase_voucher_correction_help') }}"
+                data-confirm-yes="{{ __('open_documents.actions.correct_purchase_voucher') }}">
+                <span class="fas fa-undo me-1"></span>{{ __('open_documents.actions.correct_purchase_voucher') }}
+            </button>
+        @elseif ($canCancel)
             <button type="button" class="btn btn-warning btn-sm js-cash-voucher-cancel" data-url="{{ route($routePrefix.'.cancel', $record->doc_num) }}">
                 <span class="fas fa-ban me-1"></span>{{ __($translationKey.'.actions.cancel') }}
             </button>

@@ -2,6 +2,7 @@
 
 namespace Modules\Production\Models;
 
+use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -39,6 +40,11 @@ class ProductionExpenseRequest extends Model
     protected static function booted(): void
     {
         static::creating(fn (self $request) => $request->public_id ??= (string) Str::uuid());
+        static::updating(function (self $request): void {
+            if ($request->getOriginal('cost_accounting_snapshot') !== null && $request->isDirty('cost_accounting_snapshot')) {
+                throw new DomainException(__('inventory_standard_cost.errors.immutable'));
+            }
+        });
     }
 
     protected function casts(): array
@@ -46,6 +52,8 @@ class ProductionExpenseRequest extends Model
         return [
             'request_date' => 'date',
             'amount' => 'decimal:4',
+            'exchange_rate' => 'decimal:6',
+            'cost_accounting_snapshot' => 'array',
             'submitted_at' => 'datetime',
             'approved_at' => 'datetime',
             'paid_at' => 'datetime',

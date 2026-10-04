@@ -62,6 +62,7 @@ class SalesOrder extends Model
             'payment_schedule_bypassed' => 'boolean', 'confirmed_at' => 'datetime',
             'approved_at' => 'datetime', 'rejected_at' => 'datetime', 'cancelled_at' => 'datetime',
             'reopened_at' => 'datetime',
+            'reopen_snapshot' => 'array',
         ];
     }
 
@@ -101,7 +102,32 @@ class SalesOrder extends Model
 
     public function isEditable(): bool
     {
-        return in_array($this->status, [self::StatusDraft, self::StatusReopened], true);
+        if ($this->status === self::StatusDraft) {
+            return $this->approved_at === null && $this->reopened_at === null;
+        }
+
+        return $this->status === self::StatusReopened
+            && $this->reopened_at !== null
+            && $this->statusHistory()->reorder()->latest('id')->value('to_status') === self::StatusReopened;
+    }
+
+    public function amendmentToken(): string
+    {
+        return hash('sha256', json_encode([
+            $this->only(['id', 'status', 'customer_id', 'currency_id', 'branch_store_id', 'order_date',
+                'expected_delivery_date', 'total_amount', 'notes', 'internal_notes', 'updated_at', 'reopened_at']),
+            $this->lines()->orderBy('id')->get()->map->only(['id', 'public_id', 'product_id', 'unit_id',
+                'quantity', 'base_quantity', 'unit_price', 'discount_amount', 'tax_amount', 'line_total',
+                'reserved_quantity', 'production_requested_quantity', 'produced_quantity', 'delivered_quantity', 'invoiced_quantity'])->all(),
+            $this->paymentSchedules()->orderBy('id')->get()->map->only(['id', 'title', 'due_date', 'amount', 'collected_amount', 'remaining_amount'])->all(),
+        ], JSON_THROW_ON_ERROR));
+    }
+
+    /** @return list<array<string, mixed>> */
+    public function amendmentLineSnapshot(): array
+    {
+        return $this->lines()->reorder()->orderBy('line_number')->orderBy('id')->get()
+            ->map->only(['product_id', 'unit_id', 'description', 'quantity', 'unit_price', 'discount_amount', 'tax_amount'])->all();
     }
 
     public function isApprovedForFulfillment(): bool
@@ -111,8 +137,12 @@ class SalesOrder extends Model
 
     public function canReopenSafely(): bool
     {
-        if (! in_array($this->status, [self::StatusApproved, self::StatusRejected, self::StatusClosed], true)) {
+        if (! in_array($this->status, [self::StatusApproved, self::StatusRejected, self::StatusClosed, self::StatusPartiallyFulfilled, self::StatusFulfilled], true)) {
             return false;
+        }
+
+        if ($this->canAppendProductionAmendment()) {
+            return true;
         }
 
         return ! $this->hasDownstreamDocuments() && ! $this->lines()->where(function (Builder $query): void {
@@ -124,9 +154,17 @@ class SalesOrder extends Model
         })->exists();
     }
 
+    public function canAppendProductionAmendment(): bool
+    {
+        return in_array($this->status, [self::StatusApproved, self::StatusReopened, self::StatusClosed, self::StatusPartiallyFulfilled, self::StatusFulfilled], true)
+            && ($this->sales_request_id !== null || $this->quotation_id !== null || $this->hasDownstreamDocuments()
+                || $this->lines()->where('reserved_quantity', '>', 0)->exists());
+    }
+
     public function canCancelSafely(): bool
     {
-        if (in_array($this->status, [self::StatusCancelled, self::StatusClosed], true) || $this->reopened_at !== null) {
+        if (! in_array($this->status, [self::StatusDraft, self::StatusPendingApproval, self::StatusHeldCredit], true)
+            || $this->approved_at !== null || $this->reopened_at !== null) {
             return false;
         }
 

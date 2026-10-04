@@ -55,6 +55,7 @@ return [
         'save_new' => 'حفظ وجديد',
     ],
     'messages' => [
+        'cost_center_unavailable' => 'اختر مركز تكلفة نشطًا قابلاً للترحيل في الشركة ومرتبطًا بحساب البند المحدد.',
         'created' => 'تم إنشاء سند الصرف النقدي بنجاح.',
         'updated' => 'تم تحديث سند الصرف النقدي بنجاح.',
         'deleted' => 'تم حذف سند الصرف النقدي بنجاح.',
@@ -98,6 +99,7 @@ return [
         'select_cashbox' => 'اختر الخزنة',
         'select_currency' => 'اختر العملة',
         'select_account' => 'اختر الحساب',
+        'select_cost_center' => 'اختر مركز التكلفة',
         'add_line_title' => 'إضافة سطر',
         'duplicate_line_title' => 'تكرار السطر',
         'delete_line_title' => 'حذف السطر',

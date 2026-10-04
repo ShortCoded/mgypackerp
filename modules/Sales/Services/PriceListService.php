@@ -165,7 +165,7 @@ class PriceListService
             $multiplier = $this->amounts->add(1, $this->amounts->multiply($percentage, '0.01', 8), 8);
 
             foreach ($lines as $line) {
-                $newPrice = $this->amounts->round($this->amounts->multiply($line->unit_price, $multiplier, 8));
+                $newPrice = $this->amounts->round($this->amounts->multiply($line->unit_price, $multiplier, 16), 8);
                 $line->forceFill(['unit_price' => $newPrice])->save();
             }
 

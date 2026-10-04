@@ -108,6 +108,9 @@ $hrPayrollPermissionLabels = [
     'hr.payroll_preparation.calculate' => 'Calculate Payroll',
     'hr.payroll_approval.review' => 'Submit Payroll for Review',
     'hr.payroll_approval.approve' => 'Approve and Post Payroll',
+    'hr.payroll_approval.correct' => 'Prepare Payroll Correction',
+    'hr.payroll_approval.correct_approve' => 'Approve or Reject Payroll Correction',
+    'hr.payroll_approval.correct_later_period' => 'Correct Payroll in a Later Financial Period While Preserving the Original Period',
     'hr.payroll_payment.create' => 'Create Payroll Payment',
     'hr.payroll_reconciliation.view' => 'View Payroll Reconciliation',
 ];
@@ -319,6 +322,14 @@ foreach ([
 }
 
 $inventoryPermissionLabels['inventory.opening_stocks.approve'] = 'Approve opening stock';
+$inventoryPermissionLabels['inventory.opening_stock_cost_corrections.prepare'] = 'Prepare opening stock cost correction';
+$inventoryPermissionLabels['inventory.opening_stock_cost_corrections.approve'] = 'Approve or reject opening stock cost correction';
+$inventoryPermissionLabels['inventory.opening_stock_quantity_corrections.prepare'] = 'Prepare opening stock quantity correction';
+$inventoryPermissionLabels['inventory.opening_stock_quantity_corrections.approve'] = 'Approve or reject opening stock quantity correction';
+$inventoryPermissionLabels['inventory.opening_stock_pricings.approve_estimate'] = 'Approve estimated opening stock cost';
+$inventoryPermissionLabels['inventory.documents.propose_receipt_cost'] = 'Prepare inventory receipt cost proposal';
+$inventoryPermissionLabels['inventory.documents.approve_receipt_cost'] = 'Approve inventory receipt cost';
+$inventoryPermissionLabels['inventory.opening_stock_pricings.import_estimate'] = 'Import estimated opening stock cost';
 $inventoryPermissionLabels['inventory.unpriced_inventory_receipts.view'] = 'View Unpriced Inventory Receipts';
 $inventoryPermissionLabels['inventory.unpriced_inventory_receipts.create'] = 'Create Unpriced Inventory Receipts';
 $inventoryPermissionLabels['inventory.unpriced_inventory_receipts.edit'] = 'Edit Unpriced Inventory Receipts';
@@ -332,8 +343,22 @@ $inventoryPermissionLabels['inventory.unpriced_inventory_receipts.document_numbe
 $inventoryPermissionLabels['inventory.unpriced_inventory_receipts.document_number_settings.update'] = 'Update Unpriced Inventory Receipt Document Number Settings';
 
 return [
+    'production.runs.correct' => 'Correct Completed Production Run',
+    'production.runs.correct_approve' => 'Approve or Reject Run Correction',
+    'production.runs.correct_later_period' => 'Correct and Recomplete Production in a Later Period While Preserving the Original Period',
+    'inventory.cost_policies.transition.prepare' => 'Prepare Inventory Cost Policy Transitions',
+    'inventory.cost_policies.transition.approve' => 'Approve Inventory Cost Policy Transitions',
+    'inventory.cost_policies.transition.activate' => 'Activate Inventory Cost Policy Transitions',
+    'inventory.cost_policies.transition.cancel' => 'Cancel Inventory Cost Policy Transitions',
     'customer_credits.allocate' => 'Allocate Customer Credit',
+    'customer_credits.reverse_allocation' => 'Reverse Customer Credit Allocation',
     'customer_credits.refund' => 'Refund Customer Credit',
+    'customer_credits.reverse_refund' => 'Reverse Recovered Customer Credit Refund',
+    'sales_returns.correct_prepare' => 'Prepare Sales Return Correction',
+    'sales_returns.correct_approve' => 'Approve Sales Return Correction Independently',
+    'sales_returns.correct_later_period' => 'Correct Sales Return in a Later Open Period',
+    'customer_credits.prepare_application_evidence' => 'Prepare Historical Credit Application Evidence',
+    'customer_credits.approve_application_evidence' => 'Independently Approve Historical Credit Application Evidence',
     'customer_invoices.electronic_invoice.submit' => 'Submit Electronic Invoice',
     'purchases.direct_procurement.override' => 'Override Direct Procurement Controls',
     'production.quality.release_normal' => 'Release Production after Quality Inspection',
@@ -539,4 +564,22 @@ return [
     'screen_data_visibility_rules.view_trashed' => 'View Deleted Data Visibility Rules',
     'screen_data_visibility_rules.restore' => 'Restore Data Visibility Rules',
     'screen_data_visibility_rules.bypass' => 'Bypass Data Visibility Restrictions',
+    'inventory.documents.correct_prepare' => 'Prepare inventory correction',
+    'inventory.documents.correct_approve' => 'Approve inventory correction',
+    'inventory.documents.correct_later_period' => 'Post inventory correction in later period',
+    'inventory.cost_policies.periodic.view' => 'View periodic inventory cost closes',
+    'inventory.cost_policies.periodic.prepare' => 'Prepare periodic inventory cost close',
+    'inventory.cost_policies.periodic.approve' => 'Approve periodic inventory cost close',
+    'inventory.cost_policies.periodic.export' => 'Export periodic inventory cost close',
+    'inventory.cost_policies.periodic.print' => 'Print periodic inventory cost close',
+    'inventory.cost_policies.standard.view' => 'View standard costs and variances',
+    'inventory.cost_policies.standard.prepare' => 'Prepare standard cost version',
+    'inventory.cost_policies.standard.settle' => 'Prepare standard cost variance settlement',
+    'inventory.cost_policies.standard.approve' => 'Approve standard costs and variances',
+    'inventory.cost_policies.standard.export' => 'Export standard costs and variances',
+    'inventory.cost_policies.standard.print' => 'Print standard costs and variances',
+    'customer_invoices.correct_prepare' => 'Prepare invoice and delivery correction',
+    'customer_invoices.correct_approve' => 'Approve invoice and delivery correction',
+    'customer_invoices.correct_later_period' => 'Correct invoice and delivery in a later period',
+    'customer_invoices.correct_company_warehouse' => 'Correct invoice delivery from another company branch warehouse',
 ];

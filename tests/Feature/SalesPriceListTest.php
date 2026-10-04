@@ -22,6 +22,7 @@ use Modules\Sales\Models\PriceList;
 use Modules\Sales\Models\PriceListLine;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\SalesOrder;
+use Modules\Sales\Models\SalesOrderLine;
 use Modules\Sales\Models\SalesRequest;
 use Modules\Sales\Services\CustomerInvoiceService;
 use Modules\Sales\Services\PriceListPricingService;
@@ -97,9 +98,48 @@ test('pricing resolves the latest list per product with customer priority and ge
     $finished = $pricing->resolve($fixture['company']->id, $fixture['customer']->id, $fixture['currency']->id, $fixture['finished'], $fixture['unit']->id, 2, '2026-09-01');
     $service = $pricing->resolve($fixture['company']->id, $fixture['customer']->id, $fixture['currency']->id, $fixture['service'], $fixture['unit']->id, 2, '2026-09-01');
 
-    expect($finished['unit_price'])->toBe('12.0000')->and($finished['price_list_doc_num'])->toBe($latestGeneral->doc_num)->and($finished['source'])->toBe('general')
-        ->and($service['unit_price'])->toBe('70.0000')->and($service['price_list_doc_num'])->toBe($customerList->doc_num)->and($service['source'])->toBe('customer')
+    expect($finished['unit_price'])->toBe('12.00000000')->and($finished['price_list_doc_num'])->toBe($latestGeneral->doc_num)->and($finished['source'])->toBe('general')
+        ->and($service['unit_price'])->toBe('70.00000000')->and($service['price_list_doc_num'])->toBe($customerList->doc_num)->and($service['source'])->toBe('customer')
         ->and($service['maximum_discount_amount'])->toBe('14.0000');
+});
+
+test('eight-place list prices survive saved pricing and a direct invoice without changing historic totals', function (): void {
+    $fixture = salesCycleFixture();
+    $list = createSalesPriceList($fixture, null, [[
+        'product' => $fixture['finished'], 'price' => '22.54545123',
+    ]]);
+    $storedPrice = $list->lines()->sole()->unit_price;
+    $resolved = app(PriceListPricingService::class)->resolve(
+        $fixture['company']->id,
+        $fixture['customer']->id,
+        $fixture['currency']->id,
+        $fixture['finished'],
+        $fixture['unit']->id,
+        '10000',
+        now()->toDateString(),
+    );
+    $invoice = app(CustomerInvoiceService::class)->createDirect([
+        'company_id' => $fixture['company']->id,
+        'financial_period_id' => $fixture['period']->id,
+        'branch_id' => $fixture['branch']->id,
+        'customer_doc_num' => $fixture['customer']->doc_num,
+        'currency_doc_num' => $fixture['currency']->doc_num,
+        'invoice_date' => now()->toDateString(),
+        'due_date' => now()->toDateString(),
+        'exchange_rate' => 1,
+        'lines' => [[
+            'product_doc_num' => $fixture['finished']->doc_num,
+            'unit_doc_num' => $fixture['unit']->doc_num,
+            'quantity' => '10000',
+            'discount_amount' => '0',
+            'tax_amount' => '0',
+        ]],
+    ]);
+
+    expect($storedPrice)->toBe('22.54545123')
+        ->and($resolved['unit_price'])->toBe('22.54545123')
+        ->and($invoice->lines()->sole()->unit_price)->toBe('22.54545123')
+        ->and((string) $invoice->total_amount)->toBe('225454.5123');
 });
 
 test('an unpriced product blocks the whole document and discount cannot exceed the list limit', function (): void {
@@ -132,7 +172,7 @@ test('direct invoice ignores a submitted price and stores the price-list snapsho
     ]);
     $line = $invoice->lines->sole();
 
-    expect($invoice)->toBeInstanceOf(CustomerInvoice::class)->and($line->unit_price)->toBe('25.0000')
+    expect($invoice)->toBeInstanceOf(CustomerInvoice::class)->and($line->unit_price)->toBe('25.00000000')
         ->and($line->price_list_line_id)->toBe($list->lines()->sole()->id)
         ->and($line->allowed_discount_type)->toBe('percentage')->and($line->allowed_discount_value)->toBe('10.0000');
 });
@@ -168,14 +208,15 @@ test('direct sales order blocks all unpriced products and ignores a submitted pr
     $response = $this->postJson(route('admin.sales.sales-orders.store'), $payload)->assertCreated();
     $order = SalesOrder::query()->where('doc_num', $response->json('data.doc_num'))->firstOrFail();
 
-    expect($order->lines->sole()->unit_price)->toBe('25.0000')
+    expect($order->lines->sole()->unit_price)->toBe('25.00000000')
         ->and($order->lines->sole()->price_list_line_id)->toBe($list->lines()->sole()->id)
         ->and($order->lines->sole()->allowed_discount_value)->toBe('10.0000');
 
     $list->update(['is_print_only' => true]);
     $payload['lines'][0]['unit_price'] = 999;
+    $payload['amendment_token'] = $order->fresh()->amendmentToken();
     $this->putJson(route('admin.sales.sales-orders.update', $order), $payload)->assertOk();
-    expect($order->fresh()->lines->sole()->unit_price)->toBe('25.0000')
+    expect($order->fresh()->lines->sole()->unit_price)->toBe('25.00000000')
         ->and($order->fresh()->lines->sole()->price_list_line_id)->toBe($list->lines()->sole()->id);
 });
 
@@ -241,7 +282,7 @@ test('general price list is created with automatic code and an optional open end
     $payload['lines'][0]['unit_price'] = 30;
     $this->put(route('admin.sales.price-lists.update', $priceList), $payload)->assertRedirect();
     expect($priceList->lines()->sole()->id)->toBe($lineId)
-        ->and($priceList->lines()->sole()->unit_price)->toBe('30.0000');
+        ->and($priceList->lines()->sole()->unit_price)->toBe('30.00000000');
 });
 
 test('price list screen and pricing coverage report are available in sales', function (): void {
@@ -354,7 +395,7 @@ test('sales documents display resolved prices as read only values and never say 
     ];
     $this->getJson(route('admin.sales.price-suggestion', $query))
         ->assertOk()
-        ->assertJsonPath('data.unit_price', '25.0000')
+        ->assertJsonPath('data.unit_price', '25.00000000')
         ->assertJsonPath('data.scope', 'general')
         ->assertJsonPath('data.maximum_discount_amount', '0.0000');
 });
@@ -598,7 +639,7 @@ test('price list clone copies business data and ordered lines into an independen
         ->and($clone->approved_at)->toBeNull()
         ->and($clone->lines->pluck('product_id')->all())->toBe([$fixture['finished']->getKey(), $fixture['service']->getKey()])
         ->and($clone->lines->pluck('line_number')->all())->toBe([1, 2])
-        ->and($clone->lines->pluck('unit_price')->all())->toBe(['15.2500', '30.7500'])
+        ->and($clone->lines->pluck('unit_price')->all())->toBe(['15.25000000', '30.75000000'])
         ->and($clone->lines->pluck('allowed_discount_type')->all())->toBe(['percentage', 'fixed'])
         ->and($clone->lines->pluck('allowed_discount_value')->all())->toBe(['5.0000', '1.5000'])
         ->and($source->fresh()->toArray())->toBe($sourceSnapshot);
@@ -623,7 +664,7 @@ test('price list clone copies business data and ordered lines into an independen
         ->assertSee($clone->doc_num);
 
     $clone->lines()->firstOrFail()->update(['unit_price' => '99']);
-    expect($source->lines()->firstOrFail()->unit_price)->toBe('12.3456');
+    expect($source->lines()->firstOrFail()->unit_price)->toBe('12.34560000');
 });
 
 test('price list clone is authorized company scoped and create rollback is atomic', function (): void {
@@ -809,7 +850,7 @@ test('price list percentage increase uses canonical four decimal rounding and up
 
     $this->postJson(route('admin.sales.price-lists.increase-by-percentage', $list), ['percentage' => '5'])
         ->assertOk()->assertJsonPath('success', true);
-    expect($list->fresh()->lines->pluck('unit_price')->all())->toBe(['10.5053', '21.0000'])
+    expect($list->fresh()->lines->pluck('unit_price')->all())->toBe(['10.50525000', '21.00000000'])
         ->and($list->lines->pluck('allowed_discount_value')->all())->toBe(['7.5000', '2.0000'])
         ->and($list->fresh()->updated_by)->toBe($fixture['user']->getKey());
 
@@ -826,22 +867,22 @@ test('price list percentage increase uses canonical four decimal rounding and up
         ->and($activity->event)->toBe('price_lists.percentage')
         ->and($properties['change_type'])->toBe('percentage')
         ->and($properties['percentage'])->toBe('5')
-        ->and($finishedChange['old']['unit_price'])->toBe('10.0050')
-        ->and($finishedChange['new']['unit_price'])->toBe('10.5053')
+        ->and($finishedChange['old']['unit_price'])->toBe('10.00500000')
+        ->and($finishedChange['new']['unit_price'])->toBe('10.50525000')
         ->and($finishedChange['old']['allowed_discount_type'])->toBe('percentage')
         ->and($finishedChange['new']['allowed_discount_type'])->toBe('percentage')
         ->and($finishedChange['old']['allowed_discount_value'])->toBe('7.5000')
         ->and($finishedChange['new']['allowed_discount_value'])->toBe('7.5000');
 
     $this->postJson(route('admin.sales.price-lists.increase-by-percentage', $list), ['percentage' => '2.5'])->assertOk();
-    expect($list->fresh()->lines->pluck('unit_price')->all())->toBe(['10.7679', '21.5250']);
+    expect($list->fresh()->lines->pluck('unit_price')->all())->toBe(['10.76788125', '21.52500000']);
 
     $this->get(route('admin.sales.price-lists.history', $list))
         ->assertOk()
         ->assertSee(__('price_lists.history_actions.percentage'))
         ->assertSee($fixture['finished']->name)
         ->assertSee('10.005')
-        ->assertSee('10.5053');
+        ->assertSee('10.50525');
 });
 
 test('price list percentage validation authorization scope and empty-list rules are enforced', function (string $percentage): void {
@@ -888,7 +929,7 @@ test('price list percentage increase rolls back all lines when a later line fail
 
     expect(fn () => app(PriceListService::class)->increaseByPercentage($list, '5', $fixture['company']->getKey()))
         ->toThrow(RuntimeException::class, 'Injected second-line failure');
-    expect($list->fresh()->lines->pluck('unit_price')->all())->toBe(['10.0000', '20.0000'])
+    expect($list->fresh()->lines->pluck('unit_price')->all())->toBe(['10.00000000', '20.00000000'])
         ->and($list->fresh()->updated_by)->toBeNull();
 });
 
@@ -904,7 +945,7 @@ test('price list percentage increase rolls back prices and audit fields when act
 
     expect(fn () => app(PriceListService::class)->increaseByPercentage($list, '5', $fixture['company']->getKey()))
         ->toThrow(RuntimeException::class, 'Injected activity failure');
-    expect($list->fresh()->lines->pluck('unit_price')->all())->toBe(['10.0000', '20.0000'])
+    expect($list->fresh()->lines->pluck('unit_price')->all())->toBe(['10.00000000', '20.00000000'])
         ->and($list->fresh()->updated_by)->toBeNull();
 });
 
@@ -923,8 +964,8 @@ test('price list percentage increase does not reprice an existing invoice snapsh
     $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture))
         ->postJson(route('admin.sales.price-lists.increase-by-percentage', $list), ['percentage' => '10'])->assertOk();
 
-    expect($list->fresh()->lines->sole()->unit_price)->toBe('27.5000')
-        ->and($snapshotLine->fresh()->unit_price)->toBe('25.0000')
+    expect($list->fresh()->lines->sole()->unit_price)->toBe('27.50000000')
+        ->and($snapshotLine->fresh()->unit_price)->toBe('25.00000000')
         ->and($snapshotLine->price_list_line_id)->toBe($list->lines()->sole()->getKey());
 });
 
@@ -1057,11 +1098,11 @@ test('print only lists are excluded while customer and general operational fallb
     $pricing = app(PriceListPricingService::class);
 
     $resolved = $pricing->resolve($fixture['company']->getKey(), $fixture['customer']->getKey(), $fixture['currency']->getKey(), $fixture['finished'], $fixture['unit']->getKey(), 1, '2026-09-01');
-    expect($resolved['unit_price'])->toBe('20.0000')->and($resolved['price_list_doc_num'])->toBe($customer->doc_num);
+    expect($resolved['unit_price'])->toBe('20.00000000')->and($resolved['price_list_doc_num'])->toBe($customer->doc_num);
 
     $customer->update(['is_print_only' => true]);
     $resolved = $pricing->resolve($fixture['company']->getKey(), $fixture['customer']->getKey(), $fixture['currency']->getKey(), $fixture['finished'], $fixture['unit']->getKey(), 1, '2026-09-01');
-    expect($resolved['unit_price'])->toBe('10.0000')->and($resolved['price_list_doc_num'])->toBe($general->doc_num)->and($resolved['source'])->toBe('general');
+    expect($resolved['unit_price'])->toBe('10.00000000')->and($resolved['price_list_doc_num'])->toBe($general->doc_num)->and($resolved['source'])->toBe('general');
 
     $general->update(['is_print_only' => true]);
     expect(fn () => $pricing->resolve($fixture['company']->getKey(), $fixture['customer']->getKey(), $fixture['currency']->getKey(), $fixture['finished'], $fixture['unit']->getKey(), 1, '2026-09-01'))
@@ -1141,7 +1182,7 @@ test('persisted price locking acquires candidate headers and lines in determinis
 
     expect($eligibleIds)->toBe([$operational->getKey()])
         ->and($eligibleIds)->not->toContain($printOnly->getKey())
-        ->and($resolved['unit_price'])->toBe('10.0000')
+        ->and($resolved['unit_price'])->toBe('10.00000000')
         ->and($resolved['price_list_doc_num'])->toBe($operational->doc_num)
         ->and($queries->contains(fn (string $query): bool => str_contains($query, 'from "price_lists"') && str_contains($query, 'order by "id" asc')))->toBeTrue()
         ->and($queries->contains(fn (string $query): bool => str_contains($query, 'from "price_list_lines"') && str_contains($query, 'order by "price_list_id" asc, "id" asc')))->toBeTrue();
@@ -1177,8 +1218,38 @@ test('stored order repricing locks every unmatched product in one batch and pres
         && str_contains($query, 'order by "price_list_id" asc, "id" asc'));
 
     expect(array_column($resolved, 'product_id'))->toBe([$fixture['service']->getKey(), $fixture['finished']->getKey()])
-        ->and(array_column($resolved, 'unit_price'))->toBe(['20.0000', '10.0000'])
+        ->and(array_column($resolved, 'unit_price'))->toBe(['20.00000000', '10.00000000'])
         ->and($lineLockBatches)->toHaveCount(1);
+});
+
+test('an added same-product order line receives its own price without replacing an identified source price', function (): void {
+    $fixture = salesCycleFixture();
+    createSalesPriceList($fixture, null, [['product' => $fixture['finished'], 'price' => '20']]);
+    $stored = new SalesOrderLine([
+        'public_id' => (string) Str::uuid(),
+        'product_id' => $fixture['finished']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'unit_price' => '10',
+        'allowed_discount_type' => null,
+        'allowed_discount_value' => null,
+    ]);
+    $stored->id = 99001;
+    $newLine = [
+        'product_id' => $fixture['finished']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'quantity' => '1',
+        'discount_amount' => '0',
+    ];
+    $priced = app(PriceListPricingService::class)->preserveStoredOrderPrices(
+        [$newLine, [...$newLine, 'public_id' => $stored->public_id]],
+        collect([$stored]),
+        $fixture['company']->getKey(),
+        $fixture['customer']->getKey(),
+        $fixture['currency']->getKey(),
+        now()->toDateString(),
+    );
+
+    expect(array_column($priced, 'unit_price'))->toBe(['20.00000000', '10.00000000']);
 });
 
 test('print only prices cannot enter suggestions direct orders or direct invoices', function (): void {
@@ -1420,7 +1491,7 @@ test('existing sales snapshot remains unchanged when its source list later becom
     $snapshot = $invoice->lines->sole();
 
     $list->update(['is_print_only' => true]);
-    expect($snapshot->fresh()->unit_price)->toBe('25.0000')
+    expect($snapshot->fresh()->unit_price)->toBe('25.00000000')
         ->and($snapshot->fresh()->price_list_line_id)->toBe($list->lines()->sole()->getKey());
 });
 
@@ -1500,7 +1571,7 @@ test('price list pdf is the single canonical inline report in English and Arabic
     expect(substr((string) $arabicPdf->getContent(), 0, 4))->toBe('%PDF');
 });
 
-test('price list export has matching localized headings text codes and canonical numeric values', function (): void {
+test('price list export keeps exact price text and numeric discount values', function (): void {
     $fixture = salesCycleFixture();
     $fixture['customer']->update(['doc_num' => '00042']);
     $fixture['finished']->update(['doc_num' => '000007']);
@@ -1518,11 +1589,11 @@ test('price list export has matching localized headings text codes and canonical
         ->and($xlsxRow[0])->toBe($priceList->doc_num)
         ->and($xlsxRow[2])->toBe('00042')
         ->and($xlsxRow[12])->toBe('000007')
-        ->and($xlsxRow[14])->toBeFloat()->toBe(25.125)
+        ->and($xlsxRow[14])->toBe('25.125')
         ->and($xlsxRow[16])->toBeFloat()->toBe(2.5)
-        ->and($csvRow[14])->toBe('25.1250')
+        ->and($csvRow[14])->toBe('25.125')
         ->and($csvRow[16])->toBe('2.5000')
-        ->and($xlsx->columnFormats())->toBe(['O' => '#,##0.0000', 'Q' => '#,##0.0000'])
+        ->and($xlsx->columnFormats())->toBe(['Q' => '#,##0.0000'])
         ->and($csv->columnFormats())->toBe([]);
 
     $empty = createSalesPriceList($fixture, null, []);

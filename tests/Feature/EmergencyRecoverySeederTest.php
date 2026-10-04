@@ -2,6 +2,8 @@
 
 use App\Models\User;
 use Database\Seeders\EmergencyRecoverySeeder;
+use Illuminate\Database\QueryException;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
@@ -106,4 +108,47 @@ test('permission seeder remains independently runnable after emergency recovery'
     expect(Permission::query()->whereIn('name', $registryPermissions)->where('guard_name', 'web')->count())->toBe(count($registryPermissions))
         ->and(Permission::query()->select('name', 'guard_name')->groupBy('name', 'guard_name')->havingRaw('COUNT(*) > 1')->count())->toBe(0)
         ->and($adminRole->permissions()->count())->toBe(count($registryPermissions));
+});
+
+test('emergency recovery leaves an existing customer installation untouched', function (): void {
+    $company = Company::factory()->main()->create(['name' => 'Synthetic customer installation']);
+    $user = User::factory()->create();
+    $originalPassword = $user->password;
+
+    $this->seed(EmergencyRecoverySeeder::class);
+
+    expect($company->fresh()->name)->toBe('Synthetic customer installation')
+        ->and($user->fresh()->password)->toBe($originalPassword)
+        ->and(Company::query()->count())->toBe(1)
+        ->and(User::query()->count())->toBe(1)
+        ->and(User::query()->where('email', 'admin@erp.local')->exists())->toBeFalse()
+        ->and(Role::query()->where('name', 'admin')->exists())->toBeFalse();
+});
+
+test('empty database recovery command refuses a database with customer records', function (): void {
+    $company = Company::factory()->main()->create(['name' => 'Synthetic protected company']);
+
+    expect(Artisan::call('erp:recover-empty-db'))->toBe(1)
+        ->and($company->fresh()->name)->toBe('Synthetic protected company')
+        ->and(Company::query()->count())->toBe(1)
+        ->and(User::query()->count())->toBe(0);
+});
+
+test('emergency recovery rolls back every bootstrap table after a late identity failure', function (): void {
+    $tables = ['settings', 'permissions', 'roles', 'companies', 'branches', 'financial_periods', 'account_classifications', 'accounts', 'currencies', 'users'];
+    $before = collect($tables)->mapWithKeys(fn (string $table): array => [$table => DB::table($table)->count()])->all();
+    DB::unprepared("CREATE TRIGGER fail_recovery_admin_number BEFORE UPDATE OF doc_number ON users BEGIN SELECT RAISE(ABORT, 'synthetic recovery failure'); END");
+
+    try {
+        expect(fn () => $this->seed(EmergencyRecoverySeeder::class))->toThrow(QueryException::class);
+        $after = collect($tables)->mapWithKeys(fn (string $table): array => [$table => DB::table($table)->count()])->all();
+        expect($after)->toBe($before);
+    } finally {
+        DB::unprepared('DROP TRIGGER IF EXISTS fail_recovery_admin_number');
+    }
+
+    $this->seed(EmergencyRecoverySeeder::class);
+
+    expect(Company::query()->where('name', 'Short Coded')->exists())->toBeTrue()
+        ->and(User::query()->where('email', 'admin@erp.local')->exists())->toBeTrue();
 });

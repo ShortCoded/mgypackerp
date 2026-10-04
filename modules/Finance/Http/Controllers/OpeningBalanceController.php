@@ -24,6 +24,7 @@ use Modules\Finance\Models\OpeningBalance;
 use Modules\Finance\Services\FinanceDocumentNumberSettingsService;
 use Modules\Finance\Services\OpeningBalanceApprovalService;
 use Modules\Finance\Services\OpeningBalanceService;
+use Modules\Finance\Services\OpeningInventoryValuationService;
 
 class OpeningBalanceController extends Controller
 {
@@ -46,6 +47,22 @@ class OpeningBalanceController extends Controller
     public function create(): View
     {
         return $this->form('create');
+    }
+
+    public function inventoryValuation(Request $request, OpeningInventoryValuationService $valuation): JsonResponse
+    {
+        abort_unless($request->user()?->canAny(['opening_balances.create', 'opening_balances.edit', 'opening_balances.clone']), 403);
+        $data = $request->validate(['account_doc_num' => ['required', 'string', 'max:255']]);
+        $context = app(OperatingContextService::class)->snapshot($request);
+        abort_unless($context['company_id'] && $context['financial_period_id'] && $context['branch_id'], 422);
+        $preview = $this->guardDomain(fn (): array => $valuation->preview((int) $context['company_id'],
+            (int) $context['financial_period_id'], (int) $context['branch_id'], $data['account_doc_num']));
+        if (isset($preview['snapshot'])) {
+            $preview['source_fingerprint'] = $preview['snapshot']['fingerprint'];
+            unset($preview['snapshot']);
+        }
+
+        return response()->json(['data' => $preview]);
     }
 
     public function show(Request $request, string $openingBalance): View

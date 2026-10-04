@@ -231,7 +231,7 @@ class ProcurementWorkflowRequest extends FormRequest
             'lines.*.source_line_public_id' => ['nullable', 'required_without:lines.*.rfq_line_public_id', 'uuid'],
             'lines.*.rfq_line_public_id' => ['nullable', 'required_without:lines.*.source_line_public_id', 'uuid'],
             'lines.*.offered_quantity' => ['required', 'numeric', 'decimal:0,8', 'gt:0'],
-            'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,4', 'min:0'],
+            'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,8', 'regex:/^\d{1,14}(?:\.\d{1,8})?$/D', 'min:0'],
             'lines.*.discount_amount' => ['nullable', 'numeric', 'decimal:0,4', 'min:0'],
             'lines.*.tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'between:0,100'],
             'lines.*.delivery_date' => ['nullable', 'date'],
@@ -280,6 +280,7 @@ class ProcurementWorkflowRequest extends FormRequest
             'lines.*.delivery_schedule_public_id' => ['nullable', 'uuid'],
             'lines.*.delivered_quantity' => ['required', 'numeric', 'decimal:0,8', 'gt:0'],
             'lines.*.supplier_lot_number' => ['nullable', 'string', 'max:120'],
+            'lines.*.serial_numbers' => ['nullable', 'string', 'max:1000000'],
             'lines.*.manufacture_date' => ['nullable', 'date', 'before_or_equal:lines.*.expiry_date'],
             'lines.*.expiry_date' => ['nullable', 'date', 'after_or_equal:document_date'],
             'lines.*.notes' => ['nullable', 'string'],
@@ -319,6 +320,7 @@ class ProcurementWorkflowRequest extends FormRequest
             'lines.*.accepted_quantity' => ['required', 'numeric', 'decimal:0,8', 'min:0'],
             'lines.*.rejected_quantity' => ['required', 'numeric', 'decimal:0,8', 'min:0'],
             'lines.*.supplier_lot_number' => ['nullable', 'string', 'max:120'],
+            'lines.*.serial_numbers' => ['nullable', 'string', 'max:1000000'],
             'lines.*.manufacture_date' => ['nullable', 'date', 'before_or_equal:lines.*.expiry_date'],
             'lines.*.expiry_date' => ['nullable', 'date'],
             'lines.*.notes' => ['nullable', 'string'],
@@ -343,7 +345,7 @@ class ProcurementWorkflowRequest extends FormRequest
             'requested_values.lines' => ['nullable', 'array'],
             'requested_values.lines.*.public_id' => ['required', 'uuid'],
             'requested_values.lines.*.ordered_quantity' => ['nullable', 'numeric', 'decimal:0,8', 'gt:0'],
-            'requested_values.lines.*.unit_price' => ['nullable', 'numeric', 'decimal:0,4', 'min:0'],
+            'requested_values.lines.*.unit_price' => ['nullable', 'numeric', 'decimal:0,8', 'regex:/^\d{1,14}(?:\.\d{1,8})?$/D', 'min:0'],
             'requested_values.lines.*.required_delivery_date' => ['nullable', 'date'],
         ];
     }
@@ -361,6 +363,8 @@ class ProcurementWorkflowRequest extends FormRequest
             'lines.*.receipt_line_public_id' => ['required', 'uuid'],
             'lines.*.quantity' => ['required', 'numeric', 'decimal:0,8', 'gt:0'],
             'lines.*.from_quarantine' => ['nullable', 'boolean'],
+            'lines.*.serial_receipt_layer_ids' => ['nullable', 'array', 'max:10000'],
+            'lines.*.serial_receipt_layer_ids.*' => ['integer', 'min:1', 'distinct'],
             'lines.*.reason' => ['nullable', 'string'],
         ];
     }

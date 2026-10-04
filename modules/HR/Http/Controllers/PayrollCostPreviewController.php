@@ -2,10 +2,14 @@
 
 namespace Modules\HR\Http\Controllers;
 
+use DomainException;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Routing\Controller;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
+use Modules\Core\Models\Company;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\HR\Services\PayrollCostAllocationService;
@@ -18,6 +22,31 @@ class PayrollCostPreviewController extends Controller
     ) {}
 
     public function __invoke(Request $request, int $payrollRun, PayrollCostAllocationService $allocations): View
+    {
+        $this->assertReadable($request, $payrollRun);
+        $preview = $allocations->previewRun($payrollRun);
+
+        return view('modules.hr.payroll.cost-preview', $preview);
+    }
+
+    public function recalculate(Request $request, int $payrollRun, PayrollCostAllocationService $allocations): RedirectResponse
+    {
+        $company = $this->assertReadable($request, $payrollRun);
+        DB::transaction(function () use ($request, $payrollRun, $allocations, $company): void {
+            Company::query()->whereKey($company->id)->lockForUpdate()->firstOrFail();
+            $this->assertReadable($request, $payrollRun);
+            try {
+                $allocations->recalculateStoredAllocations($payrollRun);
+            } catch (DomainException $exception) {
+                throw ValidationException::withMessages(['allocations' => $exception->getMessage()]);
+            }
+        });
+
+        return redirect()->route('admin.hr.payroll-runs.cost-preview', $payrollRun)
+            ->with('success', __('hr_payroll.messages.cost_allocation_recalculated'));
+    }
+
+    private function assertReadable(Request $request, int $payrollRun): Company
     {
         $company = $this->companies->currentCompany($request);
         abort_unless($company !== null, 409);
@@ -44,8 +73,6 @@ class PayrollCostPreviewController extends Controller
                 ->exists(), 404);
         }
 
-        $preview = $allocations->previewRun($payrollRun);
-
-        return view('modules.hr.payroll.cost-preview', $preview);
+        return $company;
     }
 }

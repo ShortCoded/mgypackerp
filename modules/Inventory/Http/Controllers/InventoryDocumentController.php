@@ -10,28 +10,40 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\DataTableSearchService;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Core\Services\Select2ResponseService;
 use Modules\Inventory\DataTables\InventoryDocumentsDataTable;
 use Modules\Inventory\Http\Requests\StoreInventoryOperationRequest;
 use Modules\Inventory\Models\InventoryDocument;
+use Modules\Inventory\Models\InventoryReceiptCostProposal;
+use Modules\Inventory\Models\InventoryReceiptLayer;
+use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
+use Modules\Inventory\Services\InventoryCostPolicyService;
 use Modules\Inventory\Services\InventoryDocumentPostingService;
+use Modules\Inventory\Services\InventoryLayerService;
 use Modules\Inventory\Services\InventoryMovementService;
-use Modules\Inventory\Services\PostedInventoryReceiptPricingService;
+use Modules\Inventory\Services\InventoryReceiptCostProposalService;
 use Modules\Production\Models\ProductionMaterialRequest;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Models\ProductionRunBatch;
 use Modules\Production\Services\ProductionCycleService;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class InventoryDocumentController extends Controller
 {
@@ -55,7 +67,7 @@ class InventoryDocumentController extends Controller
 
     public function create(Request $request): View
     {
-        $this->requiredContext($request);
+        $context = $this->requiredContext($request);
         $allowedDocumentTypes = $this->allowedDocumentTypes($request);
 
         abort_if($allowedDocumentTypes === [], 403);
@@ -65,7 +77,54 @@ class InventoryDocumentController extends Controller
             'isClone' => false,
             'allowedDocumentTypes' => $allowedDocumentTypes,
             'stockStatuses' => $this->stockStatuses(),
+            'batchLayerSelectionData' => $this->productionBatchOldInput($request, $context),
         ]);
+    }
+
+    /** @param array<string, mixed> $context @return array<string, mixed> */
+    private function productionBatchOldInput(Request $request, array $context): array
+    {
+        $storeUuid = $request->old('branch_store_uuid');
+        $batchId = $request->old('production_run_batch_public_id');
+        $store = is_string($storeUuid) ? BranchStore::query()->where('branch_id', $context['branch_id'])->where('public_uuid', $storeUuid)->first() : null;
+        $batch = is_string($batchId) ? ProductionRunBatch::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
+            ->where('financial_period_id', $context['financial_period_id'])->where('public_id', $batchId)->with('runs.requirements')->first() : null;
+        $selections = [];
+        $input = $request->old('batch_material_selections', []);
+        if ($batch !== null && $store !== null && is_array($input)) {
+            $requirements = $batch->runs->flatMap->requirements->keyBy('id');
+            $layerIds = [];
+            foreach (array_slice($input, 0, 100) as $entry) {
+                foreach (is_array($entry) && is_array($entry['receipt_layers'] ?? null) ? array_slice($entry['receipt_layers'], 0, 100) : [] as $selection) {
+                    $id = is_array($selection) && is_scalar($selection['layer_id'] ?? null) ? (string) $selection['layer_id'] : '';
+                    if (ctype_digit($id)) {
+                        $layerIds[] = $id;
+                    }
+                }
+            }
+            $layers = InventoryReceiptLayer::query()->with('receiptTransaction')->whereIn('id', array_unique($layerIds))
+                ->where('company_id', $context['company_id'])->where('branch_store_id', $store->id)
+                ->whereIn('product_id', $requirements->pluck('product_id'))->where('stock_status', InventoryTransaction::StatusAvailable)->get()->keyBy('id');
+            foreach (array_slice($input, 0, 100) as $entry) {
+                $requirement = is_array($entry) && is_scalar($entry['requirement_id'] ?? null) ? $requirements->get($entry['requirement_id']) : null;
+                if ($requirement === null || ! is_array($entry['receipt_layers'] ?? null)) {
+                    continue;
+                }
+                $slices = [];
+                foreach (array_slice($entry['receipt_layers'], 0, 100) as $selection) {
+                    $id = is_array($selection) && is_scalar($selection['layer_id'] ?? null) ? $selection['layer_id'] : null;
+                    $layer = $id !== null && ctype_digit((string) $id) ? $layers->get($id) : null;
+                    if ($layer !== null && (int) $layer->product_id === (int) $requirement->product_id) {
+                        $slices[] = ['layer_id' => (string) $layer->id, 'text' => $layer->receiptTransaction?->source_doc_num.' — '.$layer->batch_lot,
+                            'quantity' => is_scalar($selection['quantity'] ?? null) ? $selection['quantity'] : null];
+                    }
+                }
+                $selections[] = ['requirement_id' => $requirement->id, 'receipt_layers' => $slices];
+            }
+        }
+
+        return ['batch' => $batch ? ['id' => $batch->public_id, 'text' => $batch->batch_number] : null,
+            'store' => $store ? ['id' => $store->public_uuid, 'text' => $store->name] : null, 'selections' => $selections];
     }
 
     public function productionMaterialIssue(Request $request): View
@@ -73,15 +132,24 @@ class InventoryDocumentController extends Controller
         $this->authorizeProductionMaterialIssue($request);
         $context = $this->requiredContext($request);
         $selectedRequest = null;
+        $unlinkedReservations = collect();
 
         if ($request->filled('material_request')) {
             $selectedRequest = $this->issuableProductionMaterialRequests($context)
-                ->with(['run', 'store', 'lines.product', 'lines.unit'])
+                ->with(['run', 'store', 'lines.product', 'lines.unit', 'lines.reservations'])
                 ->where('doc_num', $request->string('material_request')->trim()->toString())
                 ->firstOrFail();
+            $unlinkedReservations = InventoryReservation::query()
+                ->where('company_id', $context['company_id'])
+                ->where('branch_id', $context['branch_id'])
+                ->where('production_run_id', $selectedRequest->production_run_id)
+                ->whereIn('production_material_requirement_id', $selectedRequest->lines->pluck('production_material_requirement_id'))
+                ->whereNull('production_material_request_line_id')
+                ->where('status', InventoryReservation::StatusActive)
+                ->get();
         }
 
-        return view('modules.inventory.documents.production-material-issue', compact('selectedRequest'));
+        return view('modules.inventory.documents.production-material-issue', compact('selectedRequest', 'unlinkedReservations'));
     }
 
     public function productionMaterialIssueRequests(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
@@ -231,6 +299,8 @@ class InventoryDocumentController extends Controller
                         8,
                     ) > 0)
                     ->map(fn ($requirement): array => [
+                        'requirement_id' => $requirement->id,
+                        'product_doc_num' => $requirement->product?->doc_num,
                         'run_number' => $run->run_number,
                         'line_number' => $run->orderLine->line_number,
                         'finished_product' => $run->orderLine->product?->name,
@@ -274,6 +344,76 @@ class InventoryDocumentController extends Controller
         ]));
     }
 
+    public function receiptLayers(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
+    {
+        abort_unless($request->user()?->canAny(['inventory.documents.create', 'inventory.documents.edit', 'production.material_requests.issue', 'production.runs.issue', 'production.runs.account_materials', 'production.runs.return', 'purchases.purchase_returns.create', 'purchases.purchase_returns.edit']), 403);
+        $request->validate(['branch_store_uuid' => ['nullable', 'uuid'], 'product_doc_num' => ['nullable', 'string', 'max:100'],
+            'branch_store_id' => ['nullable', 'integer', 'min:1'],
+            'document_date' => ['nullable', 'string', 'max:50'], 'stock_status' => ['nullable', 'string', 'max:50'],
+            'production_run_public_id' => ['nullable', 'uuid'],
+            'receipt_line_public_id' => ['nullable', 'uuid'],
+            'material_request_line_id' => ['nullable', 'integer', 'min:1']]);
+        $context = $this->requiredContext($request);
+        $store = BranchStore::query()->where('branch_id', $context['branch_id'])
+            ->when($request->filled('branch_store_uuid'), fn ($query) => $query->where('public_uuid', $request->input('branch_store_uuid')),
+                fn ($query) => $query->whereKey($request->integer('branch_store_id')))->first();
+        $product = Product::query()->forCompany($context['company_id'])->active()->nonService()->where('doc_num', $request->input('product_doc_num'))->first();
+        $date = app(DateFormatService::class)->normalizeForStorage($request->input('document_date'));
+        $status = $request->input('stock_status', InventoryTransaction::StatusAvailable);
+        $costPolicyId = $store !== null && $date !== null
+            ? app(InventoryCostPolicyService::class)->resolve((int) $context['company_id'], (int) $store->id, $date)['policy_id'] : null;
+        $query = InventoryReceiptLayer::query()->with(['receiptTransaction', 'serialIdentity'])->withBookCostBasis($costPolicyId)
+            ->where('company_id', $context['company_id'])->where('branch_store_id', $store?->id ?? 0)->where('product_id', $product?->id ?? 0)
+            ->where('stock_status', $status)->where('remaining_quantity', '>', 0)->withAuthoritativeCost()
+            ->when($status === InventoryTransaction::StatusProductionStaging, fn ($query) => $query->whereHas('receiptTransaction',
+                fn ($receipt) => $receipt->whereHas('productionRun', fn ($run) => $run->where('public_id', $request->input('production_run_public_id'))
+                    ->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])->where('financial_period_id', $context['financial_period_id']))))
+            ->whereDate('original_receipt_date', '<=', $date ?? '0001-01-01')
+            ->when($product?->tracks_expiry, fn ($query) => $query->whereNotNull('expiry_date')->whereDate('expiry_date', '>=', $date ?? '0001-01-01'))
+            ->orderBy('original_receipt_date')->orderBy('id');
+        if ($request->filled('receipt_line_public_id')) {
+            $receiptLine = UnpricedInventoryReceiptLine::query()
+                ->where('public_id', $request->input('receipt_line_public_id'))->where('product_id', $product?->id ?? 0)
+                ->whereHas('receipt', fn ($receipt) => $receipt->where('company_id', $context['company_id'])
+                    ->where('branch_id', $context['branch_id'])->where('branch_store_id', $store?->id ?? 0)->where('posting_status', 'posted'))->first();
+            $source = $receiptLine === null ? null : InventoryTransaction::query()->where('company_id', $context['company_id'])
+                ->where('posting_key', "purchase-receipt:{$receiptLine->id}")->first();
+            $query->whereIn('receipt_transaction_id', $source === null ? [] : app(InventoryLayerService::class)->receiptLineageTransactionIds($source->id));
+        } elseif (! $request->user()?->canAny(['inventory.documents.create', 'inventory.documents.edit', 'production.material_requests.issue', 'production.runs.issue', 'production.runs.account_materials', 'production.runs.return'])) {
+            $query->whereRaw('1 = 0');
+        }
+        if ($request->filled('material_request_line_id')) {
+            $query->whereExists(fn ($reservation) => $reservation->selectRaw('1')->from('inventory_reservations')
+                ->where('production_material_request_line_id', $request->integer('material_request_line_id'))
+                ->whereColumn('inventory_reservations.company_id', 'inventory_receipt_layers.company_id')
+                ->whereColumn('inventory_reservations.branch_store_id', 'inventory_receipt_layers.branch_store_id')
+                ->whereColumn('inventory_reservations.product_id', 'inventory_receipt_layers.product_id')
+                ->where('inventory_reservations.status', InventoryReservation::StatusActive)
+                ->whereRaw('(inventory_reservations.quantity - inventory_reservations.consumed_quantity - inventory_reservations.released_quantity) > 0')
+                ->where(fn ($batch) => $batch->whereColumn('inventory_reservations.batch_lot', 'inventory_receipt_layers.batch_lot')
+                    ->orWhere(fn ($null) => $null->whereNull('inventory_reservations.batch_lot')->whereNull('inventory_receipt_layers.batch_lot')))
+                ->where(fn ($location) => $location->whereColumn('inventory_reservations.warehouse_location_id', 'inventory_receipt_layers.warehouse_location_id')
+                    ->orWhere(fn ($null) => $null->whereNull('inventory_reservations.warehouse_location_id')->whereNull('inventory_receipt_layers.warehouse_location_id'))));
+        }
+        $terms = $search->terms($request->input('q', $request->input('term')));
+        if ($terms !== []) {
+            $query->where(function ($query) use ($search, $terms): void {
+                $search->applyMultiTermSearch($query, $terms, ['text' => ['batch_lot']]);
+                $query->orWhereHas('serialIdentity', fn ($identity) => $search->applyMultiTermSearch($identity, $terms, ['text' => ['serial_number']]));
+            });
+        }
+        $numbers = app(NumericFormatService::class);
+
+        return response()->json($select2->paginated($query, $request, fn (InventoryReceiptLayer $layer): array => [
+            'id' => (string) $layer->id,
+            'text' => ($layer->receiptTransaction?->source_doc_num ?? '').' — '.($layer->serialIdentity?->serial_number ?? $layer->batch_lot ?? __('inventory_cost_policy.no_batch')).' — '.$numbers->format($layer->remaining_quantity).' — '.$numbers->format($layer->bookUnitCostForPolicy($costPolicyId)),
+            'serial_number' => $layer->serialIdentity?->serial_number,
+            'batch_lot' => $layer->batch_lot, 'manufacture_date' => $layer->manufacture_date?->toDateString(), 'expiry_date' => $layer->expiry_date?->toDateString(),
+            'remaining_quantity' => $layer->remaining_quantity, 'unit_cost' => $layer->bookUnitCostForPolicy($costPolicyId),
+            'receipt_unit_cost' => $layer->unit_cost,
+        ]));
+    }
+
     public function store(
         StoreInventoryOperationRequest $request,
         InventoryMovementService $service,
@@ -310,7 +450,9 @@ class InventoryDocumentController extends Controller
                 );
             }
 
-            $document = $this->guard(fn (): InventoryDocument => $productionCycle->issueRunBatchMaterials($batch, (int) $store->getKey()));
+            $selectedLayers = collect($data['batch_material_selections'] ?? [])->mapWithKeys(fn (array $line): array => [(int) $line['requirement_id'] => collect($line['receipt_layers'] ?? [])
+                ->filter(fn (array $selection): bool => filled($selection['layer_id'] ?? null))->values()->all()])->all();
+            $document = $this->guard(fn (): InventoryDocument => $productionCycle->issueRunBatchMaterials($batch, (int) $store->getKey(), selectedLayersByRequirementId: $selectedLayers, documentDate: $data['document_date'] ?? null));
             $url = route('admin.inventory.documents.show', $document);
 
             return $this->respond(
@@ -446,38 +588,71 @@ class InventoryDocumentController extends Controller
         return response()->json(['success' => true]);
     }
 
-    public function show(Request $request, InventoryDocument $inventoryDocument): View
+    public function show(Request $request, InventoryDocument $inventoryDocument, InventoryReceiptCostProposalService $proposals): View
     {
-        $this->assertInCurrentContext($request, $inventoryDocument);
+        $this->assertReadableInCurrentContext($request, $inventoryDocument);
 
-        return view('modules.inventory.documents.show', [
-            'record' => $inventoryDocument->load([
-                'lines.product', 'lines.unit', 'transactions', 'branchStore',
-                'lines.reservation.productionMaterialRequirement', 'destinationBranchStore',
-                'productionOrder.salesOrder', 'productionRun.order.salesOrder', 'productionMaterialRequest', 'salesOrder',
-            ]),
+        $record = $inventoryDocument->load([
+            'lines.product', 'lines.unit', 'transactions', 'branchStore',
+            'lines.reservation.productionMaterialRequirement', 'destinationBranchStore',
+            'productionOrder.salesOrder', 'productionRun.order.salesOrder', 'productionMaterialRequest', 'salesOrder',
+            'costProposals.preparedBy', 'costProposals.approvedBy', 'costProposals.valueAdjustment.journalEntry',
         ]);
+        foreach ($record->costProposals as $proposal) {
+            if ($proposal->impact_snapshot !== null) {
+                $proposals->assertImpactBranchAccess($request, $proposal->impact_snapshot);
+            }
+        }
+
+        return view('modules.inventory.documents.show', compact('record'));
     }
 
     public function print(Request $request, InventoryDocument $inventoryDocument): Response
     {
-        $this->assertInCurrentContext($request, $inventoryDocument);
+        $this->assertReadableInCurrentContext($request, $inventoryDocument);
         $record = $inventoryDocument->load([
             'company', 'lines.product', 'lines.unit', 'branchStore', 'destinationBranchStore',
             'productionOrder', 'productionRun', 'productionMaterialRequest',
         ]);
 
         return $this->pdf->stream('reports.inventory.document', [
-            'title' => __('inventory.movements.types.'.$record->document_type).' — '.$record->doc_num,
+            'title' => $this->pdf->stockDocumentTitle($record).' — '.$record->doc_num,
             'record' => $record,
             'companyPrintIdentity' => $record->print_identity_snapshot ?: $this->printIdentity->forCompany($record->company),
         ], str('inventory-'.$record->document_type.'-'.$record->doc_num)->slug().'.pdf');
     }
 
+    public function reversalPreview(Request $request, InventoryDocument $inventoryDocument, InventoryDocumentPostingService $posting): JsonResponse|View
+    {
+        $this->assertInCurrentContext($request, $inventoryDocument);
+        $plan = $this->guard(fn (): array => $posting->reversalPlan($inventoryDocument, $request->validate(['posting_date' => ['nullable', 'date_format:Y-m-d']])['posting_date'] ?? null));
+
+        if ($request->expectsJson()) {
+            return response()->json($plan);
+        }
+
+        return view('modules.inventory.documents.reversal-preview', [
+            'record' => $inventoryDocument,
+            'plan' => $plan,
+        ]);
+    }
+
     public function reverse(Request $request, InventoryDocument $inventoryDocument, InventoryDocumentPostingService $posting): JsonResponse|RedirectResponse
     {
         $this->assertInCurrentContext($request, $inventoryDocument);
-        $record = $this->guard(fn (): InventoryDocument => $posting->reverse($inventoryDocument));
+        $data = $request->validate([
+            'reason' => ['required', 'string', 'min:5', 'max:2000'],
+            'preview_token' => ['required', 'string', 'size:64'],
+            'posting_date' => ['nullable', 'date_format:Y-m-d'],
+        ]);
+        $plan = $this->guard(fn (): array => $posting->reversalPlan($inventoryDocument, $data['posting_date'] ?? null));
+        if (! $plan['can_reverse']) {
+            throw ValidationException::withMessages(['document' => implode(' ', $plan['blockers'])]);
+        }
+        if (! hash_equals($plan['preview_token'], $data['preview_token'])) {
+            throw ValidationException::withMessages(['preview_token' => __('inventory.movements.reversal.preview_changed')]);
+        }
+        $record = $this->guard(fn (): InventoryDocument => $posting->reverse($inventoryDocument, $data['reason'], $data['posting_date'] ?? null));
 
         return $this->respond(
             $request,
@@ -491,31 +666,82 @@ class InventoryDocumentController extends Controller
     public function priceReceipt(
         Request $request,
         InventoryDocument $inventoryDocument,
-        PostedInventoryReceiptPricingService $pricing,
+        InventoryReceiptCostProposalService $proposals,
         NumericFormatService $numbers,
     ): RedirectResponse {
         $this->assertInCurrentContext($request, $inventoryDocument);
-        $request->merge([
-            'unit_costs' => collect($request->input('unit_costs', []))
-                ->map(fn (mixed $cost): ?string => $numbers->normalizeToScale($cost, 8))
-                ->all(),
-        ]);
+        if ($request->hasFile('workbook')) {
+            $request->request->remove('unit_costs');
+        } else {
+            try {
+                $request->merge([
+                    'unit_costs' => collect($request->input('unit_costs', []))
+                        ->map(fn (mixed $cost): ?string => $numbers->normalizeToScale($cost, 8))
+                        ->all(),
+                ]);
+            } catch (\InvalidArgumentException) {
+                throw ValidationException::withMessages(['unit_costs' => __('inventory.movements.messages.receipt_pricing_precision')]);
+            }
+        }
         $data = $request->validate([
-            'source_reference' => ['required', 'string', 'min:5', 'max:255'],
-            'provisional' => ['nullable', 'boolean'],
-            'unit_costs' => ['required', 'array', 'min:1'],
+            'basis' => ['required', Rule::in([InventoryReceiptCostProposal::BasisDocumented, InventoryReceiptCostProposal::BasisEstimate])],
+            'source_reference' => ['nullable', 'string', 'min:5', 'max:255'],
+            'basis_note' => ['required_if:basis,estimate', 'nullable', 'string', 'min:5', 'max:2000'],
+            'workbook' => ['nullable', 'file', 'mimes:xlsx', 'max:10240'],
+            'unit_costs' => [$request->hasFile('workbook') ? 'nullable' : 'required', 'array', 'min:1'],
             'unit_costs.*' => ['required', 'numeric', 'gt:0', 'decimal:0,8'],
         ]);
-        $this->guard(fn (): InventoryDocument => $pricing->price(
-            $inventoryDocument,
-            $data['unit_costs'],
-            trim($data['source_reference']),
-            (bool) ($data['provisional'] ?? false),
-            $request,
+        $this->guard(fn (): InventoryReceiptCostProposal => $proposals->prepare(
+            $request, $inventoryDocument, $data, $data['unit_costs'] ?? [], $request->file('workbook'),
+        ));
+
+        return to_route('admin.inventory.documents.show', $inventoryDocument)
+            ->with('success', __('inventory.movements.messages.receipt_pricing_prepared'));
+    }
+
+    public function receiptCostTemplate(Request $request, InventoryDocument $inventoryDocument, InventoryReceiptCostProposalService $proposals): BinaryFileResponse
+    {
+        $this->assertInCurrentContext($request, $inventoryDocument);
+        $path = $this->guard(fn (): string => $proposals->template($request, $inventoryDocument));
+
+        return response()->download($path, $inventoryDocument->doc_num.'-receipt-costs.xlsx')->deleteFileAfterSend(true);
+    }
+
+    public function receiptCostSource(Request $request, InventoryDocument $inventoryDocument, InventoryReceiptCostProposal $proposal): StreamedResponse
+    {
+        $this->assertInCurrentContext($request, $inventoryDocument);
+        abort_unless((int) $proposal->inventory_document_id === (int) $inventoryDocument->getKey()
+            && (int) $proposal->company_id === (int) $inventoryDocument->company_id
+            && $proposal->source_file_path !== null
+            && Storage::disk('local')->exists($proposal->source_file_path), 404);
+        abort_unless(hash_file('sha256', Storage::disk('local')->path($proposal->source_file_path)) === $proposal->source_file_sha256, 409);
+
+        return Storage::disk('local')->download($proposal->source_file_path, $proposal->source_file_name ?: 'receipt-cost-source.xlsx');
+    }
+
+    public function approveReceiptCost(Request $request, InventoryDocument $inventoryDocument, InventoryReceiptCostProposal $proposal, InventoryReceiptCostProposalService $proposals): RedirectResponse
+    {
+        $this->assertInCurrentContext($request, $inventoryDocument);
+        $data = $request->validate([
+            'source_reference' => ['required', 'string', 'min:5', 'max:255'],
+            'approval_reference' => ['required', 'string', 'min:5', 'max:255'],
+        ]);
+        $this->guard(fn (): InventoryDocument => $proposals->approve(
+            $request, $inventoryDocument, $proposal, $data['source_reference'], $data['approval_reference'],
         ));
 
         return to_route('admin.inventory.documents.show', $inventoryDocument)
             ->with('success', __('inventory.movements.messages.receipt_priced'));
+    }
+
+    public function rejectReceiptCost(Request $request, InventoryDocument $inventoryDocument, InventoryReceiptCostProposal $proposal, InventoryReceiptCostProposalService $proposals): RedirectResponse
+    {
+        $this->assertInCurrentContext($request, $inventoryDocument);
+        $data = $request->validate(['reason' => ['required', 'string', 'min:5', 'max:2000']]);
+        $this->guard(fn (): InventoryReceiptCostProposal => $proposals->reject($request, $inventoryDocument, $proposal, $data['reason']));
+
+        return to_route('admin.inventory.documents.show', $inventoryDocument)
+            ->with('success', __('inventory.movements.messages.receipt_pricing_rejected'));
     }
 
     /** @return array{company_id: int, financial_period_id: int, branch_id: int} */
@@ -598,6 +824,18 @@ class InventoryDocumentController extends Controller
         abort_unless(collect($abilities)->every(fn (string $ability): bool => (bool) $request->user()?->can($ability)), 403);
 
         return $documentType;
+    }
+
+    private function assertReadableInCurrentContext(Request $request, InventoryDocument $inventoryDocument): void
+    {
+        $context = $this->requiredContext($request);
+        abort_unless((int) $inventoryDocument->company_id === $context['company_id']
+            && (int) $inventoryDocument->branch_id === $context['branch_id'], 404);
+        $company = Company::query()->findOrFail($context['company_id']);
+        $scope = app(OperatingScopeAccessService::class);
+        abort_unless($scope->allowedFinancialPeriodQuery($request->user(), [$company->doc_num])
+            ->where('financial_periods.id', $inventoryDocument->financial_period_id)->exists()
+            && $scope->allowedBranchQuery($request->user(), [$company->doc_num])->where('branches.id', $inventoryDocument->branch_id)->exists(), 404);
     }
 
     private function assertInCurrentContext(Request $request, InventoryDocument $inventoryDocument): void

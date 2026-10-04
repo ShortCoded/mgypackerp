@@ -29,6 +29,7 @@ use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\SupplierPaymentContext;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerReceipt;
+use Modules\Sales\Services\SalesBalanceProjectionService;
 
 class FinanceReportService
 {
@@ -605,14 +606,22 @@ class FinanceReportService
         $party = $customers ? 'customer' : 'supplier';
         $dateColumn = 'invoice_date';
         $status = $customers ? CustomerInvoice::StatusPosted : PurchaseInvoice::StatusApproved;
-        $query = $model::query()->where('company_id', $this->companyId())->where('status', $status)->where('remaining_amount', '>', 0)
+        $balances = app(SalesBalanceProjectionService::class);
+        if ($customers) {
+            $balances->assertCorrectionEvidence($this->companyId());
+        }
+        $query = ($customers ? $balances->invoicesAt($this->companyId(), $asOf->toDateString()) : $model::query())
+            ->where('company_id', $this->companyId())->where('status', $status)->where('remaining_amount', '>', 0)
             ->whereDate($dateColumn, '<=', $asOf)
             ->when($filters['currency_doc_num'] ?? null, fn ($query, $value) => $query->whereHas('currency', fn ($query) => $query->where('doc_num', $value)))
             ->when($filters['financial_period_id'] ?? null, fn ($invoiceQuery, $periodId) => $invoiceQuery->where('financial_period_id', $periodId))
             ->when($filters['branch_id'] ?? null, fn ($invoiceQuery, $branchId) => $invoiceQuery->where('branch_id', $branchId))
             ->with([$party, 'currency', 'paymentSchedules']);
         if ($customers) {
-            $query->where('document_type', CustomerInvoice::TypeInvoice);
+            $query->where('document_type', CustomerInvoice::TypeInvoice)->with(['paymentSchedules' => function ($schedules) use ($balances, $asOf): void {
+                $schedules->fromSub($balances->schedulesAt($this->companyId(), $asOf->toDateString()), 'customer_invoice_payment_schedules')
+                    ->select('customer_invoice_payment_schedules.*');
+            }]);
         }
 
         $rows = $query->get()->flatMap(function ($invoice) use ($asOf, $party): Collection {
@@ -655,7 +664,9 @@ class FinanceReportService
             };
         });
 
-        return [$this->labels(['party_reference', 'document', 'due_date', 'currency', 'original_amount', 'settled_amount', 'outstanding', 'aging_bucket', 'days_overdue']), $rows, [__('finance_reports.notices.aging_current_balance_limit')]];
+        $notice = $customers ? __('sales_balance_report.documented_settlements', ['date' => $this->date($asOf)]) : __('finance_reports.notices.aging_current_balance_limit');
+
+        return [$this->labels(['party_reference', 'document', 'due_date', 'currency', 'original_amount', 'settled_amount', 'outstanding', 'aging_bucket', 'days_overdue']), $rows, [$notice]];
     }
 
     /** @return Collection<int, array<string, mixed>> */

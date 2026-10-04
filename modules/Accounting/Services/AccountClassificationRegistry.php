@@ -425,6 +425,7 @@ class AccountClassificationRegistry
             'foreign_exchange_gain' => ['أرباح فروق العملة الأجنبية', 'Foreign Exchange Gains'],
             'gain_on_asset_disposal' => ['أرباح استبعاد الممتلكات والآلات والمعدات', 'Gain on Disposal of Property, Plant and Equipment'],
             'inventory_adjustment_gain' => ['مكاسب تسويات المخزون', 'Inventory Adjustment Gains'],
+            'inventory_cost_completion_clearing' => ['حساب مقابل استكمال تكلفة الاستلامات', 'Receipt Cost Completion Clearing'],
             'quarantine_inventory' => ['مخزون تحت الفحص والحجر', 'Quarantine Inventory'],
             'rework_inventory' => ['مخزون إعادة التشغيل', 'Rework Inventory'],
             'purchases' => ['المشتريات – تصنيف عام', 'Purchases – General'],
@@ -563,6 +564,7 @@ class AccountClassificationRegistry
             ], Account::TypeAsset, Account::StatementFinancialPosition, Account::BalanceDebit),
             ...$this->rows([
                 ['goods_received_not_invoiced', 'بضائع مستلمة غير مفوترة', 'Goods Received Not Invoiced'],
+                ['inventory_cost_completion_clearing', 'حساب مقابل استكمال تكلفة الاستلامات', 'Receipt Cost Completion Clearing'],
                 ['capital_expenditure_payables', 'دائنو شراء أصول ثابتة', 'Capital Expenditure Payables'],
                 ['customer_advances', 'دفعات مقدمة من العملاء', 'Customer Advances'],
                 ['related_party_payables', 'أطراف ذات علاقة دائنة', 'Related Party Payables'],

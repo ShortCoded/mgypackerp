@@ -8,6 +8,7 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\JournalEntry;
+use Modules\Core\Models\Company;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Finance\Models\OpeningBalance;
@@ -155,12 +156,12 @@ class JournalEntryService
         $purchaseReturn->loadMissing(['purchaseInvoice.journalEntry.lines', 'purchaseInvoice.supplier.account', 'lines.product']);
         $invoice = $purchaseReturn->purchaseInvoice;
         $originalEntry = $invoice?->journalEntry;
-        if (! $invoice instanceof PurchaseInvoice || ! $originalEntry instanceof JournalEntry || (float) $invoice->total_amount <= 0) {
+        if (! $invoice instanceof PurchaseInvoice || ! $originalEntry instanceof JournalEntry || bccomp((string) $invoice->total_amount, '0', 4) <= 0) {
             throw new DomainException(__('A posted source purchase invoice is required for the financial return adjustment.'));
         }
 
         $supplierAccountId = $invoice->supplier?->account_id;
-        $supplierLine = $originalEntry->lines->first(fn ($line): bool => (float) $line->credit_amount > 0
+        $supplierLine = $originalEntry->lines->first(fn ($line): bool => bccomp((string) $line->credit_amount, '0', 4) > 0
             && (int) $line->supplier_id === (int) $invoice->supplier_id
             && (int) $line->account_id === (int) $supplierAccountId);
         if ($supplierLine === null) {
@@ -180,23 +181,26 @@ class JournalEntryService
                 4,
             );
             $key = (string) $account->getKey();
-            $credits[$key] ??= ['account_id' => $account->getKey(), 'amount' => 0.0];
-            $credits[$key]['amount'] += (float) $inventoryValue;
-            $variance = (float) $returnLine->unit_price * (float) $returnLine->quantity - (float) $inventoryValue;
-            if (abs($variance) >= 0.00005) {
+            $credits[$key] ??= ['account_id' => $account->getKey(), 'amount' => '0.0000'];
+            $credits[$key]['amount'] = bcadd($credits[$key]['amount'], $inventoryValue, 4);
+            $variance = $this->purchaseReturnPriceVariance((string) $returnLine->unit_price, (string) $returnLine->quantity, $inventoryValue);
+            if (bccomp($variance, '0', 4) !== 0) {
                 $varianceAccount = $this->accounts->resolve(
                     (int) $purchaseReturn->company_id,
                     PostingAccountResolver::PurchasePriceVariance,
                     __('Purchase Return'),
                 );
                 $key = (string) $varianceAccount->getKey();
-                $credits[$key] ??= ['account_id' => $varianceAccount->getKey(), 'amount' => 0.0];
-                $credits[$key]['amount'] += $variance;
+                $credits[$key] ??= ['account_id' => $varianceAccount->getKey(), 'amount' => '0.0000'];
+                $credits[$key]['amount'] = bcadd($credits[$key]['amount'], $variance, 4);
             }
         }
 
-        $tax = (float) $purchaseReturn->lines->sum('tax_amount');
-        if ($tax > 0) {
+        $tax = $purchaseReturn->lines->reduce(
+            fn (string $total, $line): string => bcadd($total, (string) $line->tax_amount, 4),
+            '0.0000',
+        );
+        if (bccomp($tax, '0', 4) > 0) {
             $taxAccount = $this->accounts->resolve(
                 (int) $purchaseReturn->company_id,
                 PostingAccountResolver::RecoverableVat,
@@ -205,18 +209,21 @@ class JournalEntryService
             $credits['tax'] = ['account_id' => $taxAccount->getKey(), 'amount' => $tax];
         }
 
-        $total = collect($credits)->sum('amount');
+        $total = collect($credits)->reduce(
+            fn (string $sum, array $credit): string => bcadd($sum, $credit['amount'], 4),
+            '0.0000',
+        );
         $lines = [[
             'account_id' => (int) $supplierLine->account_id,
-            'debit_amount' => number_format($total, 4, '.', ''),
+            'debit_amount' => $total,
             'credit_amount' => '0.0000',
             'description' => __('Supplier debit for purchase return'),
             'supplier_id' => $invoice->supplier_id,
             'branch_id' => $purchaseReturn->branch_id,
         ], ...collect($credits)->map(fn (array $credit): array => [
             'account_id' => (int) $credit['account_id'],
-            'debit_amount' => number_format(max(0, -(float) $credit['amount']), 4, '.', ''),
-            'credit_amount' => number_format(max(0, (float) $credit['amount']), 4, '.', ''),
+            'debit_amount' => bccomp($credit['amount'], '0', 4) < 0 ? bcsub('0', $credit['amount'], 4) : '0.0000',
+            'credit_amount' => bccomp($credit['amount'], '0', 4) > 0 ? $credit['amount'] : '0.0000',
             'description' => __('Purchase return reversal'),
             'supplier_id' => $invoice->supplier_id,
             'branch_id' => $purchaseReturn->branch_id,
@@ -235,6 +242,11 @@ class JournalEntryService
             'source_id' => $purchaseReturn->getKey(),
             'source_doc_num' => $purchaseReturn->doc_num,
         ], $lines);
+    }
+
+    public function purchaseReturnPriceVariance(string $unitPrice, string $quantity, string $inventoryValue): string
+    {
+        return bcsub(bcround(bcmul($unitPrice, $quantity, 16), 4), $inventoryValue, 4);
     }
 
     public function assertManuallyEditable(JournalEntry $journalEntry): void
@@ -335,6 +347,7 @@ class JournalEntryService
     public function createPostedReversalFromSource(JournalEntry $original, array $header): JournalEntry
     {
         return DB::transaction(function () use ($original, $header): JournalEntry {
+            Company::query()->whereKey($original->company_id)->lockForUpdate()->firstOrFail();
             $locked = JournalEntry::query()->with('lines')->lockForUpdate()->findOrFail($original->getKey());
 
             if ($locked->reversed_entry_id !== null) {
@@ -344,6 +357,7 @@ class JournalEntryService
             if (! $locked->is_posted || $locked->status !== JournalEntry::StatusPosted) {
                 throw new DomainException(__('Only a posted journal entry can be reversed.'));
             }
+            $this->assertNoPostedCostAllocations((int) $locked->getKey());
 
             $lines = $locked->lines->map(fn ($line): array => [
                 'account_id' => (int) $line->account_id,
@@ -364,5 +378,15 @@ class JournalEntryService
 
             return $reversal;
         });
+    }
+
+    public function assertNoPostedCostAllocations(int $journalEntryId): void
+    {
+        if (DB::table('cost_overhead_allocation_sources as source')
+            ->join('cost_overhead_allocation_runs as allocation', 'allocation.id', '=', 'source.allocation_run_id')
+            ->join('journal_entry_lines as line', 'line.id', '=', 'source.journal_entry_line_id')
+            ->where('line.journal_entry_id', $journalEntryId)->where('allocation.status', 'posted')->exists()) {
+            throw new DomainException(__('overhead_allocations.messages.source_journal_allocated'));
+        }
     }
 }

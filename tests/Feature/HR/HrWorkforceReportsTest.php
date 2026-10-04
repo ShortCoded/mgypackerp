@@ -6,6 +6,7 @@ use Illuminate\Support\Str;
 use Modules\Auth\Models\Role;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
+use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\HR\Exports\HrWorkforceReportExport;
@@ -21,6 +22,7 @@ use Modules\HR\Services\HrWorkforceReportService;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
+use Symfony\Component\Process\Process;
 
 /** @return array<string, mixed> */
 function workforceReportFixture(int $suffix = 1): array
@@ -354,7 +356,10 @@ test('employee report routes enforce permissions and keep screen csv xlsx and pd
     $csv = $this->withSession($session)->get(route('admin.hr.reports.employees.export', [...$filters, 'format' => 'csv']));
     $csv->assertOk();
     $csvContents = file_get_contents($csv->baseResponse->getFile()->getPathname());
-    expect($csvContents)->toContain($first['employee']->full_name)->not->toContain($outsideFilter['employee']->full_name);
+    expect($csvContents)->toContain($first['employee']->full_name)
+        ->toContain(app(DateFormatService::class)->formatDate($first['employee']->hire_date))
+        ->not->toContain($outsideFilter['employee']->full_name)
+        ->not->toContain('2026-01-31 00:00:00');
 
     $this->withSession($session)->get(route('admin.hr.reports.employees.export', [...$filters, 'format' => 'xlsx']))
         ->assertOk()
@@ -417,7 +422,10 @@ test('leave report routes enforce permissions and preserve scoped paid unpaid to
     $csv = $this->withSession($session)->get(route('admin.hr.reports.leave-requests.export', [...$filters, 'format' => 'csv']));
     $csv->assertOk();
     $csvContents = file_get_contents($csv->baseResponse->getFile()->getPathname());
-    expect($csvContents)->toContain($paidRequest->public_uuid)->not->toContain($unpaidRequest->public_uuid);
+    expect($csvContents)->toContain($paidRequest->public_uuid)
+        ->toContain(app(DateFormatService::class)->formatDate($paidRequest->requested_from))
+        ->not->toContain($unpaidRequest->public_uuid)
+        ->not->toContain('2026-09-01 00:00:00');
     $csvRows = collect(IOFactory::load($csv->baseResponse->getFile()->getPathname())->getActiveSheet()->toArray());
     $csvTotals = $csvRows->take(-4)->values();
     expect((float) ($csvTotals[2][1] ?? -1))->toBe(2.0)
@@ -442,4 +450,52 @@ test('leave report routes enforce permissions and preserve scoped paid unpaid to
     $this->withSession($session)->get(route('admin.hr.reports.leave-requests.export', [...$filters, 'format' => 'pdf']))
         ->assertOk()
         ->assertHeader('content-type', 'application/pdf');
+});
+
+test('actual workforce PDFs render populated employee and leave reports in both directions', function (): void {
+    $fixture = workforceReportFixture(21);
+    $approver = User::factory()->create(['name' => 'Workforce PDF Approver']);
+    $leaveType = HrLeaveType::query()->create([
+        'code' => 'workforce-pdf-paid', 'name' => 'Paid Annual Leave', 'status' => 'active',
+        'metadata' => ['requires_balance' => true, 'payment_status' => 'paid'],
+    ]);
+    $leave = workforceRequest($fixture, $leaveType, $approver, 2);
+    foreach (['hr.employee_reports.view', 'hr.employee_reports.export', 'hr.leave_reports.view', 'hr.leave_reports.export'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    $actor = User::factory()->create();
+    $actor->givePermissionTo(['hr.employee_reports.view', 'hr.employee_reports.export', 'hr.leave_reports.view', 'hr.leave_reports.export']);
+    $context = [
+        OperatingContextService::CompanyIdKey => $fixture['company']->getKey(),
+        OperatingContextService::CompanyDocNumKey => $fixture['company']->doc_num,
+    ];
+
+    foreach (['en', 'ar'] as $locale) {
+        $actor->forceFill(['locale' => $locale])->save();
+        app()->setLocale($locale);
+        $session = [...$context, 'locale' => $locale];
+        foreach ([
+            ['route' => 'admin.hr.reports.employees.export', 'needle' => $fixture['employee']->employee_code],
+            ['route' => 'admin.hr.reports.leave-requests.export', 'needle' => $leave->public_uuid],
+        ] as $report) {
+            $response = $this->actingAs($actor)->withSession($session)->get(route($report['route'], ['format' => 'pdf']));
+            $response->assertOk()->assertHeader('Content-Type', 'application/pdf');
+            $pdf = $response->getContent();
+            expect(str_starts_with($pdf, '%PDF-'))->toBeTrue();
+            if ($directory = getenv('MGYPACK_REPORT_PRINT_SAMPLES')) {
+                $name = $report['route'] === 'admin.hr.reports.employees.export' ? 'workforce-employees' : 'workforce-leave';
+                file_put_contents($directory.'/'.$name.'-'.$locale.'.pdf', $pdf);
+            }
+            $extract = new Process(['pdftotext', '-layout', '-', '-']);
+            $extract->setInput($pdf);
+            $extract->run();
+            expect($extract->isSuccessful())->toBeTrue()
+                ->and($extract->getOutput())->toContain($report['needle']);
+            if ($locale === 'en') {
+                $expectedDate = $report['route'] === 'admin.hr.reports.employees.export' ? '2026-01-21' : '2026-09-01';
+                expect($extract->getOutput())->toContain(app(DateFormatService::class)->formatDate($expectedDate))
+                    ->not->toContain($expectedDate.' 00:00:00');
+            }
+        }
+    }
 });

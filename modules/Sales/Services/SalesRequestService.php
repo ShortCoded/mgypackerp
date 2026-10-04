@@ -39,36 +39,45 @@ class SalesRequestService
                 throw new DomainException(__('Only draft, rejected, or reopened sales requests can be edited.'));
             }
             $companyId = $record->company_id ?? (int) $data['company_id'];
+            $appendOnlyAmendment = $record->exists
+                && $record->status === SalesRequest::StatusReopened
+                && $record->hasConversionHistory();
+            if ($appendOnlyAmendment) {
+                $this->assertActiveOperatingContext($record);
+            }
             if ($record->exists) {
                 $this->periods->resolveOpenForPostingDate($companyId, $record->request_date, (int) $record->financial_period_id, lockForUpdate: true);
             }
-            $period = $this->periods->resolveOpenForPostingDate($companyId, $data['request_date'], lockForUpdate: true);
             $values = collect($data)->only(['branch_id', 'branch_store_id', 'customer_id', 'currency_id', 'business_employee_id', 'request_date', 'required_delivery_date', 'priority', 'customer_reference', 'exchange_rate', 'notes'])->all();
-            if (! empty($values['customer_id'])) {
+            if ($appendOnlyAmendment) {
+                $this->assertAppendOnlyHeaderUnchanged($record, $data, $values);
+                $period = null;
+            } else {
+                $period = $this->periods->resolveOpenForPostingDate($companyId, $data['request_date'], lockForUpdate: true);
+            }
+            if (! $appendOnlyAmendment && ! empty($values['customer_id'])) {
                 Customer::query()->forCompany($companyId)->active()->findOrFail($values['customer_id']);
             }
-            if (! empty($values['currency_id'])) {
+            if (! $appendOnlyAmendment && ! empty($values['currency_id'])) {
                 Currency::query()->where('company_id', $companyId)->findOrFail($values['currency_id']);
             }
-            if (! empty($values['branch_store_id'])) {
+            if (! $appendOnlyAmendment && ! empty($values['branch_store_id'])) {
                 BranchStore::query()->where('branch_id', $values['branch_id'])->findOrFail($values['branch_store_id']);
             }
             if (empty($data['lines'])) {
                 throw new DomainException(__('A sales request requires at least one line.'));
             }
-            $lines = [];
-            foreach ($data['lines'] as $index => $input) {
-                $product = Product::query()->forCompany($companyId)->active()->findOrFail($input['product_id']);
-                if (! $product->isSalesEligible() || bccomp((string) $input['quantity'], '0', 8) <= 0) {
-                    throw new DomainException(__('Choose a saleable item and a positive requested quantity.'));
-                }
-                $lines[] = [...collect($input)->only(['product_id', 'description', 'quantity', 'specifications', 'notes'])->all(),
-                    'unit_price' => null,
-                    ...collect($this->units->snapshot($product, $input['unit_id'] ?? null, $input['quantity']))->except('base_unit_id')->all(), 'line_number' => $index + 1];
-            }
             $existingLines = $record->exists ? $record->lines()->get() : collect();
             $reopenRevision = $record->status === SalesRequest::StatusReopened ? $this->latestReopenRevision($record) : null;
-            $record->fill([...$values, 'company_id' => $companyId, 'financial_period_id' => $period->id]);
+            if ($appendOnlyAmendment) {
+                return $this->appendAmendmentLines($record, $existingLines, $data['lines'], $companyId, $reopenRevision);
+            }
+
+            $lines = [];
+            foreach ($data['lines'] as $index => $input) {
+                $lines[] = $this->prepareLine($input, $companyId, $index + 1);
+            }
+            $record->fill([...$values, 'company_id' => $companyId, 'financial_period_id' => $period?->id]);
             $sameLines = $existingLines->count() === count($lines) && $existingLines->values()->every(function (SalesRequestLine $line, int $index) use ($lines): bool {
                 return ! (clone $line)->fill($lines[$index])->isDirty();
             });
@@ -115,11 +124,148 @@ class SalesRequestService
         });
     }
 
+    /**
+     * @param  array<string, mixed>  $data
+     * @param  array<string, mixed>  $values
+     */
+    private function assertAppendOnlyHeaderUnchanged(SalesRequest $record, array $data, array $values): void
+    {
+        $sameCompany = (int) ($data['company_id'] ?? $record->company_id) === (int) $record->company_id;
+        $sameBranch = (int) ($data['branch_id'] ?? $record->branch_id) === (int) $record->branch_id;
+        $candidate = (clone $record)->fill($values);
+
+        if (! $sameCompany || ! $sameBranch || $candidate->isDirty()) {
+            throw new DomainException(__('Converted sales requests only permit adding new lines; the approved header and existing lines are immutable.'));
+        }
+    }
+
+    /**
+     * @param  Collection<int, SalesRequestLine>  $existingLines
+     * @param  list<array<string, mixed>>  $inputs
+     * @param  array{id: string, approved_snapshot: array<string, mixed>}|null  $reopenRevision
+     */
+    private function appendAmendmentLines(SalesRequest $record, Collection $existingLines, array $inputs, int $companyId, ?array $reopenRevision): SalesRequest
+    {
+        if (count($inputs) < $existingLines->count()) {
+            throw new DomainException(__('Converted sales requests only permit adding new lines; the approved header and existing lines are immutable.'));
+        }
+
+        foreach ($existingLines->values() as $index => $line) {
+            $input = $inputs[$index] ?? [];
+            if (! $this->matchesImmutableLine($line, $input)) {
+                throw new DomainException(__('Converted sales requests only permit adding new lines; the approved header and existing lines are immutable.'));
+            }
+        }
+
+        $newLines = [];
+        $nextLineNumber = ((int) $existingLines->max('line_number')) + 1;
+        foreach (array_slice($inputs, $existingLines->count()) as $input) {
+            $newLines[] = $this->prepareLine($input, $companyId, $nextLineNumber++);
+        }
+        if ($newLines === []) {
+            return $record->load('lines.product', 'lines.unit');
+        }
+
+        $record->forceFill(['updated_by' => auth()->id()])->save();
+        $record->lines()->createMany($newLines);
+        $this->recordAmendment($record, $reopenRevision);
+
+        return $record->refresh()->load('lines.product', 'lines.unit');
+    }
+
+    /** @param array<string, mixed> $input */
+    private function matchesImmutableLine(SalesRequestLine $line, array $input): bool
+    {
+        $allowedFields = [
+            'id', 'public_id', 'line_number', 'product_id', 'unit_id', 'description', 'quantity',
+            'conversion_factor', 'base_quantity', 'converted_quantity', 'unit_price', 'specifications', 'notes',
+        ];
+        if (array_diff(array_keys($input), $allowedFields) !== []) {
+            return false;
+        }
+        if ((int) ($input['product_id'] ?? 0) !== (int) $line->product_id
+            || (int) ($input['unit_id'] ?? 0) !== (int) $line->unit_id
+            || bccomp((string) ($input['quantity'] ?? '0'), (string) $line->quantity, 8) !== 0) {
+            return false;
+        }
+
+        foreach (['id', 'line_number'] as $field) {
+            if (array_key_exists($field, $input) && (int) $input[$field] !== (int) $line->{$field}) {
+                return false;
+            }
+        }
+        foreach (['public_id', 'description', 'notes'] as $field) {
+            if (array_key_exists($field, $input) && ($input[$field] ?? null) !== $line->{$field}) {
+                return false;
+            }
+        }
+        foreach (['conversion_factor', 'base_quantity', 'converted_quantity'] as $field) {
+            if (array_key_exists($field, $input) && bccomp((string) $input[$field], (string) $line->{$field}, 8) !== 0) {
+                return false;
+            }
+        }
+        if (array_key_exists('unit_price', $input)
+            && (($input['unit_price'] === null) !== ($line->unit_price === null)
+                || ($input['unit_price'] !== null && bccomp((string) $input['unit_price'], (string) $line->unit_price, 8) !== 0))) {
+            return false;
+        }
+
+        return ! array_key_exists('specifications', $input)
+            || ($input['specifications'] ?? null) == $line->specifications;
+    }
+
+    /** @param array<string, mixed> $input */
+    private function prepareLine(array $input, int $companyId, int $lineNumber): array
+    {
+        $product = Product::query()->forCompany($companyId)->active()->findOrFail($input['product_id']);
+        if (! $product->isSalesEligible() || bccomp((string) $input['quantity'], '0', 8) <= 0) {
+            throw new DomainException(__('Choose a saleable item and a positive requested quantity.'));
+        }
+
+        return [
+            ...collect($input)->only(['product_id', 'description', 'quantity', 'specifications', 'notes'])->all(),
+            'unit_price' => null,
+            ...collect($this->units->snapshot($product, $input['unit_id'] ?? null, $input['quantity']))->except('base_unit_id')->all(),
+            'line_number' => $lineNumber,
+        ];
+    }
+
+    /** @param array{id: string, approved_snapshot: array<string, mixed>}|null $reopenRevision */
+    private function recordAmendment(SalesRequest $record, ?array $reopenRevision): void
+    {
+        if ($reopenRevision === null) {
+            throw new DomainException(__('The sales request reopen revision is missing.'));
+        }
+
+        $record->refresh()->load('lines');
+        $afterSnapshot = $this->snapshot($record, $record->lines);
+        $history = [
+            ...($record->status_history ?? []),
+            [
+                'event' => 'amended',
+                'from' => SalesRequest::StatusReopened,
+                'to' => SalesRequest::StatusReopened,
+                'at' => now()->toIso8601String(),
+                'by' => auth()->id(),
+                'reopen_revision_id' => $reopenRevision['id'],
+                'before_snapshot' => $reopenRevision['approved_snapshot'],
+                'after_snapshot' => $afterSnapshot,
+            ],
+        ];
+        $record->forceFill(['status_history' => $history])->save();
+        $this->audit->record($record, 'sales_request.amended', [
+            'reopen_revision_id' => $reopenRevision['id'],
+            'before_snapshot' => $reopenRevision['approved_snapshot'],
+            'after_snapshot' => $afterSnapshot,
+        ]);
+    }
+
     public function delete(SalesRequest $request): void
     {
         DB::transaction(function () use ($request): void {
             $record = SalesRequest::query()->lockForUpdate()->findOrFail($request->id);
-            if ($record->status !== 'draft' || $record->quotations()->withTrashed()->exists() || $record->orders()->withTrashed()->exists()) {
+            if ($record->status !== 'draft' || $record->approved_at !== null || $record->closed_at !== null
+                || $record->hasConversionHistory()) {
                 throw new DomainException(__('Only unused drafts can be deleted.'));
             }
             $record->delete();
@@ -131,7 +277,7 @@ class SalesRequestService
     {
         return DB::transaction(function () use ($request): SalesRequest {
             $record = SalesRequest::onlyTrashed()->lockForUpdate()->findOrFail($request->id);
-            if ($record->status !== 'draft') {
+            if ($record->status !== 'draft' || ! $record->isEditable() || $record->hasConversionHistory()) {
                 throw new DomainException(__('Only unused drafts can be restored.'));
             }
             $record->restore();
@@ -146,9 +292,16 @@ class SalesRequestService
         return DB::transaction(function () use ($request, $status, $reason): SalesRequest {
             $record = SalesRequest::query()->lockForUpdate()->findOrFail($request->id);
             $this->periods->resolveOpenForPostingDate((int) $record->company_id, $record->request_date, (int) $record->financial_period_id, lockForUpdate: true);
-            $allowed = ['submitted' => ['draft', 'rejected', 'reopened'], 'approved' => ['submitted'], 'rejected' => ['submitted'], 'cancelled' => ['draft', 'submitted', 'approved', 'rejected', 'reopened'], 'closed' => ['approved', 'partially_converted', 'converted']];
+            $allowed = ['submitted' => ['draft', 'rejected', 'reopened'], 'approved' => ['submitted'], 'rejected' => ['submitted'], 'cancelled' => ['draft', 'submitted', 'approved', 'rejected', 'reopened'], 'closed' => ['approved', 'partially_converted']];
             if (! in_array($record->status, $allowed[$status] ?? [], true)) {
                 throw new DomainException(__('This sales request status transition is not allowed.'));
+            }
+            if ($status === 'submitted' && ! $record->isEditable()) {
+                throw new DomainException(__('Only draft, rejected, or reopened sales requests can be edited.'));
+            }
+            if ($status === SalesRequest::StatusApproved && $record->approved_at !== null
+                && ! $record->hasReopenSinceLastApproval()) {
+                throw new DomainException(__('Only approved sales requests may be reopened.'));
             }
             if (in_array($status, ['rejected', 'cancelled', 'closed'], true) && blank($reason)) {
                 throw new DomainException(__('A reason is required for this action.'));
@@ -158,8 +311,14 @@ class SalesRequestService
                 || CustomerInvoice::query()->withTrashed()->where('source_type', 'sales_request')->where('source_id', $record->getKey())->exists())) {
                 throw new DomainException(__('A sales request with conversions or downstream documents cannot be cancelled.'));
             }
-            $record->update(['status' => $status, $status.'_by' => auth()->id(), $status.'_at' => now(), 'status_reason' => $reason,
-                'status_history' => [...($record->status_history ?? []), ['from' => $record->status, 'to' => $status, 'at' => now()->toIso8601String(), 'by' => auth()->id(), 'reason' => $reason]]]);
+            $resultStatus = $status === SalesRequest::StatusApproved ? $this->statusAfterApproval($record) : $status;
+            $updates = ['status' => $resultStatus, $status.'_by' => auth()->id(), $status.'_at' => now(), 'status_reason' => $reason,
+                'status_history' => [...($record->status_history ?? []), ['from' => $record->status, 'to' => $resultStatus, 'at' => now()->toIso8601String(), 'by' => auth()->id(), 'reason' => $reason]]];
+            if ($status === SalesRequest::StatusApproved && $record->hasConversionHistory()) {
+                $updates['closed_at'] = $resultStatus === 'converted' ? now() : null;
+                $updates['closed_by'] = $resultStatus === 'converted' ? auth()->id() : null;
+            }
+            $record->update($updates);
             $this->audit->record($record, 'sales_request.'.$status);
 
             return $record->refresh();
@@ -170,40 +329,29 @@ class SalesRequestService
     {
         return DB::transaction(function () use ($request, $reason): SalesRequest {
             $record = SalesRequest::query()->lockForUpdate()->findOrFail($request->getKey());
-            $activeRequest = request();
-            if (! $activeRequest->hasSession()) {
-                throw new DomainException(__('operating_context.messages.required'));
-            }
-            $context = $this->operatingContext->snapshot($activeRequest);
-            if (! $context['company_id'] || ! $context['branch_id'] || ! $context['financial_period_id']
-                || (int) $record->company_id !== (int) $context['company_id']
-                || (int) $record->branch_id !== (int) $context['branch_id']
-                || (int) $record->financial_period_id !== (int) $context['financial_period_id']) {
-                throw new DomainException(__('The document is outside the active operating context.'));
-            }
+            $this->assertActiveOperatingContext($record);
             $this->periods->resolveOpenForPostingDate((int) $record->company_id, $record->request_date, (int) $record->financial_period_id, lockForUpdate: true);
-            if ($record->status !== SalesRequest::StatusApproved) {
+            if (! $record->canReopenSafely()) {
                 throw new DomainException(__('Only approved sales requests may be reopened.'));
             }
             if (blank($reason)) {
                 throw new DomainException(__('A reason is required for this action.'));
             }
-            if (! $record->canReopenSafely()) {
-                throw new DomainException(__('A sales request with conversions or downstream documents cannot be reopened.'));
-            }
-
             $reason = trim($reason);
             $revisionId = (string) Str::uuid();
             $approvedSnapshot = $this->snapshot($record, $record->lines()->get());
+            $previousStatus = $record->status;
             $record->update([
                 'status' => SalesRequest::StatusReopened,
+                'closed_at' => null,
+                'closed_by' => null,
                 'status_reason' => $reason,
                 'updated_by' => auth()->id(),
                 'status_history' => [
                     ...($record->status_history ?? []),
                     [
                         'event' => 'reopened',
-                        'from' => SalesRequest::StatusApproved,
+                        'from' => $previousStatus,
                         'to' => SalesRequest::StatusReopened,
                         'at' => now()->toIso8601String(),
                         'by' => auth()->id(),
@@ -221,6 +369,34 @@ class SalesRequestService
 
             return $record->refresh();
         });
+    }
+
+    private function assertActiveOperatingContext(SalesRequest $record): void
+    {
+        $activeRequest = request();
+        if (! $activeRequest->hasSession()) {
+            throw new DomainException(__('operating_context.messages.required'));
+        }
+
+        $context = $this->operatingContext->snapshot($activeRequest);
+        if (! $context['company_id'] || ! $context['branch_id'] || ! $context['financial_period_id']
+            || (int) $record->company_id !== (int) $context['company_id']
+            || (int) $record->branch_id !== (int) $context['branch_id']
+            || (int) $record->financial_period_id !== (int) $context['financial_period_id']) {
+            throw new DomainException(__('The document is outside the active operating context.'));
+        }
+    }
+
+    private function statusAfterApproval(SalesRequest $request): string
+    {
+        $hasConvertedQuantity = $request->lines()->where('converted_quantity', '>', 0)->exists();
+        if (! $hasConvertedQuantity) {
+            return SalesRequest::StatusApproved;
+        }
+
+        return $request->lines()->whereColumn('converted_quantity', '<', 'quantity')->exists()
+            ? 'partially_converted'
+            : 'converted';
     }
 
     /** @return array{id: string, approved_snapshot: array<string, mixed>}|null */
@@ -345,7 +521,7 @@ class SalesRequestService
             foreach ($preparedLines as $line) {
                 SalesRequestLine::query()->lockForUpdate()->findOrFail($line['sales_request_line_id'])->increment('converted_quantity', $line['quantity']);
             }
-            $record->update(['status' => $record->lines()->whereColumn('converted_quantity', '<', 'quantity')->exists() ? 'partially_converted' : 'converted']);
+            $this->syncConversionClosure($record);
             $this->audit->record($record, 'sales_request.converted', ['target' => 'order', 'document' => $order->doc_num]);
 
             return $order;
@@ -409,7 +585,7 @@ class SalesRequestService
             foreach ($preparedLines as $line) {
                 SalesRequestLine::query()->lockForUpdate()->findOrFail($line['sales_request_line_id'])->increment('converted_quantity', $line['quantity']);
             }
-            $record->update(['status' => $record->lines()->whereColumn('converted_quantity', '<', 'quantity')->exists() ? 'partially_converted' : 'converted']);
+            $this->syncConversionClosure($record);
             $this->audit->record($record, 'sales_request.converted', ['target' => 'quotation', 'document' => $quotation->doc_num]);
 
             return $quotation;
@@ -481,10 +657,20 @@ class SalesRequestService
             } else {
                 throw new DomainException(__('Choose quotation or sales order as the conversion target.'));
             }
-            $record->update(['status' => $record->lines()->whereColumn('converted_quantity', '<', 'quantity')->exists() ? 'partially_converted' : 'converted']);
+            $this->syncConversionClosure($record);
             $this->audit->record($record, 'sales_request.converted', ['target' => $target, 'document' => $document->doc_num]);
 
             return $document;
         });
+    }
+
+    private function syncConversionClosure(SalesRequest $request): void
+    {
+        $hasRemaining = $request->lines()->whereColumn('converted_quantity', '<', 'quantity')->exists();
+        $request->update([
+            'status' => $hasRemaining ? 'partially_converted' : 'converted',
+            'closed_at' => $hasRemaining ? null : now(),
+            'closed_by' => $hasRemaining ? null : auth()->id(),
+        ]);
     }
 }

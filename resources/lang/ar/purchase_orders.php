@@ -161,6 +161,7 @@ return [
         'close_requires_approved' => 'يمكن إغلاق أوامر الشراء المعتمدة فقط.',
         'already_cancelled' => 'أمر الشراء هذا ملغي بالفعل.',
         'closed_cancel_forbidden' => 'لا يمكن إلغاء أوامر الشراء المغلقة.',
+        'reopened_cancel_forbidden' => 'لا يمكن إلغاء أمر شراء سبق اعتماده بعد فتحه للتعديل.',
         'received_cancel_forbidden' => 'لا يمكن إلغاء أوامر الشراء التي تحتوي على كميات مستلمة.',
         'received_line_remove_forbidden' => 'لا يمكن حذف بنود تحتوي على كميات مستلمة.',
         'restore_not_allowed' => 'يمكن استعادة أوامر الشراء المحذوفة فقط.',

@@ -68,9 +68,9 @@
                             <td>{{ $dates->formatDate($line->requested_date, __('common.empty_value')) }}</td>
                             <td>{{ $specifications->map(fn($value, $key) => __('quotations.attributes.'.$key).': '.$value)->join(' · ') ?: __('common.empty_value') }}@if($line->warehouse_notes)<br><small>{{ __('quotations.attributes.warehouse_notes') }}: {{ $line->warehouse_notes }}</small>@endif @if($line->production_notes)<br><small>{{ __('quotations.attributes.production_notes') }}: {{ $line->production_notes }}</small>@endif</td>
                             <td class="text-end" dir="ltr">{{ $numbers->format($line->unit_price) }}</td>
-                            <td class="text-end" dir="ltr">{{ $numbers->format($line->discount_amount) }}</td>
-                            <td class="text-end" dir="ltr">{{ $numbers->format($line->tax_amount) }}</td>
-                            <td class="text-end" dir="ltr">{{ $numbers->format($line->line_total) }}</td>
+                            <td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->discount_amount, 2) }}</td>
+                            <td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->tax_amount, 2) }}</td>
+                            <td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->line_total, 2) }}</td>
                         </tr>
                     @endforeach
                 </tbody>
@@ -78,17 +78,17 @@
 
             <div class="row justify-content-end print-summary mt-3">
                 <div class="col-md-6 col-lg-5"><table class="table table-sm table-bordered mb-0"><tbody>
-                    <tr><th>{{ __('quotations.attributes.subtotal') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($revision->subtotal) }}</td></tr>
-                    <tr><th>{{ __('quotations.attributes.discount_amount') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($revision->discount_amount) }}</td></tr>
-                    <tr><th>{{ __('quotations.attributes.tax_amount') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($revision->tax_amount) }}</td></tr>
-                    <tr class="fw-bold"><th>{{ __('quotations.print.grand_total') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($revision->total) }} {{ $record->currency?->code }}</td></tr>
+                    <tr><th>{{ __('quotations.attributes.subtotal') }}</th><td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($revision->subtotal, 2) }}</td></tr>
+                    <tr><th>{{ __('quotations.attributes.discount_amount') }}</th><td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($revision->discount_amount, 2) }}</td></tr>
+                    <tr><th>{{ __('quotations.attributes.tax_amount') }}</th><td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($revision->tax_amount, 2) }}</td></tr>
+                    <tr class="fw-bold"><th>{{ __('quotations.print.grand_total') }}</th><td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($revision->total, 2) }} {{ $record->currency?->code }}</td></tr>
                 </tbody></table></div>
             </div>
 
             @if($revision->paymentMilestones->isNotEmpty())
                 <h6 class="mt-4">{{ __('quotations.tabs.payments') }}</h6>
                 <table class="table table-sm table-bordered"><thead><tr><th>#</th><th>{{ __('quotations.attributes.milestone_title') }}</th><th>{{ __('quotations.attributes.due_type') }}</th><th>{{ __('quotations.attributes.due_date') }}</th><th class="text-end">{{ __('quotations.attributes.amount') }}</th></tr></thead><tbody>
-                    @foreach($revision->paymentMilestones as $milestone)<tr><td>{{ $milestone->line_number }}</td><td>{{ $milestone->title }}</td><td>{{ $milestone->due_type ? __('quotations.due_types.'.$milestone->due_type) : __('common.empty_value') }}</td><td>{{ $dates->formatDate($milestone->due_date, __('common.empty_value')) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($milestone->amount) }}</td></tr>@endforeach
+                    @foreach($revision->paymentMilestones as $milestone)<tr><td>{{ $milestone->line_number }}</td><td>{{ $milestone->title }}</td><td>{{ $milestone->due_type ? __('quotations.due_types.'.$milestone->due_type) : __('common.empty_value') }}</td><td>{{ $dates->formatDate($milestone->due_date, __('common.empty_value')) }}</td><td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($milestone->amount, 2) }}</td></tr>@endforeach
                 </tbody></table>
             @endif
 

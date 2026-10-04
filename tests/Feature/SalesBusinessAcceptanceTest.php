@@ -83,10 +83,10 @@ test('a customer request stops on unpriced items then preserves the resolved com
     ])->assertCreated();
     $quotation = Quotation::query()->where('doc_num', $conversion->json('data.doc_num'))->firstOrFail()->load('currentRevision.lines');
     $quotationLines = $quotation->currentRevision->lines->keyBy('product_id');
-    expect($quotationLines[$fixture['finished']->id]->unit_price)->toBe('15.0000')
+    expect($quotationLines[$fixture['finished']->id]->unit_price)->toBe('15.00000000')
         ->and($quotationLines[$fixture['finished']->id]->price_list_line_id)->toBe($generalList->lines()->sole()->id)
         ->and($quotationLines[$fixture['finished']->id]->allowed_discount_value)->toBe('10.0000')
-        ->and($quotationLines[$fixture['service']->id]->unit_price)->toBe('80.0000')
+        ->and($quotationLines[$fixture['service']->id]->unit_price)->toBe('80.00000000')
         ->and($quotationLines[$fixture['service']->id]->price_list_line_id)->toBe($customerList->lines()->sole()->id)
         ->and($quotation->currentRevision->terms_snapshot)->toContain('Business acceptance terms');
 
@@ -100,8 +100,8 @@ test('a customer request stops on unpriced items then preserves the resolved com
         'branch_id' => $fixture['branch']->id,
     ]);
     $orderLines = $order->lines->keyBy('product_id');
-    expect($orderLines[$fixture['finished']->id]->unit_price)->toBe('15.0000')
-        ->and($orderLines[$fixture['service']->id]->unit_price)->toBe('80.0000')
+    expect($orderLines[$fixture['finished']->id]->unit_price)->toBe('15.00000000')
+        ->and($orderLines[$fixture['service']->id]->unit_price)->toBe('80.00000000')
         ->and(data_get($order->terms_snapshot, 'content'))->toContain('Business acceptance terms')
         ->and($request->fresh()->status)->toBe('converted');
 
@@ -124,8 +124,8 @@ test('a customer request stops on unpriced items then preserves the resolved com
         'lines' => $tamperedLines,
         'payment_schedules' => [],
     ]);
-    expect($unchanged->lines->keyBy('product_id')[$fixture['finished']->id]->unit_price)->toBe('15.0000')
-        ->and($unchanged->lines->keyBy('product_id')[$fixture['service']->id]->unit_price)->toBe('80.0000');
+    expect($unchanged->lines->keyBy('product_id')[$fixture['finished']->id]->unit_price)->toBe('15.00000000')
+        ->and($unchanged->lines->keyBy('product_id')[$fixture['service']->id]->unit_price)->toBe('80.00000000');
 });
 
 test('cash collection is balanced and exposes its responsible employee and source in the customer statement', function (): void {
@@ -188,6 +188,9 @@ test('cash collection is balanced and exposes its responsible employee and sourc
     $this->get(route('admin.accounting.reports.customer-statement.export.csv', $filters))->assertOk()->assertDownload();
     $this->get(route('admin.accounting.reports.customer-statement.export.excel', $filters))->assertOk()->assertDownload();
     $pdf = $this->get(route('admin.accounting.reports.customer-statement.export.pdf', $filters))->assertOk()->assertHeader('content-type', 'application/pdf');
+    if ($directory = getenv('MGYPACK_REPORT_PRINT_SAMPLES')) {
+        file_put_contents($directory.'/customer-collection-statement-en.pdf', $pdf->getContent());
+    }
     expect(salesPdfText($pdf->getContent()))->toContain('Omar Collector', 'COLLECTION-ACCEPTANCE-1');
 });
 

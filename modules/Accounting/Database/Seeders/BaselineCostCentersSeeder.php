@@ -36,34 +36,20 @@ class BaselineCostCentersSeeder extends Seeder
                 ->orderByRaw('CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END')
                 ->first();
 
-            if (! $costCenter instanceof CostCenter) {
-                $costCenter = new CostCenter(app(DocumentNumberService::class)->nextForCompany('cost_centers', CostCenter::class, $company->getKey()));
+            if ($costCenter instanceof CostCenter) {
+                continue;
             }
 
-            if ($costCenter->trashed()) {
-                $costCenter->restore();
-            }
-
+            $costCenter = new CostCenter(app(DocumentNumberService::class)->nextForCompany('cost_centers', CostCenter::class, $company->getKey()));
             $costCenter->forceFill([
                 'company_id' => $company->getKey(),
                 'parent_id' => null,
                 'cost_center_code' => $data['cost_center_code'],
-                'name' => trim((string) $costCenter->name) !== '' ? $costCenter->name : $data['name'],
+                'name' => $data['name'],
                 'is_group' => true,
                 'status' => 'active',
             ])->save();
-
-            $this->ensureDocumentNumber($costCenter, $company);
         }
-    }
-
-    private function ensureDocumentNumber(CostCenter $costCenter, Company $company): void
-    {
-        if ($costCenter->doc_number !== null && $costCenter->doc_num !== null) {
-            return;
-        }
-
-        $costCenter->forceFill(app(DocumentNumberService::class)->nextForCompany('cost_centers', CostCenter::class, $company->getKey()))->save();
     }
 
     /**

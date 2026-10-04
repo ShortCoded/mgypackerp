@@ -10,9 +10,11 @@ use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Accounting\Services\CostCenterHierarchyRegistry;
 use Modules\Accounting\Services\JournalEntryService;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
-use Modules\HR\Models\HrEmployee;
+use Modules\Core\Services\OperatingScopeAccessService;
+use Modules\HR\Models\HrDepartment;
 
 final class PayrollCostAllocationService
 {
@@ -33,12 +35,15 @@ final class PayrollCostAllocationService
 
         DB::transaction(function () use ($payslipItemId, $allocations): void {
             $item = $this->payslipItem($payslipItemId, lock: true);
+            if (! in_array($item->run_status, ['draft', 'calculated'], true)) {
+                throw new DomainException(__('hr_payroll.messages.cost_allocation_locked'));
+            }
 
             if ($allocations === []) {
                 throw new DomainException(__('At least one payroll cost allocation is required.'));
             }
 
-            foreach ($allocations as $allocation) {
+            foreach ($allocations as &$allocation) {
                 $percentage = $allocation['percentage'] ?? null;
 
                 if (! is_numeric($percentage)
@@ -46,7 +51,9 @@ final class PayrollCostAllocationService
                     || bccomp((string) $percentage, '100', 4) > 0) {
                     throw new DomainException(__('Each payroll allocation percentage must be greater than zero and at most 100%.'));
                 }
+                $allocation['percentage'] = bcadd((string) $percentage, '0', 4);
             }
+            unset($allocation);
 
             $percentageTotal = collect($allocations)->reduce(
                 fn (string $total, array $allocation): string => bcadd($total, (string) ($allocation['percentage'] ?? 0), 4),
@@ -57,8 +64,7 @@ final class PayrollCostAllocationService
                 throw new DomainException(__('Payroll allocation percentages must total exactly 100%.'));
             }
 
-            $employee = HrEmployee::query()->findOrFail($item->employee_id);
-            $allocatedAmount = '0.00';
+            $allocatedAmount = '0.0000';
             $rows = [];
 
             foreach ($allocations as $index => $allocation) {
@@ -81,17 +87,20 @@ final class PayrollCostAllocationService
                 $classification = $this->classificationFor($type);
                 $account = $this->accountFor($item, $classification);
                 $amount = $index === array_key_last($allocations)
-                    ? bcsub((string) $item->amount, $allocatedAmount, 2)
-                    : bcmul((string) $item->amount, bcdiv((string) $allocation['percentage'], '100', 8), 2);
-                $allocatedAmount = bcadd($allocatedAmount, $amount, 2);
+                    ? bcsub((string) $item->amount, $allocatedAmount, 4)
+                    : bcdiv(bcmul((string) $item->amount, (string) $allocation['percentage'], 8), '100', 4);
+                if (bccomp($amount, '0', 4) < 0) {
+                    throw new DomainException(__('hr_payroll.messages.cost_allocation_amount_mismatch', ['item' => $item->payroll_item_code]));
+                }
+                $allocatedAmount = bcadd($allocatedAmount, $amount, 4);
                 $rows[] = [
                     'payslip_item_id' => $payslipItemId,
-                    'department_id' => $employee->department_id,
+                    'department_id' => $item->department_id,
                     'cost_center_id' => $costCenter->getKey(),
                     'account_id' => $account->getKey(),
                     'account_classification_id' => $classification->getKey(),
                     'allocation_type' => $type,
-                    'percentage' => number_format((float) $allocation['percentage'], 4, '.', ''),
+                    'percentage' => bcadd((string) $allocation['percentage'], '0', 4),
                     'amount' => $amount,
                     'created_at' => now(),
                     'updated_at' => now(),
@@ -100,6 +109,32 @@ final class PayrollCostAllocationService
 
             DB::table('hr_payroll_cost_allocations')->where('payslip_item_id', $payslipItemId)->delete();
             DB::table('hr_payroll_cost_allocations')->insert($rows);
+        });
+    }
+
+    public function recalculateStoredAllocations(int $payrollRunId): void
+    {
+        DB::transaction(function () use ($payrollRunId): void {
+            $reference = $this->payrollRun($payrollRunId);
+            Company::query()->whereKey($reference->company_id)->lockForUpdate()->firstOrFail();
+            DB::table('hr_payroll_periods')->where('id', $reference->payroll_period_id)->lockForUpdate()->firstOrFail();
+            $run = $this->payrollRun($payrollRunId, lock: true);
+            if (! in_array($run->status, ['draft', 'calculated'], true)) {
+                throw new DomainException(__('hr_payroll.messages.cost_allocation_locked'));
+            }
+            $items = $this->runItems($payrollRunId)->where('direction', 'earning');
+            $stored = $this->storedAllocations($items->pluck('payslip_item_id')->all())->groupBy('payslip_item_id');
+            foreach ($items as $item) {
+                $allocations = $stored->get($item->payslip_item_id, collect());
+                if ($allocations->isEmpty()) {
+                    continue;
+                }
+                $this->syncAllocations((int) $item->payslip_item_id, $allocations->map(fn ($allocation): array => [
+                    'cost_center_doc_num' => $allocation->cost_center_doc_num,
+                    'percentage' => $allocation->percentage,
+                    'allocation_type' => $allocation->allocation_type,
+                ])->all());
+            }
         });
     }
 
@@ -113,6 +148,15 @@ final class PayrollCostAllocationService
         $errors = [];
 
         foreach ($items as $item) {
+            if ($item->direction === 'employer') {
+                try {
+                    $lines[] = $this->employerInsurancePreviewLine($item);
+                } catch (DomainException $exception) {
+                    $errors[] = 'payslip_item:'.$item->payslip_item_id.':'.$exception->getMessage();
+                }
+
+                continue;
+            }
             if ($item->direction !== 'earning') {
                 continue;
             }
@@ -129,6 +173,11 @@ final class PayrollCostAllocationService
                 }
             }
 
+            $allocated = $allocations->reduce(fn (string $total, object $allocation): string => bcadd($total, (string) $allocation->amount, 4), '0.0000');
+            if (bccomp($allocated, (string) $item->amount, 4) !== 0) {
+                $errors[] = __('hr_payroll.messages.cost_allocation_amount_mismatch', ['item' => $item->payroll_item_name ?? $item->payroll_item_code]);
+            }
+
             foreach ($allocations as $allocation) {
                 $lines[] = [
                     'payslip_item_id' => (int) $item->payslip_item_id,
@@ -140,6 +189,7 @@ final class PayrollCostAllocationService
                     'account_id' => (int) $allocation->account_id,
                     'account' => trim((string) $allocation->account_code.' / '.(string) $allocation->account_name),
                     'classification' => (string) $allocation->classification_code,
+                    'classification_label' => AccountClassification::displayNameFor($allocation->classification_name, $allocation->classification_name_en),
                     'department_id' => $allocation->department_id === null ? null : (int) $allocation->department_id,
                     'department' => (string) ($allocation->department_name ?? ''),
                     'cost_center_id' => (int) $allocation->cost_center_id,
@@ -175,12 +225,7 @@ final class PayrollCostAllocationService
 
             foreach ($this->runItems($payrollRunId)->where('direction', 'earning') as $item) {
                 if (! DB::table('hr_payroll_cost_allocations')->where('payslip_item_id', $item->payslip_item_id)->exists()) {
-                    $proposal = $this->proposedAllocation($item);
-                    $this->syncAllocations((int) $item->payslip_item_id, [[
-                        'cost_center_doc_num' => (string) $proposal->cost_center_doc_num,
-                        'percentage' => '100.0000',
-                        'allocation_type' => (string) $proposal->allocation_type,
-                    ]]);
+                    $this->storeMissingDefaultAllocation($item);
                 }
             }
 
@@ -209,6 +254,33 @@ final class PayrollCostAllocationService
             $deductionLines = $this->deductionLines($payrollRunId, (int) $run->company_id);
             foreach ($deductionLines as $deductionLine) {
                 $lines[] = $deductionLine;
+            }
+            $insurancePayable = null;
+            foreach (collect($preview['lines'])->where('direction', 'employer') as $employerLine) {
+                if ($insurancePayable === null) {
+                    $classification = AccountClassification::query()->where('code', 'social_insurance_payable')->where('status', 'active')->firstOrFail();
+                    $insurancePayable = $this->accountForCompanyClassification((int) $run->company_id, $classification);
+                }
+                $lines[] = [
+                    'account_id' => $employerLine['account_id'],
+                    'debit_amount' => $employerLine['amount'],
+                    'credit_amount' => '0.0000',
+                    'description' => __('hr_payroll.journal.employer_insurance_cost'),
+                    'employee_id' => $employerLine['employee_id'],
+                    'department_id' => $employerLine['department_id'],
+                    'cost_center_id' => $employerLine['cost_center_id'],
+                    'branch_id' => $employerLine['branch_id'],
+                ];
+                $lines[] = [
+                    'account_id' => $insurancePayable->getKey(),
+                    'debit_amount' => '0.0000',
+                    'credit_amount' => $employerLine['amount'],
+                    'description' => __('hr_payroll.journal.employer_insurance_payable'),
+                    'employee_id' => $employerLine['employee_id'],
+                    'department_id' => $employerLine['department_id'],
+                    'cost_center_id' => $employerLine['cost_center_id'],
+                    'branch_id' => $employerLine['branch_id'],
+                ];
             }
 
             $payableClassification = AccountClassification::query()->where('code', 'payroll_payable')->firstOrFail();
@@ -241,15 +313,24 @@ final class PayrollCostAllocationService
                 ];
             }
 
+            $postingDate = $run->posting_date ?? $run->period_end;
+            if ($run->posting_financial_period_id !== null) {
+                $companyDocNum = Company::query()->whereKey($run->company_id)->value('doc_num');
+                abort_unless(app(OperatingScopeAccessService::class)
+                    ->allowedFinancialPeriodQuery(auth()->user(), [$companyDocNum])
+                    ->where('financial_periods.id', $run->posting_financial_period_id)->exists(), 403);
+            }
             $financialPeriod = FinancialPeriod::query()
                 ->forCompany((int) $run->company_id)
-                ->whereDate('from_date', '<=', $run->period_end)
-                ->whereDate('to_date', '>=', $run->period_end)
+                ->when($run->posting_financial_period_id !== null, fn ($query) => $query->whereKey($run->posting_financial_period_id))
+                ->whereDate('from_date', '<=', $postingDate)
+                ->whereDate('to_date', '>=', $postingDate)
                 ->where('is_closed', false)
+                ->lockForUpdate()
                 ->firstOrFail();
             $currency = Currency::query()->forCompany((int) $run->company_id)->active()->where('is_main', true)->firstOrFail();
             $journal = $this->journalEntries->createPostedFromSource([
-                'entry_date' => $run->period_end,
+                'entry_date' => $postingDate,
                 'company_id' => (int) $run->company_id,
                 'financial_period_id' => $financialPeriod->getKey(),
                 'currency_id' => $currency->getKey(),
@@ -377,7 +458,7 @@ final class PayrollCostAllocationService
                 return [
                     'account_id' => (int) $account->getKey(),
                     'debit_amount' => '0.0000',
-                    'credit_amount' => number_format((float) $item->amount, 4, '.', ''),
+                    'credit_amount' => bcadd((string) $item->amount, '0', 4),
                     'description' => __('hr_payroll.journal.deduction', ['item' => $item->payroll_item_name ?: $item->payroll_item_code]),
                     'employee_id' => (int) $item->employee_id,
                     'branch_id' => $item->branch_id === null ? null : (int) $item->branch_id,
@@ -387,25 +468,80 @@ final class PayrollCostAllocationService
             ->all();
     }
 
+    /** @return array<string, mixed> */
+    private function employerInsurancePreviewLine(object $item): array
+    {
+        if ($item->payroll_item_code !== 'EMPLOYER-INSURANCE' || $item->source_type !== 'statutory_insurance_employer') {
+            throw new DomainException(__('hr_payroll.messages.employer_insurance_source_invalid'));
+        }
+        $proposal = $this->proposedAllocation($item);
+        $classification = AccountClassification::query()->where('code', 'insurance_expense')->where('status', 'active')->firstOrFail();
+        $account = $this->accountForCompanyClassification((int) $item->company_id, $classification);
+
+        return [
+            'payslip_item_id' => (int) $item->payslip_item_id,
+            'employee_id' => (int) $item->employee_id,
+            'employee' => (string) $item->employee_name,
+            'branch_id' => $item->branch_id === null ? null : (int) $item->branch_id,
+            'payroll_item' => (string) ($item->payroll_item_name ?? $item->payroll_item_code),
+            'direction' => 'employer',
+            'account_id' => (int) $account->getKey(),
+            'account' => trim($account->account_code.' / '.$account->displayName()),
+            'classification' => $classification->code,
+            'classification_label' => $classification->displayName(),
+            'department_id' => $proposal->department_id,
+            'department' => $proposal->department_name,
+            'cost_center_id' => (int) $proposal->cost_center_id,
+            'cost_center' => trim($proposal->cost_center_code.' / '.$proposal->cost_center_name),
+            'allocation_type' => $proposal->allocation_type,
+            'percentage' => '100.0000',
+            'amount' => (string) $item->amount,
+            'stored' => false,
+        ];
+    }
+
+    private function storeMissingDefaultAllocation(object $item): void
+    {
+        $proposal = $this->proposedAllocation($item);
+        DB::table('hr_payroll_cost_allocations')->insert([
+            'payslip_item_id' => $item->payslip_item_id,
+            'department_id' => $proposal->department_id,
+            'cost_center_id' => $proposal->cost_center_id,
+            'account_id' => $proposal->account_id,
+            'account_classification_id' => $this->classificationFor($proposal->allocation_type)->getKey(),
+            'allocation_type' => $proposal->allocation_type,
+            'percentage' => '100.0000',
+            'amount' => bcadd((string) $item->amount, '0', 4),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
     private function payslipItem(int $payslipItemId, bool $lock = false): object
     {
         $query = DB::table('hr_payslip_items as item')
             ->join('hr_payslips as payslip', 'payslip.id', '=', 'item.payslip_id')
+            ->join('hr_employees as employee', 'employee.id', '=', 'payslip.employee_id')
             ->join('hr_payroll_runs as run', 'run.id', '=', 'payslip.payroll_run_id')
             ->join('hr_payroll_periods as period', 'period.id', '=', 'run.payroll_period_id')
             ->leftJoin('hr_payroll_items as payroll_item', 'payroll_item.id', '=', 'item.payroll_item_id')
             ->where('item.id', $payslipItemId);
 
         if (! $lock) {
-            return $query->first([
-                'item.id', 'item.amount', 'item.direction', 'payslip.employee_id', 'period.company_id',
-                'payroll_item.code as payroll_item_code', 'payroll_item.account_classification_id', 'payroll_item.account_id',
+            $item = $query->first([
+                'item.id', 'item.amount', 'item.direction', 'payslip.employee_id', DB::raw('COALESCE(payslip.department_id, employee.department_id) as department_id'), 'period.company_id',
+                'payroll_item.code as payroll_item_code', 'payroll_item.account_classification_id', 'payroll_item.account_id', 'item.source_snapshot',
             ]) ?? throw new DomainException(__('Payroll item not found.'));
+            $snapshot = json_decode((string) ($item->source_snapshot ?? '{}'), true, 512, JSON_THROW_ON_ERROR);
+            $item->department_id = $snapshot['department_id'] ?? $item->department_id;
+
+            return $item;
         }
 
         $references = $query->first([
-            'period.id as period_id', 'run.id as run_id', 'payslip.id as payslip_id',
+            'period.id as period_id', 'period.company_id', 'run.id as run_id', 'payslip.id as payslip_id',
         ]) ?? throw new DomainException(__('Payroll item not found.'));
+        Company::query()->whereKey($references->company_id)->lockForUpdate()->firstOrFail();
         $period = DB::table('hr_payroll_periods')
             ->where('id', $references->period_id)
             ->lockForUpdate()
@@ -414,17 +550,17 @@ final class PayrollCostAllocationService
             ->where('id', $references->run_id)
             ->where('payroll_period_id', $references->period_id)
             ->lockForUpdate()
-            ->first(['id']);
+            ->first(['id', 'status']);
         $payslip = DB::table('hr_payslips')
             ->where('id', $references->payslip_id)
             ->where('payroll_run_id', $references->run_id)
             ->lockForUpdate()
-            ->first(['id', 'employee_id']);
+            ->first(['id', 'employee_id', 'department_id']);
         $item = DB::table('hr_payslip_items')
             ->where('id', $payslipItemId)
             ->where('payslip_id', $references->payslip_id)
             ->lockForUpdate()
-            ->first(['id', 'amount', 'direction', 'payroll_item_id']);
+            ->first(['id', 'amount', 'direction', 'payroll_item_id', 'source_snapshot']);
 
         if ($period === null || $run === null || $payslip === null || $item === null) {
             throw new DomainException(__('Payroll item not found.'));
@@ -442,7 +578,11 @@ final class PayrollCostAllocationService
             'amount' => $item->amount,
             'direction' => $item->direction,
             'employee_id' => $payslip->employee_id,
+            'department_id' => (json_decode((string) ($item->source_snapshot ?? '{}'), true, 512, JSON_THROW_ON_ERROR)['department_id'] ?? null)
+                ?? $payslip->department_id
+                ?? DB::table('hr_employees')->where('id', $payslip->employee_id)->value('department_id'),
             'company_id' => $period->company_id,
+            'run_status' => $run->status,
             'payroll_item_code' => $payrollItem?->code,
             'account_classification_id' => $payrollItem?->account_classification_id,
             'account_id' => $payrollItem?->account_id,
@@ -455,7 +595,7 @@ final class PayrollCostAllocationService
             ->join('hr_payroll_periods as period', 'period.id', '=', 'run.payroll_period_id')
             ->where('run.id', $payrollRunId)
             ->when($lock, fn ($query) => $query->lockForUpdate())
-            ->first(['run.id', 'run.status', 'run.branch_id', 'period.company_id', 'period.period_start', 'period.period_end'])
+            ->first(['run.id', 'run.status', 'run.payroll_period_id', 'run.branch_id', 'run.posting_date', 'run.posting_financial_period_id', 'period.company_id', 'period.period_start', 'period.period_end'])
             ?? throw new DomainException(__('Payroll run not found.'));
     }
 
@@ -476,8 +616,14 @@ final class PayrollCostAllocationService
                 'payslip.employee_name', DB::raw('COALESCE(payslip.branch_id, employee.branch_id) as branch_id'),
                 DB::raw('COALESCE(payslip.department_id, employee.department_id) as department_id'),
                 'period.company_id', 'payroll_item.code as payroll_item_code', 'payroll_item.name as payroll_item_name',
-                'payroll_item.account_classification_id', 'payroll_item.account_id', 'item.source_type', 'item.source_id',
-            ]);
+                'payroll_item.account_classification_id', 'payroll_item.account_id', 'item.source_type', 'item.source_id', 'item.source_snapshot',
+            ])
+            ->map(function (object $item): object {
+                $snapshot = json_decode((string) ($item->source_snapshot ?? '{}'), true, 512, JSON_THROW_ON_ERROR);
+                $item->department_id = $snapshot['department_id'] ?? $item->department_id;
+
+                return $item;
+            });
     }
 
     /** @param list<int> $payslipItemIds @return Collection<int, object> */
@@ -496,15 +642,19 @@ final class PayrollCostAllocationService
             ->orderBy('allocation.id')
             ->get([
                 'allocation.*', 'account.account_code', 'account.name as account_name',
-                'classification.code as classification_code', 'department.name as department_name',
+                'classification.code as classification_code', 'classification.name as classification_name', 'classification.name_en as classification_name_en', 'department.name as department_name',
                 'cost_center.doc_num as cost_center_doc_num', 'cost_center.cost_center_code', 'cost_center.name as cost_center_name',
             ]);
     }
 
     private function proposedAllocation(object $item): object
     {
-        $employee = HrEmployee::query()->with('departmentModel')->findOrFail($item->employee_id);
-        $costCenter = $employee->departmentModel?->defaultCostCenterForCompany((int) $item->company_id);
+        $department = $item->department_id === null ? null : HrDepartment::query()->find($item->department_id);
+        $snapshot = json_decode((string) ($item->source_snapshot ?? '{}'), true, 512, JSON_THROW_ON_ERROR);
+        $datedCostCenterId = (int) ($snapshot['cost_center_id'] ?? 0);
+        $costCenter = $datedCostCenterId > 0
+            ? CostCenter::query()->forCompany((int) $item->company_id)->find($datedCostCenterId)
+            : $department?->defaultCostCenterForCompany((int) $item->company_id);
 
         if (! $costCenter instanceof CostCenter
             || (int) $costCenter->company_id !== (int) $item->company_id
@@ -523,8 +673,10 @@ final class PayrollCostAllocationService
             'account_code' => $account->account_code,
             'account_name' => $account->displayName(),
             'classification_code' => $classification->code,
-            'department_id' => $employee->department_id,
-            'department_name' => $employee->departmentModel?->name,
+            'classification_name' => $classification->name,
+            'classification_name_en' => $classification->name_en,
+            'department_id' => $item->department_id,
+            'department_name' => $department?->name,
             'cost_center_id' => $costCenter->getKey(),
             'cost_center_doc_num' => $costCenter->doc_num,
             'cost_center_code' => $costCenter->cost_center_code,

@@ -3,7 +3,6 @@
 use App\Console\Commands\ResetLocalDatabaseCommand;
 use Database\Seeders\EmergencyRecoverySeeder;
 use Database\Seeders\RuntimeDemoDataSeeder;
-use Modules\Auth\Database\Seeders\PermissionSeeder;
 
 function withResetCommandEnvironment(string $environment, callable $callback): mixed
 {
@@ -70,10 +69,8 @@ test('reset local database command seeds baseline and optional demo in the expec
     $command = app(ResetLocalDatabaseCommand::class);
 
     expect($command->seederClasses(false))->toBe([
-        PermissionSeeder::class,
         EmergencyRecoverySeeder::class,
     ])->and($command->seederClasses(true))->toBe([
-        PermissionSeeder::class,
         EmergencyRecoverySeeder::class,
         RuntimeDemoDataSeeder::class,
     ]);

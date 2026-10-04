@@ -4,10 +4,15 @@ namespace Modules\Accounting\Exports;
 
 use Maatwebsite\Excel\Concerns\FromArray;
 use Maatwebsite\Excel\Concerns\ShouldAutoSize;
+use Maatwebsite\Excel\Concerns\WithCustomValueBinder;
 use Maatwebsite\Excel\Concerns\WithHeadings;
+use Maatwebsite\Excel\Concerns\WithStrictNullComparison;
 use Modules\Accounting\Services\JournalSourceLabelService;
+use PhpOffice\PhpSpreadsheet\Cell\Cell;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\Cell\DefaultValueBinder;
 
-class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
+class LedgerReportExport extends DefaultValueBinder implements FromArray, ShouldAutoSize, WithCustomValueBinder, WithHeadings, WithStrictNullComparison
 {
     /**
      * @param  array<string, mixed>  $result
@@ -16,6 +21,27 @@ class LedgerReportExport implements FromArray, ShouldAutoSize, WithHeadings
         private readonly array $result,
         private readonly string $type = 'account_ledger',
     ) {}
+
+    public function bindValue(Cell $cell, mixed $value): bool
+    {
+        $amountColumns = match ($this->type) {
+            'general_journal' => ['I', 'J'],
+            'customer_statement' => ['G', 'H'],
+            'supplier_statement' => ['E', 'F'],
+            default => ['H', 'I', 'J', 'K'],
+        };
+
+        if ($cell->getRow() > 1
+            && in_array($cell->getColumn(), $amountColumns, true)
+            && is_string($value)
+            && preg_match('/^-?\d+(?:\.\d+)?$/', $value) === 1) {
+            $cell->setValueExplicit($value, DataType::TYPE_STRING);
+
+            return true;
+        }
+
+        return parent::bindValue($cell, $value);
+    }
 
     /**
      * @return list<list<string>>

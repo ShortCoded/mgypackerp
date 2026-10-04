@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\Branch;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
@@ -16,6 +17,7 @@ use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductImageResolver;
+use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Inventory\Models\OpeningStockLine;
 use Modules\Inventory\Models\OpeningStockPricing;
@@ -37,6 +39,7 @@ class OpeningStockPricingService
         try {
             return DB::transaction(function () use ($data, $request): array {
                 $context = $this->currentContext();
+                Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
                 $period = FinancialPeriod::query()
                     ->whereKey($context['financial_period_id'])
                     ->where('company_id', $context['company_id'])
@@ -65,7 +68,9 @@ class OpeningStockPricingService
                 ]);
                 $totalAmount = $this->syncLines($record, $data['lines'], $context);
                 $record->forceFill(['total_amount' => $totalAmount])->save();
-                $this->openingStockPosting->applyPricing($record);
+                if ($record->isClosed()) {
+                    $this->openingStockPosting->applyPricing($record);
+                }
                 $this->audit->clearCreationUpdateAudit($record);
 
                 return ['record' => $record->refresh()->load(['branch', 'branchHall', 'openingStock', 'currency', 'lines.openingStockLine.product'])];
@@ -82,9 +87,15 @@ class OpeningStockPricingService
     public function update(OpeningStockPricing $record, array $data): array
     {
         return DB::transaction(function () use ($record, $data): array {
+            Company::query()->whereKey($record->company_id)->lockForUpdate()->firstOrFail();
+            FinancialPeriod::query()->whereKey($record->financial_period_id)->lockForUpdate()->firstOrFail();
+            $record = OpeningStockPricing::query()->lockForUpdate()->findOrFail($record->getKey());
             $context = $this->currentContext();
             $this->assertInCurrentContext($record, $context);
             $this->assertEditable($record);
+            if ($record->pricing_basis !== ($data['pricing_basis'] ?? OpeningStockPricing::BasisDocumented)) {
+                throw new DomainException(__('inventory.opening_stock_pricings.messages.estimate_basis_immutable'));
+            }
 
             $oldDocNumber = $record->doc_number === null ? null : (int) $record->doc_number;
             $oldDocNum = $record->doc_num;
@@ -98,10 +109,14 @@ class OpeningStockPricingService
             $totalAmount = $this->syncLines($record->refresh(), $data['lines'] ?? [], $context);
             $this->audit->saveUpdate($record, [
                 'total_amount' => $totalAmount,
-                'is_closed' => true,
-                'status' => OpeningStockPricing::StatusClosed,
+                'is_closed' => $record->pricing_basis !== OpeningStockPricing::BasisEstimate,
+                'status' => $record->pricing_basis === OpeningStockPricing::BasisEstimate
+                    ? OpeningStockPricing::StatusDraft
+                    : OpeningStockPricing::StatusClosed,
             ]);
-            $this->openingStockPosting->applyPricing($record);
+            if ($record->isClosed()) {
+                $this->openingStockPosting->applyPricing($record);
+            }
 
             return [
                 'record' => $record->refresh()->load(['branch', 'branchHall', 'openingStock', 'currency', 'lines.openingStockLine.product']),
@@ -114,9 +129,14 @@ class OpeningStockPricingService
     public function delete(OpeningStockPricing $record): void
     {
         DB::transaction(function () use ($record): void {
+            Company::query()->whereKey($record->company_id)->lockForUpdate()->firstOrFail();
+            FinancialPeriod::query()->whereKey($record->financial_period_id)->lockForUpdate()->firstOrFail();
+            $record = OpeningStockPricing::query()->lockForUpdate()->findOrFail($record->getKey());
             $this->assertInCurrentContext($record, $this->currentContext());
             $this->assertDeletable($record);
-            $this->openingStockPosting->clearPricing($record);
+            if ($record->pricing_basis !== OpeningStockPricing::BasisEstimate) {
+                $this->openingStockPosting->clearPricing($record);
+            }
             $this->audit->softDelete($record);
 
             $record->refresh()->lines()->get()->each(function (OpeningStockPricingLine $line): void {
@@ -130,6 +150,8 @@ class OpeningStockPricingService
     {
         return DB::transaction(function () use ($record): OpeningStockPricing {
             $this->assertInCurrentContext($record, $this->currentContext());
+            Company::query()->whereKey($record->company_id)->lockForUpdate()->firstOrFail();
+            FinancialPeriod::query()->whereKey($record->financial_period_id)->lockForUpdate()->firstOrFail();
             $deletedAt = $record->deleted_at;
             $restoringLines = $record->lines()
                 ->withTrashed()
@@ -147,9 +169,104 @@ class OpeningStockPricingService
 
             $this->audit->restore($record, auth()->id());
             $restoringLines->each->restore();
-            $this->openingStockPosting->applyPricing($record);
+            if ($record->pricing_basis !== OpeningStockPricing::BasisEstimate || $record->isClosed()) {
+                $this->openingStockPosting->applyPricing($record);
+            }
 
             return $record->refresh();
+        });
+    }
+
+    public function approveEstimate(OpeningStockPricing $record, string $sourceReference, string $approvalReference): OpeningStockPricing
+    {
+        return DB::transaction(function () use ($record, $sourceReference, $approvalReference): OpeningStockPricing {
+            $context = $this->currentContext();
+            Company::query()->whereKey($record->company_id)->lockForUpdate()->firstOrFail();
+            FinancialPeriod::query()->whereKey($record->financial_period_id)->lockForUpdate()->firstOrFail();
+            $locked = OpeningStockPricing::query()->lockForUpdate()->findOrFail($record->getKey());
+            $this->assertInCurrentContext($locked, $context);
+
+            if ($locked->pricing_basis !== OpeningStockPricing::BasisEstimate
+                || $locked->status !== OpeningStockPricing::StatusDraft
+                || $locked->is_closed
+                || $locked->approved_by
+                || (int) $locked->created_by === (int) auth()->id()) {
+                throw new DomainException(__('inventory.opening_stock_pricings.messages.estimate_approval_unavailable'));
+            }
+
+            $period = FinancialPeriod::query()
+                ->whereKey($context['financial_period_id'])
+                ->where('company_id', $context['company_id'])
+                ->lockForUpdate()
+                ->first();
+            $source = OpeningStock::query()
+                ->whereKey($locked->opening_stock_id)
+                ->where('company_id', $context['company_id'])
+                ->where('financial_period_id', $context['financial_period_id'])
+                ->lockForUpdate()
+                ->first();
+            $allowedBranch = $this->operatingContext->allowedBranchQueryForCurrentCompany(request())
+                ->whereKey($locked->branch_id)
+                ->exists();
+            if (! $period || $period->is_closed || ! $period->allows_opening_entries
+                || ! $source || ! $source->approved || $source->status !== OpeningStock::StatusApproved
+                || ! $allowedBranch || (int) $source->branch_id !== (int) $locked->branch_id
+                || $locked->lines()->count() === 0
+                || trim((string) $locked->estimate_basis_note) === ''
+                || trim($sourceReference) === '' || trim($approvalReference) === '') {
+                throw new DomainException(__('inventory.opening_stock_pricings.messages.estimate_approval_unavailable'));
+            }
+            $documentDate = $locked->document_date?->toDateString();
+            if (! $documentDate || $documentDate < $period->from_date->toDateString()
+                || $documentDate > $period->to_date->toDateString()
+                || ! $source->branch_store_id) {
+                throw new DomainException(__('inventory.opening_stock_pricings.messages.estimate_approval_unavailable'));
+            }
+            $currency = Currency::query()
+                ->whereKey($locked->currency_id)
+                ->where('company_id', $context['company_id'])
+                ->where('status', 'active')
+                ->first();
+            if (! $currency || bccomp((string) $locked->exchange_rate, '0', 6) <= 0
+                || ($currency->is_main && bccomp((string) $locked->exchange_rate, '1', 6) !== 0)) {
+                throw new DomainException(__('inventory.opening_stock_pricings.messages.estimate_approval_unavailable'));
+            }
+            $sum = '0.0000';
+            foreach ($locked->lines()->with('openingStockLine')->get() as $pricingLine) {
+                $openingLine = $pricingLine->openingStockLine;
+                $movement = $openingLine
+                    ? InventoryTransaction::query()
+                        ->where('posting_key', "opening-stock:{$source->getKey()}:line:{$openingLine->getKey()}")
+                        ->lockForUpdate()
+                        ->first()
+                    : null;
+                if (! $openingLine || (int) $openingLine->opening_stock_id !== (int) $source->getKey()
+                    || ! $movement || (int) $movement->company_id !== (int) $source->company_id
+                    || (int) $movement->branch_store_id !== (int) $source->branch_store_id
+                    || (int) $movement->product_id !== (int) $openingLine->product_id
+                    || bccomp((string) $movement->quantity_in, (string) $openingLine->quantity, 4) !== 0
+                    || bccomp((string) $pricingLine->quantity, (string) $openingLine->quantity, 4) !== 0
+                    || bccomp((string) $pricingLine->unit_price, '0', 8) <= 0
+                    || bccomp((string) $pricingLine->line_total, bcround(bcmul((string) $pricingLine->quantity, (string) $pricingLine->unit_price, 8), 4), 4) !== 0) {
+                    throw new DomainException(__('inventory.opening_stock_pricings.messages.estimate_approval_unavailable'));
+                }
+                $sum = bcadd($sum, (string) $pricingLine->line_total, 4);
+            }
+            if (bccomp($sum, (string) $locked->total_amount, 4) !== 0) {
+                throw new DomainException(__('inventory.opening_stock_pricings.messages.estimate_approval_unavailable'));
+            }
+
+            $this->audit->saveUpdate($locked, [
+                'source_reference' => trim($sourceReference),
+                'approval_reference' => trim($approvalReference),
+                'approved_by' => auth()->id(),
+                'approved_at' => now(),
+                'is_closed' => true,
+                'status' => OpeningStockPricing::StatusClosed,
+            ]);
+            $this->openingStockPosting->applyPricing($locked);
+
+            return $locked->refresh();
         });
     }
 
@@ -199,6 +316,7 @@ class OpeningStockPricingService
         $exchangeRate = $currency?->is_main
             ? '1.000000'
             : ($this->numbers->normalizeToScale($data['exchange_rate'] ?? 1, 6) ?? '1.000000');
+        $pricingBasis = $data['pricing_basis'] ?? OpeningStockPricing::BasisDocumented;
 
         return [
             'company_id' => $context['company_id'],
@@ -210,8 +328,13 @@ class OpeningStockPricingService
             'exchange_rate' => $exchangeRate,
             'document_date' => $data['document_date'],
             'notes' => $data['notes'] ?? null,
-            'is_closed' => true,
-            'status' => OpeningStockPricing::StatusClosed,
+            'pricing_basis' => $pricingBasis,
+            'source_reference' => $data['source_reference'] ?? null,
+            'estimate_basis_note' => $pricingBasis === OpeningStockPricing::BasisEstimate ? ($data['estimate_basis_note'] ?? null) : null,
+            'is_closed' => $pricingBasis !== OpeningStockPricing::BasisEstimate,
+            'status' => $pricingBasis === OpeningStockPricing::BasisEstimate
+                ? OpeningStockPricing::StatusDraft
+                : OpeningStockPricing::StatusClosed,
         ];
     }
 
@@ -244,7 +367,7 @@ class OpeningStockPricingService
                 continue;
             }
 
-            $unitPriceValue = $this->numbers->normalizeToScale($line['unit_price'] ?? 0, 4) ?? '0.0000';
+            $unitPriceValue = $this->numbers->normalizeToScale($line['unit_price'] ?? 0, 8) ?? '0.00000000';
             $quantityValue = $this->numbers->normalizeToScale($openingLine->quantity, 4) ?? '0.0000';
             $lineTotal = bcround(bcmul($quantityValue, $unitPriceValue, 8), 4);
             $totalAmount = bcadd($totalAmount, $lineTotal, 4);
@@ -442,7 +565,7 @@ class OpeningStockPricingService
             DB::statement(sprintf('LOCK TABLE %s IN SHARE ROW EXCLUSIVE MODE', DB::getQueryGrammar()->wrapTable('inventory_opening_stock_pricings')));
         }
 
-        $nextNumber = ((int) OpeningStockPricing::query()
+        $nextNumber = ((int) OpeningStockPricing::withTrashed()
             ->where('company_id', $companyId)
             ->where('financial_period_id', $financialPeriodId)
             ->max('doc_number')) + 1;

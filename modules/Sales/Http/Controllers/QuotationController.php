@@ -112,7 +112,17 @@ class QuotationController extends Controller
         try {
             $record = DB::transaction(function () use ($request, $salesRequests): Quotation {
                 $convertingRequest = $request->filled('source_request_doc_num');
-                $payload = $this->pricedPayload($request, $request->validated(), resolvePrices: ! $convertingRequest);
+                $cloneSource = null;
+                if ($request->filled('clone_source_doc_num')) {
+                    $context = app(OperatingContextService::class)->snapshot($request);
+                    $cloneSource = Quotation::query()
+                        ->where('company_id', $context['company_id'])
+                        ->where('branch_id', $context['branch_id'])
+                        ->where('doc_num', $request->validated('clone_source_doc_num'))
+                        ->lockForUpdate()
+                        ->firstOrFail();
+                }
+                $payload = $this->pricedPayload($request, $request->validated(), resolvePrices: ! $convertingRequest, sourceQuotation: $cloneSource);
                 if ($convertingRequest) {
                     abort_unless($request->user()?->can('sales_requests.view'), 403);
                     $context = app(OperatingContextService::class)->snapshot($request);
@@ -153,7 +163,18 @@ class QuotationController extends Controller
     public function update(UpdateQuotationRequest $request, Quotation $quotation): JsonResponse
     {
         try {
-            $result = DB::transaction(fn (): array => $this->service->update($quotation, $this->pricedPayload($request, $request->validated())));
+            $result = DB::transaction(function () use ($request, $quotation): array {
+                $context = app(OperatingContextService::class)->snapshot($request);
+                $lockedQuotation = Quotation::query()
+                    ->whereKey($quotation->getKey())
+                    ->where('company_id', $context['company_id'])
+                    ->where('branch_id', $context['branch_id'])
+                    ->lockForUpdate()
+                    ->firstOrFail();
+                $lockedQuotation->load('currentRevision.lines');
+
+                return $this->service->update($lockedQuotation, $this->pricedPayload($request, $request->validated(), sourceQuotation: $lockedQuotation));
+            });
         } catch (DomainException $exception) {
             return response()->json(['success' => false, 'message' => $exception->getMessage()], 422);
         }
@@ -634,6 +655,7 @@ class QuotationController extends Controller
                     'base_quantity' => $this->numbers->format($line->base_quantity),
                     'conversion_factor' => $this->numbers->format($line->conversion_factor),
                     'unit_price' => $this->numbers->format($line->unit_price),
+                    'source_line_public_uuid' => $line->public_uuid,
                     'discount_type' => $line->discount_type,
                     'discount_value' => $this->numbers->format($line->discount_value),
                     'discount_amount' => $this->numbers->format($line->discount_amount),
@@ -808,7 +830,7 @@ class QuotationController extends Controller
     }
 
     /** @param array<string, mixed> $data @return array<string, mixed> */
-    private function pricedPayload(Request $request, array $data, bool $resolvePrices = true): array
+    private function pricedPayload(Request $request, array $data, bool $resolvePrices = true, ?Quotation $sourceQuotation = null): array
     {
         $context = app(OperatingContextService::class)->snapshot($request);
         $customerId = Customer::query()->forCompany($context['company_id'])->active()->where('doc_num', $data['customer_doc_num'])->valueOrFail('id');
@@ -820,13 +842,26 @@ class QuotationController extends Controller
             return [...$line, 'product_id' => $product->getKey(), 'unit_id' => $unitId];
         })->all();
 
+        $samePricingContext = $sourceQuotation instanceof Quotation
+            && (int) $sourceQuotation->customer_id === (int) $customerId
+            && (int) $sourceQuotation->currency_id === (int) $currencyId
+            && $sourceQuotation->quotation_date?->toDateString() === $data['quotation_date'];
+
         return [
             ...$data,
             'discount_type' => null,
             'discount_value' => 0,
-            'lines' => $resolvePrices
-                ? $this->priceLists->applyToLines($lines, $context['company_id'], $customerId, $currencyId, $data['quotation_date'], 'quotation', lockForUpdate: true)
-                : $lines,
+            'lines' => ! $resolvePrices ? $lines : ($samePricingContext
+                ? $this->priceLists->preserveStoredQuotationPrices(
+                    $lines,
+                    $sourceQuotation->currentRevision?->lines ?? collect(),
+                    $context['company_id'],
+                    $customerId,
+                    $currencyId,
+                    $data['quotation_date'],
+                    lockForUpdate: true,
+                )
+                : $this->priceLists->applyToLines($lines, $context['company_id'], $customerId, $currencyId, $data['quotation_date'], 'quotation', lockForUpdate: true)),
         ];
     }
 

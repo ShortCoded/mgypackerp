@@ -541,4 +541,6 @@ test('every report page in the authorized menu opens successfully', function ():
 
     expect($items->count())->toBeGreaterThan(20)
         ->and($failures)->toBe([]);
+    $this->actingAs($admin)->withSession($session)->get(route('admin.tools.users-tasks-report.index'))
+        ->assertRedirect(url('/admin/tools/team-board'));
 });

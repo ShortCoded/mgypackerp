@@ -47,19 +47,19 @@
                 <td>{{ $line->unit_name_snapshot }}</td><td class="number">{{ $numbers->format($line->quantity) }}</td>
                 @if($showRequestedDate)<td>{{ $dates->formatDate($line->requested_date, '') }}</td>@endif
                 <td class="number">{{ $numbers->format($line->unit_price) }}</td>
-                @if($showDiscount)<td class="number">{{ $numbers->format($line->discount_amount) }}</td>@endif
-                @if($showTax)<td class="number">{{ $numbers->format($line->tax_amount) }}</td>@endif
-                <td class="number">{{ $numbers->format($line->line_total) }}</td>
+                @if($showDiscount)<td class="number">{{ $numbers->formatWithMinimumDecimals($line->discount_amount, 2) }}</td>@endif
+                @if($showTax)<td class="number">{{ $numbers->formatWithMinimumDecimals($line->tax_amount, 2) }}</td>@endif
+                <td class="number">{{ $numbers->formatWithMinimumDecimals($line->line_total, 2) }}</td>
             </tr>
         @endforeach</tbody>
     </table>
-    <table dir="{{ $direction ?? 'ltr' }}" class="report-table" style="width:45%; margin-top:10px; margin-{{ $direction === 'rtl' ? 'right' : 'left' }}:55%; page-break-inside:avoid;"><tbody><tr><th>{{ __('quotations.attributes.subtotal') }}</th><td>{{ $numbers->format($revision->subtotal) }}</td></tr><tr><th>{{ __('quotations.attributes.discount_amount') }}</th><td>{{ $numbers->format($revision->discount_amount) }}</td></tr><tr><th>{{ __('quotations.attributes.tax_amount') }}</th><td>{{ $numbers->format($revision->tax_amount) }}</td></tr><tr><th>{{ __('quotations.print.grand_total') }}</th><td><strong>{{ $numbers->format($revision->total) }} {{ $record->currency?->code }}</strong></td></tr></tbody></table>
+    <table dir="{{ $direction ?? 'ltr' }}" class="report-table" style="width:45%; margin-top:10px; margin-{{ $direction === 'rtl' ? 'right' : 'left' }}:55%; page-break-inside:avoid;"><tbody><tr><th>{{ __('quotations.attributes.subtotal') }}</th><td>{{ $numbers->formatWithMinimumDecimals($revision->subtotal, 2) }}</td></tr><tr><th>{{ __('quotations.attributes.discount_amount') }}</th><td>{{ $numbers->formatWithMinimumDecimals($revision->discount_amount, 2) }}</td></tr><tr><th>{{ __('quotations.attributes.tax_amount') }}</th><td>{{ $numbers->formatWithMinimumDecimals($revision->tax_amount, 2) }}</td></tr><tr><th>{{ __('quotations.print.grand_total') }}</th><td><strong>{{ $numbers->formatWithMinimumDecimals($revision->total, 2) }} {{ $record->currency?->code }}</strong></td></tr></tbody></table>
     @include('reports.partials.amount-in-words', ['amount' => $revision->total])
     @if($revision->paymentMilestones->isNotEmpty())
         <h3>{{ __('quotations.tabs.payments') }}</h3>
         <table dir="{{ $direction ?? 'ltr' }}" class="report-table"><thead><tr><th>#</th><th>{{ __('quotations.attributes.milestone_title') }}</th><th>{{ __('quotations.attributes.due_type') }}</th><th>{{ __('quotations.attributes.due_date') }}</th><th>{{ __('quotations.attributes.amount') }}</th></tr></thead><tbody>
             @foreach($revision->paymentMilestones as $milestone)
-                <tr><td>{{ $milestone->line_number }}</td><td>{{ $milestone->title }}@if($milestone->notes)<div class="document-item-details">{{ $milestone->notes }}</div>@endif</td><td>{{ $milestone->due_type ? __('quotations.due_types.'.$milestone->due_type) : '' }}</td><td>{{ $dates->formatDate($milestone->due_date, '') }}</td><td class="number">{{ $numbers->format($milestone->amount) }}</td></tr>
+                <tr><td>{{ $milestone->line_number }}</td><td>{{ $milestone->title }}@if($milestone->notes)<div class="document-item-details">{{ $milestone->notes }}</div>@endif</td><td>{{ $milestone->due_type ? __('quotations.due_types.'.$milestone->due_type) : '' }}</td><td>{{ $dates->formatDate($milestone->due_date, '') }}</td><td class="number">{{ $numbers->formatWithMinimumDecimals($milestone->amount, 2) }}</td></tr>
             @endforeach
         </tbody></table>
     @endif

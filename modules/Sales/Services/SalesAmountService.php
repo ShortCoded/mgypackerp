@@ -21,6 +21,11 @@ class SalesAmountService
         return bcmul((string) $left, (string) $right, $scale);
     }
 
+    public function unitPriceTotal(string|int|float $quantity, string|int|float $unitPrice, int $amountScale = 4): string
+    {
+        return $this->round($this->multiply($quantity, $unitPrice, 16), $amountScale);
+    }
+
     public function round(string|int|float $value, int $scale = 4): string
     {
         $increment = '0.'.str_repeat('0', $scale).'5';
@@ -52,6 +57,28 @@ class SalesAmountService
         if ($this->compare($value, '0', $scale) <= 0) {
             throw new DomainException($message);
         }
+    }
+
+    /** @param list<string> $weights @return list<string> */
+    public function splitQuantityByWeights(string $quantity, array $weights, int $scale = 8): array
+    {
+        $total = $this->sum($weights, 8);
+        $positiveKeys = array_keys(array_filter($weights, fn (string $weight): bool => bccomp($weight, '0', 8) > 0));
+        if ($positiveKeys === [] || bccomp($quantity, '0', $scale) < 0 || count(array_filter($weights, fn (string $weight): bool => bccomp($weight, '0', 8) < 0)) > 0) {
+            throw new DomainException(__('sales_issue.messages.quantity_allocation_mismatch'));
+        }
+        $last = $positiveKeys[array_key_last($positiveKeys)];
+        $allocated = '0';
+        $quantities = [];
+        foreach ($weights as $index => $weight) {
+            $slice = $index === $last
+                ? bcsub($quantity, $allocated, $scale)
+                : bcdiv(bcmul($quantity, $weight, 24), $total, $scale);
+            $quantities[] = $slice;
+            $allocated = bcadd($allocated, $slice, $scale);
+        }
+
+        return $quantities;
     }
 
     public function assertNotGreaterThan(string|int|float $value, string|int|float $maximum, string $message, int $scale = 8): void

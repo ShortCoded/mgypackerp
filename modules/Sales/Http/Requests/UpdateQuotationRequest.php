@@ -14,7 +14,7 @@ class UpdateQuotationRequest extends StoreQuotationRequest
     public function rules(): array
     {
         $rules = parent::rules();
-        unset($rules['clone_source_token']);
+        unset($rules['clone_source_token'], $rules['clone_source_doc_num']);
 
         return $rules;
     }

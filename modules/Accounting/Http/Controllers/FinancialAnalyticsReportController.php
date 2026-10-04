@@ -61,6 +61,7 @@ final class FinancialAnalyticsReportController extends Controller
             $company = Company::query()->findOrFail($this->companies->requireCompanyId());
 
             return $pdf->stream('reports.financial-analytics', [
+                'title' => $report['title'],
                 'report' => $report,
                 'companyPrintIdentity' => $printIdentities->forCompany($company),
             ], str_replace('_', '-', $type).'.pdf', 'L');

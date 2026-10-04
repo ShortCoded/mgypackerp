@@ -4,15 +4,20 @@ namespace Modules\Sales\Services;
 
 use DomainException;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Models\InventoryReservation;
+use Modules\Production\Models\ProductionOrder;
 use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\CustomerCommercialAgreement;
+use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\QuotationPaymentMilestone;
 use Modules\Sales\Models\QuotationRevision;
@@ -172,12 +177,27 @@ class SalesOrderService
             if (! $locked->isEditable()) {
                 throw new DomainException(__('Released sales orders must be reopened before amendment.'));
             }
+            Gate::authorize('sales_orders.edit');
+            $this->assertReopenContext($locked);
+            foreach (['company_id', 'branch_id', 'financial_period_id'] as $field) {
+                if (isset($data[$field]) && (int) $data[$field] !== (int) $locked->{$field}) {
+                    throw new DomainException(__('The document is outside the active operating context.'));
+                }
+            }
+            if (($locked->reopened_at !== null && ! isset($data['amendment_token']))
+                || (isset($data['amendment_token']) && ! hash_equals($locked->amendmentToken(), (string) $data['amendment_token']))) {
+                throw new DomainException(__('sales_ui.amendment_stale'));
+            }
+            unset($data['amendment_token']);
+            $data = collect($data)->except(['id', 'public_id', 'status', 'approved_at', 'approved_by',
+                'reopened_at', 'reopened_by', 'reopen_reason', 'reopen_snapshot', 'cancelled_at', 'cancelled_by',
+                'cancel_reason', 'created_by', 'created_at', 'deleted_by', 'deleted_at'])->all();
             app(FinancialPeriodService::class)->resolveOpenForPostingDate((int) $locked->company_id, $locked->order_date, (int) $locked->financial_period_id, lockForUpdate: true);
 
             $data['customer_id'] = $locked->customer_id;
             $data['currency_id'] = $locked->currency_id;
             $data['exchange_rate'] = $locked->exchange_rate;
-            if ($locked->quotation_id) {
+            if ($locked->quotation_id && ! $locked->canAppendProductionAmendment()) {
                 $data['payment_schedules'] = $locked->paymentSchedules()->orderBy('sequence')->get()->map(fn ($schedule): array => [
                     'title' => $schedule->title,
                     'due_date' => $schedule->due_date->toDateString(),
@@ -186,7 +206,10 @@ class SalesOrderService
                 ])->all();
             }
             $lines = $this->validatedLines($data['lines'] ?? [], (int) $locked->company_id);
-            $currentLines = $locked->lines()->get();
+            $currentLines = $locked->lines()->lockForUpdate()->get();
+            if ($locked->canAppendProductionAmendment()) {
+                return $this->updateProductionAmendment($locked, $data, $lines, $currentLines);
+            }
             if ($locked->quotation_id || $locked->sales_request_id) {
                 if ($currentLines->count() !== count($lines)) {
                     throw new DomainException(__('Source document lines must be preserved; create a separate order for changes.'));
@@ -242,11 +265,124 @@ class SalesOrderService
         });
     }
 
+    /**
+     * @param  array<string, mixed>  $data
+     * @param  list<array<string, mixed>>  $lines
+     * @param  Collection<int, SalesOrderLine>  $currentLines
+     */
+    private function updateProductionAmendment(SalesOrder $order, array $data, array $lines, Collection $currentLines): SalesOrder
+    {
+        if (! $order->canAppendProductionAmendment()
+            || Carbon::parse($data['order_date'])->toDateString() !== $order->order_date->toDateString()
+            || (int) ($data['branch_store_id'] ?? 0) !== (int) ($order->branch_store_id ?? 0)) {
+            throw new DomainException(__('sales_ui.production_amendment_context'));
+        }
+
+        $existingByPublicId = $currentLines->keyBy('public_id');
+        $beforeSnapshot = $currentLines->map->attributesToArray()->all();
+        $seen = [];
+        $totalsLines = [];
+        $nextLineNumber = (int) $currentLines->max('line_number');
+        foreach ($lines as $index => $line) {
+            $publicId = $data['lines'][$index]['public_id'] ?? null;
+            if ($publicId !== null) {
+                $source = $existingByPublicId->get($publicId);
+                if (! $source instanceof SalesOrderLine || isset($seen[$publicId])) {
+                    throw new DomainException(__('sales_ui.production_amendment_line_identity'));
+                }
+                $seen[$publicId] = true;
+                foreach (['product_id', 'unit_id', 'description', 'unit_price', 'discount_amount', 'tax_amount', 'conversion_factor'] as $field) {
+                    $same = in_array($field, ['unit_price', 'conversion_factor'], true)
+                        ? bccomp((string) $line[$field], (string) $source->{$field}, 8) === 0
+                        : (in_array($field, ['discount_amount', 'tax_amount'], true)
+                            ? bccomp((string) $line[$field], (string) $source->{$field}, 4) === 0
+                            : (string) $line[$field] === (string) $source->{$field});
+                    if (! $same) {
+                        throw new DomainException(__('sales_ui.production_amendment_locked_terms'));
+                    }
+                }
+                $committedQuantity = $this->committedLineQuantity($source);
+                if (bccomp((string) $line['quantity'], $committedQuantity, 8) < 0) {
+                    throw new DomainException(__('sales_ui.amendment_below_commitment', [
+                        'line' => $source->line_number,
+                        'quantity' => app(NumericFormatService::class)->format($committedQuantity),
+                    ]));
+                }
+                if (bccomp((string) $line['quantity'], (string) $source->quantity, 8) !== 0) {
+                    $source->update([
+                        'quantity' => $line['quantity'],
+                        'base_quantity' => $line['base_quantity'],
+                        'line_total' => $line['line_total'],
+                    ]);
+                }
+            } else {
+                $nextLineNumber++;
+                $order->lines()->create([...$line, 'line_number' => $nextLineNumber]);
+            }
+            $totalsLines[] = $line;
+        }
+        if (count($seen) !== $currentLines->count()) {
+            throw new DomainException(__('sales_ui.production_amendment_preserve_lines'));
+        }
+
+        $totals = $this->totals($totalsLines);
+        $agreement = CustomerCommercialAgreement::query()
+            ->where('company_id', $order->company_id)->where('customer_id', $order->customer_id)
+            ->where(fn ($query) => $query->whereNull('currency_id')->orWhere('currency_id', $order->currency_id))
+            ->effective($order->order_date->toDateString())->orderByRaw('currency_id is null')->latest('effective_from')->first();
+        $agreementSnapshot = $this->creditControl->snapshotFor($agreement, (int) $order->company_id, (int) $order->customer_id, (int) $order->currency_id);
+        $order->update([
+            ...$totals,
+            'agreement_snapshot' => $agreementSnapshot,
+            'credit_limit_snapshot' => $agreementSnapshot['credit_limit'],
+            'required_advance_amount' => $this->requiredAdvance($agreement, $totals['total_amount']),
+            'expected_delivery_date' => $data['expected_delivery_date'] ?? $order->expected_delivery_date,
+            'notes' => $data['notes'] ?? $order->notes,
+            'internal_notes' => $data['internal_notes'] ?? $order->internal_notes,
+            'updated_by' => auth()->id(),
+        ]);
+        $order->paymentSchedules()->delete();
+        $this->syncPaymentSchedules($order, $data['payment_schedules'] ?? []);
+        $this->audit->record($order, 'sales_order.amended', [
+            'status' => $order->status,
+            'total_amount' => $order->total_amount,
+            'preserved_source_line_ids' => $currentLines->modelKeys(),
+            'before_lines' => $beforeSnapshot,
+            'after_lines' => $order->lines()->get()->map->attributesToArray()->all(),
+        ]);
+
+        return $order->refresh()->load(['lines.product', 'paymentSchedules']);
+    }
+
+    private function committedLineQuantity(SalesOrderLine $line): string
+    {
+        $productionBase = (string) $line->productionLines()
+            ->whereHas('order', fn ($query) => $query->where('status', '!=', ProductionOrder::StatusCancelled))
+            ->sum('base_quantity');
+        $productionQuantity = bcdiv($productionBase, (string) $line->conversion_factor, 8);
+        $invoiceQuantity = (string) $line->invoiceLines()
+            ->whereHas('invoice', fn ($query) => $query
+                ->where('document_type', CustomerInvoice::TypeInvoice)
+                ->where('status', '!=', CustomerInvoice::StatusCancelled))
+            ->sum('quantity');
+        $quantities = [
+            $line->activeReservedQuantity(), $line->production_requested_quantity,
+            $line->produced_quantity, $line->delivered_quantity, $line->invoiced_quantity,
+            $productionQuantity, $invoiceQuantity,
+        ];
+
+        return collect($quantities)->reduce(
+            fn (string $maximum, mixed $quantity): string => bccomp((string) ($quantity ?? '0'), $maximum, 8) > 0 ? (string) $quantity : $maximum,
+            '0.00000000',
+        );
+    }
+
     public function delete(SalesOrder $order): void
     {
         DB::transaction(function () use ($order): void {
             $record = SalesOrder::query()->lockForUpdate()->findOrFail($order->id);
-            if ($record->status !== SalesOrder::StatusDraft || $record->quotation_id || $record->sales_request_id
+            if ($record->status !== SalesOrder::StatusDraft || $record->approved_at !== null || $record->reopened_at !== null
+                || $record->quotation_id || $record->sales_request_id
                 || $record->invoices()->withTrashed()->exists() || $record->deliveries()->exists()
                 || $record->productionOrders()->exists() || $record->receipts()->withTrashed()->exists()
                 || InventoryReservation::query()->where('sales_order_id', $record->id)->exists()) {
@@ -261,7 +397,7 @@ class SalesOrderService
     {
         return DB::transaction(function () use ($order): SalesOrder {
             $record = SalesOrder::onlyTrashed()->lockForUpdate()->findOrFail($order->id);
-            if ($record->status !== SalesOrder::StatusDraft) {
+            if (! $record->isEditable() || $record->status !== SalesOrder::StatusDraft) {
                 throw new DomainException(__('Only unused drafts can be restored.'));
             }
             $record->restore();
@@ -281,7 +417,10 @@ class SalesOrderService
         return DB::transaction(function () use ($order): SalesOrder {
             $locked = SalesOrder::query()->with('lines')->lockForUpdate()->findOrFail($order->getKey());
             Customer::query()->lockForUpdate()->findOrFail($locked->customer_id);
-            if (! in_array($locked->status, [SalesOrder::StatusDraft, SalesOrder::StatusPendingApproval, SalesOrder::StatusHeldCredit], true)) {
+            if (! in_array($locked->status, [SalesOrder::StatusDraft, SalesOrder::StatusPendingApproval, SalesOrder::StatusHeldCredit], true)
+                || ($locked->approved_at !== null
+                    && $locked->statusHistory()->whereIn('to_status', [SalesOrder::StatusApproved, SalesOrder::StatusReopened])
+                        ->reorder()->latest('id')->value('to_status') !== SalesOrder::StatusReopened)) {
                 throw new DomainException(__('The sales order is not awaiting approval.'));
             }
             if ($locked->lines->isEmpty()) {
@@ -347,16 +486,19 @@ class SalesOrderService
 
     public function reopen(SalesOrder $order, string $reason): SalesOrder
     {
+        Gate::authorize('sales_orders.reopen');
+
         return DB::transaction(function () use ($order, $reason): SalesOrder {
             $locked = SalesOrder::query()->with('lines')->lockForUpdate()->findOrFail($order->getKey());
             $this->assertReopenContext($locked);
             if (blank($reason)) {
                 throw new DomainException(__('A reason is required for this action.'));
             }
-            if (! in_array($locked->status, [SalesOrder::StatusApproved, SalesOrder::StatusRejected, SalesOrder::StatusClosed], true)) {
+            if (! in_array($locked->status, [SalesOrder::StatusApproved, SalesOrder::StatusRejected, SalesOrder::StatusClosed, SalesOrder::StatusPartiallyFulfilled, SalesOrder::StatusFulfilled], true)) {
                 throw new DomainException(__('The sales order cannot be reopened from its current status.'));
             }
-            if ($locked->lines->contains(fn (SalesOrderLine $line): bool => collect([
+            $appendProduction = $locked->canAppendProductionAmendment();
+            if (! $appendProduction && $locked->lines->contains(fn (SalesOrderLine $line): bool => collect([
                 $line->reserved_quantity,
                 $line->production_requested_quantity,
                 $line->produced_quantity,
@@ -365,11 +507,12 @@ class SalesOrderService
             ])->contains(fn (mixed $quantity): bool => $this->amounts->compare($quantity, '0', 8) > 0))) {
                 throw new DomainException(__('An order with reservations, production, deliveries, or invoices cannot be amended; use controlled downstream reversal documents.'));
             }
-            if ($locked->hasDownstreamDocuments()) {
+            if (! $appendProduction && $locked->hasDownstreamDocuments()) {
                 throw new DomainException(__('An order with downstream documents cannot be reopened.'));
             }
             $from = $locked->status;
-            $locked->update(['status' => SalesOrder::StatusReopened, 'reopened_by' => auth()->id(), 'reopened_at' => now(), 'reopen_reason' => trim($reason)]);
+            $locked->update(['status' => SalesOrder::StatusReopened, 'reopened_by' => auth()->id(), 'reopened_at' => now(), 'reopen_reason' => trim($reason),
+                'reopen_snapshot' => ['status' => $from, 'lines' => $locked->amendmentLineSnapshot()]]);
             $this->recordStatus($locked, $from, SalesOrder::StatusReopened, $reason);
             $this->audit->record($locked, 'sales_order.reopened', ['reason' => trim($reason)]);
 
@@ -406,7 +549,8 @@ class SalesOrderService
     {
         return DB::transaction(function () use ($order, $reason): SalesOrder {
             $locked = SalesOrder::query()->with('lines')->lockForUpdate()->findOrFail($order->getKey());
-            if (in_array($locked->status, [SalesOrder::StatusCancelled, SalesOrder::StatusClosed], true) || $locked->reopened_at !== null) {
+            if (! in_array($locked->status, [SalesOrder::StatusDraft, SalesOrder::StatusPendingApproval, SalesOrder::StatusHeldCredit], true)
+                || $locked->approved_at !== null || $locked->reopened_at !== null) {
                 throw new DomainException(__('The sales order cannot be cancelled from its current status.'));
             }
             if ($locked->lines->contains(fn (SalesOrderLine $line): bool => $this->amounts->compare($line->delivered_quantity, '0', 8) > 0 || $this->amounts->compare($line->invoiced_quantity, '0', 8) > 0)) {
@@ -432,7 +576,13 @@ class SalesOrderService
     {
         $from = $order->status;
         $order->update(['status' => SalesOrder::StatusApproved, 'credit_status' => $creditStatus, 'approved_by' => auth()->id(), 'approved_at' => now(), 'updated_by' => auth()->id()]);
-        $this->recordStatus($order, $from, SalesOrder::StatusApproved, $creditStatus === 'overridden' ? 'Credit hold overridden.' : null);
+        app(SalesFulfillmentService::class)->refreshOrderStatus($order);
+        if (($order->reopen_snapshot['status'] ?? null) === SalesOrder::StatusClosed
+            && ($order->reopen_snapshot['lines'] ?? null) === $order->amendmentLineSnapshot()) {
+            $order->update(['status' => SalesOrder::StatusClosed]);
+        }
+        $order->update(['reopen_snapshot' => null]);
+        $this->recordStatus($order, $from, $order->status, $creditStatus === 'overridden' ? 'Credit hold overridden.' : null);
         $this->audit->record($order, 'sales_order.approved', ['credit_status' => $creditStatus]);
 
         return $order->refresh();
@@ -444,6 +594,9 @@ class SalesOrderService
             $locked = SalesOrder::query()->lockForUpdate()->findOrFail($order->getKey());
             if (! in_array($locked->status, $allowed, true)) {
                 throw new DomainException(__('Invalid sales order status transition.'));
+            }
+            if ($status === SalesOrder::StatusPendingApproval && ! $locked->isEditable()) {
+                throw new DomainException(__('Released sales orders must be reopened before amendment.'));
             }
             $from = $locked->status;
             $locked->update(['status' => $status, 'updated_by' => auth()->id()]);
@@ -466,9 +619,9 @@ class SalesOrderService
                 throw new DomainException(__('Only finished products and services may be sold.'));
             }
             $this->amounts->assertPositive($line['quantity'], __('Line quantity must be greater than zero.'));
-            $this->amounts->assertPositive($line['unit_price'] ?? '0', __('Line unit price must be greater than zero.'), 4);
+            $this->amounts->assertPositive($line['unit_price'] ?? '0', __('Line unit price must be greater than zero.'), 8);
             $unitSnapshot = $this->unitConversions->snapshot($product, $line['unit_id'] ?? null, $line['quantity']);
-            $gross = $this->amounts->multiply($line['quantity'], $line['unit_price']);
+            $gross = $this->amounts->unitPriceTotal($line['quantity'], $line['unit_price']);
             $discount = (string) ($line['discount_amount'] ?? 0);
             $tax = (string) ($line['tax_amount'] ?? 0);
             $total = $this->amounts->add($this->amounts->subtract($gross, $discount), $tax);
@@ -496,7 +649,7 @@ class SalesOrderService
     /** @param list<array<string, mixed>> $lines @return array{subtotal_amount: string, discount_amount: string, tax_amount: string, total_amount: string} */
     private function totals(array $lines): array
     {
-        $subtotal = $this->amounts->sum(array_map(fn (array $line): string => $this->amounts->multiply($line['quantity'], $line['unit_price']), $lines));
+        $subtotal = $this->amounts->sum(array_map(fn (array $line): string => $this->amounts->unitPriceTotal($line['quantity'], $line['unit_price']), $lines));
         $discount = $this->amounts->sum(array_column($lines, 'discount_amount'));
         $tax = $this->amounts->sum(array_column($lines, 'tax_amount'));
 
@@ -554,7 +707,7 @@ class SalesOrderService
         $documentDiscount = $this->amounts->subtract($revision->discount_amount, $baseDiscount);
         $discountableTotal = $this->amounts->sum($revision->lines->map(
             fn ($line): string => $this->amounts->subtract(
-                $this->amounts->multiply($line->quantity, $line->unit_price),
+                $this->amounts->unitPriceTotal($line->quantity, $line->unit_price),
                 $line->discount_amount,
             ),
         ));
@@ -567,7 +720,7 @@ class SalesOrderService
                 if ($index === $lastIndex) {
                     $share = $this->amounts->subtract($documentDiscount, $allocatedDocumentDiscount);
                 } else {
-                    $lineBase = $this->amounts->subtract($this->amounts->multiply($line->quantity, $line->unit_price), $line->discount_amount);
+                    $lineBase = $this->amounts->subtract($this->amounts->unitPriceTotal($line->quantity, $line->unit_price), $line->discount_amount);
                     $share = $this->amounts->round($this->amounts->multiply($documentDiscount, bcdiv($lineBase, $discountableTotal, 8), 8));
                     $allocatedDocumentDiscount = $this->amounts->add($allocatedDocumentDiscount, $share);
                 }

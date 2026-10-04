@@ -197,9 +197,15 @@
                                             @endcan
                                         @endif
                                         @if ($run->status === 'under_review')
+                                            @can('hr.payroll_approval.review')
+                                                <button class="btn btn-sm btn-outline-secondary js-payroll-action" type="button" data-confirm="return" data-url="{{ route('admin.hr.payroll-runs.return-for-recalculation', $run->id) }}">{{ __('hr_payroll.actions.return_for_recalculation') }}</button>
+                                            @endcan
                                             @can('hr.payroll_approval.approve')
                                                 <button class="btn btn-sm btn-success js-payroll-action" type="button" data-confirm="approve" data-url="{{ route('admin.hr.payroll-runs.approve', $run->id) }}">{{ __('hr_payroll.actions.approve_post') }}</button>
                                             @endcan
+                                        @endif
+                                        @if (in_array($run->status, ['posted', 'reversed'], true) && auth()->user()?->canAny(['hr.payroll_approval.correct', 'hr.payroll_approval.correct_approve']))
+                                            <a class="btn btn-sm btn-outline-warning" href="{{ route('admin.hr.payroll-runs.corrections.index', $run->id) }}">{{ __('hr_payroll_correction.title') }}</a>
                                         @endif
                                     </td>
                                 </tr>
@@ -264,6 +270,8 @@
                         <tbody>@forelse($payrollEmployees as $employeePayroll)<tr><td><a href="{{ route('admin.hr.payslips.show', $employeePayroll->id) }}">{{ $employeePayroll->employee_name }}</a><div class="small text-muted" dir="ltr">{{ $employeePayroll->employee_doc_num }}</div></td><td>{{ $employeePayroll->branch_name ?: '—' }}</td><td class="text-end" dir="ltr">{{ $numbers->format($employeePayroll->gross_amount) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($employeePayroll->deduction_amount) }}</td><td class="text-end" dir="ltr">{{ $numbers->format($employeePayroll->net_amount) }}</td><td class="text-end" dir="ltr">{{ $employeePayroll->covered_by_legacy_payment ? '—' : $numbers->format($employeePayroll->paid_amount) }}</td><td class="text-end fw-semibold" dir="ltr">{{ $employeePayroll->covered_by_legacy_payment ? '—' : $numbers->format($employeePayroll->remaining_amount) }}</td><td class="text-end">
                             @if ($employeePayroll->covered_by_legacy_payment)
                                 <span class="badge badge-subtle-warning">{{ __('hr_payroll.labels.legacy_payment_covered') }}</span>
+                            @elseif ($selected['run']->status !== 'posted')
+                                <span class="badge badge-subtle-secondary">{{ __('hr_payroll.status.'.$selected['run']->status) }}</span>
                             @elseif ($selected['run']->status === 'posted' && bccomp((string) $employeePayroll->remaining_amount, '0.0000', 4) > 0 && bccomp((string) $summary['remaining'], '0.0000', 4) > 0)
                                 @can('hr.payroll_payment.create') @can('cash_payment_vouchers.create')<button class="btn btn-sm btn-primary js-open-payroll-payment" type="button" data-bs-toggle="modal" data-bs-target="#payroll-payment-modal" data-payslip-id="{{ $employeePayroll->id }}" data-employee="{{ $employeePayroll->employee_name }}" data-branch-id="{{ $employeePayroll->branch_id }}" data-remaining="{{ $employeePayroll->remaining_amount }}">{{ __('hr_payroll.actions.pay_employee') }}</button>@endcan @endcan
                             @else <span class="badge badge-subtle-success">{{ __('hr_payroll.labels.settled') }}</span> @endif
@@ -287,7 +295,7 @@
                                 @forelse ($selected['payments'] as $payment)
                                     <tr>
                                         <td>{{ $payment->employee_name ?: __('hr_payroll.labels.legacy_branch_payment') }}</td>
-                                        <td><a href="{{ route('admin.finance.cash-payment-vouchers.show', $payment->voucher_doc_num) }}">{{ $payment->voucher_doc_num }}</a></td>
+                                        <td>@can('cash_payment_vouchers.view')<a href="{{ route('admin.finance.cash-payment-vouchers.show', $payment->voucher_doc_num) }}">{{ $payment->voucher_doc_num }}</a>@else{{ $payment->voucher_doc_num }}@endcan</td>
                                         <td dir="ltr">{{ $dates->formatDate($payment->voucher_date, '—') }}</td>
                                         <td class="text-end" dir="ltr">{{ $numbers->format($payment->amount) }}</td>
                                         <td>{{ __('hr_payroll.status.'.$payment->status) }}</td>
@@ -465,7 +473,7 @@
                 if (!await confirmAction('payment')) return;
                 try {
                     const result = await submitJson(form.dataset.url, data);
-                    window.location.assign(result.data.voucher_url);
+                    window.location.assign(result.data.voucher_url || result.data.payroll_url);
                 } catch (error) {
                     showFeedback(error.message);
                 }

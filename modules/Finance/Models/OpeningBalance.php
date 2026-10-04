@@ -35,6 +35,7 @@ class OpeningBalance extends Model
         'exchange_rate',
         'description',
         'notes',
+        'inventory_valuation_snapshot',
         'is_cancelled',
         'is_closed',
         'approved',
@@ -60,6 +61,7 @@ class OpeningBalance extends Model
     protected function casts(): array
     {
         return [
+            'inventory_valuation_snapshot' => 'array',
             'document_date' => 'date',
             'exchange_rate' => 'decimal:6',
             'is_cancelled' => 'boolean',

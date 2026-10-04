@@ -17,6 +17,17 @@
         'early' => $summary['early_leave_minutes'],
         'overtime' => $summary['overtime_minutes'],
     ];
+    $visibleSummaryCards = collect($summaryCards)->filter(fn ($value) => (int) $value !== 0);
+    $exportOptions = [[
+        'label' => __('reports.export_csv'),
+        'url' => route($attendanceExportRoute, $filters),
+        'icon' => 'file-csv',
+        'permission' => $attendanceExportPermission,
+    ]];
+    if ($isAttendanceReport) {
+        $exportOptions[] = ['label' => 'XLSX', 'url' => route('admin.hr.reports.attendance.export.xlsx', $filters), 'icon' => 'file-excel', 'permission' => $attendanceExportPermission];
+        $exportOptions[] = ['label' => 'PDF', 'url' => route('admin.hr.reports.attendance.export.pdf', $filters), 'icon' => 'file-pdf', 'permission' => $attendanceExportPermission, 'newTab' => true];
+    }
 @endphp
 
 @section('title', __('hr_attendance.admin.title'))
@@ -46,12 +57,7 @@
                 <x-admin.report.actions-toolbar
                     filter-target="attendance-report-filters"
                     :refresh-url="request()->fullUrl()"
-                    :export-options="[[
-                        'label' => __('reports.export_csv'),
-                        'url' => route($attendanceExportRoute, $filters),
-                        'icon' => 'file-csv',
-                        'permission' => $attendanceExportPermission,
-                    ]]" />
+                    :export-options="$exportOptions" />
             </x-slot:actions>
 
             <x-admin.report.filter-panel
@@ -91,8 +97,9 @@
                 </div>
             </x-admin.report.filter-panel>
 
+            @if($visibleSummaryCards->isNotEmpty())
             <div class="row g-2 mb-3" data-attendance-summary>
-                @foreach ($summaryCards as $key => $value)
+                @foreach ($visibleSummaryCards as $key => $value)
                     <div class="col-6 col-md-3 col-xl-2">
                         <div class="card h-100">
                             <div class="card-body py-3 text-center">
@@ -103,6 +110,7 @@
                     </div>
                 @endforeach
             </div>
+            @endif
 
             @if(! $isAttendanceReport && auth()->user()?->can('hr.employee_attendance.correct'))
                 <div class="card mb-3">

@@ -11,7 +11,7 @@ class CustomerReceiptAllocation extends Model
 
     protected function casts(): array
     {
-        return ['allocated_amount' => 'decimal:4', 'applied_at' => 'datetime'];
+        return ['allocated_amount' => 'decimal:4', 'applied_at' => 'datetime', 'settlement_evidence' => 'array'];
     }
 
     public function receipt(): BelongsTo

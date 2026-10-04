@@ -253,6 +253,16 @@ test('costing report shells render posted production costs and export the same s
         'reports.costing.allocation_analysis.view',
     ]);
 
+    foreach (['work_order_cost', 'estimated_vs_actual', 'cost_variance', 'profitability'] as $type) {
+        $permission = Permission::findOrCreate("reports.costing.{$type}.view", 'web');
+        $fixture['user']->givePermissionTo($permission);
+        $reportRoute = 'admin.reports.costing.'.str_replace('_', '-', $type).'.index';
+        $this->actingAs($fixture['user'])->withSession($session)->get(route($reportRoute))
+            ->assertOk()->assertSee(__("costing_reports.types.{$type}.title"));
+        $fixture['user']->revokePermissionTo($permission);
+        $this->actingAs($fixture['user'])->withSession($session)->get(route($reportRoute))->assertForbidden();
+    }
+
     $this->actingAs($fixture['user'])->withSession($session)
         ->get(route('admin.reports.costing.work-in-progress.index'))
         ->assertOk()
@@ -276,10 +286,29 @@ test('costing report shells render posted production costs and export the same s
         ->get(route('admin.accounting.reports.costing.export.excel', ['type' => 'product_cost']))
         ->assertOk()
         ->assertHeader('content-disposition');
-    $this->actingAs($fixture['user'])->withSession($session)
+    $csv = $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.accounting.reports.costing.export.csv', ['type' => 'product_cost']))
+        ->assertOk()->assertDownload();
+    expect(file_get_contents($csv->baseResponse->getFile()->getPathname()))
+        ->toContain($fixture['finished']->name, '70', '30', '100');
+    $this->withoutExceptionHandling();
+    $costPdf = $this->actingAs($fixture['user'])->withSession($session)
         ->get(route('admin.accounting.reports.costing.export.pdf', ['type' => 'product_cost']))
         ->assertOk()
         ->assertHeader('content-type', 'application/pdf');
+    $this->withExceptionHandling();
+    if ($directory = getenv('MGYPACK_REPORT_PRINT_SAMPLES')) {
+        file_put_contents($directory.'/costing-product-en.pdf', $costPdf->getContent());
+        $fixture['user']->forceFill(['locale' => 'ar'])->save();
+        app()->setLocale('ar');
+        $arabicCostPdf = $this->withSession(['locale' => 'ar'])
+            ->get(route('admin.accounting.reports.costing.export.pdf', ['type' => 'product_cost']))
+            ->assertOk()->assertHeader('content-type', 'application/pdf');
+        file_put_contents($directory.'/costing-product-ar.pdf', $arabicCostPdf->getContent());
+        $fixture['user']->forceFill(['locale' => 'en'])->save();
+        app()->setLocale('en');
+        $this->withSession(['locale' => 'en']);
+    }
 
     $fixture['user']->revokePermissionTo([
         'reports.costing.product_cost.export',
@@ -289,8 +318,26 @@ test('costing report shells render posted production costs and export the same s
         ->get(route('admin.accounting.reports.costing.export.excel', ['type' => 'product_cost']))
         ->assertForbidden();
     $this->actingAs($fixture['user'])->withSession($session)
+        ->get(route('admin.accounting.reports.costing.export.csv', ['type' => 'product_cost']))
+        ->assertForbidden();
+    $this->actingAs($fixture['user'])->withSession($session)
         ->get(route('admin.accounting.reports.costing.export.pdf', ['type' => 'product_cost']))
         ->assertForbidden();
+
+    $finishedReceipt = InventoryDocument::where('production_run_id', $run->id)->where('document_type', InventoryDocument::TypeProductionReceipt)->sole();
+    $finishedReceipt->lines()->sole()->update(['quantity' => '4', 'base_quantity' => '4', 'total_cost' => '28']);
+    $run->update(['status' => ProductionRun::StatusRunning, 'received_base_quantity' => '4']);
+    $partial = app(CostingReportService::class)->report(['type' => CostingReportService::ProductCost]);
+    expect($partial['rows']->sole()['good_quantity'])->toBe('10.00000000')
+        ->and($partial['rows']->sole()['received_quantity'])->toBe('4.00000000')
+        ->and($partial['rows']->sole()['recognized_cost'])->toBe('28.00000000')
+        ->and($partial['rows']->sole()['unit_cost'])->toBe('7.00000000');
+    $finishedReceipt->update(['status' => InventoryDocument::StatusDraft]);
+    $run->update(['received_base_quantity' => '0']);
+    $beforeReceipt = app(CostingReportService::class)->report(['type' => CostingReportService::ProductCost]);
+    expect($beforeReceipt['rows']->sole()['received_quantity'])->toBe('0.00000000')
+        ->and($beforeReceipt['rows']->sole()['capitalizable_cost'])->toBe('100.00000000')
+        ->and($beforeReceipt['rows']->sole()['unit_cost'])->toBe('10.00000000');
 });
 
 test('profitability keeps profit and margin unavailable when recognized cost is missing', function (): void {

@@ -27,6 +27,8 @@ class StoreSalesReturnRequest extends FormRequest
             'branch_store_uuid' => ['nullable', 'uuid'],
             'lines' => ['required', 'array', 'min:1'], 'lines.*.invoice_line_public_id' => ['required', 'uuid', 'distinct'],
             'lines.*.quantity' => ['required', 'numeric', 'gt:0'],
+            'lines.*.delivery_line_ids' => ['nullable', 'array', 'max:10000'],
+            'lines.*.delivery_line_ids.*' => ['integer', 'min:1', 'distinct'],
         ];
     }
 }

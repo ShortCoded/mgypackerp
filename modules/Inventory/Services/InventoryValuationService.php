@@ -5,14 +5,23 @@ namespace Modules\Inventory\Services;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
+use Modules\Core\Services\NumericFormatService;
+use Modules\Inventory\Models\InventoryCostPolicy;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Inventory\Models\InventoryValueAdjustment;
+use Modules\Inventory\Models\InventoryValueAdjustmentLine;
+use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
+use Modules\Purchases\Models\PurchaseInvoiceLine;
+use Modules\Purchases\Services\PurchaseInvoiceCalculationService;
 
 class InventoryValuationService
 {
     public const Method = 'moving_average';
 
     private const CalculationScale = 8;
+
+    public function __construct(private readonly PurchaseInvoiceCalculationService $purchaseCalculator) {}
 
     public function movingAverageUnitCost(
         int $companyId,
@@ -49,6 +58,24 @@ class InventoryValuationService
         mixed $asOfDate = null,
         bool $exactDimensions = false,
     ): ?string {
+        return $this->bookPositionUnitCost($this->bookPositionForPosition(
+            $companyId, $branchStoreId, $productId, $stockStatus, $warehouseLocationId,
+            $batchLot, $productionRunId, $asOfDate, $exactDimensions,
+        ));
+    }
+
+    /** @return array{quantity: string, value: string, unvalued_quantity: string} */
+    public function bookPositionForPosition(
+        int $companyId,
+        int $branchStoreId,
+        int $productId,
+        ?string $stockStatus = null,
+        ?int $warehouseLocationId = null,
+        ?string $batchLot = null,
+        ?int $productionRunId = null,
+        mixed $asOfDate = null,
+        bool $exactDimensions = false,
+    ): array {
         $totals = InventoryTransaction::query()
             ->where('company_id', $companyId)
             ->where('branch_store_id', $branchStoreId)
@@ -73,20 +100,57 @@ class InventoryValuationService
             )
             ->when($asOfDate !== null, fn (Builder $query) => $query->whereDate('transaction_date', '<=', $asOfDate))
             ->selectRaw('coalesce(sum(quantity_in - quantity_out), 0) as quantity')
-            ->selectRaw('coalesce(sum(case
-                when unit_cost is not null and total_cost is not null then case when quantity_in > 0 then total_cost else -total_cost end
-                else 0 end), 0) as value')
-            ->selectRaw('coalesce(sum(case when unit_cost is null or total_cost is null then quantity_in - quantity_out else 0 end), 0) as unvalued_quantity')
+            ->selectRaw('coalesce(sum('.InventoryTransaction::signedValueSql().'), 0) as value')
+            ->selectRaw('coalesce(sum('.InventoryTransaction::unvaluedQuantitySql().'), 0) as unvalued_quantity')
             ->first();
 
-        if ($totals === null
-            || bccomp((string) $totals->quantity, '0', 8) <= 0
-            || bccomp((string) $totals->unvalued_quantity, '0', 8) !== 0
-            || bccomp((string) $totals->value, '0', 8) < 0) {
+        $numbers = app(NumericFormatService::class);
+
+        return [
+            'quantity' => bcadd($numbers->normalize($totals?->quantity ?? '0') ?? '0', '0', 8),
+            'value' => bcadd($numbers->normalize($totals?->value ?? '0') ?? '0', '0', 8),
+            'unvalued_quantity' => bcadd($numbers->normalize($totals?->unvalued_quantity ?? '0') ?? '0', '0', 8),
+        ];
+    }
+
+    /** @param array{quantity: string, value: string, unvalued_quantity: string} $position */
+    private function bookPositionUnitCost(array $position): ?string
+    {
+        if (bccomp($position['quantity'], '0', 8) <= 0
+            || bccomp($position['unvalued_quantity'], '0', 8) !== 0
+            || bccomp($position['value'], '0', 8) < 0) {
             return null;
         }
 
-        return bcdiv((string) $totals->value, (string) $totals->quantity, 8);
+        return bcdiv($position['value'], $position['quantity'], 8);
+    }
+
+    /**
+     * Preview one canonical movement against a virtual book position, in posting order.
+     *
+     * @param  array{quantity: string, value: string, unvalued_quantity: string}  $position
+     * @return array{unit_cost: string|null, total_cost: string|null, position: array{quantity: string, value: string, unvalued_quantity: string}}
+     */
+    public function previewBookPositionMovement(array $position, string $quantityIn, string $quantityOut, ?string $receiptUnitCost = null): array
+    {
+        $inbound = bccomp($quantityIn, '0', 8) > 0;
+        if (bccomp($quantityIn, '0', 8) < 0 || bccomp($quantityOut, '0', 8) < 0
+            || ($inbound && bccomp($quantityOut, '0', 8) > 0)
+            || (! $inbound && bccomp($quantityOut, '0', 8) <= 0)
+            || (! $inbound && bccomp($quantityOut, $position['quantity'], 8) > 0)) {
+            throw new DomainException(__('The issue exceeds the receipt-layer quantity available for allocation.'));
+        }
+        $unitCost = $inbound ? $receiptUnitCost : $this->bookPositionUnitCost($position);
+        $quantity = $inbound ? $quantityIn : $quantityOut;
+        $value = $unitCost === null ? null : bcmul($quantity, $unitCost, 8);
+        $position['quantity'] = bcadd($position['quantity'], bcsub($quantityIn, $quantityOut, 8), 8);
+        if ($value === null) {
+            $position['unvalued_quantity'] = bcadd($position['unvalued_quantity'], $inbound ? $quantity : bcsub('0', $quantity, 8), 8);
+        } else {
+            $position['value'] = bcadd($position['value'], $inbound ? $value : bcsub('0', $value, 8), 8);
+        }
+
+        return ['unit_cost' => $unitCost, 'total_cost' => $value, 'position' => $position];
     }
 
     /**
@@ -119,6 +183,12 @@ class InventoryValuationService
             throw new DomainException('inventory_accounting.errors.no_valuation_movements');
         }
 
+        $purchaseReferences = $this->approvedPurchaseReferences(
+            $companyId,
+            collect([(object) ['branch_store_id' => $branchStoreId, 'product_id' => $productId]]),
+            $asOfDate,
+        );
+
         $documentUrls = auth()->user()?->can('inventory.documents.view')
             ? InventoryDocument::withTrashed()
                 ->where('company_id', $companyId)
@@ -137,7 +207,7 @@ class InventoryValuationService
                 $transaction->batch_lot ?? 'none',
                 $this->costPositionRunId($transaction) ?? 'none',
             ]))
-            ->map(function (Collection $positionTransactions, string $positionKey) use ($referenceMethod): array {
+            ->map(function (Collection $positionTransactions, string $positionKey) use ($referenceMethod, $purchaseReferences): array {
                 /** @var InventoryTransaction $first */
                 $first = $positionTransactions->first();
 
@@ -150,11 +220,13 @@ class InventoryValuationService
                     ...$this->compareMovements(
                         $positionTransactions->map(fn (InventoryTransaction $transaction): array => $this->comparisonMovement($transaction))->all(),
                         $referenceMethod,
+                        $purchaseReferences->get($this->purchaseReferenceKey($first->branch_store_id, $first->product_id)),
                     ),
                 ];
             })
             ->values();
         $comparison = $this->aggregatePositionComparisons($positions, $referenceMethod);
+        $comparison = $this->markPostedBookMethod($comparison, $transactions);
 
         return [
             ...$comparison,
@@ -207,6 +279,7 @@ class InventoryValuationService
             ->get()
             ->filter(fn (InventoryTransaction $transaction): bool => $positionKeys->has($this->stockScopePositionKey($transaction)));
         $transactions = $this->effectiveTransactions($transactions, $asOfDate);
+        $purchaseReferences = $this->approvedPurchaseReferences($companyId, $bookRows, $asOfDate);
 
         $positions = collect();
         $excluded = collect();
@@ -227,7 +300,11 @@ class InventoryValuationService
                     'branch_id' => $first->branch_id,
                     'branch_store_id' => $first->branch_store_id,
                     'product_id' => $first->product_id,
-                    ...$this->compareMovements($movements->map(fn (InventoryTransaction $transaction): array => $this->comparisonMovement($transaction)), $referenceMethod),
+                    ...$this->compareMovements(
+                        $movements->map(fn (InventoryTransaction $transaction): array => $this->comparisonMovement($transaction)),
+                        $referenceMethod,
+                        $purchaseReferences->get($this->purchaseReferenceKey($first->branch_store_id, $first->product_id)),
+                    ),
                 ]);
             } catch (DomainException $exception) {
                 $bookRow = $bookRowsByPosition->get($this->stockScopePositionKey($first));
@@ -240,6 +317,8 @@ class InventoryValuationService
                     'store_name' => $bookRow?->branchStore?->name,
                     'product_doc_num' => $bookRow?->product?->doc_num,
                     'product_name' => $bookRow?->product?->name,
+                    'unit_id' => $bookRow?->product?->item_unit_id,
+                    'unit_name' => $bookRow?->product?->unit?->name ?? '—',
                     'quantity' => $movements->reduce(fn (string $total, InventoryTransaction $transaction): string => bcadd($total, bcsub((string) $transaction->quantity_in, (string) $transaction->quantity_out, 8), 8), '0.00000000'),
                     'reason' => $exception->getMessage(),
                     'source_doc_nums' => $movements->pluck('source_doc_num')->filter()->unique()->values()->all(),
@@ -247,14 +326,35 @@ class InventoryValuationService
             }
         }
 
+        $excludedQuantityByUnit = $excluded
+            ->groupBy(fn (array $position): string => $position['unit_id'] !== null
+                ? 'unit:'.$position['unit_id']
+                : 'product:'.$position['product_id'])
+            ->map(function (Collection $unitPositions): array {
+                $first = $unitPositions->first();
+
+                return [
+                    'unit_id' => $first['unit_id'],
+                    'unit_name' => $first['unit_name'],
+                    'quantity' => $unitPositions->reduce(
+                        fn (string $total, array $position): string => bcadd($total, $position['quantity'], 8),
+                        '0.00000000',
+                    ),
+                ];
+            })
+            ->values()
+            ->all();
+
         return [
-            ...$this->aggregatePositionComparisons($positions, $referenceMethod),
+            ...$this->markPostedBookMethod($this->aggregatePositionComparisons($positions, $referenceMethod), $transactions),
             'as_of' => (string) $asOfDate,
             'source_count' => $transactions->count(),
             'sources' => [],
             'valued_position_count' => $positions->count(),
             'excluded_position_count' => $excluded->count(),
             'excluded_quantity' => $excluded->reduce(fn (string $total, array $position): string => bcadd($total, $position['quantity'], 8), '0.00000000'),
+            'excluded_mixed_units' => count($excludedQuantityByUnit) > 1,
+            'excluded_quantity_by_unit' => $excludedQuantityByUnit,
             'excluded_positions' => $excluded->all(),
             'valuation_complete' => $excluded->isEmpty(),
         ];
@@ -265,6 +365,176 @@ class InventoryValuationService
         return $transaction->stock_status === InventoryTransaction::StatusProductionStaging
             ? $transaction->production_run_id
             : null;
+    }
+
+    private function purchaseReferenceKey(int $storeId, int $productId): string
+    {
+        return $storeId.':'.$productId;
+    }
+
+    /**
+     * The approved receipt is the provisional source until an eligible approved invoice
+     * supplies its final net line price. Freight and recoverable tax are separate postings.
+     * Neither source changes the historical inventory ledger through this report.
+     *
+     * @param  Collection<int, object>  $positions
+     * @return Collection<string, array<string, mixed>>
+     */
+    private function approvedPurchaseReferences(int $companyId, Collection $positions, mixed $asOfDate): Collection
+    {
+        $pairs = $positions->mapWithKeys(fn (object $position): array => [
+            $this->purchaseReferenceKey((int) $position->branch_store_id, (int) $position->product_id) => true,
+        ]);
+        $references = collect();
+        if ($pairs->isEmpty()) {
+            return $references;
+        }
+
+        UnpricedInventoryReceiptLine::query()
+            ->where('company_id', $companyId)
+            ->whereIn('product_id', $positions->pluck('product_id')->unique())
+            ->where('inventory_posted_quantity', '>', 0)
+            ->whereNotNull('grni_journal_entry_id')
+            ->whereHas('receipt', fn (Builder $query): Builder => $query
+                ->where('company_id', $companyId)
+                ->whereIn('branch_store_id', $positions->pluck('branch_store_id')->unique())
+                ->whereDate('document_date', '<=', $asOfDate)
+                ->whereDate('approved_at', '<=', $asOfDate)
+                ->where(function (Builder $reversal) use ($asOfDate): void {
+                    $reversal->whereNull('reversed_at')->orWhereDate('reversed_at', '>', $asOfDate);
+                }))
+            ->with(['receipt.purchaseOrder.currency', 'purchaseOrderLine'])
+            ->chunkById(200, function (Collection $receiptLines) use ($companyId, $pairs, $references, $asOfDate): void {
+                $eligibleLines = $receiptLines->filter(fn (UnpricedInventoryReceiptLine $line): bool => $line->receipt !== null
+                    && $line->purchaseOrderLine !== null
+                    && $pairs->has($this->purchaseReferenceKey((int) $line->receipt->branch_store_id, (int) $line->product_id)));
+
+                foreach ($eligibleLines as $line) {
+                    $receipt = $line->receipt;
+                    $order = $receipt->purchaseOrder;
+                    $factor = $line->purchaseOrderLine->stockConversionFactor();
+                    if ($order === null || bccomp((string) $line->provisional_unit_value, '0', self::CalculationScale) < 0) {
+                        continue;
+                    }
+
+                    $this->rememberPurchaseReference($references, $this->purchaseReferenceKey((int) $receipt->branch_store_id, (int) $line->product_id), [
+                        'unit_cost' => bcdiv((string) $line->provisional_unit_value, $factor, self::CalculationScale),
+                        'date' => $receipt->document_date->toDateString(),
+                        'purchase_date' => $receipt->document_date->toDateString(),
+                        'purchase_line_id' => $line->getKey(),
+                        'document' => $receipt->doc_num,
+                        'source' => 'approved_receipt',
+                        'source_id' => $line->getKey(),
+                        'currency' => $order->currency?->code,
+                        'exchange_rate' => (string) $order->exchange_rate,
+                        'basis' => 'net_order_line_excluding_freight_tax',
+                    ]);
+                }
+
+                $invoiceAmounts = [];
+                $invoiceLines = PurchaseInvoiceLine::query()
+                    ->where('company_id', $companyId)
+                    ->whereIn('receipt_line_id', $eligibleLines->modelKeys())
+                    ->whereHas('purchaseInvoice', fn (Builder $query): Builder => $query
+                        ->where('company_id', $companyId)
+                        ->whereNotNull('journal_entry_id')
+                        ->whereDate('invoice_date', '<=', $asOfDate)
+                        ->whereDate('approved_at', '<=', $asOfDate)
+                        ->where(function (Builder $reversal) use ($asOfDate): void {
+                            $reversal->whereNull('reversed_at')->orWhereDate('reversed_at', '>', $asOfDate);
+                        }))
+                    ->with(['purchaseInvoice.currency'])
+                    ->get();
+                $linesById = $eligibleLines->keyBy('id');
+                foreach ($invoiceLines as $invoiceLine) {
+                    $receiptLine = $linesById->get($invoiceLine->receipt_line_id);
+                    $invoice = $invoiceLine->purchaseInvoice;
+                    if ($receiptLine === null || $invoice === null
+                        || (int) $invoiceLine->product_id !== (int) $receiptLine->product_id
+                        || (int) $invoiceLine->purchase_order_line_id !== (int) $receiptLine->purchase_order_line_id
+                        || bccomp((string) $invoiceLine->quantity, '0', self::CalculationScale) <= 0) {
+                        continue;
+                    }
+
+                    $invoiceAmounts[$invoice->getKey()] ??= $this->purchaseCalculator->netAmountsByLine($invoice);
+                    $factor = $receiptLine->purchaseOrderLine->stockConversionFactor();
+                    $stockQuantity = bcmul((string) $invoiceLine->quantity, $factor, self::CalculationScale);
+                    if (bccomp($stockQuantity, '0', self::CalculationScale) <= 0) {
+                        continue;
+                    }
+
+                    $netBaseValue = bcmul(
+                        (string) ($invoiceAmounts[$invoice->getKey()][$invoiceLine->getKey()] ?? '0'),
+                        (string) $invoice->exchange_rate,
+                        self::CalculationScale,
+                    );
+                    $this->rememberPurchaseReference($references, $this->purchaseReferenceKey((int) $receiptLine->receipt->branch_store_id, (int) $receiptLine->product_id), [
+                        'unit_cost' => bcdiv($netBaseValue, $stockQuantity, self::CalculationScale),
+                        'date' => $invoice->invoice_date->toDateString(),
+                        'purchase_date' => $receiptLine->receipt->document_date->toDateString(),
+                        'purchase_line_id' => $receiptLine->getKey(),
+                        'document' => $invoice->doc_num,
+                        'source' => 'approved_invoice',
+                        'source_id' => $invoiceLine->getKey(),
+                        'currency' => $invoice->currency?->code,
+                        'exchange_rate' => (string) $invoice->exchange_rate,
+                        'basis' => 'net_line_excluding_freight_tax',
+                    ]);
+                }
+            });
+
+        return $references;
+    }
+
+    /** @param Collection<string, array<string, mixed>> $references @param array<string, mixed> $candidate */
+    private function rememberPurchaseReference(Collection $references, string $key, array $candidate): void
+    {
+        $current = $references->get($key);
+        $candidateRank = $candidate['source'] === 'approved_invoice' ? 2 : 1;
+        $currentRank = ($current['source'] ?? null) === 'approved_invoice' ? 2 : 1;
+        if ($current === null
+            || $candidate['purchase_date'] > $current['purchase_date']
+            || ($candidate['purchase_date'] === $current['purchase_date'] && $candidate['purchase_line_id'] > $current['purchase_line_id'])
+            || ($candidate['purchase_line_id'] === $current['purchase_line_id'] && $candidateRank > $currentRank)
+            || ($candidate['purchase_line_id'] === $current['purchase_line_id'] && $candidateRank === $currentRank && $candidate['date'] > $current['date'])
+            || ($candidate['purchase_line_id'] === $current['purchase_line_id'] && $candidateRank === $currentRank && $candidate['date'] === $current['date'] && $candidate['source_id'] > $current['source_id'])) {
+            $references->put($key, $candidate);
+        }
+    }
+
+    /** @param array<string, mixed> $comparison @param Collection<int, InventoryTransaction> $transactions
+     * @return array<string, mixed>
+     */
+    private function markPostedBookMethod(array $comparison, Collection $transactions): array
+    {
+        foreach ($comparison['methods'] as $method => $result) {
+            $comparison['methods'][$method]['book_method'] = false;
+        }
+
+        $outbounds = $transactions->filter(fn (InventoryTransaction $transaction): bool => bccomp((string) $transaction->quantity_out, '0', 8) > 0);
+        $methods = $outbounds->map(fn (InventoryTransaction $transaction): string => $transaction->cost_method ?? InventoryCostPolicy::MovingAverage)->unique()->values();
+        if ($methods->count() !== 1 || $outbounds->contains(fn (InventoryTransaction $transaction): bool => $transaction->cost_basis !== null
+            && ! in_array($transaction->cost_basis, ['moving_average', 'fifo_allocations'], true))
+            || $transactions->contains(fn (InventoryTransaction $transaction): bool => bccomp(bcadd((string) $transaction->quantity_in, (string) $transaction->quantity_out, 8), '0', 8) > 0
+            && ($transaction->unit_cost === null || $transaction->total_cost === null))) {
+            return $comparison;
+        }
+
+        $method = $methods->first();
+        if (! isset($comparison['methods'][$method])) {
+            return $comparison;
+        }
+
+        $postedValue = $transactions->reduce(fn (string $total, InventoryTransaction $transaction): string => bcadd(
+            $total,
+            bccomp((string) $transaction->quantity_in, '0', 8) > 0
+                ? (string) $transaction->total_cost
+                : bcmul((string) $transaction->total_cost, '-1', 8),
+            8,
+        ), '0.00000000');
+        $comparison['methods'][$method]['book_method'] = bccomp($postedValue, (string) $comparison['methods'][$method]['ending_value'], 8) === 0;
+
+        return $comparison;
     }
 
     private function stockScopePositionKey(InventoryTransaction $transaction): string
@@ -291,6 +561,8 @@ class InventoryValuationService
             return $transactions;
         }
 
+        $transactions = $this->analysisWithCompletedCosts($transactions, $asOfDate);
+
         if ($transactions->contains(fn (InventoryTransaction $transaction): bool => $transaction->is_reversal && $transaction->reversal_of_id === null)) {
             throw new DomainException('inventory_accounting.errors.invalid_valuation_reversal');
         }
@@ -312,11 +584,12 @@ class InventoryValuationService
         $originals = $transactions->filter(fn (InventoryTransaction $transaction): bool => ! $transaction->is_reversal)->keyBy('id');
         $missingIds = $originalIds->diff($originals->keys());
         foreach ($missingIds->chunk(500) as $ids) {
-            foreach (InventoryTransaction::query()->whereIn('id', $ids)->get() as $original) {
+            foreach ($this->analysisWithCompletedCosts(InventoryTransaction::query()->whereIn('id', $ids)->get(), $asOfDate) as $original) {
                 $originals->put($original->getKey(), $original);
             }
         }
 
+        $reversals = $this->analysisWithCompletedCosts($reversals, $asOfDate);
         $reversedIds = collect();
         foreach ($reversals->groupBy('reversal_of_id') as $originalId => $group) {
             $original = $originals->get($originalId);
@@ -332,6 +605,33 @@ class InventoryValuationService
 
         return $transactions->filter(fn (InventoryTransaction $transaction): bool => ! $transaction->is_reversal
             && ! $reversedIds->contains((int) $transaction->getKey()));
+    }
+
+    /** @param Collection<int, InventoryTransaction> $transactions @return Collection<int, InventoryTransaction> */
+    private function analysisWithCompletedCosts(Collection $transactions, mixed $asOfDate): Collection
+    {
+        $transactions = $transactions->reject(fn (InventoryTransaction $row): bool => $row->transaction_type === InventoryTransaction::TypeValueAdjustment);
+        $corrections = InventoryValueAdjustmentLine::query()->where('effect', InventoryValueAdjustmentLine::EffectStock)
+            ->whereIn('source_transaction_id', $transactions->pluck('id'))
+            ->whereHas('adjustment', fn ($query) => $query->where('status', InventoryValueAdjustment::StatusPosted)->whereDate('posting_date', '<=', $asOfDate))
+            ->get()->groupBy('source_transaction_id');
+
+        return $transactions->map(function (InventoryTransaction $row) use ($corrections): InventoryTransaction {
+            $parts = $corrections->get($row->id, collect());
+            if ($parts->isEmpty()) {
+                return $row;
+            }
+            $copy = clone $row;
+            $inbound = bccomp((string) $row->quantity_in, '0', 8) > 0;
+            $quantity = $inbound ? (string) $row->quantity_in : (string) $row->quantity_out;
+            $delta = $parts->reduce(fn (string $sum, InventoryValueAdjustmentLine $part): string => bcadd($sum, (string) $part->amount, 8), '0');
+            $total = bcadd((string) ($row->total_cost ?? '0'), bcmul($delta, $inbound ? '1' : '-1', 8), 8);
+            $copy->setAttribute('total_cost', $total);
+            $copy->setAttribute('unit_cost', bcdiv($total, $quantity, 8));
+            $copy->setAttribute('cost_basis', 'approved_receipt_cost_completion');
+
+            return $copy;
+        });
     }
 
     private function isMatchingReversal(InventoryTransaction $original, InventoryTransaction $reversal): bool
@@ -357,7 +657,8 @@ class InventoryValuationService
     }
 
     /**
-     * @param  iterable<array{quantity_in: mixed, quantity_out: mixed, unit_cost?: mixed, total_cost?: mixed, type?: string, counts_as_consumption?: bool}>  $movements
+     * @param  iterable<array{quantity_in: mixed, quantity_out: mixed, unit_cost?: mixed, total_cost?: mixed, type?: string, counts_as_consumption?: bool, date?: string, document?: string}>  $movements
+     * @param  array{unit_cost: string, date: string, document: string, source: string, currency: ?string, exchange_rate: string, basis: string}|null  $approvedPurchase
      * @return array{
      *     available_quantity: string,
      *     available_cost: string,
@@ -366,13 +667,15 @@ class InventoryValuationService
      *     methods: array<string, array{issue_cost: ?string, ending_value: string, ending_unit_cost: string, difference_vs_reference: ?string, book_method: bool, reference_only: bool}>
      * }
      */
-    public function compareMovements(iterable $movements, string $referenceMethod = self::Method): array
+    public function compareMovements(iterable $movements, string $referenceMethod = self::Method, ?array $approvedPurchase = null): array
     {
         $this->assertReferenceMethod($referenceMethod);
         $availableQuantity = $issuedQuantity = $movingQuantity = $movingValue = '0.00000000';
-        $availableCost = $consumedQuantity = $movingIssueCost = $fifoIssueCost = '0.00000000';
+        $availableCost = $consumedQuantity = $movingIssueCost = $fifoIssueCost = $lifoIssueCost = '0.00000000';
         $lastReceiptUnitCost = '0.00000000';
+        $lastReceiptSource = null;
         $fifoLayers = new Collection;
+        $lifoLayers = new Collection;
         $checkpoints = [];
 
         foreach ($movements as $sequence => $movement) {
@@ -394,7 +697,18 @@ class InventoryValuationService
                 $movingQuantity = bcadd($movingQuantity, $quantityIn, self::CalculationScale);
                 $movingValue = bcadd($movingValue, $receiptCost, self::CalculationScale);
                 $lastReceiptUnitCost = $receiptUnitCost;
+                $lastReceiptSource = [
+                    'date' => $movement['date'] ?? null,
+                    'document' => $movement['document'] ?? null,
+                    'source' => 'inbound_movement',
+                    'movement_type' => $movement['type'] ?? null,
+                    'unit_cost' => $receiptUnitCost,
+                ];
                 $fifoLayers->push([
+                    'quantity' => $quantityIn,
+                    'unit_cost' => $receiptUnitCost,
+                ]);
+                $lifoLayers->push([
                     'quantity' => $quantityIn,
                     'unit_cost' => $receiptUnitCost,
                 ]);
@@ -423,11 +737,13 @@ class InventoryValuationService
             $movingValue = bcsub($movingValue, $movementIssueCost, self::CalculationScale);
             $issuedQuantity = bcadd($issuedQuantity, $quantityOut, self::CalculationScale);
             $fifoMovementIssueCost = $this->consumeFifoLayers($fifoLayers, $quantityOut);
+            $lifoMovementIssueCost = $this->consumeLifoLayers($lifoLayers, $quantityOut);
 
             if ((bool) ($movement['counts_as_consumption'] ?? true)) {
                 $consumedQuantity = bcadd($consumedQuantity, $quantityOut, self::CalculationScale);
                 $movingIssueCost = bcadd($movingIssueCost, $movementIssueCost, self::CalculationScale);
                 $fifoIssueCost = bcadd($fifoIssueCost, $fifoMovementIssueCost, self::CalculationScale);
+                $lifoIssueCost = bcadd($lifoIssueCost, $lifoMovementIssueCost, self::CalculationScale);
             }
 
             $checkpoints[] = $this->checkpoint($sequence, $movement, $movingQuantity, $movingValue);
@@ -448,13 +764,29 @@ class InventoryValuationService
             ),
             '0.00000000',
         );
+        $lifoEndingValue = $lifoLayers->reduce(
+            fn (string $total, array $layer): string => bcadd(
+                $total,
+                bcmul($layer['quantity'], $layer['unit_cost'], self::CalculationScale),
+                self::CalculationScale,
+            ),
+            '0.00000000',
+        );
         $lastReceiptEndingValue = bcmul($endingQuantity, $lastReceiptUnitCost, self::CalculationScale);
 
         $methods = [
             'moving_average' => $this->methodResult($movingIssueCost, $movingValue, $endingQuantity, true),
             'periodic_weighted_average' => $this->methodResult($periodicIssueCost, $periodicEndingValue, $endingQuantity),
             'fifo' => $this->methodResult($fifoIssueCost, $fifoEndingValue, $endingQuantity),
-            'last_purchase_reference' => $this->methodResult(null, $lastReceiptEndingValue, $endingQuantity, false, true),
+            'lifo' => $this->methodResult($lifoIssueCost, $lifoEndingValue, $endingQuantity),
+            'last_inbound_reference' => [
+                ...$this->methodResult(null, $lastReceiptEndingValue, $endingQuantity, false, true),
+                'source' => $lastReceiptSource,
+            ],
+            'last_purchase_reference' => [
+                ...$this->referenceResult($approvedPurchase['unit_cost'] ?? null, $endingQuantity),
+                'source' => $approvedPurchase,
+            ],
         ];
         $methods = $this->withReferenceDifferences($methods, $referenceMethod);
 
@@ -468,6 +800,7 @@ class InventoryValuationService
             'methods' => $methods,
             'checkpoints' => $checkpoints,
             'remaining_fifo_layers' => $fifoLayers->values()->all(),
+            'remaining_lifo_layers' => $lifoLayers->values()->all(),
         ];
     }
 
@@ -480,6 +813,8 @@ class InventoryValuationService
             'unit_cost' => $transaction->unit_cost,
             'total_cost' => $transaction->total_cost,
             'type' => $transaction->transaction_type,
+            'date' => $transaction->transaction_date?->toDateString(),
+            'document' => $transaction->source_doc_num,
             'counts_as_consumption' => $this->countsAsConsumption($transaction),
         ];
     }
@@ -506,21 +841,30 @@ class InventoryValuationService
      */
     private function aggregatePositionComparisons(Collection $positions, string $referenceMethod): array
     {
-        $methodKeys = ['moving_average', 'periodic_weighted_average', 'fifo', 'last_purchase_reference'];
-        $methods = collect($methodKeys)->mapWithKeys(function (string $method) use ($positions): array {
-            $issueCost = $method === 'last_purchase_reference'
+        $methodKeys = ['moving_average', 'periodic_weighted_average', 'fifo', 'lifo', 'last_inbound_reference', 'last_purchase_reference'];
+        $multipleProducts = $positions->pluck('product_id')->filter()->unique()->count() > 1;
+        $methods = collect($methodKeys)->mapWithKeys(function (string $method) use ($positions, $multipleProducts): array {
+            $referenceOnly = in_array($method, ['last_inbound_reference', 'last_purchase_reference'], true);
+            $issueCost = $referenceOnly
                 ? null
                 : $this->sumPositionValue($positions, "methods.{$method}.issue_cost");
-            $endingValue = $this->sumPositionValue($positions, "methods.{$method}.ending_value");
+            $hasUnknownReference = $method === 'last_purchase_reference'
+                && $positions->contains(fn (array $position): bool => data_get($position, "methods.{$method}.ending_value") === null
+                    && bccomp((string) $position['ending_quantity'], '0', self::CalculationScale) > 0);
+            $endingValue = $hasUnknownReference ? null : $this->sumPositionValue($positions, "methods.{$method}.ending_value");
             $endingQuantity = $this->sumPositionValue($positions, 'ending_quantity');
 
-            return [$method => $this->methodResult(
-                $issueCost,
-                $endingValue,
-                $endingQuantity,
-                $method === self::Method,
-                $method === 'last_purchase_reference',
-            )];
+            $result = $endingValue === null
+                ? $this->referenceResult(null, $endingQuantity)
+                : $this->methodResult($issueCost, $endingValue, $endingQuantity, $method === self::Method, $referenceOnly);
+            if ($multipleProducts) {
+                $result['ending_unit_cost'] = null;
+            }
+            if ($referenceOnly) {
+                $result['sources'] = $positions->pluck("methods.{$method}.source")->filter()->unique(fn (array $source): string => json_encode($source))->values()->all();
+            }
+
+            return [$method => $result];
         })->all();
 
         return [
@@ -529,6 +873,7 @@ class InventoryValuationService
             'issued_quantity' => $this->sumPositionValue($positions, 'issued_quantity'),
             'consumed_quantity' => $this->sumPositionValue($positions, 'consumed_quantity'),
             'ending_quantity' => $this->sumPositionValue($positions, 'ending_quantity'),
+            'multiple_products' => $multipleProducts,
             'reference_method' => $referenceMethod,
             'methods' => $this->withReferenceDifferences($methods, $referenceMethod),
             'positions' => $positions->all(),
@@ -539,7 +884,7 @@ class InventoryValuationService
     private function sumPositionValue(Collection $positions, string $path): string
     {
         return $positions->reduce(
-            fn (string $sum, array $position): string => bcadd($sum, (string) data_get($position, $path, '0'), self::CalculationScale),
+            fn (string $sum, array $position): string => bcadd($sum, (string) (data_get($position, $path) ?? '0'), self::CalculationScale),
             '0.00000000',
         );
     }
@@ -550,12 +895,12 @@ class InventoryValuationService
      */
     private function withReferenceDifferences(array $methods, string $referenceMethod): array
     {
-        $referenceValue = (string) $methods[$referenceMethod]['ending_value'];
+        $referenceValue = $methods[$referenceMethod]['ending_value'];
 
         foreach ($methods as $method => $result) {
-            $methods[$method]['difference_vs_reference'] = $method === 'last_purchase_reference'
+            $methods[$method]['difference_vs_reference'] = $result['reference_only'] || $referenceValue === null || $result['ending_value'] === null
                 ? null
-                : bcsub((string) $result['ending_value'], $referenceValue, self::CalculationScale);
+                : bcsub((string) $result['ending_value'], (string) $referenceValue, self::CalculationScale);
         }
 
         return $methods;
@@ -563,7 +908,7 @@ class InventoryValuationService
 
     private function assertReferenceMethod(string $referenceMethod): void
     {
-        if (! in_array($referenceMethod, [self::Method, 'periodic_weighted_average', 'fifo', 'last_purchase_reference'], true)) {
+        if (! in_array($referenceMethod, [self::Method, 'periodic_weighted_average', 'fifo', 'lifo', 'last_inbound_reference', 'last_purchase_reference'], true)) {
             throw new DomainException('inventory_accounting.errors.invalid_reference_method');
         }
     }
@@ -645,6 +990,37 @@ class InventoryValuationService
         return $issueCost;
     }
 
+    /** @param Collection<int, array{quantity: string, unit_cost: string}> $layers */
+    private function consumeLifoLayers(Collection $layers, string $quantity): string
+    {
+        $remaining = $quantity;
+        $issueCost = '0.00000000';
+
+        while (bccomp($remaining, '0', self::CalculationScale) > 0) {
+            $layer = $layers->pop();
+            if (! is_array($layer)) {
+                throw new DomainException('inventory_accounting.errors.negative_valuation_stock');
+            }
+
+            $consumed = bccomp($layer['quantity'], $remaining, self::CalculationScale) <= 0
+                ? $layer['quantity']
+                : $remaining;
+            $issueCost = bcadd(
+                $issueCost,
+                bcmul($consumed, $layer['unit_cost'], self::CalculationScale),
+                self::CalculationScale,
+            );
+            $remaining = bcsub($remaining, $consumed, self::CalculationScale);
+            $layerRemainder = bcsub($layer['quantity'], $consumed, self::CalculationScale);
+
+            if (bccomp($layerRemainder, '0', self::CalculationScale) > 0) {
+                $layers->push(['quantity' => $layerRemainder, 'unit_cost' => $layer['unit_cost']]);
+            }
+        }
+
+        return $issueCost;
+    }
+
     /**
      * @return array{issue_cost: ?string, ending_value: string, ending_unit_cost: string, difference_vs_reference: null, book_method: bool, reference_only: bool}
      */
@@ -665,6 +1041,23 @@ class InventoryValuationService
             'book_method' => $bookMethod,
             'reference_only' => $referenceOnly,
         ];
+    }
+
+    /** @return array{issue_cost: null, ending_value: ?string, ending_unit_cost: ?string, difference_vs_reference: null, book_method: false, reference_only: true} */
+    private function referenceResult(?string $unitCost, string $endingQuantity): array
+    {
+        if ($unitCost === null) {
+            return [
+                'issue_cost' => null,
+                'ending_value' => null,
+                'ending_unit_cost' => null,
+                'difference_vs_reference' => null,
+                'book_method' => false,
+                'reference_only' => true,
+            ];
+        }
+
+        return $this->methodResult(null, bcmul($endingQuantity, $unitCost, self::CalculationScale), $endingQuantity, false, true);
     }
 
     private function decimal(mixed $value): string

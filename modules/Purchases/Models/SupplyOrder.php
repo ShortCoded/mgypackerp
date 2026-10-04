@@ -12,8 +12,10 @@ use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
+use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 
 class SupplyOrder extends Model
 {
@@ -81,12 +83,18 @@ class SupplyOrder extends Model
             return $this->status;
         }
 
-        $ordered = (float) $this->lines()->sum('ordered_quantity');
-        $received = $this->lines()->get()->sum(fn (SupplyOrderLine $line): float => $line->receivedQuantity());
+        $numbers = app(NumericFormatService::class);
+        $ordered = $numbers->normalizeScientificNotation((string) $this->lines()->sum('ordered_quantity')) ?? '0';
+        $received = $numbers->normalizeScientificNotation((string) UnpricedInventoryReceiptLine::query()
+            ->whereHas('supplyOrderLine', fn ($query) => $query->where('supply_order_id', $this->getKey()))
+            ->whereHas('receipt', fn ($query) => $query->where('approved', true)
+                ->where('posting_status', 'posted')
+                ->whereNotIn('status', ['cancelled', 'reversed']))
+            ->sum('accepted_quantity')) ?? '0';
 
         return match (true) {
-            $received <= 0 => self::StatusIssued,
-            $received + 0.00000001 >= $ordered => self::StatusFullyReceived,
+            bccomp($received, '0', 8) <= 0 => self::StatusIssued,
+            bccomp($received, $ordered, 8) >= 0 => self::StatusFullyReceived,
             default => self::StatusPartiallyReceived,
         };
     }

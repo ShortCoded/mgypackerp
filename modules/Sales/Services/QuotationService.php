@@ -60,7 +60,8 @@ class QuotationService
     public function update(Quotation $record, array $data): array
     {
         return DB::transaction(function () use ($record, $data): array {
-            $record->loadMissing('currentRevision');
+            $record = Quotation::query()->lockForUpdate()->findOrFail($record->getKey());
+            $record->load('currentRevision');
             $this->assertEditable($record);
 
             $oldDocNumber = $record->doc_number === null ? null : (int) $record->doc_number;
@@ -431,6 +432,8 @@ class QuotationService
         $calculation = $this->calculator->calculate($data['lines'] ?? [], $data['discount_type'] ?? null, $data['discount_value'] ?? 0);
 
         $sourceLines = $revision->lines()->get()->keyBy('line_number');
+        $sourceLinesByUuid = $sourceLines->keyBy('public_uuid');
+        $reusedLineUuids = [];
         if ($record->sales_request_id && $sourceLines->isNotEmpty() && $sourceLines->count() !== count($calculation['lines'])) {
             throw new DomainException(__('Source request lines must be preserved; convert another quantity from the request.'));
         }
@@ -458,8 +461,21 @@ class QuotationService
                 throw new DomainException(__('Source request lines must be preserved; convert another quantity from the request.'));
             }
             $unitSnapshot = $this->unitConversions->snapshot($product, $unit?->getKey(), $line['quantity']);
+            $identityLine = filled($line['source_line_public_uuid'] ?? null)
+                ? $sourceLinesByUuid->get($line['source_line_public_uuid'])
+                : $sourceLine;
+            $stableLineUuid = $identityLine
+                && ! isset($reusedLineUuids[$identityLine->public_uuid])
+                && (int) $identityLine->product_id === (int) $product->getKey()
+                && (int) $identityLine->unit_id === (int) $unit?->getKey()
+                ? $identityLine->public_uuid
+                : null;
+            if ($stableLineUuid !== null) {
+                $reusedLineUuids[$stableLineUuid] = true;
+            }
 
             $revision->lines()->create([
+                'public_uuid' => $stableLineUuid,
                 'sales_request_line_id' => $sourceLine?->sales_request_line_id ?? $line['sales_request_line_id'] ?? null,
                 'line_number' => $index + 1,
                 'product_id' => $product?->getKey(),

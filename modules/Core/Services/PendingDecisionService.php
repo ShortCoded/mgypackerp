@@ -4,6 +4,7 @@ namespace Modules\Core\Services;
 
 use App\Models\User;
 use App\Services\EffectivePermissionResolver;
+use Carbon\CarbonInterface;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Carbon;
@@ -52,14 +53,14 @@ final class PendingDecisionService
                 'key' => $row['key'],
                 'title' => $row['type'],
                 'body' => __('dashboard.personal.work.document', ['document' => $row['document_number']]),
-                'meta' => __('dashboard.personal.work.waiting_since', ['time' => Carbon::parse($row['created_at'])->diffForHumans()]),
+                'meta' => __('dashboard.personal.work.waiting_since', ['time' => Carbon::parse($row['created_at'])->diffForHumans(null, CarbonInterface::DIFF_ABSOLUTE)]),
                 'severity' => 'action',
                 'url' => $row['url'],
                 'rank' => 1,
                 'sort_at' => $row['created_at'],
             ]),
             'meta' => $first?->oldest_at
-                ? __('dashboard.personal.meta.approvals_oldest', ['time' => Carbon::parse($first->oldest_at)->diffForHumans()])
+                ? __('dashboard.personal.meta.approvals_oldest', ['time' => Carbon::parse($first->oldest_at)->diffForHumans(null, CarbonInterface::DIFF_ABSOLUTE)])
                 : __('dashboard.personal.meta.approvals'),
             'has_sources' => true,
         ];

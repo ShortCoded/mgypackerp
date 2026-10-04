@@ -6,6 +6,7 @@ use DomainException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Company;
 use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
@@ -222,6 +223,7 @@ class ProductionMaterialRequestService
     {
         return DB::transaction(function () use ($request): ProductionMaterialRequest {
             $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionMaterialRequest::query()->with(['lines.requirement.run.orderLine', 'lines.product', 'lines.unit', 'store'])->lockForUpdate()->findOrFail($request->getKey());
             $this->assertContext($locked, $context);
 
@@ -243,7 +245,7 @@ class ProductionMaterialRequestService
                 $shortage = bcsub($quantity, $reserveQuantity, 8);
 
                 if (bccomp($reserveQuantity, '0', 8) > 0) {
-                    $this->reservations->reserveForProduction(
+                    $this->reservations->reserveForProductionAcrossPositions(
                         $line->requirement,
                         (int) $locked->branch_store_id,
                         $reserveQuantity,
@@ -334,17 +336,18 @@ class ProductionMaterialRequestService
     }
 
     /** @param array<int, string|int|float> $quantitiesByRequestLineId */
-    public function issue(ProductionMaterialRequest $request, array $quantitiesByRequestLineId = []): InventoryDocument
+    public function issue(ProductionMaterialRequest $request, array $quantitiesByRequestLineId = [], array $selectedLayersByRequestLineId = []): InventoryDocument
     {
-        return DB::transaction(function () use ($request, $quantitiesByRequestLineId): InventoryDocument {
+        return DB::transaction(function () use ($request, $quantitiesByRequestLineId, $selectedLayersByRequestLineId): InventoryDocument {
             $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionMaterialRequest::query()->with(['lines', 'run.requirements'])->lockForUpdate()->findOrFail($request->getKey());
             $this->assertContext($locked, $context);
 
             if (! in_array($locked->status, [ProductionMaterialRequest::StatusApproved, ProductionMaterialRequest::StatusShortage, ProductionMaterialRequest::StatusPartiallyIssued], true)) {
                 throw new DomainException(__('production_execution.messages.material_request_not_issuable'));
             }
-            if (array_diff(array_map('intval', array_keys($quantitiesByRequestLineId)), $locked->lines->modelKeys()) !== []) {
+            if (array_diff(array_map('intval', array_keys($quantitiesByRequestLineId + $selectedLayersByRequestLineId)), $locked->lines->modelKeys()) !== []) {
                 throw new DomainException(__('production_execution.messages.material_request_issue_line_invalid'));
             }
 
@@ -360,6 +363,10 @@ class ProductionMaterialRequestService
                     throw new DomainException(__('production_execution.messages.material_request_issue_exceeds_reserved'));
                 }
                 if (bccomp($quantity, '0', 8) <= 0) {
+                    if (($selectedLayersByRequestLineId[$line->getKey()] ?? []) !== []) {
+                        throw new DomainException(__('inventory_cost_policy.errors.layer_selection'));
+                    }
+
                     continue;
                 }
 
@@ -378,6 +385,9 @@ class ProductionMaterialRequestService
                 $locked->request_type === 'additional',
                 materialRequestLineIdsByRequirementId: $locked->lines->mapWithKeys(
                     fn (ProductionMaterialRequestLine $line): array => [$line->production_material_requirement_id => $line->getKey()],
+                )->all(),
+                selectedLayersByRequirementId: $locked->lines->mapWithKeys(
+                    fn (ProductionMaterialRequestLine $line): array => [$line->production_material_requirement_id => $selectedLayersByRequestLineId[$line->id] ?? []],
                 )->all(),
             );
             $document->update(['production_material_request_id' => $locked->getKey()]);
@@ -408,10 +418,68 @@ class ProductionMaterialRequestService
         });
     }
 
+    public function reconcileReservationStore(ProductionMaterialRequest $request, string $reason): ProductionMaterialRequest
+    {
+        return DB::transaction(function () use ($request, $reason): ProductionMaterialRequest {
+            $context = $this->requiredContext();
+            $locked = ProductionMaterialRequest::query()->lockForUpdate()->findOrFail($request->getKey());
+            $this->assertContext($locked, $context);
+
+            if (trim($reason) === '' || ! in_array($locked->status, [
+                ProductionMaterialRequest::StatusApproved,
+                ProductionMaterialRequest::StatusShortage,
+                ProductionMaterialRequest::StatusPartiallyIssued,
+                ProductionMaterialRequest::StatusIssued,
+            ], true)) {
+                throw new DomainException(__('production_execution.messages.material_request_reservation_repair_invalid'));
+            }
+
+            $run = ProductionRun::query()->lockForUpdate()->findOrFail($locked->production_run_id);
+            if (in_array($run->status, [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled], true)) {
+                throw new DomainException(__('production_execution.messages.material_request_run_closed'));
+            }
+
+            $changes = [];
+            $lines = ProductionMaterialRequestLine::query()
+                ->where('production_material_request_id', $locked->getKey())
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+            foreach ($lines as $line) {
+                foreach ($this->reservations->linkUntouchedLegacyForMaterialRequestLine($line, $reason) as $change) {
+                    $changes[] = ['request_line_id' => (int) $line->getKey(), 'kind' => 'legacy_link', ...$change];
+                }
+                foreach ($this->reservations->rebuildMissingForMaterialRequestLine($line, $reason) as $change) {
+                    $changes[] = ['request_line_id' => (int) $line->getKey(), 'kind' => 'missing_reservation_rebuild', ...$change];
+                }
+                foreach ($this->reservations->relocateMisplacedForMaterialRequestLine($line, (int) $locked->branch_store_id, $reason) as $change) {
+                    $changes[] = ['request_line_id' => (int) $line->getKey(), 'kind' => 'store_relocation', ...$change];
+                }
+            }
+
+            if ($changes !== []) {
+                $this->activityLogger->log(request(), 'production', 'production_material_request.reservation_store_reconciled', 'success', [
+                    'subject' => $locked,
+                    'company_id' => $locked->company_id,
+                    'properties_only' => true,
+                    'properties' => [
+                        'doc_num' => $locked->doc_num,
+                        'target_store_id' => $locked->branch_store_id,
+                        'reason' => trim($reason),
+                        'changes' => $changes,
+                    ],
+                ]);
+            }
+
+            return $locked->refresh()->load('lines');
+        }, 3);
+    }
+
     public function allocateShortage(ProductionMaterialRequest $request): ProductionMaterialRequest
     {
         return DB::transaction(function () use ($request): ProductionMaterialRequest {
             $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionMaterialRequest::query()
                 ->with(['lines.requirement', 'store'])
                 ->lockForUpdate()
@@ -442,7 +510,7 @@ class ProductionMaterialRequestService
                     continue;
                 }
 
-                $this->reservations->reserveForProduction(
+                $this->reservations->reserveForProductionAcrossPositions(
                     $line->requirement,
                     (int) $locked->branch_store_id,
                     $reserveQuantity,

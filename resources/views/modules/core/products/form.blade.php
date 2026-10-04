@@ -496,11 +496,11 @@
                                 </div>
                                 <div class="product-options-panel">
                                     <div class="row g-2">
-                                        @foreach (['cost_as_inventory', 'is_displayable', 'tracks_expiry'] as $booleanField)
+                                        @foreach (['cost_as_inventory', 'is_displayable', 'tracks_expiry', 'tracks_serials'] as $booleanField)
                                             @php
                                                 $booleanDefault = $record
                                                     ? (bool) $record->{$booleanField}
-                                                    : (bool) ($createDefaults[$booleanField] ?? true);
+                                                    : (bool) ($createDefaults[$booleanField] ?? ($booleanField !== 'tracks_serials'));
                                                 $booleanChecked = $useOldInput
                                                     ? filter_var(old($booleanField, $booleanDefault), FILTER_VALIDATE_BOOL)
                                                     : $booleanDefault;

@@ -172,7 +172,7 @@ test('payroll preview and posting resolve department defaults before exact split
     ]);
     $runId = DB::table('hr_payroll_runs')->insertGetId([
         'payroll_period_id' => $periodId,
-        'status' => 'approved',
+        'status' => 'calculated',
         'created_at' => now(),
         'updated_at' => now(),
     ]);
@@ -304,6 +304,7 @@ test('payroll preview and posting resolve department defaults before exact split
         'status' => 'active',
     ]);
 
+    DB::table('hr_payroll_runs')->where('id', $runId)->update(['status' => 'approved']);
     $journalEntryId = $service->postRun($runId);
     $journalEntry = JournalEntry::query()->with('lines')->findOrFail($journalEntryId);
     $expenseLines = $journalEntry->lines->whereNotNull('employee_id')->keyBy('cost_center_id');

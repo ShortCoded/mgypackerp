@@ -427,56 +427,59 @@
     return xhr.responseJSON && xhr.responseJSON.message ? xhr.responseJSON.message : msg('unexpectedError', 'Unexpected error occurred.');
   }
 
-  function toNumber(value) {
-    return window.AppNumbers.number(value, 0);
+  function decimalValue(value) {
+    return window.AppNumbers.normalize(value) || '0';
   }
 
   function decimal(value) {
-    const normalized = (Math.round((value + Number.EPSILON) * 10000) / 10000).toFixed(4).replace(/\.?0+$/, '') || '0';
-
-    return window.AppNumbers.format(normalized);
+    return window.AppNumbers.formatWithMinimumDecimals(window.AppNumbers.round(value, 4) || '0', 2);
   }
 
   function discountAmount(base, type, value) {
-    const numeric = Math.max(0, toNumber(value));
+    const numbers = window.AppNumbers;
+    const numeric = decimalValue(value);
+    const bounded = numbers.compare(numeric, '0') < 0 ? '0' : numeric;
 
     if (type === 'percentage') {
-      return Math.min(base, base * Math.min(numeric, 100) / 100);
+      const rate = numbers.compare(bounded, '100') > 0 ? '100' : bounded;
+      const result = numbers.round(numbers.divide(numbers.multiply(base, rate), '100', 8), 4);
+      return numbers.compare(result, base) > 0 ? base : result;
     }
 
     if (type === 'fixed') {
-      return Math.min(base, numeric);
+      return numbers.compare(bounded, base) > 0 ? base : bounded;
     }
 
-    return 0;
+    return '0';
   }
 
   function calculateTotals($form) {
-    let subtotal = 0;
-    let lineDiscount = 0;
-    let tax = 0;
+    const numbers = window.AppNumbers;
+    let subtotal = '0';
+    let lineDiscount = '0';
+    let tax = '0';
 
     $form.find('.js-quotation-line').each(function () {
       const $row = $(this);
-      const quantity = toNumber($row.find('[name$="[quantity]"]').val());
-      const unitPrice = toNumber($row.find('[name$="[unit_price]"]').val());
-      const base = quantity * unitPrice;
+      const quantity = decimalValue($row.find('[name$="[quantity]"]').val());
+      const unitPrice = decimalValue($row.find('[name$="[unit_price]"]').val());
+      const base = numbers.round(numbers.multiply(quantity, unitPrice), 4);
       const discount = discountAmount(base, $row.find('[name$="[discount_type]"]').val(), $row.find('[name$="[discount_value]"]').val());
-      const taxBase = Math.max(0, base - discount);
-      const rowTax = taxBase * (toNumber($row.find('[name$="[tax_rate]"]').val()) / 100);
-      const total = taxBase + rowTax;
+      const taxBase = numbers.subtract(base, discount);
+      const rowTax = numbers.round(numbers.divide(numbers.multiply(taxBase, decimalValue($row.find('[name$="[tax_rate]"]').val())), '100', 8), 4);
+      const total = numbers.add(taxBase, rowTax);
 
-      subtotal += base;
-      lineDiscount += discount;
-      tax += rowTax;
+      subtotal = numbers.add(subtotal, base);
+      lineDiscount = numbers.add(lineDiscount, discount);
+      tax = numbers.add(tax, rowTax);
       $row.find('.js-quotation-line-discount-amount').text(decimal(discount));
       $row.find('.js-quotation-line-tax-amount').text(decimal(rowTax));
       $row.find('.js-quotation-line-total').text(decimal(total));
     });
 
-    const headerDiscount = discountAmount(Math.max(0, subtotal - lineDiscount), $form.find('[name="discount_type"]').val(), $form.find('[name="discount_value"]').val());
-    const discount = lineDiscount + headerDiscount;
-    const total = Math.max(0, subtotal - discount + tax);
+    const headerDiscount = discountAmount(numbers.subtract(subtotal, lineDiscount), $form.find('[name="discount_type"]').val(), $form.find('[name="discount_value"]').val());
+    const discount = numbers.add(lineDiscount, headerDiscount);
+    const total = numbers.add(numbers.subtract(subtotal, discount), tax);
 
     $form.find('.js-quotation-subtotal').text(decimal(subtotal));
     $form.find('.js-quotation-discount').text(decimal(discount));
@@ -632,6 +635,7 @@
     $form.find('[name="quotation_date"]').val(String($form.data('default-quotation-date') || ''));
     $form.find('[name="submit_action"]').val('save');
     $form.find('[name="clone_source_token"]').remove();
+    $form.find('[name="clone_source_doc_num"]').remove();
     $form.find('.js-quotation-lines tbody').empty();
     addTemplateRow($form.find('.js-quotation-lines'), '#quotation-line-template', '.js-quotation-line', 'lines');
     $form.find('.js-quotation-milestones tbody, .js-quotation-schedule tbody, #quotation-selected-attachments, #quotation_attachment_file_inputs').empty();
@@ -770,6 +774,12 @@
         syncDiscountInputs($currentForm);
         calculateTotals($currentForm);
       })
+      .off('change.quotationQuantityPrice', '.js-quotation-line [name$="[quantity]"]')
+      .on('change.quotationQuantityPrice', '.js-quotation-line [name$="[quantity]"]', function () {
+        const $row = $(this).closest('.js-quotation-line');
+        $row.removeAttr('data-price-locked');
+        window.AppSalesPricing?.suggest($row[0]);
+      })
       .off('change.quotationType', '[name="quotation_type"]')
       .on('change.quotationType', '[name="quotation_type"]', function () {
         syncQuotationType($(this).closest('.js-quotation-form'));
@@ -778,6 +788,7 @@
       .on('select2:select.quotationsProduct', '.js-quotation-product', function (event) {
         const data = event.params ? event.params.data : null;
         const $row = $(this).closest('.js-quotation-line');
+        $row.removeAttr('data-price-locked');
         const unitDocNum = data && data.unitDocNum ? String(data.unitDocNum) : '';
         const unitLabel = data && data.unitLabel ? String(data.unitLabel) : '';
         const $unit = $row.find('.js-quotation-unit').first();
@@ -797,6 +808,8 @@
       .off('change.quotationPrice', '.js-quotation-unit, [name="customer_doc_num"], [name="currency_doc_num"], [name="quotation_date"]')
       .on('change.quotationPrice', '.js-quotation-unit, [name="customer_doc_num"], [name="currency_doc_num"], [name="quotation_date"]', function () {
         const $currentForm = $(this).closest('.js-quotation-form');
+        if ($(this).is('.js-quotation-unit')) $(this).closest('.js-quotation-line').removeAttr('data-price-locked');
+        else $currentForm.find('.js-quotation-line').removeAttr('data-price-locked');
         syncMainCurrency($currentForm);
         if ($(this).is('[name="customer_doc_num"]')) loadCustomerTerms($currentForm);
         $currentForm.find('.js-quotation-line').each(function () {window.AppSalesPricing?.suggest(this);});
@@ -811,7 +824,10 @@
       .on('click.quotationsDuplicateLine', '.js-quotation-duplicate-line', function () {
         const $row = $(this).closest('.js-quotation-line');
         const $newRow = $(window.AppLineItemCards.append($row.closest('tbody')[0], document.querySelector('#quotation-line-template'), 'lines', $row[0]));
+        $newRow.removeAttr('data-price-locked');
+        $newRow.find('[name$="[source_line_public_uuid]"]').remove();
         initSelect2($newRow[0]); initDatePickers($newRow[0]); syncDiscountInputs($row.closest('form')); calculateTotals($row.closest('form'));
+        window.AppSalesPricing?.suggest($newRow[0]);
       })
       .off('click.quotationsRemoveLine', '.js-quotation-remove-line')
       .on('click.quotationsRemoveLine', '.js-quotation-remove-line', function () {

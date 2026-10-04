@@ -102,7 +102,7 @@
                 @if($record->payment_method === 'cheque' && $record->cheque_due_date)<tr><th>{{ __('Cheque due date') }}</th><td>{{ $dates->formatDate($record->cheque_due_date, '—') }}</td></tr>@endif
                 @if($record->cashVoucher)<tr><th>{{ __('Canonical Finance document') }}</th><td>{{ __('Cash Receipt Voucher') }} <span dir="ltr">{{ $record->cashVoucher->doc_num }}</span></td></tr>@endif
                 @if($record->cheque)<tr><th>{{ __('Canonical Finance document') }}</th><td>{{ __('Received Cheque') }} <span dir="ltr">{{ $record->cheque->doc_num }}</span>@if($record->cheque->cheque_number) / <span dir="ltr">{{ $record->cheque->cheque_number }}</span>@endif</td></tr>@endif
-                <tr><th>{{ __('Receipt amount') }}</th><td dir="ltr">{{ $numbers->format($record->amount) }} {{ $record->currency?->code }}</td></tr>
+                <tr><th>{{ __('Receipt amount') }}</th><td dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->amount, 2) }} {{ $record->currency?->code }}</td></tr>
             @endif
             @if($isLegalCopy)
                 <tr><th>{{ __('Electronic invoice status') }}</th><td>{{ __(str($record->electronic_invoice_status)->replace('_', ' ')->title()->toString()) }}</td></tr>
@@ -126,7 +126,7 @@
                         <td>{{ $printUnit?->name }}</td>
                         <td dir="ltr">{{ $numbers->format($printQuantity) }}</td>
                         @if($kind === 'sales_order')<td dir="ltr">{{ $numbers->format($line->delivered_quantity) }}</td>@endif
-                        @if($showPrices)<td dir="ltr">{{ $numbers->format($line->unit_price ?? 0) }}</td><td dir="ltr">{{ $numbers->format($line->discount_amount ?? 0) }}</td><td dir="ltr">{{ $numbers->format($line->tax_amount ?? 0) }}</td><td dir="ltr">{{ $numbers->format($line->line_total ?? 0) }}</td>@endif
+                        @if($showPrices)<td dir="ltr">{{ $numbers->format($line->unit_price ?? 0) }}</td><td dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->discount_amount ?? 0, 2) }}</td><td dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->tax_amount ?? 0, 2) }}</td><td dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->line_total ?? 0, 2) }}</td>@endif
                         @if(in_array($kind, ['sales_return', 'quality_disposition'], true))<td>{{ $line->quality_disposition ? $qualityDispositionLabel($line->quality_disposition) : __('Pending inspection') }}<br>{{ __('Saleable') }}: {{ $numbers->format($line->saleable_quantity) }} · {{ __('Quarantine') }}: {{ $numbers->format($line->quarantine_quantity) }} · {{ __('Rework') }}: {{ $numbers->format($line->rework_quantity) }} · {{ __('Scrap') }}: {{ $numbers->format($line->scrap_quantity) }}</td>@endif
                     </tr>
                 @endforeach
@@ -136,20 +136,20 @@
 
     @if($kind === 'payment_schedule' || ($showPrices && $record->relationLoaded('paymentSchedules') && $record->paymentSchedules->isNotEmpty()))
         <h3>{{ __('Payment Schedule') }}</h3>
-        <table dir="{{ $direction ?? 'ltr' }}" class="report-table"><thead><tr><th>#</th><th>{{ __('Due date') }}</th><th>{{ __('Amount') }}</th><th>{{ __('Collected') }}</th><th>{{ __('Credited') }}</th><th>{{ __('Outstanding') }}</th></tr></thead><tbody>@foreach($record->paymentSchedules as $schedule)<tr><td>{{ $schedule->sequence }}</td><td>{{ $dates->formatDate($schedule->due_date, '') }}</td><td>{{ $numbers->format($schedule->amount) }}</td><td>{{ $numbers->format($schedule->collected_amount) }}</td><td>{{ $numbers->format($schedule->credited_amount) }}</td><td>{{ $numbers->format($schedule->outstanding_amount) }}</td></tr>@endforeach</tbody></table>
+        <table dir="{{ $direction ?? 'ltr' }}" class="report-table"><thead><tr><th>#</th><th>{{ __('Due date') }}</th><th>{{ __('Amount') }}</th><th>{{ __('Collected') }}</th><th>{{ __('Credited') }}</th><th>{{ __('Outstanding') }}</th></tr></thead><tbody>@foreach($record->paymentSchedules as $schedule)<tr><td>{{ $schedule->sequence }}</td><td>{{ $dates->formatDate($schedule->due_date, '') }}</td><td>{{ $numbers->formatWithMinimumDecimals($schedule->amount, 2) }}</td><td>{{ $numbers->formatWithMinimumDecimals($schedule->collected_amount, 2) }}</td><td>{{ $numbers->formatWithMinimumDecimals($schedule->credited_amount, 2) }}</td><td>{{ $numbers->formatWithMinimumDecimals($schedule->outstanding_amount, 2) }}</td></tr>@endforeach</tbody></table>
     @endif
 
     @if($kind === 'customer_receipt' && $record->relationLoaded('allocations') && $record->allocations->isNotEmpty())
         <h3>{{ __('Receipt Allocations') }}</h3>
-        <table dir="{{ $direction ?? 'ltr' }}" class="report-table"><thead><tr><th>{{ __('Invoice') }}</th><th>{{ __('Installment due') }}</th><th>{{ __('Allocated') }}</th></tr></thead><tbody>@foreach($record->allocations as $allocation)<tr><td>{{ $allocation->invoice?->doc_num }}</td><td>{{ $dates->formatDate($allocation->invoiceSchedule?->due_date, '—') }}</td><td dir="ltr">{{ $numbers->format($allocation->allocated_amount) }} {{ $record->currency?->code }}</td></tr>@endforeach</tbody></table>
+        <table dir="{{ $direction ?? 'ltr' }}" class="report-table"><thead><tr><th>{{ __('Invoice') }}</th><th>{{ __('Installment due') }}</th><th>{{ __('Allocated') }}</th></tr></thead><tbody>@foreach($record->allocations as $allocation)<tr><td>{{ $allocation->invoice?->doc_num }}</td><td>{{ $dates->formatDate($allocation->invoiceSchedule?->due_date, '—') }}</td><td dir="ltr">{{ $numbers->formatWithMinimumDecimals($allocation->allocated_amount, 2) }} {{ $record->currency?->code }}</td></tr>@endforeach</tbody></table>
     @endif
 
     @if($showPrices && isset($record->total_amount))
         <table dir="{{ $direction ?? 'ltr' }}" class="report-table" style="width:45%; margin-top:10px; margin-{{ $direction === 'rtl' ? 'right' : 'left' }}:55%; page-break-inside:avoid;"><tbody>
-            @if(isset($record->subtotal_amount))<tr><th>{{ __('Subtotal') }}</th><td>{{ $numbers->format($record->subtotal_amount) }}</td></tr>@endif
-            @if(isset($record->discount_amount))<tr><th>{{ __('Discount') }}</th><td>{{ $numbers->format($record->discount_amount) }}</td></tr>@endif
-            @if(isset($record->tax_amount))<tr><th>{{ __('Tax') }}</th><td>{{ $numbers->format($record->tax_amount) }}</td></tr>@endif
-            <tr><th>{{ __('Grand total') }}</th><td><strong>{{ $numbers->format($record->total_amount) }}</strong></td></tr>
+            @if(isset($record->subtotal_amount))<tr><th>{{ __('Subtotal') }}</th><td>{{ $numbers->formatWithMinimumDecimals($record->subtotal_amount, 2) }}</td></tr>@endif
+            @if(isset($record->discount_amount))<tr><th>{{ __('Discount') }}</th><td>{{ $numbers->formatWithMinimumDecimals($record->discount_amount, 2) }}</td></tr>@endif
+            @if(isset($record->tax_amount))<tr><th>{{ __('Tax') }}</th><td>{{ $numbers->formatWithMinimumDecimals($record->tax_amount, 2) }}</td></tr>@endif
+            <tr><th>{{ __('Grand total') }}</th><td><strong>{{ $numbers->formatWithMinimumDecimals($record->total_amount, 2) }}</strong></td></tr>
         </tbody></table>
     @endif
 

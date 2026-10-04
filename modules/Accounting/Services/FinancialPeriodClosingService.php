@@ -8,6 +8,7 @@ use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\JournalEntry;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\NumericFormatService;
@@ -118,6 +119,7 @@ class FinancialPeriodClosingService
     public function close(FinancialPeriod $period): array
     {
         return DB::transaction(function () use ($period): array {
+            Company::query()->whereKey($period->company_id)->lockForUpdate()->firstOrFail();
             $period = $this->lockedPeriod($period);
             $this->assertCurrentCompany($period);
 
@@ -154,6 +156,7 @@ class FinancialPeriodClosingService
     public function reopen(FinancialPeriod $period): array
     {
         return DB::transaction(function () use ($period): array {
+            Company::query()->whereKey($period->company_id)->lockForUpdate()->firstOrFail();
             $period = $this->lockedPeriod($period);
             $this->assertCurrentCompany($period);
 

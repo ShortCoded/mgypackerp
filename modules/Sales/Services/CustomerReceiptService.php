@@ -84,6 +84,9 @@ class CustomerReceiptService
                 'journal_entry_id' => $journal?->getKey(), 'approved_by' => auth()->id(), 'approved_at' => now(),
                 'is_closed' => true, 'updated_by' => auth()->id(),
             ]);
+            if ($journal) {
+                app(CustomerReceiptApplicationHistoryService::class)->record($receipt, $journal);
+            }
             $this->audit->record($receipt, 'customer_receipt.approved', ['allocated_amount' => $allocated, 'unallocated_amount' => $receipt->fresh()->unallocated_amount]);
 
             return $receipt->refresh()->load(['allocations.invoiceSchedule', 'cashVoucher', 'cheque']);

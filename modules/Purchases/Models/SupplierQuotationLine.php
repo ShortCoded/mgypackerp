@@ -30,7 +30,7 @@ class SupplierQuotationLine extends Model
     protected function casts(): array
     {
         return [
-            'offered_quantity' => 'decimal:8', 'unit_price' => 'decimal:4', 'discount_amount' => 'decimal:4',
+            'offered_quantity' => 'decimal:8', 'unit_price' => 'decimal:8', 'discount_amount' => 'decimal:4',
             'tax_rate' => 'decimal:4', 'tax_amount' => 'decimal:4', 'line_total' => 'decimal:4', 'delivery_date' => 'date',
         ];
     }

@@ -23,6 +23,8 @@ class PostingAccountResolver
 
     public const InventoryAdjustmentGain = 'inventory_adjustment_gain';
 
+    public const InventoryCostCompletionClearing = 'inventory_cost_completion_clearing';
+
     public const InventoryAdjustmentLoss = 'inventory_adjustment_loss';
 
     public const OtherPurchases = 'other_purchases';
@@ -102,7 +104,7 @@ class PostingAccountResolver
 
         $account = Account::query()
             ->forCompany($companyId)
-            ->eligibleForDirectPosting()
+            ->eligibleForClassifiedPosting()
             ->where('account_classification_id', $classification->getKey())
             ->ordered()
             ->first();
@@ -134,7 +136,7 @@ class PostingAccountResolver
 
         $accounts = Account::query()
             ->forCompany($companyId)
-            ->eligibleForDirectPosting()
+            ->eligibleForClassifiedPosting()
             ->where('account_classification_id', $classification->getKey())
             ->ordered()
             ->get(['id', 'company_id', 'doc_num', 'account_code', 'name', 'name_en']);
@@ -161,15 +163,18 @@ class PostingAccountResolver
 
     public function inventoryForProduct(int $companyId, Product $product, string $event): Account
     {
-        $classificationCode = match ($product->item_classification) {
+        return $this->resolve($companyId, $this->inventoryClassificationForProduct($product, $event), $event);
+    }
+
+    public function inventoryClassificationForProduct(Product $product, string $event): string
+    {
+        return match ($product->item_classification) {
             Product::ClassificationRawMaterial => self::RawMaterialInventory,
             Product::ClassificationPackaging, Product::ClassificationOther => self::PackagingMaterialInventory,
             Product::ClassificationSemiFinished => self::SemiFinishedGoodsInventory,
             Product::ClassificationFinishedProduct => self::FinishedGoodsInventory,
             default => throw new DomainException(__('accounts.messages.non_inventory_product', ['event' => $event])),
         };
-
-        return $this->resolve($companyId, $classificationCode, $event);
     }
 
     public function purchaseDebitForProduct(int $companyId, Product $product, string $event): Account

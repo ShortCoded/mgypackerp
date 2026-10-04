@@ -6,6 +6,7 @@ use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\JournalEntry;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
@@ -267,6 +268,7 @@ class ChequeService
     {
         return DB::transaction(function () use ($record, $status, $allowedStatuses, $extra, $requireFullDistribution): Cheque {
             $companyId = $this->companies->requireCompanyId();
+            Company::query()->whereKey($companyId)->lockForUpdate()->firstOrFail();
 
             /** @var Cheque $locked */
             $locked = Cheque::query()

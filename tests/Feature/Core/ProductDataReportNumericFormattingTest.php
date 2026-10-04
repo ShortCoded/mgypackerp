@@ -286,6 +286,12 @@ test('product XLSX keeps numeric cells and text identifiers while CSV stays cano
         'quantity' => '1234567.89000000',
     ]);
 
+    $this->actingAs($actor)->getJson(route('admin.reports.products-data.filter-options.components', ['q' => $component->doc_num]))
+        ->assertOk()->assertJsonStructure(['results' => [['id', 'text']], 'pagination' => ['more']])
+        ->assertJsonPath('results.0.id', $component->doc_num)->assertJsonCount(1, 'results');
+    $this->actingAs($actor)->getJson(route('admin.reports.products-data.filter-options.components', ['selected_doc_num' => $product->doc_num]))
+        ->assertOk()->assertJsonCount(0, 'results');
+
     $summaryFilters = ['product_doc_num' => $product->doc_num];
     $summaryExcel = $this->actingAs($actor)
         ->withSession($this->productNumericReportContext['session'])

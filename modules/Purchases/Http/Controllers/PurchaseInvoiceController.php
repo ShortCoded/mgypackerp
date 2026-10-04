@@ -19,6 +19,7 @@ use Modules\Core\Services\BreadcrumbService;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\DocumentNumberSettingsService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\FixedAssets\Services\FixedAssetPurchaseIntegrationService;
@@ -95,17 +96,20 @@ class PurchaseInvoiceController extends Controller
                 $receipts = collect([null]);
             }
             foreach ($receipts as $receiptLine) {
-                $alreadyBilled = (float) PurchaseInvoiceLine::query()->where('purchase_order_line_id', $orderLine->getKey())
-                    ->whereHas('purchaseInvoice', fn ($query) => $query->whereNotIn('status', ['cancelled', 'reversed']))->sum('quantity');
-                $quantity = $receiptLine ? $matching->remainingForReceipt($receiptLine) : max(0, (float) $orderLine->ordered_quantity - $alreadyBilled);
-                if ($quantity <= 0) {
+                $alreadyBilled = app(NumericFormatService::class)->normalizeScientificNotation((string) PurchaseInvoiceLine::query()
+                    ->where('purchase_order_line_id', $orderLine->getKey())
+                    ->whereHas('purchaseInvoice', fn ($query) => $query->whereNotIn('status', ['cancelled', 'reversed']))->sum('quantity')) ?? '0';
+                $quantity = $receiptLine
+                    ? $matching->remainingForReceiptExact($receiptLine)
+                    : bcsub((string) $orderLine->ordered_quantity, $alreadyBilled, 8);
+                if (bccomp($quantity, '0', 8) <= 0) {
                     continue;
                 }
                 $line = new PurchaseInvoiceLine([
                     'product_id' => $orderLine->product_id, 'unit_id' => $orderLine->unit_id,
                     'purchase_order_line_id' => $orderLine->getKey(), 'receipt_line_id' => $receiptLine?->getKey(),
                     'quantity' => $quantity, 'unit_price' => $orderLine->unit_price,
-                    'discount_type' => 'fixed', 'discount_value' => (float) $orderLine->discount_amount * $quantity / (float) $orderLine->ordered_quantity,
+                    'discount_type' => 'fixed', 'discount_value' => bcdiv(bcmul((string) ($orderLine->discount_amount ?? 0), $quantity, 12), (string) $orderLine->ordered_quantity, 4),
                     'tax_rate' => $orderLine->tax_rate, 'notes' => $orderLine->notes,
                 ]);
                 $line->setRelation('product', $orderLine->product)->setRelation('unit', $orderLine->unit)

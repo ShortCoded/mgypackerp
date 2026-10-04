@@ -134,6 +134,7 @@ Route::middleware('auth')
             Route::get('/', 'index')->name('index');
             Route::get('/print', 'print')->middleware('can:fixed_assets.print')->name('print');
             Route::get('/excel', 'excel')->middleware('can:fixed_assets.export')->name('excel');
+            Route::get('/csv', 'csv')->middleware('can:fixed_assets.export')->name('csv');
             Route::get('/pdf', 'pdf')->middleware('can:fixed_assets.print')->name('pdf');
         });
 

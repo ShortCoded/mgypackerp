@@ -19,7 +19,7 @@ class SalesRequestLine extends Model
 
     protected function casts(): array
     {
-        return ['quantity' => 'decimal:8', 'converted_quantity' => 'decimal:8', 'base_quantity' => 'decimal:8', 'conversion_factor' => 'decimal:8', 'unit_price' => 'decimal:4', 'specifications' => 'array'];
+        return ['quantity' => 'decimal:8', 'converted_quantity' => 'decimal:8', 'base_quantity' => 'decimal:8', 'conversion_factor' => 'decimal:8', 'unit_price' => 'decimal:8', 'specifications' => 'array'];
     }
 
     public function remainingQuantity(): string

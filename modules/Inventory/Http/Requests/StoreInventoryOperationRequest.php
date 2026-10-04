@@ -18,7 +18,7 @@ class StoreInventoryOperationRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
-        $this->normalizeNumericInput(['lines.*.quantity', 'lines.*.unit_cost']);
+        $this->normalizeNumericInput(['lines.*.quantity', 'lines.*.unit_cost', 'batch_material_selections.*.receipt_layers.*.quantity']);
 
         $dates = app(DateFormatService::class);
         $sourceStoreUuid = $this->input('branch_store_uuid');
@@ -49,10 +49,11 @@ class StoreInventoryOperationRequest extends FormRequest
             return $line;
         })->all();
 
+        $documentDate = $this->input('document_date');
         $this->merge([
             'branch_store_uuid' => $sourceStoreUuid,
             'destination_branch_store_uuid' => $destinationStoreUuid,
-            'document_date' => $dates->normalizeForStorage((string) $this->input('document_date')) ?? $this->input('document_date'),
+            'document_date' => is_string($documentDate) ? ($dates->normalizeForStorage($documentDate) ?? $documentDate) : $documentDate,
             'lines' => $lines,
         ]);
     }
@@ -103,9 +104,16 @@ class StoreInventoryOperationRequest extends FormRequest
                         ->whereNull('deleted_at')),
                 ],
                 'document_type' => ['required', Rule::in([InventoryDocument::TypeIssue, InventoryDocument::TypeReceipt])],
+                'document_date' => ['nullable', 'date_format:Y-m-d'],
                 'warehouse_location_id' => ['prohibited'],
                 'destination_warehouse_location_id' => ['prohibited'],
                 'lines' => ['array', 'max:0'],
+                'batch_material_selections' => [$this->input('document_type') === InventoryDocument::TypeReceipt ? 'prohibited' : 'nullable', 'array', 'max:100'],
+                'batch_material_selections.*.requirement_id' => ['required', 'integer', 'distinct'],
+                'batch_material_selections.*.receipt_layers' => ['nullable', 'array', 'max:100'],
+                'batch_material_selections.*.receipt_layers.*' => ['array'],
+                'batch_material_selections.*.receipt_layers.*.layer_id' => ['required_with:batch_material_selections.*.receipt_layers.*.quantity', 'nullable', 'integer', 'min:1'],
+                'batch_material_selections.*.receipt_layers.*.quantity' => ['required_with:batch_material_selections.*.receipt_layers.*.layer_id', 'nullable', 'numeric', 'gt:0'],
             ];
         }
 
@@ -123,12 +131,10 @@ class StoreInventoryOperationRequest extends FormRequest
                 'uuid',
                 'different:branch_store_uuid',
                 Rule::exists('branch_stores', 'public_uuid')->where(fn ($query) => $query
-                    ->whereIn('branch_id', fn ($branches) => $branches
-                        ->select('id')
-                        ->from('branches')
-                        ->where('company_id', $context['company_id'])
-                        ->where('status', 'active')
-                        ->whereNull('deleted_at'))
+                    ->whereIn('branch_id', app(OperatingContextService::class)->allowedBranchQueryForCurrentCompany($this)
+                        ->select('branches.id')
+                        ->where('branches.status', 'active')
+                        ->whereNull('branches.deleted_at'))
                     ->whereNull('deleted_at')),
             ],
             'warehouse_location_id' => ['prohibited'],
@@ -151,6 +157,8 @@ class StoreInventoryOperationRequest extends FormRequest
                     ->whereNull('deleted_at')),
             ],
             'lines.*.quantity' => ['required', 'numeric', 'gt:0'],
+            'lines.*.selected_receipt_layer_id' => ['nullable', 'integer', 'min:1'],
+            'lines.*.serial_numbers' => ['nullable', 'string', 'max:1000000'],
             'lines.*.unit_cost' => ['nullable', 'numeric', 'min:0'],
             'lines.*.warehouse_location_id' => ['prohibited'],
             'lines.*.destination_warehouse_location_id' => ['prohibited'],

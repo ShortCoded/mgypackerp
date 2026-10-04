@@ -5,7 +5,9 @@ namespace Modules\Finance\Services;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
+use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\NumericFormatService;
@@ -19,14 +21,19 @@ class OpeningBalanceService
         private readonly CrudAuditService $audit,
         private readonly OperatingContextService $operatingContext,
         private readonly NumericFormatService $numbers,
+        private readonly OpeningInventoryValuationService $inventoryValuation,
     ) {}
 
     public function create(array $data): array
     {
         return DB::transaction(function () use ($data): array {
             $context = $this->currentContext();
+            $this->lockContext($context);
+            $prepared = $this->inventoryValuation->prepare($data, $context, true);
+            $data['lines'] = $prepared['lines'];
             $record = OpeningBalance::query()->create([
                 ...$this->values($data, $context),
+                'inventory_valuation_snapshot' => $prepared['inventory_valuation_snapshot'],
                 ...$this->document($data, $context),
                 'is_closed' => true,
                 'created_by' => auth()->id(),
@@ -42,12 +49,21 @@ class OpeningBalanceService
     {
         return DB::transaction(function () use ($record, $data): array {
             $context = $this->currentContext();
+            $this->lockContext($context);
+            $record = OpeningBalance::query()->lockForUpdate()->findOrFail($record->id);
             $this->assertInCurrentContext($record, $context);
             $this->assertEditable($record);
+            if (is_array($record->inventory_valuation_snapshot)
+                && (int) $record->inventory_valuation_snapshot['branch_id'] !== $context['branch_id']) {
+                throw new DomainException(__('opening_balances.messages.inventory_source_changed'));
+            }
+            $prepared = $this->inventoryValuation->prepare($data, $context, true);
+            $data['lines'] = $prepared['lines'];
 
             $oldDocNumber = $record->doc_number === null ? null : (int) $record->doc_number;
             $oldDocNum = $record->doc_num;
-            $values = [...$this->values($data, $context), 'is_closed' => true];
+            $values = [...$this->values($data, $context), 'is_closed' => true,
+                'inventory_valuation_snapshot' => $prepared['inventory_valuation_snapshot']];
             if (array_key_exists('doc_number', $data)) {
                 $values = [...$values, ...$this->document($data, $context)];
             }
@@ -160,7 +176,10 @@ class OpeningBalanceService
     {
         $changes = [];
         foreach ($values as $field => $value) {
-            if ((string) $record->{$field} !== (string) $value) {
+            $original = $record->{$field};
+            $originalComparison = is_array($original) ? json_encode($original, JSON_THROW_ON_ERROR) : (string) $original;
+            $valueComparison = is_array($value) ? json_encode($value, JSON_THROW_ON_ERROR) : (string) $value;
+            if ($originalComparison !== $valueComparison) {
                 $changes[$field] = ['old' => $record->{$field}, 'new' => $value];
             }
         }
@@ -241,6 +260,13 @@ class OpeningBalanceService
         if ($record->is_cancelled || $record->journal_entry_id !== null) {
             throw new DomainException(__('opening_balances.messages.document_locked'));
         }
+    }
+
+    private function lockContext(array $context): void
+    {
+        Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
+        FinancialPeriod::query()->where('company_id', $context['company_id'])
+            ->whereKey($context['financial_period_id'])->lockForUpdate()->firstOrFail();
     }
 
     /**

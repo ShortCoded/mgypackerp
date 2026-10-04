@@ -1,0 +1,28 @@
+<?php
+
+return [
+    'title' => 'Invoice and delivery correction',
+    'help' => 'Recover collections, applied credits and returns first. Review all connected invoices and deliveries. Independent approval posts dated inverse entries and restores original stock layers; original documents and signatures are retained. Create replacement documents through the normal cycle afterwards.',
+    'stale' => 'The source or approval evidence has changed. Refresh the preview and prepare a new correction.',
+    'pending' => 'A connected invoice already has a pending correction. Review or reject that proposal first.',
+    'independent' => 'A different authorized reviewer must approve this correction with an explanation.',
+    'source_invalid' => 'The invoice, source quantities, settlement or posting lineage does not reconcile. Recover the linked documents and review the source evidence first.',
+    'target_invalid' => 'Select an authorized open period and a posting date on or after all source effects. A closed source requires a later period.',
+    'recover_first' => 'Complete the listed collection, credit and return recovery steps before preparing this correction.',
+    'recover_collection' => 'Reverse the linked collection',
+    'recover_credit' => 'Recover the applied credit',
+    'recover_return' => 'Correct or cancel the linked return',
+    'credit' => 'Invoice correction credit note',
+    'recovery_reference' => 'Physical recovery / source correction evidence reference',
+    'invoices' => 'Connected invoices',
+    'deliveries' => 'Connected deliveries',
+    'dependencies' => 'Required recovery steps',
+    'target' => 'Posting period',
+    'prepare' => 'Prepare correction',
+    'approve' => 'Approve and recover invoice / delivery',
+    'reject' => 'Reject proposal',
+    'prepared' => 'Correction prepared for independent review.',
+    'approved' => 'Correction approved; create the replacement documents through the normal cycle.',
+    'rejected' => 'Correction proposal rejected.',
+    'history' => 'Correction and approval history',
+];

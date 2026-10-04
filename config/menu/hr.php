@@ -76,6 +76,12 @@ return [[
             'active' => ['admin.hr.shift-assignments.*'], 'children' => [],
         ],
         [
+            'label' => 'hr_work_calendars', 'title' => 'Work Calendars', 'icon' => 'calendar-check',
+            'route' => 'admin.hr.work-calendars.index', 'permission' => 'hr.work_calendars.view', 'subgroup' => 'hr_attendance_management',
+            'actions' => ['view' => 'hr.work_calendars.view', 'manage' => 'hr.work_calendars.manage'],
+            'active' => ['admin.hr.work-calendars.*'], 'children' => [],
+        ],
+        [
             'label' => 'hr_employee_attendance', 'title' => 'Employee Attendance', 'icon' => 'user-clock',
             'route' => 'admin.hr.employee-attendance.index', 'permission' => 'hr.employee_attendance.view', 'subgroup' => 'hr_attendance_management',
             'actions' => ['view' => 'hr.employee_attendance.view', 'manage' => 'hr.employee_attendance.manage', 'correct' => 'hr.employee_attendance.correct', 'import' => 'hr.employee_attendance.import', 'export' => 'hr.employee_attendance.export'],
@@ -96,7 +102,7 @@ return [[
         [
             'label' => 'hr_payroll_preparation', 'title' => 'Payroll', 'icon' => 'money-check-alt',
             'route' => 'admin.hr.payroll-preparation.index', 'permission' => 'hr.payroll_preparation.view', 'subgroup' => 'hr_payroll',
-            'actions' => ['view' => 'hr.payroll_preparation.view', 'calculate' => 'hr.payroll_preparation.calculate', 'review' => 'hr.payroll_approval.review', 'approve' => 'hr.payroll_approval.approve', 'create_payment' => 'hr.payroll_payment.create', 'reconcile' => 'hr.payroll_reconciliation.view'],
+            'actions' => ['view' => 'hr.payroll_preparation.view', 'calculate' => 'hr.payroll_preparation.calculate', 'review' => 'hr.payroll_approval.review', 'approve' => 'hr.payroll_approval.approve', 'correct' => 'hr.payroll_approval.correct', 'correct_approve' => 'hr.payroll_approval.correct_approve', 'correct_later_period' => 'hr.payroll_approval.correct_later_period', 'create_payment' => 'hr.payroll_payment.create', 'reconcile' => 'hr.payroll_reconciliation.view'],
             'active' => ['admin.hr.payroll-preparation.*', 'admin.hr.payroll-runs.*'], 'children' => [],
         ],
         [

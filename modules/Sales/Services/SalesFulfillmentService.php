@@ -5,10 +5,12 @@ namespace Modules\Sales\Services;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Inventory\Models\InventoryDocument;
+use Modules\Inventory\Models\InventoryReceiptLayer;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryAvailabilityService;
@@ -27,11 +29,13 @@ class SalesFulfillmentService
         private readonly InventoryDocumentPostingService $posting,
         private readonly SalesAccountingService $accounting,
         private readonly FinancialPeriodService $periods,
+        private readonly SalesCycleAuditService $audit,
     ) {}
 
     public function reserve(SalesOrderLine $line, string $quantity): InventoryReservation
     {
         return DB::transaction(function () use ($line, $quantity): InventoryReservation {
+            Company::query()->whereKey($line->order->company_id)->lockForUpdate()->firstOrFail();
             $order = SalesOrder::query()->lockForUpdate()->findOrFail($line->sales_order_id);
             $locked = SalesOrderLine::query()->lockForUpdate()->findOrFail($line->getKey());
             $locked->setRelation('order', $order);
@@ -47,19 +51,21 @@ class SalesFulfillmentService
             $available = $this->availability->forProduct((int) $locked->order->company_id, (int) $locked->order->branch_store_id, (int) $locked->product_id)['available'];
             $this->amounts->assertNotGreaterThan($baseQuantity, $available, __('Reservation exceeds currently available stock.'));
 
-            $reservations = collect($this->allocateStockPositions(
+            $allocations = $this->allocateStockPositions(
                 (int) $locked->order->company_id,
                 (int) $locked->order->branch_store_id,
                 (int) $locked->product_id,
                 $baseQuantity,
-            ))->map(fn (array $allocation): InventoryReservation => InventoryReservation::query()->create([
+            );
+            $transactionQuantities = $this->amounts->splitQuantityByWeights($quantity, array_column($allocations, 'quantity'));
+            $reservations = collect($allocations)->map(fn (array $allocation, int $index): InventoryReservation => InventoryReservation::query()->create([
                 'company_id' => $locked->order->company_id, 'financial_period_id' => $locked->order->financial_period_id,
                 'branch_id' => $locked->order->branch_id, 'branch_store_id' => $locked->order->branch_store_id,
                 'warehouse_location_id' => $allocation['warehouse_location_id'], 'batch_lot' => $allocation['batch_lot'],
                 'sales_order_id' => $locked->sales_order_id, 'sales_order_line_id' => $locked->getKey(),
                 'product_id' => $locked->product_id, 'unit_id' => $product->item_unit_id,
                 'transaction_unit_id' => $locked->unit_id, 'conversion_factor' => $locked->conversion_factor,
-                'transaction_quantity' => bcdiv($allocation['quantity'], (string) $locked->conversion_factor, 8),
+                'transaction_quantity' => $transactionQuantities[$index],
                 'quantity' => $allocation['quantity'], 'stock_status' => InventoryTransaction::StatusAvailable,
                 'status' => InventoryReservation::StatusActive, 'created_by' => auth()->id(),
             ]));
@@ -73,6 +79,7 @@ class SalesFulfillmentService
     public function releaseReservation(InventoryReservation $reservation, string $reason): InventoryReservation
     {
         return DB::transaction(function () use ($reservation, $reason): InventoryReservation {
+            Company::query()->whereKey($reservation->company_id)->lockForUpdate()->firstOrFail();
             SalesOrder::query()->lockForUpdate()->findOrFail($reservation->sales_order_id);
             $locked = InventoryReservation::query()->lockForUpdate()->findOrFail($reservation->getKey());
             if ($locked->status !== InventoryReservation::StatusActive) {
@@ -103,6 +110,7 @@ class SalesFulfillmentService
     public function deliver(SalesOrder $order, array $lines, array $logistics = [], bool $allowCompanyWarehouse = false): InventoryDocument
     {
         return DB::transaction(function () use ($order, $lines, $logistics, $allowCompanyWarehouse): InventoryDocument {
+            Company::query()->whereKey($order->company_id)->lockForUpdate()->firstOrFail();
             if ($lines === [] || count(array_unique(array_column($lines, 'sales_order_line_id'))) !== count($lines)) {
                 throw new DomainException(__('Select each delivery order line once and enter its total quantity.'));
             }
@@ -149,15 +157,20 @@ class SalesFulfillmentService
                 $stock = $this->availability->forProduct((int) $lockedOrder->company_id, $branchStoreId, (int) $line->product_id, (int) $line->getKey());
                 $this->amounts->assertNotGreaterThan($baseQuantity, $stock['available'], __('Delivery exceeds available or reserved stock.'));
 
-                foreach ($this->deliveryStockAllocations($line, $baseQuantity, $branchStoreId) as $allocation) {
+                $allocations = $this->deliveryStockAllocations($line, $baseQuantity, $branchStoreId, $input['receipt_layers'] ?? [], $documentDate);
+                $transactionQuantities = $this->amounts->splitQuantityByWeights($quantity, array_column($allocations, 'quantity'));
+                foreach ($allocations as $index => $allocation) {
                     $document->lines()->create([
                         'company_id' => $lockedOrder->company_id, 'financial_period_id' => $period->getKey(),
                         'line_number' => ++$documentLineNumber, 'product_id' => $line->product_id, 'unit_id' => $product->item_unit_id,
                         'transaction_unit_id' => $line->unit_id, 'conversion_factor' => $line->conversion_factor,
-                        'transaction_quantity' => bcdiv($allocation['quantity'], (string) $line->conversion_factor, 8),
+                        'transaction_quantity' => $transactionQuantities[$index],
                         'base_quantity' => $allocation['quantity'],
                         'warehouse_location_id' => $allocation['warehouse_location_id'],
                         'batch_lot' => $allocation['batch_lot'],
+                        'selected_receipt_layer_id' => $allocation['selected_receipt_layer_id'] ?? null,
+                        'manufacture_date' => $allocation['manufacture_date'] ?? null,
+                        'expiry_date' => $allocation['expiry_date'] ?? null,
                         'inventory_reservation_id' => $allocation['inventory_reservation_id'],
                         'source_line_type' => SalesOrderLine::class, 'source_line_id' => $line->getKey(),
                         'source_line_public_id' => $line->public_id, 'reference_quantity' => $line->base_quantity,
@@ -175,7 +188,10 @@ class SalesFulfillmentService
                 $line = SalesOrderLine::query()->lockForUpdate()->findOrFail($documentLine->source_line_id);
                 $line->increment('delivered_quantity', $documentLine->transaction_quantity);
                 $line->increment('delivered_base_quantity', $documentLine->quantity);
-                $this->consumeReservations($line, (string) $documentLine->quantity, $branchStoreId);
+                $this->consumeReservations($line, (string) $documentLine->quantity, $branchStoreId, $documentLine->warehouse_location_id, $documentLine->batch_lot);
+            }
+            foreach ($posted->lines->pluck('source_line_id')->unique() as $lineId) {
+                $this->releaseExcessReservations(SalesOrderLine::query()->lockForUpdate()->findOrFail($lineId), $posted);
             }
             $this->refreshOrderStatus($lockedOrder);
 
@@ -190,6 +206,7 @@ class SalesFulfillmentService
     public function deliverInvoice(CustomerInvoice $invoice, array $lines, array $logistics, bool $allowCompanyWarehouse = false): InventoryDocument
     {
         return DB::transaction(function () use ($invoice, $lines, $logistics, $allowCompanyWarehouse): InventoryDocument {
+            Company::query()->whereKey($invoice->company_id)->lockForUpdate()->firstOrFail();
             if ($lines === [] || count(array_unique(array_column($lines, 'customer_invoice_line_id'))) !== count($lines)) {
                 throw new DomainException(__('Select each invoice line once and enter its delivery quantity.'));
             }
@@ -197,7 +214,7 @@ class SalesFulfillmentService
             $lockedInvoice = CustomerInvoice::query()->with(['order', 'lines.orderLine', 'lines.product', 'deliveries.lines'])
                 ->lockForUpdate()->findOrFail($invoice->getKey());
             $lockedInvoice->setRelation('deliveries', $lockedInvoice->deliveries->where('status', InventoryDocument::StatusPosted));
-            if ($lockedInvoice->document_type !== CustomerInvoice::TypeInvoice || $lockedInvoice->posting_status !== CustomerInvoice::StatusPosted) {
+            if ($lockedInvoice->document_type !== CustomerInvoice::TypeInvoice || $lockedInvoice->posting_status !== CustomerInvoice::StatusPosted || $lockedInvoice->hasApprovedCorrection()) {
                 throw new DomainException(__('Only a posted sales invoice can be delivered.'));
             }
             if (! $lockedInvoice->order) {
@@ -232,6 +249,7 @@ class SalesFulfillmentService
                 $deliveredByOrderLine[$sourceId] = bcsub($delivered, $consumed, 8);
             }
             $deliveryQuantities = [];
+            $deliveryLayers = [];
             foreach ($lines as $input) {
                 $invoiceLine = CustomerInvoiceLine::query()->with('orderLine')->where('customer_invoice_id', $lockedInvoice->getKey())
                     ->lockForUpdate()->findOrFail($input['customer_invoice_line_id']);
@@ -245,10 +263,11 @@ class SalesFulfillmentService
                 $this->amounts->assertNotGreaterThan($quantity, $remaining, __('Delivery quantity exceeds the invoiced quantity remaining for delivery.'));
                 $sourceId = (int) $invoiceLine->sales_order_line_id;
                 $deliveryQuantities[$sourceId] = bcadd($deliveryQuantities[$sourceId] ?? '0', $quantity, 8);
+                $deliveryLayers[$sourceId] = [...($deliveryLayers[$sourceId] ?? []), ...($input['receipt_layers'] ?? [])];
             }
             $deliveryLines = [];
             foreach ($deliveryQuantities as $sourceId => $quantity) {
-                $deliveryLines[] = ['sales_order_line_id' => $sourceId, 'quantity' => $quantity];
+                $deliveryLines[] = ['sales_order_line_id' => $sourceId, 'quantity' => $quantity, 'receipt_layers' => $deliveryLayers[$sourceId] ?? []];
             }
 
             $document = $this->deliver($lockedInvoice->order, $deliveryLines, [
@@ -301,24 +320,30 @@ class SalesFulfillmentService
             if ($invoiceLine->is_service || ! $invoiceLine->product_id) {
                 throw new DomainException(__('Services do not generate warehouse deliveries.'));
             }
-            $delivered = (string) $invoice->deliveries->flatMap->lines
+            $delivered = $this->amounts->sum($invoice->deliveries->flatMap->lines
                 ->where('source_line_type', CustomerInvoiceLine::class)
                 ->where('source_line_id', $invoiceLine->getKey())
-                ->sum('transaction_quantity');
+                ->pluck('transaction_quantity'), 8);
             $remaining = $this->amounts->subtract((string) $invoiceLine->quantity, $delivered, 8);
             $quantity = (string) $input['quantity'];
             $this->amounts->assertPositive($quantity, __('Delivery quantity must be greater than zero.'));
             $this->amounts->assertNotGreaterThan($quantity, $remaining, __('Delivery quantity exceeds the invoiced quantity remaining for delivery.'));
             $baseQuantity = bcmul($quantity, (string) $invoiceLine->conversion_factor, 8);
 
-            foreach ($this->allocateStockPositions((int) $invoice->company_id, (int) $branchStore->getKey(), (int) $invoiceLine->product_id, $baseQuantity) as $allocation) {
+            $allocations = ($input['receipt_layers'] ?? []) !== []
+                ? $this->selectedDeliveryStockAllocations((int) $invoice->company_id, (int) $branchStore->getKey(), (int) $invoiceLine->product_id, $baseQuantity, $input['receipt_layers'], $documentDate)
+                : $this->allocateStockPositions((int) $invoice->company_id, (int) $branchStore->getKey(), (int) $invoiceLine->product_id, $baseQuantity);
+            $transactionQuantities = $this->amounts->splitQuantityByWeights($quantity, array_column($allocations, 'quantity'));
+            foreach ($allocations as $index => $allocation) {
                 $document->lines()->create([
                     'company_id' => $invoice->company_id, 'financial_period_id' => $period->getKey(), 'line_number' => ++$lineNumber,
                     'product_id' => $invoiceLine->product_id, 'unit_id' => $invoiceLine->product->item_unit_id,
                     'transaction_unit_id' => $invoiceLine->unit_id, 'conversion_factor' => $invoiceLine->conversion_factor,
-                    'transaction_quantity' => bcdiv($allocation['quantity'], (string) $invoiceLine->conversion_factor, 8),
+                    'transaction_quantity' => $transactionQuantities[$index],
                     'base_quantity' => $allocation['quantity'], 'quantity' => $allocation['quantity'],
                     'warehouse_location_id' => $allocation['warehouse_location_id'], 'batch_lot' => $allocation['batch_lot'],
+                    'selected_receipt_layer_id' => $allocation['selected_receipt_layer_id'] ?? null,
+                    'manufacture_date' => $allocation['manufacture_date'] ?? null, 'expiry_date' => $allocation['expiry_date'] ?? null,
                     'source_line_type' => CustomerInvoiceLine::class, 'source_line_id' => $invoiceLine->getKey(),
                     'source_line_public_id' => $invoiceLine->public_id, 'reference_quantity' => $invoiceLine->base_quantity,
                     'previous_quantity' => bcmul($delivered, (string) $invoiceLine->conversion_factor, 8),
@@ -339,10 +364,12 @@ class SalesFulfillmentService
         return $posted->refresh()->load(['lines', 'branchStore']);
     }
 
-    private function consumeReservations(SalesOrderLine $line, string $quantity, int $branchStoreId): void
+    private function consumeReservations(SalesOrderLine $line, string $quantity, int $branchStoreId, ?int $locationId, ?string $batchLot): void
     {
         $remaining = $quantity;
-        foreach (InventoryReservation::query()->where('sales_order_line_id', $line->getKey())->where('branch_store_id', $branchStoreId)->where('status', InventoryReservation::StatusActive)->lockForUpdate()->oldest()->get() as $reservation) {
+        foreach (InventoryReservation::query()->where('sales_order_line_id', $line->getKey())->where('branch_store_id', $branchStoreId)
+            ->where('warehouse_location_id', $locationId)->where('batch_lot', $batchLot)
+            ->where('status', InventoryReservation::StatusActive)->lockForUpdate()->oldest()->get() as $reservation) {
             if ($this->amounts->compare($remaining, '0', 8) <= 0) {
                 break;
             }
@@ -352,6 +379,42 @@ class SalesFulfillmentService
                 $reservation->update(['status' => InventoryReservation::StatusConsumed]);
             }
             $remaining = $this->amounts->subtract($remaining, $consume, 8);
+        }
+    }
+
+    private function releaseExcessReservations(SalesOrderLine $line, InventoryDocument $delivery): void
+    {
+        $reservations = InventoryReservation::query()->where('company_id', $delivery->company_id)
+            ->where('sales_order_id', $line->sales_order_id)->where('sales_order_line_id', $line->id)
+            ->where('status', InventoryReservation::StatusActive)->orderByDesc('id')->lockForUpdate()->get();
+        $active = $this->amounts->sum($reservations->map(fn (InventoryReservation $reservation): string => $reservation->remaining_quantity), 8);
+        $remaining = bcsub((string) $line->base_quantity, (string) $line->delivered_base_quantity, 8);
+        $excess = bcsub($active, bccomp($remaining, '0', 8) > 0 ? $remaining : '0', 8);
+        $released = '0';
+        foreach ($reservations as $reservation) {
+            if (bccomp($excess, '0', 8) <= 0) {
+                break;
+            }
+            $before = $reservation->remaining_quantity;
+            $quantity = bccomp($excess, $before, 8) > 0 ? $before : $excess;
+            $reservation->update([
+                'released_quantity' => bcadd((string) $reservation->released_quantity, $quantity, 8),
+                'status' => bccomp($quantity, $before, 8) === 0 ? InventoryReservation::StatusReleased : InventoryReservation::StatusActive,
+                'released_by' => auth()->id(), 'released_at' => now(),
+                'release_reason' => __('sales_issue.messages.reservation_released_after_delivery'),
+            ]);
+            $this->audit->record($reservation, 'inventory_reservation.released_after_delivery', [
+                'delivery' => $delivery->doc_num, 'sales_order_line_id' => $line->id,
+                'released_base_quantity' => $quantity, 'before_remaining_base_quantity' => $before,
+                'after_remaining_base_quantity' => $reservation->fresh()->remaining_quantity,
+            ]);
+            $released = bcadd($released, $quantity, 8);
+            $excess = bcsub($excess, $quantity, 8);
+        }
+        if (bccomp($released, '0', 8) > 0) {
+            $reservedBase = bcsub((string) $line->reserved_base_quantity, $released, 8);
+            $reservedBase = bccomp($reservedBase, '0', 8) > 0 ? $reservedBase : '0';
+            $line->update(['reserved_base_quantity' => $reservedBase, 'reserved_quantity' => bcdiv($reservedBase, (string) $line->conversion_factor, 8)]);
         }
     }
 
@@ -415,8 +478,11 @@ class SalesFulfillmentService
     /**
      * @return list<array{warehouse_location_id: int|null, batch_lot: string|null, quantity: string, inventory_reservation_id: int|null}>
      */
-    private function deliveryStockAllocations(SalesOrderLine $line, string $quantity, int $branchStoreId): array
+    private function deliveryStockAllocations(SalesOrderLine $line, string $quantity, int $branchStoreId, array $selectedLayers = [], ?string $date = null): array
     {
+        if ($selectedLayers !== []) {
+            return $this->selectedDeliveryStockAllocations((int) $line->order->company_id, $branchStoreId, (int) $line->product_id, $quantity, $selectedLayers, $date ?? now()->toDateString(), (int) $line->id);
+        }
         $remaining = $quantity;
         $allocations = [];
         $allocatedByPosition = [];
@@ -507,7 +573,45 @@ class SalesFulfillmentService
             ->all();
     }
 
-    private function refreshOrderStatus(SalesOrder $order): void
+    /** @param list<array{layer_id: int, quantity: string}> $selections
+     * @return list<array<string, mixed>>
+     */
+    private function selectedDeliveryStockAllocations(int $companyId, int $storeId, int $productId, string $quantity, array $selections, string $date, ?int $salesLineId = null): array
+    {
+        $seen = [];
+        $positions = [];
+        $total = '0';
+        $allocations = [];
+        foreach ($selections as $selection) {
+            $id = (int) ($selection['layer_id'] ?? 0);
+            $slice = (string) ($selection['quantity'] ?? '0');
+            $layer = InventoryReceiptLayer::query()->whereKey($id)->where('company_id', $companyId)
+                ->where('branch_store_id', $storeId)->where('product_id', $productId)->where('stock_status', InventoryTransaction::StatusAvailable)
+                ->withAuthoritativeCost()->whereDate('original_receipt_date', '<=', $date)->lockForUpdate()->first();
+            if (isset($seen[$id]) || $layer === null || ! preg_match('/^\d+(?:\.\d{1,8})?$/D', $slice)
+                || bccomp($slice, '0', 8) <= 0 || bccomp($slice, (string) $layer->remaining_quantity, 8) > 0) {
+                throw new DomainException(__('inventory_cost_policy.errors.layer_selection'));
+            }
+            $key = json_encode([$layer->warehouse_location_id, $layer->batch_lot], JSON_THROW_ON_ERROR);
+            $available = $this->availability->forProduct($companyId, $storeId, $productId, $salesLineId, $layer->warehouse_location_id, InventoryTransaction::StatusAvailable, $layer->batch_lot, true)['available'];
+            $positions[$key] = bcadd($positions[$key] ?? '0', $slice, 8);
+            if (bccomp($positions[$key], $available, 8) > 0) {
+                throw new DomainException(__('Delivery exceeds available or reserved stock.'));
+            }
+            $seen[$id] = true;
+            $total = bcadd($total, $slice, 8);
+            $allocations[] = ['warehouse_location_id' => $layer->warehouse_location_id, 'batch_lot' => $layer->batch_lot,
+                'quantity' => $slice, 'selected_receipt_layer_id' => $id, 'inventory_reservation_id' => null,
+                'manufacture_date' => $layer->manufacture_date, 'expiry_date' => $layer->expiry_date];
+        }
+        if (bccomp($total, $quantity, 8) !== 0) {
+            throw new DomainException(__('inventory_cost_policy.errors.layer_selection'));
+        }
+
+        return $allocations;
+    }
+
+    public function refreshOrderStatus(SalesOrder $order): void
     {
         $lines = $order->lines()->get();
         $physical = $lines->reject->isService();

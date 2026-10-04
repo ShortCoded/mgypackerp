@@ -17,68 +17,66 @@ class PurchaseOrderCalculationService
     public function calculate(array $lines, mixed $freightAmount = 0): array
     {
         $calculatedLines = [];
-        $totalOrderedQuantity = 0.0;
-        $totalReceivedQuantity = 0.0;
-        $totalRemainingQuantity = 0.0;
-        $subtotalAmount = 0.0;
-        $totalAmount = 0.0;
-        $freightAmount = max(0, $this->number($freightAmount));
+        $totalOrderedQuantity = '0.00000000';
+        $totalReceivedQuantity = '0.00000000';
+        $totalRemainingQuantity = '0.00000000';
+        $subtotalAmount = '0.0000';
+        $totalAmount = '0.0000';
+        $freightAmount = $this->nonNegative($this->formatAmount($freightAmount));
 
         foreach (array_values($lines) as $line) {
             $orderedQuantityInput = $line['ordered_quantity'] ?? 0;
             $receivedQuantityInput = $line['received_quantity'] ?? 0;
             $unitPriceInput = $line['unit_price'] ?? 0;
-            $orderedQuantity = $this->number($orderedQuantityInput);
-            $receivedQuantity = max(0, $this->number($receivedQuantityInput));
-            $remainingQuantity = max(0, $orderedQuantity - $receivedQuantity);
-            $unitPrice = $this->number($unitPriceInput);
-            $subtotal = $orderedQuantity * $unitPrice;
+            $orderedQuantity = $this->formatQuantity($orderedQuantityInput);
+            $receivedQuantity = $this->nonNegative($this->formatQuantity($receivedQuantityInput), 8);
+            $remainingQuantity = $this->nonNegative(bcsub($orderedQuantity, $receivedQuantity, 8), 8);
+            $unitPrice = $this->formatUnitPrice($unitPriceInput);
+            $subtotal = bcround(bcmul($orderedQuantity, $unitPrice, 16), 4);
             $discountType = in_array($line['discount_type'] ?? null, ['fixed', 'percentage'], true)
                 ? $line['discount_type']
                 : 'fixed';
-            $discountValue = max(0, $this->number($line['discount_value'] ?? 0));
+            $discountValue = $this->nonNegative($this->formatAmount($line['discount_value'] ?? 0));
             $discountAmount = $discountType === 'percentage'
-                ? $subtotal * min(100, $discountValue) / 100
-                : min($subtotal, $discountValue);
-            $totalBeforeTax = max(0, $subtotal - $discountAmount);
-            $taxRate = min(100, max(0, $this->number($line['tax_rate'] ?? 0)));
-            $taxAmount = $totalBeforeTax * $taxRate / 100;
-            $lineTotal = $totalBeforeTax + $taxAmount;
+                ? bcround(bcdiv(bcmul($subtotal, $this->boundedRate($discountValue), 12), '100', 12), 4)
+                : (bccomp($discountValue, $subtotal, 4) > 0 ? $subtotal : $discountValue);
+            $totalBeforeTax = $this->nonNegative(bcsub($subtotal, $discountAmount, 4));
+            $taxRate = $this->boundedRate($this->formatAmount($line['tax_rate'] ?? 0));
+            $taxAmount = bcround(bcdiv(bcmul($totalBeforeTax, $taxRate, 12), '100', 12), 4);
+            $lineTotal = bcadd($totalBeforeTax, $taxAmount, 4);
 
             $calculatedLines[] = [
                 ...$line,
-                'ordered_quantity' => $this->formatQuantity($orderedQuantityInput),
-                'received_quantity' => $receivedQuantity > 0
-                    ? $this->formatQuantity($receivedQuantityInput)
-                    : $this->formatQuantity(0),
-                'remaining_quantity' => $this->decimalQuantity($remainingQuantity),
-                'unit_price' => $this->formatAmount($unitPriceInput),
+                'ordered_quantity' => $orderedQuantity,
+                'received_quantity' => $receivedQuantity,
+                'remaining_quantity' => $remainingQuantity,
+                'unit_price' => $unitPrice,
                 'discount_type' => $discountType,
-                'discount_value' => $this->formatAmount($discountValue),
-                'discount_amount' => $this->decimalAmount($discountAmount),
-                'tax_rate' => $this->formatAmount($taxRate),
-                'tax_amount' => $this->decimalAmount($taxAmount),
-                'subtotal_amount' => $this->decimalAmount($subtotal),
-                'total_before_tax' => $this->decimalAmount($totalBeforeTax),
-                'total_after_tax' => $this->decimalAmount($lineTotal),
-                'line_total' => $this->decimalAmount($lineTotal),
+                'discount_value' => $discountValue,
+                'discount_amount' => $discountAmount,
+                'tax_rate' => $taxRate,
+                'tax_amount' => $taxAmount,
+                'subtotal_amount' => $subtotal,
+                'total_before_tax' => $totalBeforeTax,
+                'total_after_tax' => $lineTotal,
+                'line_total' => $lineTotal,
             ];
 
-            $totalOrderedQuantity += $orderedQuantity;
-            $totalReceivedQuantity += $receivedQuantity;
-            $totalRemainingQuantity += $remainingQuantity;
-            $subtotalAmount += $subtotal;
-            $totalAmount += $lineTotal;
+            $totalOrderedQuantity = bcadd($totalOrderedQuantity, $orderedQuantity, 8);
+            $totalReceivedQuantity = bcadd($totalReceivedQuantity, $receivedQuantity, 8);
+            $totalRemainingQuantity = bcadd($totalRemainingQuantity, $remainingQuantity, 8);
+            $subtotalAmount = bcadd($subtotalAmount, $subtotal, 4);
+            $totalAmount = bcadd($totalAmount, $lineTotal, 4);
         }
 
         return [
             'order' => [
-                'total_ordered_quantity' => $this->decimalQuantity($totalOrderedQuantity),
-                'total_received_quantity' => $this->decimalQuantity($totalReceivedQuantity),
-                'total_remaining_quantity' => $this->decimalQuantity($totalRemainingQuantity),
-                'subtotal_amount' => $this->decimalAmount($subtotalAmount),
-                'freight_amount' => $this->formatAmount($freightAmount),
-                'total_amount' => $this->decimalAmount($totalAmount + $freightAmount),
+                'total_ordered_quantity' => $totalOrderedQuantity,
+                'total_received_quantity' => $totalReceivedQuantity,
+                'total_remaining_quantity' => $totalRemainingQuantity,
+                'subtotal_amount' => $subtotalAmount,
+                'freight_amount' => $freightAmount,
+                'total_amount' => bcadd($totalAmount, $freightAmount, 4),
             ],
             'lines' => $calculatedLines,
         ];
@@ -101,13 +99,20 @@ class PurchaseOrderCalculationService
         return $this->numbers->normalizeToScale($value ?? 0, 4) ?? '0.0000';
     }
 
-    private function decimalQuantity(float $value): string
+    public function formatUnitPrice(mixed $value): string
     {
-        return number_format($value, 8, '.', '');
+        $this->numbers->normalizeToScale($value ?? 0, 8);
+
+        return $this->numbers->normalize($value ?? 0) ?? '0';
     }
 
-    private function decimalAmount(float $value): string
+    private function nonNegative(string $value, int $scale = 4): string
     {
-        return number_format($value, 4, '.', '');
+        return bccomp($value, '0', $scale) < 0 ? $this->numbers->normalizeToScale(0, $scale) : $value;
+    }
+
+    private function boundedRate(string $rate): string
+    {
+        return bccomp($rate, '100', 4) > 0 ? '100.0000' : $rate;
     }
 }

@@ -39,6 +39,6 @@
     <style>
         .report-filter-summary { background: #f8fafc; border: 1px solid #d8e2ef; margin-bottom: 8px; padding: 6px 8px; }
         .general-journal-table { table-layout: fixed; }
-        .general-journal-table th, .general-journal-table td { font-size: 6.6px; line-height: 1.25; overflow-wrap: anywhere; }
+        .general-journal-table th, .general-journal-table td { font-size: 12px; line-height: 1.3; overflow-wrap: anywhere; }
     </style>
 @endsection

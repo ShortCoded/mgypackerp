@@ -27,14 +27,26 @@ class RecoverEmptyDatabaseCommand extends Command
      */
     public function handle(): int
     {
+        if (! app()->environment(['local', 'development', 'testing']) || ! EmergencyRecoverySeeder::isOperationallyEmpty()) {
+            $this->error('Recovery is allowed only for an empty local or test database. Existing records were not changed.');
+
+            return self::FAILURE;
+        }
+
         $this->warn('This recovery command never truncates or deletes data.');
 
         $this->call('optimize:clear');
         app(PermissionRegistrar::class)->forgetCachedPermissions();
-        $this->call('db:seed', [
+        $result = $this->call('db:seed', [
             '--class' => EmergencyRecoverySeeder::class,
         ]);
         app(PermissionRegistrar::class)->forgetCachedPermissions();
+
+        if ($result !== self::SUCCESS) {
+            $this->error('Recovery seeder failed.');
+
+            return self::FAILURE;
+        }
 
         $this->newLine();
         $this->info('Recovery seeder completed.');

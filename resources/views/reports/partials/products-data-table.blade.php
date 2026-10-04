@@ -6,70 +6,60 @@
 @endif
 
 @php
-    $numericColumnIndexes = ($mode ?? 'summary') === 'detailed' ? [6] : [12, 15];
+    $detailed = ($mode ?? 'summary') === 'detailed';
+    $mainColumns = $detailed ? [0, 1, 3, 4, 8, 9] : [0, 1, 2, 4, 14];
+    $detailColumns = array_values(array_diff(array_keys($headings), $mainColumns));
+    $numericColumnIndexes = $detailed ? [7, 8] : [12, 15];
 @endphp
 
-<table dir="{{ $direction ?? 'ltr' }}" class="report-table products-data-report-table {{ ($mode ?? 'summary') === 'detailed' ? 'products-data-report-table-detailed' : 'products-data-report-table-summary' }}">
-    <thead>
-        <tr>
-            @foreach ($headings as $heading)
-                <th>{{ $heading }}</th>
+@if (count($rows) > 0)
+    <table autosize="1" dir="{{ $direction ?? 'ltr' }}" class="report-table products-data-report-table">
+        <thead><tr>
+            @foreach ($mainColumns as $columnIndex)<th>{{ $headings[$columnIndex] }}</th>@endforeach
+        </tr></thead>
+        <tbody>
+            @foreach ($rows as $row)
+                <tr>
+                    @foreach ($mainColumns as $columnIndex)
+                        <td @if ($loop->first) rowspan="2" @endif @if (in_array($columnIndex, $numericColumnIndexes, true)) dir="ltr" @endif>{{ $row[$columnIndex] ?? '' }}</td>
+                    @endforeach
+                </tr>
+                <tr><td colspan="{{ count($mainColumns) - 1 }}" class="products-data-details">
+                    @foreach ($detailColumns as $columnIndex)
+                        <span class="products-data-attribute"><strong>{{ $headings[$columnIndex] }}:</strong>
+                            <span @if (in_array($columnIndex, $numericColumnIndexes, true)) dir="ltr" @endif>{{ filled($row[$columnIndex] ?? null) ? $row[$columnIndex] : '—' }}</span>
+                        </span>@unless ($loop->last) · @endunless
+                    @endforeach
+                </td></tr>
             @endforeach
-        </tr>
-    </thead>
-    <tbody>
-        @forelse ($rows as $row)
-            <tr>
-                @foreach ($row as $columnIndex => $cell)
-                    <td @class(['report-number' => in_array($columnIndex, $numericColumnIndexes, true)]) @if (in_array($columnIndex, $numericColumnIndexes, true)) dir="ltr" @endif>{{ $cell }}</td>
-                @endforeach
-            </tr>
-        @empty
-            <tr>
-                <td colspan="{{ count($headings) }}">{{ __('reports.no_data') }}</td>
-            </tr>
-        @endforelse
-    </tbody>
-</table>
+        </tbody>
+    </table>
+@else
+    <div class="report-empty-state">{{ __('reports.no_data') }}</div>
+@endif
 
 <style>
     .report-filter-summary {
-        background: #f8fafc;
         border: 1px solid #d8e2ef;
-        border-radius: 4px;
         color: #344050;
-        font-size: 8.2px;
-        line-height: 1.45;
+        font-size: 12px;
+        line-height: 1.5;
         margin-bottom: 8px;
         padding: 6px 8px;
     }
-
-    .products-data-report-table {
-        table-layout: fixed;
-    }
-
     .products-data-report-table th,
     .products-data-report-table td {
-        font-size: 7.4px;
-        line-height: 1.35;
+        font-size: 12px;
+        line-height: 1.5;
         overflow-wrap: break-word;
+        white-space: normal;
         vertical-align: top;
     }
-
-    .products-data-report-table-summary th,
-    .products-data-report-table-summary td {
-        font-size: 6.6px;
+    .products-data-report-table .products-data-details {
+        font-size: 12px;
+        background: #ffffff;
+        padding: 6px 8px 9px;
+        border-bottom: 1px solid #aab8c7;
     }
-
-    .products-data-report-table-detailed th,
-    .products-data-report-table-detailed td {
-        font-size: 8px;
-    }
-
-    .products-data-report-table .report-number {
-        direction: ltr;
-        font-variant-numeric: tabular-nums;
-        unicode-bidi: isolate;
-    }
-
+    .products-data-attribute { line-height: 1.6; }
 </style>

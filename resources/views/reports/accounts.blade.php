@@ -47,7 +47,7 @@
             border: 1px solid #d8e2ef;
             border-radius: 4px;
             color: #344050;
-            font-size: 8.5px;
+            font-size: 12px;
             line-height: 1.5;
             margin-bottom: 8px;
             padding: 6px 8px;
@@ -59,7 +59,7 @@
 
         .accounts-report-table th,
         .accounts-report-table td {
-            font-size: 8.2px;
+            font-size: 12px;
             line-height: 1.35;
             overflow-wrap: break-word;
         }

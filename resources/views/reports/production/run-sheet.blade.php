@@ -15,5 +15,14 @@
         @endforelse
     </tbody></table>
     <table dir="{{ $direction ?? 'ltr' }}" class="report-table" style="margin-top:9px"><tbody><tr><th>{{ __('production_execution.reports.columns.good') }}</th><td dir="ltr">{{ $numbers->format($record->good_base_quantity) }}</td><th>{{ __('production_execution.reports.columns.rejected') }}</th><td dir="ltr">{{ $numbers->format($record->rejected_base_quantity) }}</td><th>{{ __('production_execution.reports.columns.rework') }}</th><td dir="ltr">{{ $numbers->format($record->rework_base_quantity) }}</td><th>{{ __('production_execution.reports.columns.scrap') }}</th><td dir="ltr">{{ $numbers->format($record->scrap_base_quantity) }}</td></tr></tbody></table>
+    @if(collect($record->labor_details ?? [])->contains(fn ($labor) => !empty($labor['work_segments'])))
+        <h3>{{ __('production_execution.fields.daily_work_hours') }}</h3>
+        <table class="report-table"><thead><tr><th>{{ __('production_execution.fields.worker_name') }}</th><th>{{ __('production_execution.fields.work_date') }}</th><th>{{ __('production_execution.fields.actual_hours') }}</th></tr></thead><tbody>
+            @foreach($record->labor_details ?? [] as $labor)@foreach($labor['work_segments'] ?? [] as $segment)
+                <tr><td>{{ $labor['name'] ?? $labor['employee_doc_num'] ?? '—' }}</td><td>{{ $dates->formatDate($segment['work_date']) }}</td><td dir="ltr">{{ $numbers->format($segment['actual_hours']) }}</td></tr>
+            @endforeach
+            @endforeach
+        </tbody></table>
+    @endif
     @include('reports.production.partials.signatures', ['areas' => ['production_supervisor', 'quality']])
 @endsection

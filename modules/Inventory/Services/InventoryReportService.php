@@ -8,10 +8,14 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Collection as SupportCollection;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Product;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Inventory\Models\InventoryDocument;
+use Modules\Inventory\Models\InventoryPeriodicCostClose;
+use Modules\Inventory\Models\InventoryReceiptCostProposal;
 use Modules\Inventory\Models\InventoryReceiptLayer;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Inventory\Models\InventoryValueAdjustment;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Inventory\Models\StockCountLine;
 use Modules\Sales\Models\PriceList;
@@ -19,6 +23,8 @@ use Modules\Sales\Models\PriceList;
 class InventoryReportService
 {
     public const MovementPageSize = 500;
+
+    public function __construct(private readonly NumericFormatService $numbers, private readonly InventoryLayerHistoryService $layerHistory) {}
 
     /**
      * @param  array<string, mixed>  $filters
@@ -59,10 +65,8 @@ class InventoryReportService
                 'unvalued_receipt_quantity' => $this->decimalTotal($balances, 'unvalued_receipt_quantity'),
                 ...$this->movementTotals($companyId, $contextFilters),
                 'aging_quantity' => $this->decimalTotal($agingLayers, 'remaining_quantity'),
-                'aging_value' => $agingLayers->reduce(
-                    fn (string $total, InventoryReceiptLayer $layer): string => bcadd($total, bcmul((string) $layer->remaining_quantity, (string) ($layer->unit_cost ?? 0), 8), 8),
-                    '0.00000000',
-                ),
+                'aging_value' => $this->decimalTotal($agingLayers->whereNotNull('remaining_value'), 'remaining_value'),
+                'aging_unvalued_quantity' => $this->decimalTotal($agingLayers->whereNull('remaining_value'), 'remaining_quantity'),
                 'expiry_quantity' => $this->decimalTotal($expiryLayers, 'remaining_quantity'),
             ],
         ];
@@ -73,9 +77,9 @@ class InventoryReportService
     {
         $asOf = CarbonImmutable::parse($filters['as_of'] ?? $filters['to'] ?? today())->startOfDay();
 
-        return InventoryReceiptLayer::query()
+        $layers = InventoryReceiptLayer::query()
             ->where('company_id', $companyId)
-            ->where('remaining_quantity', '>', 0)
+            ->whereDate('receipt_date', '<=', $asOf)
             ->whereDate('original_receipt_date', '<=', $asOf)
             ->when($filters['financial_period_id'] ?? null, fn ($query, $periodId) => $query->where('financial_period_id', $periodId))
             ->when($filters['branch_id'] ?? null, fn ($query, $branchId) => $query->where('branch_id', $branchId))
@@ -88,12 +92,13 @@ class InventoryReportService
             ->with(['product', 'branchStore', 'warehouseLocation'])
             ->orderBy('original_receipt_date')
             ->orderBy('id')
-            ->get()
+            ->get();
+
+        return $this->layerHistory->atDate($layers, $asOf)
             ->each(function (InventoryReceiptLayer $layer) use ($asOf): void {
                 $ageDays = $layer->original_receipt_date->diffInDays($asOf);
                 $layer->setAttribute('age_days', $ageDays);
                 $layer->setAttribute('age_bucket', $this->ageBucket($ageDays));
-                $layer->setAttribute('remaining_value', bcmul((string) $layer->remaining_quantity, (string) ($layer->unit_cost ?? 0), 8));
             });
     }
 
@@ -104,9 +109,9 @@ class InventoryReportService
         $withinDays = (int) ($filters['expiry_within_days'] ?? 90);
         $cutoff = $asOf->copy()->addDays($withinDays);
 
-        return InventoryReceiptLayer::query()
+        $layers = InventoryReceiptLayer::query()
             ->where('company_id', $companyId)
-            ->where('remaining_quantity', '>', 0)
+            ->whereDate('receipt_date', '<=', $asOf)
             ->whereNotNull('expiry_date')
             ->whereDate('expiry_date', '<=', $cutoff)
             ->when($filters['financial_period_id'] ?? null, fn ($query, $periodId) => $query->where('financial_period_id', $periodId))
@@ -120,7 +125,9 @@ class InventoryReportService
             ->with(['product', 'branchStore', 'warehouseLocation'])
             ->orderBy('expiry_date')
             ->orderBy('id')
-            ->get()
+            ->get();
+
+        return $this->layerHistory->atDate($layers, $asOf)
             ->each(function (InventoryReceiptLayer $layer) use ($asOf): void {
                 $daysToExpiry = $asOf->diffInDays($layer->expiry_date, false);
                 $layer->setAttribute('days_to_expiry', $daysToExpiry);
@@ -155,15 +162,18 @@ class InventoryReportService
             ];
         }
 
+        $showHallBreakdown = ! empty($filters['branch_hall_id']);
+        $showLocationBreakdown = ! empty($filters['warehouse_location_id']);
+
         $rows = InventoryTransaction::query()
-            ->selectRaw('company_id, branch_id, branch_store_id, branch_hall_id, warehouse_location_id, product_id')
-            ->selectRaw('sum(quantity_in - quantity_out) as on_hand')
-            ->selectRaw('sum(case when stock_status = ? then quantity_in - quantity_out else 0 end) as available_stock', [InventoryTransaction::StatusAvailable])
-            ->selectRaw('sum(case when stock_status <> ? then quantity_in - quantity_out else 0 end) as held_stock', [InventoryTransaction::StatusAvailable])
-            ->selectRaw('sum(case
-                when unit_cost is not null and total_cost is not null then case when quantity_in > 0 then total_cost else -total_cost end
-                else 0 end) as inventory_value')
-            ->selectRaw('sum(case when unit_cost is null or total_cost is null then quantity_in - quantity_out else 0 end) as unvalued_quantity')
+            ->selectRaw('company_id, branch_id, branch_store_id, product_id')
+            ->selectRaw($showHallBreakdown ? 'branch_hall_id' : 'NULL as branch_hall_id')
+            ->selectRaw($showLocationBreakdown ? 'warehouse_location_id' : 'NULL as warehouse_location_id')
+            ->selectRaw('round(sum(quantity_in - quantity_out), 8) as on_hand')
+            ->selectRaw('round(sum(case when stock_status = ? then quantity_in - quantity_out else 0 end), 8) as available_stock', [InventoryTransaction::StatusAvailable])
+            ->selectRaw('round(sum(case when stock_status <> ? then quantity_in - quantity_out else 0 end), 8) as held_stock', [InventoryTransaction::StatusAvailable])
+            ->selectRaw('round(sum('.InventoryTransaction::signedValueSql().'), 8) as inventory_value')
+            ->selectRaw('round(sum('.InventoryTransaction::unvaluedQuantitySql().'), 8) as unvalued_quantity')
             ->selectRaw('sum(case when unit_cost is null or total_cost is null then 1 else 0 end) as unvalued_row_count')
             ->where('company_id', $companyId)
             ->whereIn('branch_id', $allowedBranchIds)
@@ -181,14 +191,15 @@ class InventoryReportService
                 'warehouseLocation:id,branch_store_id,code,name,zone_code,deleted_at',
                 'product' => fn ($query) => $query->withTrashed()->with(['unit', 'category', 'group', 'itemModel', 'size', 'color', 'decal', 'originCountry']),
             ])
-            ->groupBy(['company_id', 'branch_id', 'branch_store_id', 'branch_hall_id', 'warehouse_location_id', 'product_id'])
-            ->havingRaw('sum(quantity_in - quantity_out) <> 0')
+            ->groupBy(['company_id', 'branch_id', 'branch_store_id', 'product_id'])
+            ->when($showHallBreakdown, fn (Builder $query) => $query->groupBy('branch_hall_id'))
+            ->when($showLocationBreakdown, fn (Builder $query) => $query->groupBy('warehouse_location_id'))
             ->orderBy('branch_id')
             ->orderBy('branch_store_id')
             ->orderBy('product_id')
             ->get();
 
-        $reservationsAreHallScoped = empty($filters['branch_hall_id']);
+        $reservationsAreHallScoped = ! $showHallBreakdown;
         $reservationRows = $reservationsAreHallScoped
             ? InventoryReservation::query()
                 ->selectRaw('branch_store_id, warehouse_location_id, product_id, stock_status, batch_lot')
@@ -208,11 +219,15 @@ class InventoryReportService
 
         $reservedByPosition = $reservationRows->groupBy(fn ($row): string => $this->stockPositionKey(
             (int) $row->branch_store_id,
-            $row->warehouse_location_id ? (int) $row->warehouse_location_id : null,
+            $showLocationBreakdown && $row->warehouse_location_id ? (int) $row->warehouse_location_id : null,
             (int) $row->product_id,
         ))->map(fn (SupportCollection $positionRows): string => $this->decimalTotal($positionRows, 'reserved_quantity'));
 
         $rows->each(function (InventoryTransaction $row) use ($reservedByPosition): void {
+            foreach (['on_hand', 'available_stock', 'held_stock', 'inventory_value', 'unvalued_quantity'] as $amount) {
+                $row->setAttribute($amount, $this->decimal($row->getAttribute($amount)));
+            }
+
             $key = $this->stockPositionKey(
                 (int) $row->branch_store_id,
                 $row->warehouse_location_id ? (int) $row->warehouse_location_id : null,
@@ -223,9 +238,16 @@ class InventoryReportService
                 : '0.00000000';
             $available = bcsub((string) $row->available_stock, $reserved, 8);
 
+            $row->setAttribute('unvalued_row_count', bccomp((string) $row->unvalued_quantity, '0', 8) === 0 ? 0 : 1);
             $row->setAttribute('reserved', $reserved);
             $row->setAttribute('available', bccomp($available, '0', 8) < 0 ? '0.00000000' : $available);
         });
+
+        $rows = $rows->filter(fn (InventoryTransaction $row): bool => bccomp((string) $row->on_hand, '0', 8) !== 0
+            || bccomp((string) $row->inventory_value, '0', 8) !== 0
+            || bccomp((string) $row->unvalued_quantity, '0', 8) !== 0
+            || bccomp((string) $row->reserved, '0', 8) !== 0
+        );
 
         $rows = $this->filterStockBalanceQuantityState($rows, $filters['quantity_state'] ?? null);
         $visiblePositionKeys = $rows->map(fn (InventoryTransaction $row): string => $this->stockPositionKey(
@@ -236,7 +258,7 @@ class InventoryReportService
         $reservedTotal = $reservationsAreHallScoped
             ? $this->decimalTotal($reservationRows->filter(fn ($row): bool => $visiblePositionKeys->contains($this->stockPositionKey(
                 (int) $row->branch_store_id,
-                $row->warehouse_location_id ? (int) $row->warehouse_location_id : null,
+                $showLocationBreakdown && $row->warehouse_location_id ? (int) $row->warehouse_location_id : null,
                 (int) $row->product_id,
             ))), 'reserved_quantity')
             : '0.00000000';
@@ -265,14 +287,17 @@ class InventoryReportService
             ];
         }
 
+        $showHallBreakdown = ! empty($filters['branch_hall_id']);
+        $showLocationBreakdown = ! empty($filters['warehouse_location_id']);
+
         $rows = InventoryTransaction::query()
-            ->selectRaw('company_id, branch_id, branch_store_id, branch_hall_id, warehouse_location_id, product_id')
-            ->selectRaw('sum(quantity_in - quantity_out) as on_hand')
-            ->selectRaw('sum(case
-                when unit_cost is not null and total_cost is not null then case when quantity_in > 0 then total_cost else -total_cost end
-                else 0 end) as book_value')
-            ->selectRaw('sum(case when unit_cost is null or total_cost is null then quantity_in - quantity_out else 0 end) as unvalued_quantity')
-            ->selectRaw('sum(case when unit_cost is not null and total_cost is not null and total_cost = 0 then 1 else 0 end) as zero_cost_row_count')
+            ->selectRaw('company_id, branch_id, branch_store_id, product_id')
+            ->selectRaw($showHallBreakdown ? 'branch_hall_id' : 'NULL as branch_hall_id')
+            ->selectRaw($showLocationBreakdown ? 'warehouse_location_id' : 'NULL as warehouse_location_id')
+            ->selectRaw('round(sum(quantity_in - quantity_out), 8) as on_hand')
+            ->selectRaw('round(sum('.InventoryTransaction::signedValueSql().'), 8) as book_value')
+            ->selectRaw('round(sum('.InventoryTransaction::unvaluedQuantitySql().'), 8) as unvalued_quantity')
+            ->selectRaw('sum(case when (quantity_in > 0 or quantity_out > 0) and unit_cost is not null and total_cost is not null and total_cost = 0 then 1 else 0 end) as zero_cost_row_count')
             ->where('company_id', $companyId)
             ->whereIn('branch_id', $allowedBranchIds)
             ->whereDate('transaction_date', '<=', $filters['as_of'] ?? today()->toDateString())
@@ -289,32 +314,40 @@ class InventoryReportService
                 'warehouseLocation:id,branch_store_id,code,name,zone_code,deleted_at',
                 'product' => fn ($query) => $query->withTrashed()->with(['unit', 'category', 'group']),
             ])
-            ->groupBy(['company_id', 'branch_id', 'branch_store_id', 'branch_hall_id', 'warehouse_location_id', 'product_id'])
-            ->havingRaw('sum(quantity_in - quantity_out) <> 0')
+            ->groupBy(['company_id', 'branch_id', 'branch_store_id', 'product_id'])
+            ->when($showHallBreakdown, fn (Builder $query) => $query->groupBy('branch_hall_id'))
+            ->when($showLocationBreakdown, fn (Builder $query) => $query->groupBy('warehouse_location_id'))
             ->orderBy('branch_id')
             ->orderBy('branch_store_id')
             ->orderBy('product_id')
             ->get()
             ->each(function (InventoryTransaction $row): void {
-                $quantity = bcadd((string) $row->on_hand, '0', 8);
-                $bookValue = bcadd((string) $row->book_value, '0', 8);
-                $unvaluedQuantity = bcadd((string) $row->unvalued_quantity, '0', 8);
+                $quantity = $this->decimal($row->on_hand);
+                $bookValue = $this->decimal($row->book_value);
+                $unvaluedQuantity = $this->decimal($row->unvalued_quantity);
                 $hasUnvalued = bccomp($unvaluedQuantity, '0', 8) !== 0;
+                $isZeroQuantity = bccomp($quantity, '0', 8) === 0;
+                $hasResidualValue = $isZeroQuantity && bccomp($bookValue, '0', 8) !== 0;
                 $unvaluedRows = $hasUnvalued ? 1 : 0;
-                $isZeroCost = ! $hasUnvalued && bccomp($bookValue, '0', 8) === 0;
+                $isZeroCost = ! $hasUnvalued && ! $isZeroQuantity && bccomp($bookValue, '0', 8) === 0;
 
                 $row->setAttribute('on_hand', $quantity);
                 $row->setAttribute('book_value', $bookValue);
                 $row->setAttribute('unvalued_quantity', $unvaluedQuantity);
                 $row->setAttribute('unvalued_row_count', $unvaluedRows);
                 $row->setAttribute('zero_cost_row_count', (int) $row->zero_cost_row_count);
-                $row->setAttribute('book_unit_cost', $hasUnvalued ? null : bcdiv($bookValue, $quantity, 8));
-                $row->setAttribute('valuation_status', $hasUnvalued ? 'unvalued' : ($isZeroCost ? 'zero_cost' : 'valued'));
+                $row->setAttribute('book_unit_cost', $hasUnvalued || $isZeroQuantity ? null : bcdiv($bookValue, $quantity, 8));
+                $row->setAttribute('valuation_status', $hasUnvalued ? 'unvalued' : ($hasResidualValue ? 'residual_value' : ($isZeroCost ? 'zero_cost' : 'valued')));
                 $row->setAttribute('is_negative', bccomp($quantity, '0', 8) < 0);
             });
 
+        $rows = $rows->filter(fn (InventoryTransaction $row): bool => bccomp((string) $row->on_hand, '0', 8) !== 0
+            || bccomp((string) $row->book_value, '0', 8) !== 0
+            || bccomp((string) $row->unvalued_quantity, '0', 8) !== 0
+        );
+
         $rows = match ($filters['quantity_state'] ?? null) {
-            'positive' => $rows->filter(fn (InventoryTransaction $row): bool => ! $row->is_negative),
+            'positive' => $rows->filter(fn (InventoryTransaction $row): bool => bccomp((string) $row->on_hand, '0', 8) > 0),
             'negative' => $rows->filter(fn (InventoryTransaction $row): bool => $row->is_negative),
             default => $rows,
         };
@@ -369,19 +402,27 @@ class InventoryReportService
         };
     }
 
-    /** @return array<string, string|int> */
+    /** @return array<string, mixed> */
     private function stockBalanceTotals(Collection $rows, string $reservedTotal): array
     {
         $availableStock = $this->decimalTotal($rows, 'available_stock');
-        $netAvailable = bcsub($availableStock, $reservedTotal, 8);
+        $quantityByUnit = $this->quantitiesByUnit($rows, [
+            'on_hand' => 'on_hand',
+            'available_stock' => 'available_stock',
+            'reserved' => 'reserved',
+            'available' => 'available',
+            'held_stock' => 'held_stock',
+        ]);
 
         return [
             'positions' => $rows->count(),
             'products' => $rows->pluck('product_id')->unique()->count(),
+            'mixed_units' => count($quantityByUnit) > 1,
+            'quantity_by_unit' => $quantityByUnit,
             'on_hand' => $this->decimalTotal($rows, 'on_hand'),
             'available_stock' => $availableStock,
             'reserved' => $reservedTotal,
-            'available' => bccomp($netAvailable, '0', 8) < 0 ? '0.00000000' : $netAvailable,
+            'available' => $this->decimalTotal($rows, 'available'),
             'held_stock' => $this->decimalTotal($rows, 'held_stock'),
             'inventory_value' => $this->decimalTotal($rows, 'inventory_value'),
         ];
@@ -392,11 +433,9 @@ class InventoryReportService
     {
         $rows = InventoryTransaction::query()
             ->selectRaw('company_id, branch_store_id, warehouse_location_id, product_id, stock_status, batch_lot')
-            ->selectRaw('sum(quantity_in) as quantity_in, sum(quantity_out) as quantity_out, sum(quantity_in - quantity_out) as on_hand')
-            ->selectRaw('sum(case
-                when unit_cost is not null and total_cost is not null then case when quantity_in > 0 then total_cost else -total_cost end
-                else 0 end) as inventory_value')
-            ->selectRaw('sum(case when unit_cost is null or total_cost is null then quantity_in - quantity_out else 0 end) as unvalued_receipt_quantity')
+            ->selectRaw('round(sum(quantity_in), 8) as quantity_in, round(sum(quantity_out), 8) as quantity_out, round(sum(quantity_in - quantity_out), 8) as on_hand')
+            ->selectRaw('round(sum('.InventoryTransaction::signedValueSql().'), 8) as inventory_value')
+            ->selectRaw('round(sum('.InventoryTransaction::unvaluedQuantitySql().'), 8) as unvalued_receipt_quantity')
             ->selectRaw('sum(case when unit_cost is null or total_cost is null then 1 else 0 end) as unvalued_row_count')
             ->where('company_id', $companyId)
             ->when($filters['financial_period_id'] ?? null, fn ($query, $periodId) => $query->where('financial_period_id', $periodId))
@@ -408,27 +447,46 @@ class InventoryReportService
             ->when($filters['as_of'] ?? $filters['to'] ?? null, fn ($query, $date) => $query->whereDate('transaction_date', '<=', $date))
             ->with(['product', 'branchStore', 'warehouseLocation'])
             ->groupBy(['company_id', 'branch_store_id', 'warehouse_location_id', 'product_id', 'stock_status', 'batch_lot'])
-            ->havingRaw('sum(quantity_in - quantity_out) <> 0')
+            ->havingRaw('(round(sum(quantity_in - quantity_out), 8) <> 0 or round(sum('.InventoryTransaction::signedValueSql().'), 8) <> 0 or round(sum('.InventoryTransaction::unvaluedQuantitySql().'), 8) <> 0)')
             ->orderBy('branch_store_id')
             ->orderBy('product_id')
-            ->get();
+            ->get()
+            ->each(function (InventoryTransaction $row): void {
+                foreach (['quantity_in', 'quantity_out', 'on_hand', 'inventory_value', 'unvalued_receipt_quantity'] as $amount) {
+                    $row->setAttribute($amount, $this->decimal($row->getAttribute($amount)));
+                }
+                $row->setAttribute('unvalued_row_count', bccomp((string) $row->unvalued_receipt_quantity, '0', 8) === 0 ? 0 : 1);
+            })
+            ->filter(function (InventoryTransaction $row): bool {
+                return bccomp((string) $row->on_hand, '0', 8) !== 0
+                    || bccomp((string) $row->inventory_value, '0', 8) !== 0
+                    || bccomp((string) $row->unvalued_receipt_quantity, '0', 8) !== 0;
+            })
+            ->values();
 
         return $rows;
     }
 
-    /** @return array<string, string|int|bool> */
+    /** @return array<string, mixed> */
     private function bookValuationTotals(Collection $rows): array
     {
         $unvaluedRows = (int) $rows->sum('unvalued_row_count');
+        $quantityByUnit = $this->quantitiesByUnit($rows, [
+            'quantity' => 'on_hand',
+            'unvalued_quantity' => 'unvalued_quantity',
+        ]);
 
         return [
             'positions' => $rows->count(),
             'products' => $rows->pluck('product_id')->unique()->count(),
             'quantity' => $this->decimalTotal($rows, 'on_hand'),
+            'mixed_units' => count($quantityByUnit) > 1,
+            'quantity_by_unit' => $quantityByUnit,
             'book_value' => $this->decimalTotal($rows, 'book_value'),
             'unvalued_quantity' => $this->decimalTotal($rows, 'unvalued_quantity'),
             'unvalued_rows' => $unvaluedRows,
             'zero_cost_positions' => $rows->where('valuation_status', 'zero_cost')->count(),
+            'residual_value_positions' => $rows->where('valuation_status', 'residual_value')->count(),
             'negative_positions' => $rows->where('is_negative', true)->count(),
             'has_unvalued' => $unvaluedRows > 0,
         ];
@@ -473,7 +531,7 @@ class InventoryReportService
     public function movements(int $companyId, array $filters = [], ?int $page = 1): Collection
     {
         $query = $this->movementQuery($companyId, $filters)
-            ->with(['product', 'branchStore', 'warehouseLocation', 'productionRun'])
+            ->with(['product', 'branchStore', 'warehouseLocation', 'productionRun', 'serialIdentity'])
             ->latest('transaction_date')
             ->latest('id');
 
@@ -644,15 +702,19 @@ class InventoryReportService
         if ($allowedBranchIds === []) {
             return [
                 'rows' => new Collection,
-                'totals' => ['position_count' => 0, 'product_count' => 0, 'unpriced_product_count' => 0, 'quantity' => '0.00000000', 'sales_value' => '0.00000000', 'unpriced_quantity' => '0.00000000'],
+                'totals' => ['position_count' => 0, 'product_count' => 0, 'unpriced_product_count' => 0, 'quantity' => '0.00000000', 'sales_value' => '0.00000000', 'unpriced_quantity' => '0.00000000', 'mixed_units' => false, 'quantity_by_unit' => []],
             ];
         }
 
         $asOf = CarbonImmutable::parse($filters['as_of'] ?? today())->startOfDay();
         $priceListId = (int) ($filters['price_list_id'] ?? 0);
+        $showHallBreakdown = ! empty($filters['branch_hall_id']);
+        $showLocationBreakdown = ! empty($filters['warehouse_location_id']);
 
         $positions = InventoryTransaction::query()
-            ->selectRaw('company_id, branch_id, branch_store_id, branch_hall_id, warehouse_location_id, product_id')
+            ->selectRaw('company_id, branch_id, branch_store_id, product_id')
+            ->selectRaw($showHallBreakdown ? 'branch_hall_id' : 'NULL as branch_hall_id')
+            ->selectRaw($showLocationBreakdown ? 'warehouse_location_id' : 'NULL as warehouse_location_id')
             ->selectRaw('sum(quantity_in - quantity_out) as on_hand')
             ->where('company_id', $companyId)
             ->whereIn('branch_id', $allowedBranchIds)
@@ -670,7 +732,9 @@ class InventoryReportService
                 'warehouseLocation:id,branch_store_id,code,name,zone_code,deleted_at',
                 'product' => fn ($query) => $query->withTrashed()->with(['unit']),
             ])
-            ->groupBy(['company_id', 'branch_id', 'branch_store_id', 'branch_hall_id', 'warehouse_location_id', 'product_id'])
+            ->groupBy(['company_id', 'branch_id', 'branch_store_id', 'product_id'])
+            ->when($showHallBreakdown, fn (Builder $query) => $query->groupBy('branch_hall_id'))
+            ->when($showLocationBreakdown, fn (Builder $query) => $query->groupBy('warehouse_location_id'))
             ->havingRaw('sum(quantity_in - quantity_out) <> 0')
             ->orderBy('branch_id')
             ->orderBy('branch_store_id')
@@ -698,6 +762,7 @@ class InventoryReportService
                 'warehouseLocation' => $row->warehouseLocation,
                 'product' => $row->product,
                 'on_hand' => $quantity,
+                'unpriced_quantity' => $isUnpriced ? $quantity : '0.00000000',
                 'unit_selling_price' => $unitSellingPrice,
                 'sales_value' => $salesValue,
                 'price_list' => $priceList,
@@ -719,10 +784,16 @@ class InventoryReportService
             ->orderBy('product_id')
             ->get();
 
+        $quantityByUnit = $this->quantitiesByUnit($rows, [
+            'quantity' => 'on_hand',
+            'unpriced_quantity' => 'unpriced_quantity',
+        ]);
         $totals = [
             'position_count' => $rows->count(),
             'product_count' => $rows->pluck('product_id')->unique()->count(),
             'unpriced_product_count' => $rows->where('price_status', 'unpriced')->pluck('product_id')->unique()->count(),
+            'mixed_units' => count($quantityByUnit) > 1,
+            'quantity_by_unit' => $quantityByUnit,
             'quantity' => $rows->reduce(fn (string $total, object $row): string => bcadd($total, (string) $row->on_hand, 8), '0.00000000'),
             'sales_value' => $rows->reduce(fn (string $total, object $row): string => $row->sales_value !== null ? bcadd($total, (string) $row->sales_value, 8) : $total, '0.00000000'),
             'unpriced_quantity' => $rows->where('price_status', 'unpriced')->reduce(
@@ -746,29 +817,85 @@ class InventoryReportService
     private function decimalTotal(SupportCollection $rows, string $attribute): string
     {
         return $rows->reduce(
-            fn (string $total, $row): string => bcadd($total, (string) ($row->{$attribute} ?? 0), 8),
+            fn (string $total, $row): string => bcadd($total, $this->decimal($row->{$attribute} ?? 0), 8),
             '0.00000000',
         );
     }
 
+    /**
+     * @param  array<string, string>  $attributes
+     * @return list<array<string, int|string|null>>
+     */
+    private function quantitiesByUnit(SupportCollection $rows, array $attributes): array
+    {
+        return $rows
+            ->groupBy(fn (object $row): string => $row->product?->item_unit_id !== null
+                ? 'unit:'.$row->product->item_unit_id
+                : 'product:'.($row->product_id ?? 'unknown'))
+            ->map(function (SupportCollection $unitRows) use ($attributes): array {
+                $first = $unitRows->first();
+                $result = [
+                    'unit_id' => $first->product?->item_unit_id,
+                    'unit_name' => $first->product?->unit?->name ?? '—',
+                ];
+
+                foreach ($attributes as $name => $attribute) {
+                    $result[$name] = $this->decimalTotal($unitRows, $attribute);
+                }
+
+                return $result;
+            })
+            ->values()
+            ->all();
+    }
+
+    private function decimal(mixed $value): string
+    {
+        return bcadd($this->numbers->normalizeScientificNotation((string) ($value ?? '0')) ?? '0', '0', 8);
+    }
+
     private function hydrateMovementSources(Collection $rows): void
     {
+        $companyIds = $rows->pluck('company_id')->unique();
         $inventoryDocuments = InventoryDocument::query()
+            ->whereIn('company_id', $companyIds)
             ->whereIn('id', $rows->where('source_type', InventoryDocument::class)->pluck('source_id')->filter()->unique())
             ->get()
             ->keyBy('id');
         $openingStocks = OpeningStock::query()
             ->withTrashed()
+            ->whereIn('company_id', $companyIds)
             ->whereIn('id', $rows->where('source_type', OpeningStock::class)->pluck('source_id')->filter()->unique())
             ->get()
             ->keyBy('id');
 
-        $rows->each(function (InventoryTransaction $row) use ($inventoryDocuments, $openingStocks): void {
-            $row->setRelation('sourceDocument', match ($row->source_type) {
+        $adjustments = InventoryValueAdjustment::query()
+            ->whereIn('company_id', $companyIds)
+            ->whereIn('id', $rows->where('source_type', InventoryValueAdjustment::class)->pluck('source_id')->filter()->unique())
+            ->get()->keyBy('id');
+        $proposals = InventoryReceiptCostProposal::query()->with('document')
+            ->whereIn('company_id', $companyIds)
+            ->whereIn('id', $adjustments->where('source_type', InventoryReceiptCostProposal::class)->pluck('source_id'))
+            ->get()->keyBy('id');
+        $periodicCloses = InventoryPeriodicCostClose::query()->whereIn('company_id', $companyIds)
+            ->whereIn('id', $adjustments->where('source_type', InventoryPeriodicCostClose::class)->pluck('source_id'))
+            ->get()->keyBy('id');
+
+        $rows->each(function (InventoryTransaction $row) use ($inventoryDocuments, $openingStocks, $adjustments, $proposals, $periodicCloses): void {
+            $adjustment = $adjustments->get($row->source_id);
+            $completionDocument = $row->source_type === InventoryValueAdjustment::class
+                && $adjustment?->source_type === InventoryReceiptCostProposal::class
+                ? $proposals->get($adjustment->source_id)?->document : null;
+            $row->setRelation('costCompletionDocument', (int) $completionDocument?->company_id === (int) $row->company_id ? $completionDocument : null);
+            $periodicClose = $row->source_type === InventoryValueAdjustment::class && $adjustment?->source_type === InventoryPeriodicCostClose::class
+                ? $periodicCloses->get($adjustment->source_id) : null;
+            $row->setRelation('periodicCostClose', (int) $periodicClose?->company_id === (int) $row->company_id ? $periodicClose : null);
+            $sourceDocument = match ($row->source_type) {
                 InventoryDocument::class => $inventoryDocuments->get($row->source_id),
                 OpeningStock::class => $openingStocks->get($row->source_id),
                 default => null,
-            });
+            };
+            $row->setRelation('sourceDocument', (int) $sourceDocument?->company_id === (int) $row->company_id ? $sourceDocument : null);
         });
     }
 }

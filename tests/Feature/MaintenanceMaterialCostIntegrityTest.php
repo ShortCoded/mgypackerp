@@ -12,35 +12,42 @@ use Modules\Core\Database\Seeders\CurrencySeeder;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
+use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\FixedAssets\Models\FixedAsset;
+use Modules\Inventory\Models\InventoryCostPolicy;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryLayerAllocation;
 use Modules\Inventory\Models\InventoryReceiptLayer;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\WarehouseLocation;
 use Modules\Inventory\Services\InventoryAvailabilityService;
+use Modules\Inventory\Services\InventoryCostPolicyService;
 use Modules\Inventory\Services\InventoryDocumentPostingService;
 use Modules\Inventory\Services\InventoryLayerService;
 use Modules\Inventory\Services\InventoryReportService;
 use Modules\Maintenance\Exports\MaintenanceWorkOrderExport;
 use Modules\Maintenance\Models\MaintenanceMaterialRequest;
 use Modules\Maintenance\Models\MaintenanceMaterialRequestLine;
+use Modules\Maintenance\Models\MaintenancePlan;
+use Modules\Maintenance\Models\MaintenancePlanDue;
+use Modules\Maintenance\Models\MaintenanceRequest;
 use Modules\Maintenance\Models\MaintenanceWorkOrder;
 use Modules\Maintenance\Services\MaintenanceMaterialRequestService;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionOrderLine;
 use Modules\Production\Models\ProductionRun;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 use Symfony\Component\Process\Process;
 
 /** @return array<string, mixed> */
-function maintenanceMaterialCostFixture(): array
+function maintenanceMaterialCostFixture(bool $fifo = false, bool $periodic = false): array
 {
     test()->seed(DefaultOperatingContextSeeder::class);
     test()->seed(CurrencySeeder::class);
@@ -104,6 +111,16 @@ function maintenanceMaterialCostFixture(): array
     ];
     request()->session()->put($session);
 
+    if ($fifo || $periodic) {
+        Permission::findOrCreate('inventory.cost_policies.manage', 'web');
+        $user->givePermissionTo('inventory.cost_policies.manage');
+        app(InventoryCostPolicyService::class)->createVersion($company->getKey(), [
+            'branch_store_id' => $store->getKey(),
+            'method' => $periodic ? InventoryCostPolicy::PeriodicWeightedAverage : InventoryCostPolicy::Fifo,
+            'effective_from' => $period->from_date->toDateString(),
+        ], $user->getKey());
+    }
+
     foreach ([
         ['key' => 'receipt-low', 'date' => now()->subDays(2)->toDateString(), 'cost' => '2.00000000'],
         ['key' => 'receipt-high', 'date' => now()->subDay()->toDateString(), 'cost' => '6.00000000'],
@@ -121,6 +138,31 @@ function maintenanceMaterialCostFixture(): array
 
     return compact('user', 'company', 'branch', 'period', 'store', 'unit', 'product', 'costCenter', 'asset', 'workOrder', 'maintenanceExpenseAccount', 'lowCostLocation', 'highCostLocation', 'session');
 }
+
+test('FIFO maintenance issue and returned allocation post their exact layer costs to stock and GL', function (): void {
+    $fixture = maintenanceMaterialCostFixture(fifo: true);
+    $service = app(MaintenanceMaterialRequestService::class);
+    $request = approvedMaintenanceMaterialRequest($fixture);
+    $issue = $service->issue($request)->load('transactions', 'journalEntry.lines');
+    $issueTransaction = $issue->transactions->sole();
+
+    expect($issueTransaction->cost_method)->toBe(InventoryCostPolicy::Fifo)
+        ->and($issueTransaction->total_cost)->toBe('50.00000000')
+        ->and($issue->journalEntry->lines->sum('debit_amount'))->toBe(50.0);
+
+    $line = $request->refresh()->lines()->sole();
+    $service->recordConsumption($fixture['workOrder'], [['line_id' => $line->getKey(), 'consumed_quantity' => '3']]);
+    $returned = $service->returnUnused($request->fresh())->load('lines', 'transactions', 'journalEntry.lines');
+    $returnLines = $returned->lines->sortBy('id')->values();
+
+    expect($returnLines)->toHaveCount(2)
+        ->and($returnLines[0]->unit_cost)->toBe('2.00000000')
+        ->and($returnLines[0]->total_cost)->toBe('20.00000000')
+        ->and($returnLines[1]->unit_cost)->toBe('6.00000000')
+        ->and($returnLines[1]->total_cost)->toBe('12.00000000')
+        ->and($returned->transactions->sum('total_cost'))->toBe(32.0)
+        ->and($returned->journalEntry->lines->sum('debit_amount'))->toBe(32.0);
+});
 
 /** @param array<string, mixed> $fixture */
 function approvedMaintenanceMaterialRequest(array $fixture, string $quantity = '15'): MaintenanceMaterialRequest
@@ -239,11 +281,13 @@ test('maintenance material issue and partial return preserve canonical moving-av
         ->and($allRestoredLayers[0]->receipt_transaction_id)->toBe($returnTransactions[0]->getKey())
         ->and($allRestoredLayers[0]->warehouse_location_id)->toBe($fixture['lowCostLocation']->getKey())
         ->and($allRestoredLayers[0]->original_quantity)->toBe('10.00000000')
-        ->and($allRestoredLayers[0]->unit_cost)->toBe('2.00000000')
+        ->and($allRestoredLayers[0]->unit_cost)->toBe('4.00000000')
+        ->and($allRestoredLayers[0]->sourceAllocation->layer->unit_cost)->toBe('2.00000000')
         ->and($allRestoredLayers[1]->receipt_transaction_id)->toBe($returnTransactions[1]->getKey())
         ->and($allRestoredLayers[1]->warehouse_location_id)->toBe($fixture['highCostLocation']->getKey())
         ->and($allRestoredLayers[1]->original_quantity)->toBe('2.00000000')
-        ->and($allRestoredLayers[1]->unit_cost)->toBe('6.00000000');
+        ->and($allRestoredLayers[1]->unit_cost)->toBe('4.00000000')
+        ->and($allRestoredLayers[1]->sourceAllocation->layer->unit_cost)->toBe('6.00000000');
 
     // Transaction position → layer position: per-position quantity_in = layer original_quantity
     expect($returnTransactions[0]->quantity_in)->toBe($allRestoredLayers[0]->original_quantity)
@@ -286,17 +330,13 @@ test('maintenance material issue and partial return preserve canonical moving-av
     expect($aggregateBv['totals']['quantity'])->toBe('17.00000000')
         ->and($aggregateBv['totals']['book_value'])->toBe('68.00000000');
 
-    // Aggregate equals the sum of location-return positions plus the remaining null-position row
+    // The unfiltered report intentionally returns one store/product row; its residual is the unfiltered position.
     $aggregateRows = $aggregateBv['rows'];
     $locationReturnSum = bcadd((string) $lowBv['totals']['quantity'], (string) $highBv['totals']['quantity'], 8);
-    $nullPositionRow = $aggregateRows->first(fn ($row): bool => $row->warehouse_location_id === null);
-    expect($nullPositionRow)->not->toBeNull()
-        ->and(bcadd($locationReturnSum, (string) $nullPositionRow->on_hand, 8))->toBe('17.00000000')
-        ->and(bcadd(
-            bcadd((string) $lowBv['totals']['book_value'], (string) $highBv['totals']['book_value'], 8),
-            (string) $nullPositionRow->book_value,
-            8,
-        ))->toBe('68.00000000');
+    expect($aggregateRows)->toHaveCount(1)
+        ->and($aggregateRows->first()->warehouse_location_id)->toBeNull()
+        ->and(bcsub((string) $aggregateBv['totals']['quantity'], $locationReturnSum, 8))->toBe('5.00000000')
+        ->and(bcsub((string) $aggregateBv['totals']['book_value'], bcadd((string) $lowBv['totals']['book_value'], (string) $highBv['totals']['book_value'], 8), 8))->toBe('20.00000000');
 
     // Aggregate restored layer quantity = request returned_quantity = 12
     expect(bcadd((string) $allRestoredLayers[0]->original_quantity, (string) $allRestoredLayers[1]->original_quantity, 8))->toBe('12.00000000')
@@ -333,9 +373,11 @@ test('maintenance material issue and partial return preserve canonical moving-av
     }
 
     // Source-layer cost lineage explicitly distinct from canonical transaction book cost
-    expect($allRestoredLayers[0]->unit_cost)->toBe('2.00000000')
+    expect($allRestoredLayers[0]->unit_cost)->toBe('4.00000000')
+        ->and($allRestoredLayers[0]->sourceAllocation->layer->unit_cost)->toBe('2.00000000')
         ->not->toBe($returnTransactions[0]->unit_cost)
-        ->and($allRestoredLayers[1]->unit_cost)->toBe('6.00000000')
+        ->and($allRestoredLayers[1]->unit_cost)->toBe('4.00000000')
+        ->and($allRestoredLayers[1]->sourceAllocation->layer->unit_cost)->toBe('6.00000000')
         ->not->toBe($returnTransactions[1]->unit_cost)
         // Original receipt dates preserved from source layers
         ->and($allRestoredLayers[0]->original_receipt_date)->not->toBeNull()
@@ -714,6 +756,174 @@ test('maintenance material posting respects financial-period and operating-conte
         ->and(InventoryDocument::query()->where('source_document_type', MaintenanceMaterialRequest::class)->count())->toBe(0);
 });
 
+test('maintenance screen PDF Excel and CSV include the same filtered request due and work order groups', function (): void {
+    app()->setLocale('en');
+    $fixture = maintenanceMaterialCostFixture();
+    $maintenanceRequest = MaintenanceRequest::query()->create([
+        'doc_number' => 97002,
+        'doc_num' => 'MR-MAINT-REPORT',
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'fixed_asset_id' => $fixture['asset']->getKey(),
+        'reported_at' => now(),
+        'request_type' => 'breakdown',
+        'priority' => 'urgent',
+        'symptoms' => 'Synthetic report breakdown',
+        'is_machine_stopped' => true,
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+    $plan = MaintenancePlan::query()->create([
+        'doc_number' => 97002,
+        'doc_num' => 'MP-MAINT-REPORT',
+        'company_id' => $fixture['company']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'fixed_asset_id' => $fixture['asset']->getKey(),
+        'name' => 'Synthetic Maintenance Plan',
+        'frequency_basis' => MaintenancePlan::FrequencyCalendar,
+        'interval_value' => '30',
+        'task_template' => 'Synthetic planned maintenance',
+        'status' => MaintenancePlan::StatusApproved,
+        'created_by' => $fixture['user']->getKey(),
+    ]);
+    MaintenancePlanDue::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'financial_period_id' => $fixture['period']->getKey(),
+        'branch_id' => $fixture['branch']->getKey(),
+        'maintenance_plan_id' => $plan->getKey(),
+        'due_key' => 'maintenance-report-due',
+        'due_at' => now()->addDay(),
+        'generated_at' => now(),
+        'generated_by' => $fixture['user']->getKey(),
+    ]);
+
+    foreach (['maintenance.reports.view', 'maintenance.reports.export', 'maintenance.reports.financial'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    $fixture['user']->givePermissionTo(['maintenance.reports.view', 'maintenance.reports.export', 'maintenance.reports.financial']);
+    $filters = ['from' => now()->subDay()->toDateString(), 'to' => now()->addDays(2)->toDateString()];
+    $screen = $this->actingAs($fixture['user'])->withSession($fixture['session'])
+        ->get(route('admin.maintenance.reports.index', $filters))->assertOk();
+    $screen->assertSee($maintenanceRequest->doc_num)
+        ->assertSee($plan->doc_num)
+        ->assertSee($fixture['workOrder']->doc_num);
+
+    $pdf = $this->actingAs($fixture['user'])->withSession($fixture['session'])
+        ->get(route('admin.maintenance.reports.print', $filters))->assertOk();
+    $pdfPath = tempnam(sys_get_temp_dir(), 'maintenance-group-pdf-');
+    if ($pdfPath === false) {
+        throw new RuntimeException('Could not create a temporary PDF path.');
+    }
+    try {
+        file_put_contents($pdfPath, $pdf->getContent());
+        $pdfText = (new Process(['pdftotext', $pdfPath, '-']))->mustRun()->getOutput();
+        expect((new Process(['pdfinfo', $pdfPath]))->mustRun()->getOutput())->toMatch('/Pages:\s+1/');
+    } finally {
+        @unlink($pdfPath);
+    }
+    expect($pdfText)->toContain($maintenanceRequest->doc_num, $plan->doc_num, $fixture['workOrder']->doc_num);
+
+    $excel = $this->actingAs($fixture['user'])->withSession($fixture['session'])
+        ->get(route('admin.maintenance.reports.export', $filters))->assertOk();
+    $workbook = IOFactory::load($excel->baseResponse->getFile()->getPathname());
+    expect($workbook->getSheetCount())->toBe(6)
+        ->and($workbook->getSheet(1)->getCell('A2')->getValue())->toBe($maintenanceRequest->doc_num)
+        ->and($workbook->getSheet(2)->getCell('A2')->getValue())->toContain($plan->doc_num)
+        ->and($workbook->getSheet(4)->getCell('A2')->getValue())->toBe($fixture['workOrder']->doc_num);
+
+    $csv = $this->actingAs($fixture['user'])->withSession($fixture['session'])
+        ->get(route('admin.maintenance.reports.export.csv', $filters))->assertOk();
+    $csvText = file_get_contents($csv->baseResponse->getFile()->getPathname());
+    expect($csvText)->toContain($maintenanceRequest->doc_num, $plan->doc_num, $fixture['workOrder']->doc_num)
+        ->toContain(__('maintenance.reports.requests_table'), __('maintenance.reports.plan_due_table'), __('maintenance.reports.orders_table'));
+    app()->setLocale('ar');
+    $arabicPdf = $this->actingAs($fixture['user'])
+        ->withSession([...$fixture['session'], 'locale' => 'ar'])
+        ->get(route('admin.maintenance.reports.print', $filters))->assertOk();
+    $arabicPdfPath = tempnam(sys_get_temp_dir(), 'maintenance-arabic-pdf-');
+    if ($arabicPdfPath === false) {
+        throw new RuntimeException('Could not create a temporary Arabic PDF path.');
+    }
+    try {
+        file_put_contents($arabicPdfPath, $arabicPdf->getContent());
+        expect((new Process(['pdfinfo', $arabicPdfPath]))->mustRun()->getOutput())->toMatch('/Pages:\s+1/');
+        expect((new Process(['pdftotext', $arabicPdfPath, '-']))->mustRun()->getOutput())
+            ->toContain($maintenanceRequest->doc_num, $plan->doc_num, $fixture['workOrder']->doc_num);
+    } finally {
+        @unlink($arabicPdfPath);
+    }
+});
+
+test('maintenance material quantities remain separated by unit on screen and exports', function (): void {
+    app()->setLocale('en');
+    $fixture = maintenanceMaterialCostFixture();
+    $kilogram = ItemUnit::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'doc_number' => 97002,
+        'doc_num' => 'UNIT-MAINT-KG',
+        'name' => 'Maintenance Kilogram',
+        'status' => 'active',
+    ]);
+    $secondProduct = Product::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'doc_number' => 97002,
+        'doc_num' => 'RM-MAINT-KG',
+        'name' => 'Maintenance Compound',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $kilogram->getKey(),
+        'status' => 'active',
+    ]);
+    app(MaintenanceMaterialRequestService::class)->create($fixture['workOrder'], [
+        'branch_store_id' => $fixture['store']->getKey(),
+        'lines' => [
+            ['product_id' => $fixture['product']->getKey(), 'item_type' => 'spare_part', 'quantity' => '2'],
+            ['product_id' => $secondProduct->getKey(), 'item_type' => 'consumable', 'quantity' => '3'],
+        ],
+    ]);
+    foreach (['maintenance.reports.view', 'maintenance.reports.export'] as $permission) {
+        Permission::findOrCreate($permission, 'web');
+    }
+    app(PermissionRegistrar::class)->forgetCachedPermissions();
+    $fixture['user']->givePermissionTo(['maintenance.reports.view', 'maintenance.reports.export']);
+
+    $screen = $this->actingAs($fixture['user'])->withSession($fixture['session'])
+        ->get(route('admin.maintenance.reports.index'))->assertOk();
+    $screen->assertSee(__('maintenance.reports.material_quantities_by_unit'))
+        ->assertSee('Maintenance Piece')
+        ->assertSee('Maintenance Kilogram');
+    $excel = $this->actingAs($fixture['user'])->withSession($fixture['session'])
+        ->get(route('admin.maintenance.reports.export'))->assertOk();
+    $workbook = IOFactory::load($excel->baseResponse->getFile()->getPathname());
+    expect($workbook->getSheetCount())->toBe(5)
+        ->and($workbook->getSheet(3)->getCell('A2')->getValue())->toBe('Maintenance Piece')
+        ->and($workbook->getSheet(3)->getCell('B2')->getValue())->toBe('2.00000000')
+        ->and($workbook->getSheet(3)->getCell('A3')->getValue())->toBe('Maintenance Kilogram')
+        ->and($workbook->getSheet(3)->getCell('B3')->getValue())->toBe('3.00000000');
+    $csv = $this->actingAs($fixture['user'])->withSession($fixture['session'])
+        ->get(route('admin.maintenance.reports.export.csv'))->assertOk();
+    $csvRows = array_map('str_getcsv', file($csv->baseResponse->getFile()->getPathname()));
+    $quantityRows = collect($csvRows)->filter(fn (array $row): bool => ($row[0] ?? '') === __('maintenance.reports.material_quantities_by_unit') && ($row[1] ?? '') === __('sales_ui.reports.export.row_types.data'))->values();
+    expect($quantityRows)->toHaveCount(2)
+        ->and($quantityRows[0][2])->toBe('Maintenance Piece')
+        ->and($quantityRows[0][3])->toBe('2.00000000')
+        ->and($quantityRows[1][2])->toBe('Maintenance Kilogram')
+        ->and($quantityRows[1][3])->toBe('3.00000000');
+    $pdf = $this->actingAs($fixture['user'])->withSession($fixture['session'])
+        ->get(route('admin.maintenance.reports.print'))->assertOk();
+    $pdfPath = tempnam(sys_get_temp_dir(), 'maintenance-unit-pdf-');
+    if ($pdfPath === false) {
+        throw new RuntimeException('Could not create a temporary PDF path.');
+    }
+    try {
+        file_put_contents($pdfPath, $pdf->getContent());
+        $pdfText = (new Process(['pdftotext', $pdfPath, '-']))->mustRun()->getOutput();
+    } finally {
+        @unlink($pdfPath);
+    }
+    expect($pdfText)->toContain('Maintenance Piece', 'Maintenance Kilogram');
+});
+
 test('maintenance PDF report renders exact per-material costs and redacts them without financial permission', function (): void {
     $fixture = maintenanceMaterialCostFixture();
     $service = app(MaintenanceMaterialRequestService::class);
@@ -727,9 +937,10 @@ test('maintenance PDF report renders exact per-material costs and redacts them w
     $service->returnUnused($request->fresh());
 
     Permission::findOrCreate('maintenance.reports.export', 'web');
+    Permission::findOrCreate('maintenance.reports.view', 'web');
     Permission::findOrCreate('maintenance.reports.financial', 'web');
     app(PermissionRegistrar::class)->forgetCachedPermissions();
-    $fixture['user']->givePermissionTo(['maintenance.reports.export', 'maintenance.reports.financial']);
+    $fixture['user']->givePermissionTo(['maintenance.reports.view', 'maintenance.reports.export', 'maintenance.reports.financial']);
 
     $extractPdfText = function (string $contents): string {
         $path = tempnam(sys_get_temp_dir(), 'maintenance-report-');
@@ -741,6 +952,7 @@ test('maintenance PDF report renders exact per-material costs and redacts them w
             file_put_contents($path, $contents);
             $process = new Process(['pdftotext', $path, '-']);
             $process->mustRun();
+            expect((new Process(['pdfinfo', $path]))->mustRun()->getOutput())->toMatch('/Pages:\s+1/');
 
             return preg_replace('/\s+/', ' ', $process->getOutput()) ?? '';
         } finally {
@@ -756,6 +968,14 @@ test('maintenance PDF report renders exact per-material costs and redacts them w
     expect($authorizedText)
         ->toContain('RM-MAINT-COST', 'Maintenance Piece', 'Issued: 1.12500000', 'Returned: 1.00000000', 'Net: 0.12500000')
         ->toContain('Unit cost: 4.00000000 / Gross: 4.5000 / Returned cost: 4.0000 / Net cost: 0.5000');
+    $csvRoute = route('admin.maintenance.reports.export.csv');
+    $authorizedCsv = $this->actingAs($fixture['user'])
+        ->withSession($fixture['session'])->get($csvRoute)->assertOk();
+    $authorizedCsvContents = file_get_contents($authorizedCsv->baseResponse->getFile()->getPathname());
+    expect($authorizedCsvContents)->toContain('RM-MAINT-COST', '0.5000', __('maintenance.reports.net_material_cost'));
+    $this->actingAs($fixture['user'])->withSession($fixture['session'])
+        ->get(route('admin.maintenance.reports.index'))
+        ->assertOk()->assertSee($csvRoute, false);
 
     $fixture['user']->revokePermissionTo('maintenance.reports.financial');
     $redactedResponse = $this->actingAs($fixture['user'])
@@ -766,6 +986,14 @@ test('maintenance PDF report renders exact per-material costs and redacts them w
     expect($redactedText)
         ->toContain('RM-MAINT-COST', 'Issued: 1.12500000', 'Returned: 1.00000000', 'Net: 0.12500000')
         ->not->toContain('Unit cost:', 'Gross:', 'Returned cost:', 'Net cost:');
+    $redactedCsv = $this->actingAs($fixture['user'])
+        ->withSession($fixture['session'])->get($csvRoute)->assertOk();
+    $redactedCsvContents = file_get_contents($redactedCsv->baseResponse->getFile()->getPathname());
+    expect($redactedCsvContents)->toContain('RM-MAINT-COST')
+        ->not->toContain(__('maintenance.reports.net_material_cost'), '0.5000');
+    $fixture['user']->revokePermissionTo('maintenance.reports.export');
+    $this->actingAs($fixture['user'])->withSession($fixture['session'])
+        ->get($csvRoute)->assertForbidden();
 });
 
 test('maintenance return with null-location legacy allocation preserves null on transaction and restored layer', function (): void {
@@ -797,9 +1025,9 @@ test('maintenance return with null-location legacy allocation preserves null on 
         ->and($returnLine->quantity)->toBe('2.00000000')
         ->and($returnTransaction->quantity_in)->toBe('2.00000000')
         ->and($restoredLayer->original_quantity)->toBe('2.00000000')
-        // Restored layer preserves original source layer cost (2), distinct from canonical transaction book cost (4)
-        ->and($restoredLayer->unit_cost)->toBe('2.00000000')
-        ->and($restoredLayer->unit_cost)->not->toBe($returnTransaction->unit_cost)
+        // The restored book value follows its issue allocation; native receipt history remains separately traceable.
+        ->and($restoredLayer->unit_cost)->toBe('4.00000000')
+        ->and($restoredLayer->sourceAllocation->layer->unit_cost)->toBe('2.00000000')
         ->and($returnTransaction->unit_cost)->toBe('4.00000000')
         // Original receipt date preserved from source layer
         ->and($restoredLayer->original_receipt_date)->not->toBeNull();
@@ -808,4 +1036,102 @@ test('maintenance return with null-location legacy allocation preserves null on 
     expect(app(InventoryAvailabilityService::class)->forProduct(
         $fixture['company']->getKey(), $fixture['store']->getKey(), $fixture['product']->getKey(),
     )['physical_on_hand'])->toBe('20.00000000');
+});
+
+test('eight digit maintenance return allocation slices consume the original booked journal with exact final rounding carry', function (): void {
+    $fixture = maintenanceMaterialCostFixture();
+    foreach (InventoryTransaction::query()->where('branch_store_id', $fixture['store']->id)->get() as $receipt) {
+        $unitCost = bcadd((string) $receipt->unit_cost, '0.00005678', 8);
+        $receipt->update(['unit_cost' => $unitCost, 'total_cost' => bcmul((string) $receipt->quantity_in, $unitCost, 8)]);
+    }
+    $service = app(MaintenanceMaterialRequestService::class);
+    $request = approvedMaintenanceMaterialRequest($fixture);
+    $issue = $service->issue($request)->load('transactions', 'journalEntry.lines');
+    $line = $request->refresh()->lines()->sole();
+    expect($issue->transactions->sole()->total_cost)->toBe('60.00085170')->and($issue->journalEntry->lines->sum('debit_amount'))->toBe(60.0009);
+    $source = DB::table('journal_entry_lines')->where('journal_entry_id', $issue->journal_entry_id)->orderBy('id')->get()->toArray();
+    $service->recordConsumption($fixture['workOrder'], [['line_id' => $line->id, 'consumed_quantity' => '0']]);
+    $returned = $service->returnUnused($request->fresh());
+    expect($returned->lines)->toHaveCount(2);
+    $slices = $returned->lines->sortBy('id')->values();
+    expect($slices[0]->product_snapshot['maintenance_return_accounting']['amount'])->toBe('40.0006')
+        ->and($slices[1]->product_snapshot['maintenance_return_accounting']['amount'])->toBe('20.0003')
+        ->and(bcadd((string) $returned->journalEntry->lines->sum('debit_amount'), '0', 4))->toBe('60.0009')
+        ->and($request->fresh()->lines->sole()->returned_quantity)->toBe('15.00000000')
+        ->and(DB::table('journal_entry_lines')->where('journal_entry_id', $issue->journal_entry_id)->orderBy('id')->get()->toArray())->toEqual($source);
+});
+
+test('maintenance return after periodic completion reverses the corrected issue expense and stock with preserved original history', function (): void {
+    require_once __DIR__.'/../InventoryPeriodicCostCloseSupport.php';
+    $fixture = maintenanceMaterialCostFixture(periodic: true);
+    $fixture['preparer'] = $fixture['user'];
+    $fixture['approver'] = closureSyntheticUser();
+    $fixture = periodicCostFixture($fixture);
+    $service = app(MaintenanceMaterialRequestService::class);
+    $request = approvedMaintenanceMaterialRequest($fixture);
+    $issue = $service->issue($request)->load('transactions', 'journalEntry.lines');
+    $original = $issue->transactions->sole()->getAttributes();
+    $oldJournal = DB::table('journal_entry_lines')->where('journal_entry_id', $issue->journal_entry_id)->orderBy('id')->get()->toArray();
+    costTransitionMovement($fixture, now()->toDateString(), InventoryDocument::TypeReceipt, '20', '10');
+    $close = approvePeriodicCost($fixture, preparePeriodicCost($fixture, ['from_date' => now()->subDays(2)->toDateString(),
+        'to_date' => now()->toDateString(), 'posting_date' => now()->toDateString()]));
+    expect($issue->transactions->sole()->completedTotalCost())->toBe('105.00000000');
+    test()->actingAs($fixture['user']);
+    request()->setUserResolver(fn (): User => $fixture['user']);
+    $this->travel(1)->days();
+    try {
+        $line = $request->fresh()->lines->sole();
+        $service->recordConsumption($fixture['workOrder'], [['line_id' => $line->id, 'consumed_quantity' => '0']]);
+        $returned = $service->returnUnused($request->fresh());
+        expect(bcadd((string) $returned->journalEntry->lines->sum('debit_amount'), '0', 4))->toBe('105.0000')
+            ->and($returned->transactions->sum('total_cost'))->toBe(105.0)
+            ->and($issue->transactions->sole()->fresh()->getAttributes())->toBe($original)
+            ->and(DB::table('journal_entry_lines')->where('journal_entry_id', $issue->journal_entry_id)->orderBy('id')->get()->toArray())->toEqual($oldJournal);
+    } finally {
+        $this->travelBack();
+    }
+});
+
+test('maintenance returns reject altered source and completion journal headers atomically before accepting the valid completed cost', function (): void {
+    require_once __DIR__.'/../InventoryPeriodicCostCloseSupport.php';
+    $fixture = maintenanceMaterialCostFixture(periodic: true);
+    $fixture['preparer'] = $fixture['user'];
+    $fixture['approver'] = closureSyntheticUser();
+    $fixture = periodicCostFixture($fixture);
+    $service = app(MaintenanceMaterialRequestService::class);
+    $request = approvedMaintenanceMaterialRequest($fixture);
+    $issue = $service->issue($request)->load('journalEntry');
+    costTransitionMovement($fixture, now()->toDateString(), InventoryDocument::TypeReceipt, '20', '10');
+    $close = approvePeriodicCost($fixture, preparePeriodicCost($fixture, ['from_date' => now()->subDays(2)->toDateString(),
+        'to_date' => now()->toDateString(), 'posting_date' => now()->toDateString()]));
+    $otherCompany = Company::factory()->create();
+    $otherCurrency = Currency::query()->create(['company_id' => $fixture['company']->id, 'doc_number' => 998712,
+        'doc_num' => 'SYNTHETIC-HEADER-CURRENCY', 'name' => 'SYNTHETIC other currency', 'code' => 'SYN',
+        'minor_unit_name' => 'SYN', 'minor_unit_factor' => 100, 'is_main' => false, 'status' => 'active']);
+    $otherPeriod = FinancialPeriod::query()->create(['company_id' => $fixture['company']->id, 'doc_number' => 998712,
+        'doc_num' => 'SYNTHETIC-HEADER-PERIOD', 'name' => 'SYNTHETIC other period',
+        'from_date' => $fixture['period']->from_date->copy()->addYear(), 'to_date' => $fixture['period']->to_date->copy()->addYear(), 'is_closed' => false]);
+    test()->actingAs($fixture['user']);
+    request()->setUserResolver(fn (): User => $fixture['user']);
+    $this->travel(1)->days();
+    try {
+        $service->recordConsumption($fixture['workOrder'], [['line_id' => $request->fresh()->lines->sole()->id, 'consumed_quantity' => '0']]);
+        $counts = [InventoryDocument::query()->count(), InventoryTransaction::query()->count(), DB::table('journal_entries')->count()];
+        foreach ([$issue->journal_entry_id, $close->valueAdjustment->journal_entry_id] as $journalId) {
+            $header = (array) DB::table('journal_entries')->where('id', $journalId)->first();
+            foreach (['company_id' => $otherCompany->id, 'currency_id' => $otherCurrency->id, 'financial_period_id' => $otherPeriod->id,
+                'branch_id' => null, 'entry_date' => now()->addDays(3)->toDateString(), 'source_type' => 'SYNTHETIC-wrong-source',
+                'source_id' => 998712, 'exchange_rate' => '2', 'status' => 'draft', 'is_posted' => false] as $field => $value) {
+                DB::table('journal_entries')->where('id', $journalId)->update([$field => $value]);
+                expect(fn () => $service->returnUnused($request->fresh()))->toThrow(DomainException::class);
+                expect([InventoryDocument::query()->count(), InventoryTransaction::query()->count(), DB::table('journal_entries')->count()])
+                    ->toBe($counts, 'SYNTHETIC altered '.$field.' must leave no partial return');
+                DB::table('journal_entries')->where('id', $journalId)->update([$field => $header[$field]]);
+            }
+        }
+        $return = $service->returnUnused($request->fresh());
+        expect(bcadd((string) $return->journalEntry->lines->sum('debit_amount'), '0', 4))->toBe('105.0000');
+    } finally {
+        $this->travelBack();
+    }
 });

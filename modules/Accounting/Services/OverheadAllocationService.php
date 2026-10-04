@@ -10,12 +10,15 @@ use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\CostCenter;
+use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Models\OverheadAllocationRule;
 use Modules\Accounting\Models\OverheadAllocationRun;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
+use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Services\ProductionCostService;
@@ -28,6 +31,7 @@ final class OverheadAllocationService
         private readonly JournalEntryService $journals,
         private readonly PostingAccountResolver $accounts,
         private readonly ProductionCostService $productionCosts,
+        private readonly OperatingScopeAccessService $scope,
     ) {}
 
     /** @param array<string, mixed> $data */
@@ -49,6 +53,15 @@ final class OverheadAllocationService
             $normalCapacity = filled($data['normal_capacity_hours'] ?? null)
                 ? $this->decimal($data['normal_capacity_hours'], 8)
                 : null;
+
+            if ($basis === OverheadAllocationRule::BasisDirectPayrollHours
+                && ($behavior !== OverheadAllocationRule::BehaviorVariable || $fallbackBasis !== null)) {
+                throw new DomainException(__('overhead_allocations.messages.direct_payroll_policy'));
+            }
+            if ($basis === OverheadAllocationRule::BasisDirectPayrollHours && Account::query()->whereIn('id', $sourceAccountIds)
+                ->whereHas('classification', fn ($query) => $query->where('code', 'direct_labor_cost'))->count() !== count($sourceAccountIds)) {
+                throw new DomainException(__('overhead_allocations.messages.direct_payroll_accounts'));
+            }
 
             if ($behavior === OverheadAllocationRule::BehaviorFixed
                 && ($normalCapacity === null || bccomp($normalCapacity, '0', 8) <= 0)) {
@@ -90,6 +103,7 @@ final class OverheadAllocationService
         string $toDate,
     ): OverheadAllocationRun {
         return DB::transaction(function () use ($rule, $period, $branchId, $fromDate, $toDate): OverheadAllocationRun {
+            Company::query()->whereKey($rule->company_id)->lockForUpdate()->firstOrFail();
             $lockedRule = OverheadAllocationRule::query()->lockForUpdate()->findOrFail($rule->getKey());
             $this->assertRuleContext($lockedRule, $period, $branchId, $fromDate, $toDate);
             $snapshot = $this->snapshot($lockedRule, $period, $branchId, $fromDate, $toDate);
@@ -171,13 +185,27 @@ final class OverheadAllocationService
         });
     }
 
+    public function assertTargetAccess(OverheadAllocationRun $run): void
+    {
+        if ($run->basis_used !== OverheadAllocationRule::BasisDirectPayrollHours) {
+            return;
+        }
+        $allowed = $this->scope->allowedFinancialPeriodQuery(auth()->user(), [Company::findOrFail($run->company_id)->doc_num])
+            ->pluck('financial_periods.id');
+        $run->loadMissing('lines.productionRun');
+        abort_unless($run->lines->every(fn ($line): bool => $line->productionRun !== null
+            && $allowed->contains($line->productionRun->financial_period_id)), 403);
+    }
+
     public function approve(OverheadAllocationRun $run): OverheadAllocationRun
     {
         return DB::transaction(function () use ($run): OverheadAllocationRun {
+            Company::query()->whereKey($run->company_id)->lockForUpdate()->firstOrFail();
             $locked = OverheadAllocationRun::query()
                 ->with(['rule', 'sources', 'lines.productionRun'])
                 ->lockForUpdate()
                 ->findOrFail($run->getKey());
+            $this->assertTargetAccess($locked);
 
             if ($locked->status === OverheadAllocationRun::StatusPosted) {
                 return $locked;
@@ -186,6 +214,10 @@ final class OverheadAllocationService
             if ($locked->status !== OverheadAllocationRun::StatusDraft) {
                 throw new DomainException(__('overhead_allocations.messages.draft_only'));
             }
+            JournalEntry::query()->whereIn('id', DB::table('cost_overhead_allocation_sources as source')
+                ->join('journal_entry_lines as line', 'line.id', '=', 'source.journal_entry_line_id')
+                ->where('source.allocation_run_id', $locked->id)->select('line.journal_entry_id'))
+                ->orderBy('id')->lockForUpdate()->get(['id']);
 
             $targetIds = $locked->lines->pluck('production_run_id')->map(fn (mixed $id): int => (int) $id);
             $this->assertTargetsRemainUnreceived($targetIds, lockForUpdate: true);
@@ -238,10 +270,12 @@ final class OverheadAllocationService
     public function reverse(OverheadAllocationRun $run, string $reason): OverheadAllocationRun
     {
         return DB::transaction(function () use ($run, $reason): OverheadAllocationRun {
+            Company::query()->whereKey($run->company_id)->lockForUpdate()->firstOrFail();
             $locked = OverheadAllocationRun::query()
                 ->with(['journalEntry', 'lines.productionRun'])
                 ->lockForUpdate()
                 ->findOrFail($run->getKey());
+            $this->assertTargetAccess($locked);
 
             if ($locked->status === OverheadAllocationRun::StatusReversed) {
                 return $locked;
@@ -306,7 +340,7 @@ final class OverheadAllocationService
             throw new DomainException(__('overhead_allocations.messages.no_eligible_cost'));
         }
 
-        $targetMetrics = $this->targetMetrics($rule, $period, $branchId, $fromDate, $toDate);
+        $targetMetrics = $this->targetMetrics($rule, $period, $branchId, $fromDate, $toDate, $sources);
         if ($targetMetrics->isEmpty()) {
             throw new DomainException(__('overhead_allocations.messages.no_eligible_runs'));
         }
@@ -339,10 +373,13 @@ final class OverheadAllocationService
             $utilizationPercent = $this->round(bcmul($capacityRatio, '100', 8), 4);
         }
 
-        $allocations = bccomp($allocatableCost, '0', 4) === 0
+        $directLabor = $basisUsed === OverheadAllocationRule::BasisDirectPayrollHours
+            ? $this->allocateDirectPayroll($sources, $targetMetrics)
+            : null;
+        $allocations = $directLabor !== null ? $directLabor['amounts'] : (bccomp($allocatableCost, '0', 4) === 0
             ? array_fill(0, $targetMetrics->count(), '0.0000')
-            : $this->allocate($allocatableCost, $targetMetrics, $basisUsed, $basisTotal);
-        $targets = $targetMetrics->values()->map(function (array $target, int $index) use ($allocations, $basisUsed, $basisTotal): array {
+            : $this->allocate($allocatableCost, $targetMetrics, $basisUsed, $basisTotal));
+        $targets = $targetMetrics->values()->map(function (array $target, int $index) use ($allocations, $basisUsed, $basisTotal, $directLabor, $eligibleCost): array {
             $basisValue = (string) $target[$basisUsed];
 
             return [
@@ -352,9 +389,11 @@ final class OverheadAllocationService
                 'labor_hours' => $target['labor_hours'],
                 'direct_material_cost' => $target['direct_material_cost'],
                 'basis_value' => $basisValue,
-                'allocation_percent' => bccomp($basisTotal, '0', 8) === 0
+                'allocation_percent' => $directLabor !== null
+                    ? $this->round(bcmul(bcdiv($allocations[$index], $eligibleCost, 12), '100', 12), 8)
+                    : (bccomp($basisTotal, '0', 8) === 0
                     ? '0.00000000'
-                    : $this->round(bcmul(bcdiv($basisValue, $basisTotal, 12), '100', 12), 8),
+                    : $this->round(bcmul(bcdiv($basisValue, $basisTotal, 12), '100', 12), 8)),
                 'allocated_amount' => $allocations[$index],
             ];
         })->all();
@@ -380,6 +419,7 @@ final class OverheadAllocationService
             'unused_capacity_cost' => $unusedCapacityCost,
             'unused_capacity_reason' => $unusedCapacityReason,
             'rounding_scale' => 4,
+            'direct_payroll_allocations' => $directLabor['sources'] ?? [],
             'from_date' => $fromDate,
             'to_date' => $toDate,
         ];
@@ -412,14 +452,28 @@ final class OverheadAllocationService
     {
         return DB::table('journal_entry_lines as line')
             ->join('journal_entries as entry', 'entry.id', '=', 'line.journal_entry_id')
+            ->leftJoin('hr_payroll_runs as payroll', fn ($join) => $join->on('payroll.id', '=', 'entry.source_id')
+                ->where('entry.source_type', 'hr_payroll_run'))
+            ->leftJoin('hr_payroll_periods as payroll_period', 'payroll_period.id', '=', 'payroll.payroll_period_id')
             ->whereNull('entry.deleted_at')
             ->where('entry.company_id', $rule->company_id)
             ->where('entry.financial_period_id', $period->getKey())
             ->where('entry.status', 'posted')
             ->where('entry.is_posted', true)
-            ->whereBetween('entry.entry_date', [$fromDate, $toDate])
+            ->whereNull('entry.reversed_entry_id')
+            ->whereNotExists(fn (Builder $query) => $query->selectRaw('1')->from('journal_entries as original')
+                ->whereColumn('original.reversed_entry_id', 'entry.id'))
+            ->whereNotExists(fn (Builder $query) => $query->selectRaw('1')->from('production_expense_requests as direct_expense')
+                ->whereColumn('direct_expense.journal_entry_id', 'entry.id')->whereNotNull('direct_expense.production_run_id'))
+            ->whereDate('entry.entry_date', '>=', $fromDate)->whereDate('entry.entry_date', '<=', $toDate)
             ->where('line.cost_center_id', $rule->source_cost_center_id)
             ->whereIn('line.account_id', array_map('intval', $rule->source_account_ids ?? []))
+            ->when($rule->basis === OverheadAllocationRule::BasisDirectPayrollHours, fn (Builder $query) => $query
+                ->where('entry.source_type', 'hr_payroll_run')->whereColumn('payroll_period.company_id', 'entry.company_id')
+                ->whereExists(fn (Builder $posted) => $posted->selectRaw('1')->from('hr_payroll_postings as payroll_posting')
+                    ->whereColumn('payroll_posting.payroll_run_id', 'payroll.id')->whereColumn('payroll_posting.journal_entry_id', 'entry.id')
+                    ->where('payroll_posting.status', 'posted'))
+                ->where('line.debit_amount', '>', 0)->where('line.credit_amount', 0))
             ->where(function (Builder $query) use ($branchId): void {
                 $query->where('line.branch_id', $branchId)
                     ->orWhere(fn (Builder $entryBranch) => $entryBranch->whereNull('line.branch_id')->where('entry.branch_id', $branchId));
@@ -442,23 +496,28 @@ final class OverheadAllocationService
             ->get([
                 'line.id as journal_entry_line_id',
                 'line.account_id',
+                'line.employee_id', 'payroll_period.period_start', 'payroll_period.period_end',
                 DB::raw('(line.debit_amount - line.credit_amount) * entry.exchange_rate as source_amount'),
             ])
             ->map(fn (object $source): array => [
                 'journal_entry_line_id' => (int) $source->journal_entry_line_id,
                 'account_id' => (int) $source->account_id,
                 'source_amount' => $this->decimal($source->source_amount, 4),
+                'employee_id' => $source->employee_id === null ? null : (int) $source->employee_id,
+                'period_start' => $source->period_start,
+                'period_end' => $source->period_end,
             ])
             ->all();
     }
 
     /** @return Collection<int, array<string, mixed>> */
-    private function targetMetrics(OverheadAllocationRule $rule, FinancialPeriod $period, int $branchId, string $fromDate, string $toDate): Collection
+    private function targetMetrics(OverheadAllocationRule $rule, FinancialPeriod $period, int $branchId, string $fromDate, string $toDate, array $sources): Collection
     {
+        $isDirectPayroll = $rule->basis === OverheadAllocationRule::BasisDirectPayrollHours;
         $runs = ProductionRun::query()
             ->with(['product', 'order', 'progressEntries'])
             ->where('company_id', $rule->company_id)
-            ->where('financial_period_id', $period->getKey())
+            ->when(! $isDirectPayroll, fn ($query) => $query->where('financial_period_id', $period->getKey()))
             ->where('branch_id', $branchId)
             ->where('status', ProductionRun::StatusRunning)
             ->where('good_base_quantity', '>', 0)
@@ -466,16 +525,30 @@ final class OverheadAllocationService
             ->when($rule->target_cost_center_ids !== null, fn ($query) => $query->whereIn('cost_center_id', array_map('intval', $rule->target_cost_center_ids)))
             ->orderBy('id')
             ->get();
-        $from = Carbon::parse($fromDate)->startOfDay();
-        $to = Carbon::parse($toDate)->endOfDay();
+        $from = Carbon::parse($isDirectPayroll ? collect($sources)->min('period_start') : $fromDate)->startOfDay();
+        $to = Carbon::parse($isDirectPayroll ? collect($sources)->max('period_end') : $toDate)->endOfDay();
         $costPositions = $this->productionCosts->positions($runs);
 
-        return $runs->map(function (ProductionRun $run) use ($costPositions, $from, $to): ?array {
+        $allowedPeriods = $isDirectPayroll
+            ? $this->scope->allowedFinancialPeriodQuery(auth()->user(), [Company::findOrFail($rule->company_id)->doc_num])->pluck('financial_periods.id')
+            : null;
+
+        return $runs->map(function (ProductionRun $run) use ($costPositions, $from, $to, $allowedPeriods, $isDirectPayroll): ?array {
             $endAt = $run->actual_end_at ?? $run->progressEntries->last()?->recorded_at;
-            if ($endAt === null || $endAt->lt($from) || $endAt->gt($to)) {
+            if ($isDirectPayroll && $run->actual_end_at === null) {
+                $lastWorkDate = collect($run->labor_details ?? [])->flatMap(fn (array $labor): array => $labor['work_segments'] ?? [])->max('work_date');
+                if ($lastWorkDate !== null) {
+                    $endAt = $endAt?->max(Carbon::parse($lastWorkDate)->endOfDay()) ?? Carbon::parse($lastWorkDate)->endOfDay();
+                }
+            }
+            if ($endAt === null || $endAt->lt($from)
+                || ($isDirectPayroll ? $run->actual_start_at?->gt($to) : $endAt->gt($to))) {
                 return null;
             }
 
+            if ($allowedPeriods !== null) {
+                abort_unless($allowedPeriods->contains($run->financial_period_id), 403);
+            }
             $machineHours = null;
             if ($run->actual_start_at !== null) {
                 $seconds = (string) $run->actual_start_at->diffInSeconds($endAt, false);
@@ -494,6 +567,10 @@ final class OverheadAllocationService
                 'cost_center_id' => $run->cost_center_id === null ? null : (int) $run->cost_center_id,
                 'machine_hours' => $machineHours,
                 'labor_hours' => $laborHours,
+                'direct_payroll_hours' => $laborHours,
+                'labor_details' => $laborDetails->all(),
+                'actual_start_at' => $run->actual_start_at?->toDateString(),
+                'actual_end_at' => $endAt->toDateString(),
                 'direct_material_cost' => $this->round((string) $cost['direct_material_cost'], 4),
                 'material_valuation_complete' => (bool) $cost['material_valuation_complete'],
             ];
@@ -504,6 +581,13 @@ final class OverheadAllocationService
     private function basisFor(OverheadAllocationRule $rule, Collection $targets): array
     {
         $basis = (string) $rule->basis;
+        if ($basis === OverheadAllocationRule::BasisDirectPayrollHours) {
+            if ($rule->cost_behavior !== OverheadAllocationRule::BehaviorVariable || $rule->fallback_basis !== null) {
+                throw new DomainException(__('overhead_allocations.messages.direct_payroll_policy'));
+            }
+
+            return [$basis, null];
+        }
         if ($basis === OverheadAllocationRule::BasisDirectMaterialCost
             && $targets->contains(fn (array $target): bool => ! $target['material_valuation_complete'])) {
             throw new DomainException(__('overhead_allocations.messages.incomplete_material_valuation'));
@@ -557,6 +641,73 @@ final class OverheadAllocationService
 
             return $share;
         })->all();
+    }
+
+    /** @param list<array<string, mixed>> $sources @return array{amounts: list<string>, sources: list<array<string, mixed>>} */
+    private function allocateDirectPayroll(array $sources, Collection $targets): array
+    {
+        $amounts = array_fill(0, $targets->count(), '0.0000');
+        $details = [];
+        foreach ($sources as $source) {
+            if ($source['employee_id'] === null || $source['period_start'] === null || $source['period_end'] === null) {
+                throw new DomainException(__('overhead_allocations.messages.direct_payroll_employee'));
+            }
+            $matched = $targets->map(function (array $target, int $index) use ($source): ?array {
+                if ($target['actual_start_at'] === null || $target['actual_start_at'] > $source['period_end']
+                    || $target['actual_end_at'] < $source['period_start']) {
+                    return null;
+                }
+                $hours = '0.00000000';
+                $datedHours = [];
+                foreach ($target['labor_details'] as $labor) {
+                    if ((int) ($labor['employee_id'] ?? 0) !== $source['employee_id']) {
+                        continue;
+                    }
+                    if (! is_numeric($labor['actual_hours'] ?? null) || bccomp((string) $labor['actual_hours'], '0', 8) <= 0) {
+                        throw new DomainException(__('overhead_allocations.messages.direct_payroll_employee'));
+                    }
+                    $segments = $labor['work_segments'] ?? [];
+                    if ($segments === []) {
+                        if ($target['actual_start_at'] < $source['period_start'] || $target['actual_end_at'] > $source['period_end']) {
+                            throw new DomainException(__('overhead_allocations.messages.direct_payroll_dated_hours', ['run' => $target['production_run_id']]));
+                        }
+                        $hours = bcadd($hours, (string) $labor['actual_hours'], 8);
+
+                        continue;
+                    }
+                    $total = '0.00000000';
+                    foreach ($segments as $segment) {
+                        $segmentHours = (string) ($segment['actual_hours'] ?? '');
+                        $workDate = (string) ($segment['work_date'] ?? '');
+                        if (! is_numeric($segmentHours) || bccomp($segmentHours, '0', 8) <= 0) {
+                            throw new DomainException(__('overhead_allocations.messages.direct_payroll_employee'));
+                        }
+                        $total = bcadd($total, $segmentHours, 8);
+                        if ($workDate >= $source['period_start'] && $workDate <= $source['period_end']) {
+                            $hours = bcadd($hours, $segmentHours, 8);
+                            $datedHours[] = $segment;
+                        }
+                    }
+                    if (bccomp($total, (string) $labor['actual_hours'], 8) !== 0) {
+                        throw new DomainException(__('production_execution.messages.labor_days_total'));
+                    }
+                }
+
+                return bccomp($hours, '0', 8) > 0 ? ['index' => $index, 'production_run_id' => $target['production_run_id'], 'hours' => $hours, 'work_segments' => $datedHours] : null;
+            })->filter()->values();
+            if ($matched->isEmpty()) {
+                throw new DomainException(__('overhead_allocations.messages.direct_payroll_unmatched', ['employee' => $source['employee_id']]));
+            }
+            $totalHours = $this->sum($matched, 'hours', 8);
+            $shares = $this->allocate($source['source_amount'], $matched, 'hours', $totalHours);
+            foreach ($matched as $position => $match) {
+                $amounts[$match['index']] = bcadd($amounts[$match['index']], $shares[$position], 4);
+                $details[] = [...$source, 'production_run_id' => $match['production_run_id'], 'hours' => $match['hours'],
+                    'total_employee_hours' => $totalHours, 'allocated_amount' => $shares[$position], 'work_segments' => $match['work_segments']];
+            }
+        }
+
+        return ['amounts' => $amounts, 'sources' => $details];
     }
 
     /** @return list<array<string, mixed>> */

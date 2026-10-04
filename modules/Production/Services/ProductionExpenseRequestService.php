@@ -2,10 +2,12 @@
 
 namespace Modules\Production\Services;
 
+use App\Services\PostingAccountResolver;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Services\JournalEntryService;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingContextService;
@@ -24,6 +26,7 @@ class ProductionExpenseRequestService
         private readonly OperatingContextService $context,
         private readonly CashVoucherService $cashVouchers,
         private readonly JournalEntryService $journals,
+        private readonly PostingAccountResolver $postingAccounts,
     ) {}
 
     /** @param array<string, mixed> $data */
@@ -77,6 +80,7 @@ class ProductionExpenseRequestService
                 'request_date' => now()->toDateString(),
                 'amount' => $data['amount'],
                 'currency_id' => $currency->getKey(),
+                'exchange_rate' => $this->exchangeRateFor($currency, $data['exchange_rate'] ?? null),
                 'payment_channel' => $paymentChannel,
                 'cashbox_id' => $cashbox?->getKey(),
                 'bank_account_id' => $bankAccount?->getKey(),
@@ -138,6 +142,7 @@ class ProductionExpenseRequestService
                 'production_run_id' => $run->getKey(),
                 'amount' => $data['amount'],
                 'currency_id' => $currency->getKey(),
+                'exchange_rate' => $this->exchangeRateFor($currency, $data['exchange_rate'] ?? null),
                 'payment_channel' => $paymentChannel,
                 'cashbox_id' => $cashbox?->getKey(),
                 'bank_account_id' => $bankAccount?->getKey(),
@@ -238,6 +243,7 @@ class ProductionExpenseRequestService
                 'request_date' => now()->toDateString(),
                 'amount' => $data['amount'],
                 'currency_id' => $currency->getKey(),
+                'exchange_rate' => $this->exchangeRateFor($currency, $data['exchange_rate'] ?? null),
                 'payment_channel' => $data['payment_channel'] ?? 'cashbox',
                 'cashbox_id' => $cashbox?->getKey(),
                 'bank_account_id' => $bankAccount?->getKey(),
@@ -296,6 +302,7 @@ class ProductionExpenseRequestService
                 'maintenance_work_order_id' => $workOrder->getKey(),
                 'amount' => $data['amount'],
                 'currency_id' => $currency->getKey(),
+                'exchange_rate' => $this->exchangeRateFor($currency, $data['exchange_rate'] ?? null),
                 'payment_channel' => $data['payment_channel'],
                 'cashbox_id' => $cashbox?->getKey(),
                 'bank_account_id' => $bankAccount?->getKey(),
@@ -322,8 +329,12 @@ class ProductionExpenseRequestService
     {
         return DB::transaction(function () use ($request): ProductionExpenseRequest {
             $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionExpenseRequest::query()->with(['cashbox.account', 'bankAccount.account', 'currency', 'expenseAccount', 'run', 'maintenanceWorkOrder.asset'])->lockForUpdate()->findOrFail($request->getKey());
             $this->assertContext($locked, $context);
+            if ($locked->production_run_id !== null) {
+                ProductionRun::query()->whereKey($locked->production_run_id)->lockForUpdate()->firstOrFail();
+            }
 
             if ($locked->status !== ProductionExpenseRequest::StatusApproved) {
                 throw new DomainException(__('production_execution.messages.expense_approved_only'));
@@ -331,6 +342,7 @@ class ProductionExpenseRequestService
             if (! $locked->expenseAccount?->is_postable || $locked->expenseAccount->status !== 'active' || $locked->expenseAccount->trashed()) {
                 throw new DomainException(__('production_execution.messages.expense_account_required'));
             }
+            $exchangeRate = $this->exchangeRateFor($locked->currency, $locked->exchange_rate);
             $voucher = null;
             if ($locked->payment_channel === 'cashbox') {
                 if (! $locked->cashbox?->account) {
@@ -340,7 +352,7 @@ class ProductionExpenseRequestService
                     'voucher_date' => now()->toDateString(),
                     'cashbox_doc_num' => $locked->cashbox->doc_num,
                     'currency_doc_num' => $locked->currency->doc_num,
-                    'exchange_rate' => 1,
+                    'exchange_rate' => $exchangeRate,
                     'amount' => $locked->amount,
                     'person_name' => $locked->maintenance_work_order_id ? __('maintenance.maintenance_expense') : __('production_execution.production_expense'),
                     'reason' => $locked->reason,
@@ -365,13 +377,16 @@ class ProductionExpenseRequestService
             } else {
                 throw new DomainException(__('production_execution.messages.expense_invalid_state'));
             }
+            $debitAccount = $locked->production_run_id !== null
+                ? $this->postingAccounts->resolve($context['company_id'], PostingAccountResolver::WorkInProcessInventory, __('production_execution.production_expense'))
+                : $locked->expenseAccount;
             $journal = $this->journals->createPostedFromSource([
                 'entry_date' => now()->toDateString(),
                 'company_id' => $context['company_id'],
                 'financial_period_id' => $context['financial_period_id'],
                 'branch_id' => $context['branch_id'],
                 'currency_id' => $locked->currency_id,
-                'exchange_rate' => 1,
+                'exchange_rate' => $exchangeRate,
                 'description' => __('production_execution.messages.expense_journal_description', ['number' => $locked->doc_num]),
                 'notes' => $locked->notes,
                 'source_type' => 'production_expense_payment',
@@ -379,7 +394,7 @@ class ProductionExpenseRequestService
                 'source_doc_num' => $locked->doc_num,
             ], [
                 [
-                    'account_id' => $locked->expenseAccount->getKey(),
+                    'account_id' => $debitAccount->getKey(),
                     'debit_amount' => $locked->amount,
                     'credit_amount' => '0.0000',
                     'description' => $locked->reason,
@@ -398,6 +413,11 @@ class ProductionExpenseRequestService
                 'status' => ProductionExpenseRequest::StatusPaid,
                 'cash_voucher_id' => $voucher?->getKey(),
                 'journal_entry_id' => $journal->getKey(),
+                'cost_accounting_snapshot' => ['version' => 1, 'capitalized' => $locked->production_run_id !== null,
+                    'journal_id' => (int) $journal->id, 'debit_account_id' => (int) $debitAccount->id, 'credit_account_id' => (int) $creditAccount->id,
+                    'expense_account_id' => (int) $locked->expense_account_id, 'currency_id' => (int) $locked->currency_id,
+                    'exchange_rate' => $exchangeRate, 'amount' => (string) $locked->amount,
+                    'base_amount' => bcmul((string) $locked->amount, $exchangeRate, 8)],
                 'paid_by' => auth()->id(),
                 'paid_at' => now(),
                 'updated_by' => auth()->id(),
@@ -411,8 +431,12 @@ class ProductionExpenseRequestService
     {
         return DB::transaction(function () use ($request, $reason): ProductionExpenseRequest {
             $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionExpenseRequest::query()->with(['cashVoucher', 'journalEntry'])->lockForUpdate()->findOrFail($request->getKey());
             $this->assertContext($locked, $context);
+            if ($locked->production_run_id !== null) {
+                ProductionRun::query()->whereKey($locked->production_run_id)->lockForUpdate()->firstOrFail();
+            }
 
             if ($locked->status !== ProductionExpenseRequest::StatusPaid || ! $locked->journalEntry
                 || ($locked->payment_channel === 'cashbox' && ! $locked->cashVoucher)) {
@@ -431,7 +455,7 @@ class ProductionExpenseRequestService
                 'financial_period_id' => $context['financial_period_id'],
                 'branch_id' => $context['branch_id'],
                 'currency_id' => $locked->currency_id,
-                'exchange_rate' => 1,
+                'exchange_rate' => (string) $locked->journalEntry->exchange_rate,
                 'description' => __('production_execution.messages.expense_reversal_journal_description', ['number' => $locked->doc_num]),
                 'notes' => trim($reason),
                 'source_type' => 'production_expense_reversal',
@@ -461,6 +485,9 @@ class ProductionExpenseRequestService
             if ($locked->status !== $from) {
                 throw new DomainException(__('production_execution.messages.expense_invalid_state'));
             }
+            if (($values['status'] ?? null) === ProductionExpenseRequest::StatusApproved) {
+                $this->exchangeRateFor($locked->currency, $locked->exchange_rate);
+            }
             $locked->update([...$values, 'updated_by' => auth()->id()]);
 
             return $locked->refresh();
@@ -476,6 +503,23 @@ class ProductionExpenseRequestService
         }
 
         return ['company_id' => (int) $context['company_id'], 'financial_period_id' => (int) $context['financial_period_id'], 'branch_id' => (int) $context['branch_id']];
+    }
+
+    private function exchangeRateFor(Currency $currency, mixed $rawRate): string
+    {
+        if (($rawRate === null || trim((string) $rawRate) === '') && $currency->is_main) {
+            return '1.000000';
+        }
+
+        $rate = trim((string) $rawRate);
+        if (! preg_match('/^\d{1,12}(?:\.\d{1,6})?$/D', $rate) || bccomp($rate, '0', 6) <= 0) {
+            throw new DomainException(__('production_execution.messages.expense_exchange_rate_required'));
+        }
+        if ($currency->is_main && bccomp($rate, '1', 6) !== 0) {
+            throw new DomainException(__('production_execution.messages.expense_main_currency_rate'));
+        }
+
+        return bcadd($rate, '0', 6);
     }
 
     /** @param array{company_id: int, financial_period_id: int, branch_id: int} $context */

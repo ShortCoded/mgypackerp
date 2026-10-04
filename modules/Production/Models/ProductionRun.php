@@ -44,7 +44,10 @@ class ProductionRun extends Model
         'received_base_quantity', 'planned_start_at', 'planned_end_at', 'actual_start_at',
         'actual_end_at', 'production_shift_id', 'production_machine_id', 'production_mold_id', 'fixed_asset_id',
         'batch_lot', 'work_description', 'planned_labor_count', 'actual_labor_count', 'labor_details',
-        'status', 'setup_status', 'setup_started_at', 'setup_completed_at',
+        'status', 'setup_status', 'setup_started_at', 'setup_completed_at', 'correction_sequence',
+        'correction_document_date', 'correction_manufacture_date', 'correction_expiry_date',
+        'correction_receipt_basis',
+        'correction_posting_financial_period_id', 'active_correction_id',
         'notes', 'created_by', 'updated_by', 'started_by', 'completed_by', 'deleted_by', 'restored_by', 'restored_at',
     ];
 
@@ -67,6 +70,10 @@ class ProductionRun extends Model
             'setup_started_at' => 'datetime', 'setup_completed_at' => 'datetime',
             'labor_details' => 'array', 'planned_labor_count' => 'integer', 'actual_labor_count' => 'integer',
             'restored_at' => 'datetime',
+            'correction_sequence' => 'integer',
+            'correction_document_date' => 'date', 'correction_manufacture_date' => 'date', 'correction_expiry_date' => 'date',
+            'correction_receipt_basis' => 'array',
+            'correction_posting_financial_period_id' => 'integer', 'active_correction_id' => 'integer',
         ];
     }
 

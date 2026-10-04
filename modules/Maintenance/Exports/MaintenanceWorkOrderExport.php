@@ -8,6 +8,7 @@ use Maatwebsite\Excel\Concerns\ShouldAutoSize;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithStrictNullComparison;
 use Maatwebsite\Excel\Concerns\WithTitle;
+use Modules\Core\Services\DateFormatService;
 use Modules\Maintenance\Models\MaintenanceWorkOrder;
 
 class MaintenanceWorkOrderExport implements FromArray, ShouldAutoSize, WithHeadings, WithStrictNullComparison, WithTitle
@@ -23,7 +24,10 @@ class MaintenanceWorkOrderExport implements FromArray, ShouldAutoSize, WithHeadi
             $materialLines = $order->materialRequests->flatMap->lines;
             $expenseSummary = $order->expenses
                 ->groupBy(fn ($expense) => $expense->currency?->code ?: '—')
-                ->map(fn ($rows, $currency) => $currency.': '.$rows->sum('amount'))
+                ->map(fn ($rows, $currency): string => $currency.': '.$rows->reduce(
+                    fn (string $carry, $expense): string => bcadd($carry, (string) $expense->amount, 4),
+                    '0.0000',
+                ))
                 ->implode(' | ');
             $grossMaterialCost = $order->materialRequests
                 ->flatMap(fn ($request) => $request->issueDocument?->lines ?? collect())
@@ -48,10 +52,10 @@ class MaintenanceWorkOrderExport implements FromArray, ShouldAutoSize, WithHeadi
                 __('maintenance.service_modes.'.$order->service_mode),
                 $order->supplier?->name ?: $order->external_provider_name ?: __('maintenance.internal'),
                 __('maintenance.priorities.'.$order->priority),
-                $order->planned_start_at?->format('Y-m-d H:i:s'),
-                $order->actual_start_at?->format('Y-m-d H:i:s'),
-                $order->actual_end_at?->format('Y-m-d H:i:s'),
-                $order->machine_released_at?->format('Y-m-d H:i:s'),
+                app(DateFormatService::class)->formatDateTime($order->planned_start_at, ''),
+                app(DateFormatService::class)->formatDateTime($order->actual_start_at, ''),
+                app(DateFormatService::class)->formatDateTime($order->actual_end_at, ''),
+                app(DateFormatService::class)->formatDateTime($order->machine_released_at, ''),
                 $order->total_paused_minutes + ($order->paused_at ? (int) $order->paused_at->diffInMinutes(now()) : 0),
                 $order->test_result ? __('maintenance.test_results.'.$order->test_result) : null,
                 $order->repair_outcome ? __('maintenance.repair_outcomes.'.$order->repair_outcome) : null,
@@ -70,7 +74,7 @@ class MaintenanceWorkOrderExport implements FromArray, ShouldAutoSize, WithHeadi
                 $order->diagnosis,
                 $order->root_cause,
                 $order->work_performed,
-                $order->next_due_date?->toDateString(),
+                app(DateFormatService::class)->formatDate($order->next_due_date, ''),
             ];
 
             if (! $this->canViewFinancial) {

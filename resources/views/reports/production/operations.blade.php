@@ -5,17 +5,26 @@
 
 @if($section === 'control')
     <style>
-        .report-print .report-table th, .report-print .report-table td { font-size: 8px; line-height: 1.2; padding: 2px; white-space: normal; }
+        .report-print .report-table th, .report-print .report-table td { font-size: 12px; line-height: 1.3; padding: 4px; white-space: normal; }
         .report-print .report-control-summary-table { table-layout: fixed; }
         .report-print .report-control-summary-table th, .report-print .report-control-summary-table td { overflow-wrap: anywhere; }
-        .report-print h3 { margin: 4px 0 2px; }
-        .report-print .report-control-note { font-size: 8px; line-height: 1.2; font-weight: 400; color: #475569; margin: 1px 0 2px; }
+        .report-print .report-control-kpi-strip { width: 100%; border-collapse: separate; border-spacing: 3px; margin: 2px 0 5px; }
+        .report-print .report-control-kpi-strip td { width: 25%; padding: 5px 7px; border: 1px solid #c8dfe9; background: #f2f8fa; color: #173b5e; vertical-align: top; text-align: center; }
+        .report-print .report-control-kpi-strip td strong { display: block; margin-top: 2px; font-size: 13px; color: #123763; }
+        .report-print .report-control-kpi-strip td.is-empty { border: 0; background: transparent; }
+        .report-print h3 { margin: 4px 0 2px; page-break-after: avoid; }
+        .report-print .report-control-note { font-size: 10.5px; line-height: 1.3; font-weight: 400; color: #475569; margin: 1px 0 2px; page-break-after: avoid; }
     </style>
-    <div class="report-filter-summary">{{ __('production_execution.reports.control.all_branches') }}: {{ $controlBranches->firstWhere('id', $controlFilters['branch_id'] ?? null)?->name ?? __('stock_balance_inquiry.options.all') }} · {{ __('production_execution.reports.filters.from') }}: {{ $controlFilters['from'] ?? '—' }} · {{ __('production_execution.reports.filters.to') }}: {{ $controlFilters['to'] ?? '—' }}</div>
+    <div class="report-filter-summary">{{ __('production_execution.reports.control.all_branches') }}: {{ $controlBranches->firstWhere('id', $controlFilters['branch_id'] ?? null)?->name ?? __('stock_balance_inquiry.options.all') }} · {{ __('production_execution.reports.filters.from') }}: {{ $dates->formatDate($controlFilters['from'] ?? null, '—') }} · {{ __('production_execution.reports.filters.to') }}: {{ $dates->formatDate($controlFilters['to'] ?? null, '—') }}</div>
     @php($visibleControlKpis = collect($controlKpis)->filter(fn ($value): bool => bccomp((string) $value, '0', 8) !== 0))
     @if($visibleControlKpis->isNotEmpty())
-        <table class="report-table"><thead><tr><th>{{ __('production_execution.reports.columns.metric') }}</th><th class="number">{{ __('production_execution.reports.columns.value') }}</th></tr></thead><tbody>
-            @foreach($visibleControlKpis as $key => $value)<tr><td>{{ __('production_execution.reports.control.kpis.'.$key) }}</td><td class="number">{{ $numbers->format($value) }}</td></tr>@endforeach
+        <table class="report-control-kpi-strip"><tbody>
+            @foreach($visibleControlKpis->chunk(4) as $group)
+                <tr>
+                    @foreach($group as $key => $value)<td>{{ __('production_execution.reports.control.kpis.'.$key) }}<br><strong dir="ltr">{{ $numbers->format($value) }}</strong></td>@endforeach
+                    @for($empty = $group->count(); $empty < 4; $empty++)<td class="is-empty"></td>@endfor
+                </tr>
+            @endforeach
         </tbody></table>
     @endif
     @if($controlRuns->isNotEmpty() && $controlRuns->every(fn ($run): bool => bccomp((string) $run->report_recorded_base_quantity, '0', 8) === 0))
@@ -28,17 +37,17 @@
     <p class="report-control-note">{{ __('production_execution.reports.control.final_stage_note') }}</p>
     <table class="report-table"><thead><tr>@foreach(['branch','product','customer','stage','unit','pack_size','planned','good','equivalent_good','yield'] as $column)<th>{{ __('production_execution.reports.control.columns.'.$column) }}</th>@endforeach</tr></thead><tbody>
         @forelse($controlProducts as $row)
-            <tr><td>{{ $row['branch'] ?: '—' }}</td><td>{{ $row['product']?->doc_num }} / {{ $row['product']?->name }}@if($row['color'])<br><small>{{ $row['color'] }}</small>@endif @if($row['components'])<br><small>{{ $row['components'] }}</small>@endif</td><td>{{ $row['customer'] ?: '—' }}</td><td>{{ $row['stage'] ?: '—' }}</td><td>{{ $row['unit'] ?: '—' }}</td>
+            <tr><td>{{ $row['branch'] ?: '—' }}</td><td>{{ $row['product']?->doc_num }} / {{ $row['product']?->name }}@if($row['color'])<br><small>{{ $row['color'] }}</small>@endif @if($row['components'])<br><small>{{ $row['components'] }}</small>@endif</td><td>{{ $row['customer'] ?: '—' }}</td><td>{{ $row['stage'] ?: '—' }}</td><td>{{ $row['unit'] ?: '—' }}@if($row['equivalent_unit'])<br><small>{{ __('production_execution.reports.control.columns.equivalent_unit') }}: {{ $row['equivalent_unit'] }}</small>@endif</td>
                 @foreach(['pack_size','planned','good','equivalent_good','yield'] as $field)<td class="number">{{ $row[$field] === null ? '—' : $numbers->format($row[$field]) }}@if($field === 'good' && $row['good_weight_kg'] !== null)<br><small>{{ __('production_execution.reports.control.columns.good_weight_kg') }}: {{ $numbers->format($row['good_weight_kg']) }}</small>@if($row['unit_weight_kg'] !== null)<br><small>{{ __('production_execution.reports.control.columns.unit_weight_kg') }}: {{ $numbers->format($row['unit_weight_kg']) }}</small>@endif @endif @if($field === 'yield' && $row['production_scrap_weight_kg'] !== null)<br><small>{{ __('production_execution.reports.control.columns.production_scrap_weight_kg') }}: {{ $numbers->format($row['production_scrap_weight_kg']) }}</small>@if($row['production_scrap_percent'] !== null)<br><small>{{ __('production_execution.reports.control.columns.production_scrap_percent') }}: {{ $numbers->format($row['production_scrap_percent']) }}</small>@endif @endif</td>@endforeach
             </tr>
         @empty<tr><td colspan="10" class="report-empty-cell">{{ __('production_execution.reports.control.no_runs') }}</td></tr>@endforelse
     </tbody></table>
     <h3>{{ __('production_execution.reports.control.daily_output') }}</h3>
-    <table class="report-table"><thead><tr>@foreach(['date','branch','machine','shift','run','product','good','equivalent_good','scrap'] as $column)<th>{{ __('production_execution.reports.control.columns.'.$column) }}</th>@endforeach</tr></thead><tbody>
+    <table class="report-table"><thead><tr>@foreach(['date','date_basis','branch','machine','shift','run','product','good','equivalent_good','scrap'] as $column)<th>{{ __('production_execution.reports.control.columns.'.$column) }}</th>@endforeach</tr></thead><tbody>
         @forelse($controlDaily as $row)
             @php($run = $row['run'])
-            <tr><td>{{ $dates->formatDate($row['date']) }}</td><td>{{ $run->order?->branch?->name }}</td><td>{{ $run->fixedAsset?->asset_name ?? $run->machine?->name ?? '—' }}</td><td>{{ $run->shift?->name ?: '—' }}</td><td>{{ $run->run_number }}</td><td>{{ $run->product?->doc_num }} / {{ $run->product?->name }}@if($run->output_color_name)<br><small>{{ $run->output_color_name }}</small>@endif</td><td class="number">{{ $numbers->format($row['good']) }}@if($row['good_weight_kg'] !== null)<br><small>{{ __('production_execution.reports.control.columns.good_weight_kg') }}: {{ $numbers->format($row['good_weight_kg']) }}</small>@endif</td><td class="number">{{ $row['equivalent_good'] === null ? '—' : $numbers->format($row['equivalent_good']) }}</td><td class="number">{{ $numbers->format($row['scrap']) }}@if($row['production_scrap_weight_kg'] !== null)<br><small>{{ __('production_execution.reports.control.columns.production_scrap_weight_kg') }}: {{ $numbers->format($row['production_scrap_weight_kg']) }}</small>@endif</td></tr>
-        @empty<tr><td colspan="9" class="report-empty-cell">{{ __('production_execution.reports.control.no_daily') }}</td></tr>@endforelse
+            <tr><td>{{ $dates->formatDate($row['date']) }}</td><td>{{ __('production_execution.reports.control.date_bases.'.$row['date_basis']) }}</td><td>{{ $run->order?->branch?->name }}</td><td>{{ $run->fixedAsset?->asset_name ?? $run->machine?->name ?? '—' }}</td><td>{{ $run->shift?->name ?: '—' }}</td><td>{{ $run->run_number }}</td><td>{{ $run->product?->doc_num }} / {{ $run->product?->name }}@if($run->output_color_name)<br><small>{{ $run->output_color_name }}</small>@endif</td><td class="number">{{ $numbers->format($row['good']) }}@if($row['good_weight_kg'] !== null)<br><small>{{ __('production_execution.reports.control.columns.good_weight_kg') }}: {{ $numbers->format($row['good_weight_kg']) }}</small>@endif</td><td class="number">{{ $row['equivalent_good'] === null ? '—' : $numbers->format($row['equivalent_good']) }}</td><td class="number">{{ $numbers->format($row['scrap']) }}@if($row['production_scrap_weight_kg'] !== null)<br><small>{{ __('production_execution.reports.control.columns.production_scrap_weight_kg') }}: {{ $numbers->format($row['production_scrap_weight_kg']) }}</small>@endif</td></tr>
+        @empty<tr><td colspan="10" class="report-empty-cell">{{ __('production_execution.reports.control.no_daily') }}</td></tr>@endforelse
     </tbody></table>
     <h3>{{ __('production_execution.reports.control.daily_materials') }}</h3>
     <table class="report-table"><thead><tr>@foreach(['date','branch','run','product','material','unit','consumed','waste','total_used','waste_percent','document'] as $column)<th>{{ __('production_execution.reports.control.columns.'.$column) }}</th>@endforeach</tr></thead><tbody>
@@ -54,12 +63,15 @@
             <tr><td>{{ $row['branch'] ?: '—' }}</td><td>{{ $row['machine'] ?: '—' }}</td><td>{{ $row['stage'] ?: '—' }}</td><td>{{ $row['product']?->doc_num }} / {{ $row['product']?->name }}@if($row['color'])<br><small>{{ $row['color'] }}</small>@endif</td><td>{{ $row['unit'] ?: '—' }}</td><td class="number">{{ $row['runs'] }}</td><td class="number">{{ $numbers->format($row['planned']) }}</td><td class="number">{{ $row['good'] === null ? '—' : $numbers->format($row['good']) }}@if($row['good_weight_kg'] !== null)<br><small>{{ __('production_execution.reports.control.columns.good_weight_kg') }}: {{ $numbers->format($row['good_weight_kg']) }}</small>@endif</td><td class="number">{{ $row['yield'] === null ? '—' : $numbers->format($row['yield']) }}@if($row['production_scrap_weight_kg'] !== null)<br><small>{{ __('production_execution.reports.control.columns.production_scrap_weight_kg') }}: {{ $numbers->format($row['production_scrap_weight_kg']) }}</small>@endif</td></tr>
         @empty<tr><td colspan="9" class="report-empty-cell">{{ __('production_execution.reports.control.no_runs') }}</td></tr>@endforelse
     </tbody></table>
+    @if($controlMaterialSummary->isNotEmpty() && ($controlProducts->isNotEmpty() || $controlDaily->isNotEmpty() || $controlDailyMaterials->isNotEmpty() || $controlMachines->isNotEmpty()))
+        <pagebreak />
+    @endif
     <h3>{{ __('production_execution.reports.control.material_summary') }}</h3>
     <p class="report-control-note">{{ __('production_execution.reports.control.material_unit_note') }}</p>
     <table class="report-table"><thead><tr>@foreach(['product','material','unit','planned','issued','consumed','waste','total_used','consumed_per_equivalent','waste_percent','variance'] as $column)<th>{{ __('production_execution.reports.control.columns.'.$column) }}</th>@endforeach</tr></thead><tbody>
         @forelse($controlMaterialSummary as $row)
             <tr><td>{{ $row['product']?->doc_num }} / {{ $row['product']?->name }}@if($row['color'])<br><small>{{ $row['color'] }}</small>@endif @if($row['stage'])<br><small>{{ $row['stage'] }}</small>@endif</td><td>{{ $row['material']?->doc_num }} / {{ $row['material']?->name }}</td><td>{{ $row['unit'] ?: '—' }}</td>
-                @foreach(['planned','issued','consumed','waste','total_used'] as $field)<td class="number">{{ $row[$field] === null ? '—' : $numbers->format($row[$field]) }}</td>@endforeach
+                @foreach(['planned','issued','consumed','waste','total_used'] as $field)<td class="number">{{ $row[$field] === null ? '—' : $numbers->format($row[$field]) }}@if($field === 'issued' && $row['returned'] !== null)<br><small>{{ __('production_execution.reports.control.columns.returned') }}: {{ $numbers->format($row['returned']) }}</small>@endif</td>@endforeach
                 <td class="number">{{ $row['consumed_per_equivalent'] === null ? '—' : $numbers->format($row['consumed_per_equivalent']) }}@if($row['consumed_per_equivalent'] !== null && $row['consumption_unit'])<br><small>{{ $row['consumption_unit'] }}</small>@endif</td>
                 @foreach(['waste_percent','variance'] as $field)<td class="number">{{ $row[$field] === null ? '—' : $numbers->format($row[$field]) }}</td>@endforeach
             </tr>
@@ -68,7 +80,7 @@
     <h3>{{ __('production_execution.reports.control.run_details') }}</h3>
     <table class="report-table"><thead><tr>@foreach(['branch','date','shift','machine','run','product','planned','good','received','yield'] as $column)<th>{{ __('production_execution.reports.control.columns.'.$column) }}</th>@endforeach</tr></thead><tbody>
         @forelse($controlRuns as $run)
-            <tr><td>{{ $run->order?->branch?->name }}</td><td>{{ $dates->formatDate($run->actual_start_at ?? $run->planned_start_at) }}</td><td>{{ $run->shift?->name ?: '—' }}</td><td>{{ $run->fixedAsset?->asset_name ?? $run->machine?->name ?? '—' }}</td><td>{{ $run->run_number }}</td><td>{{ $run->product?->doc_num }} / {{ $run->product?->name }}</td><td class="number">{{ $numbers->format($run->planned_base_quantity) }}</td><td class="number">{{ $run->report_yield_percent === null ? '—' : $numbers->format($run->report_good_base_quantity) }}@if($run->report_good_weight_kg !== null)<br><small>{{ $numbers->format($run->report_good_weight_kg) }} kg</small>@endif</td><td class="number">{{ bccomp((string) $run->report_received_base_quantity, '0', 8) > 0 ? $numbers->format($run->report_received_base_quantity) : '—' }}</td><td class="number">{{ $run->report_yield_percent === null ? '—' : $numbers->format($run->report_yield_percent) }}@if($run->report_production_scrap_weight_kg !== null)<br><small>{{ __('production_execution.reports.control.columns.production_scrap_weight_kg') }}: {{ $numbers->format($run->report_production_scrap_weight_kg) }}</small>@endif</td></tr>
+            <tr><td>{{ $run->order?->branch?->name }}</td><td>{{ $dates->formatDate($run->actual_start_at ?? $run->planned_start_at) }}</td><td>{{ $run->shift?->name ?: '—' }}</td><td>{{ $run->fixedAsset?->asset_name ?? $run->machine?->name ?? '—' }}</td><td>{{ $run->run_number }}<br><small>{{ __('production_execution.statuses.'.$run->status) }}</small></td><td>{{ $run->product?->doc_num }} / {{ $run->product?->name }}</td><td class="number">{{ $numbers->format($run->planned_base_quantity) }}</td><td class="number">{{ $run->report_yield_percent === null ? '—' : $numbers->format($run->report_good_base_quantity) }}@if($run->report_good_weight_kg !== null)<br><small>{{ $numbers->format($run->report_good_weight_kg) }} kg</small>@endif</td><td class="number">{{ bccomp((string) $run->report_received_base_quantity, '0', 8) > 0 ? $numbers->format($run->report_received_base_quantity) : '—' }}</td><td class="number">{{ $run->report_yield_percent === null ? '—' : $numbers->format($run->report_yield_percent) }}@if($run->report_production_scrap_weight_kg !== null)<br><small>{{ __('production_execution.reports.control.columns.production_scrap_weight_kg') }}: {{ $numbers->format($run->report_production_scrap_weight_kg) }}</small>@endif</td></tr>
         @empty<tr><td colspan="10" class="report-empty-cell">{{ __('production_execution.reports.control.no_runs') }}</td></tr>@endforelse
     </tbody></table>
     @if($controlRuns->isNotEmpty())

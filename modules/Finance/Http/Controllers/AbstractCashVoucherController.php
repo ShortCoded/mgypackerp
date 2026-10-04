@@ -31,6 +31,8 @@ use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Services\CashVoucherService;
 use Modules\Finance\Services\FinanceDocumentNumberSettingsService;
+use Modules\Purchases\Models\PurchaseInvoicePaymentSchedule;
+use Modules\Purchases\Models\SupplierPaymentContext;
 
 abstract class AbstractCashVoucherController extends Controller
 {
@@ -197,10 +199,21 @@ abstract class AbstractCashVoucherController extends Controller
         ]);
     }
 
+    public function correctPurchasePayment(CancelCashVoucherRequest $request, string $cashVoucher): JsonResponse
+    {
+        abort_unless($this->voucherType() === CashVoucher::TypePayment, 404);
+        $record = $this->findInCurrentCompany($request, $cashVoucher);
+        $this->enforceOperatingScope($request, $record, includeCancellationPeriod: true);
+        $record = $this->guardDomain(fn (): CashVoucher => $this->service->correctScheduledPurchasePayment($record, (string) $request->validated('cancel_reason')));
+
+        return response()->json(['success' => true, 'message' => __('open_documents.messages.purchase_voucher_corrected'),
+            'data' => ['doc_num' => $record->doc_num, 'urls' => $this->urls($record)]]);
+    }
+
     public function print(Request $request, string $cashVoucher, CompanyPrintIdentityService $printIdentities, ReportPdfService $pdf): Response
     {
         $record = $this->findInCurrentCompany($request, $cashVoucher, true);
-        $record->loadMissing(['company', 'cashbox.account', 'currency', 'lines.account']);
+        $record->loadMissing(['company', 'cashbox.account', 'currency', 'lines.account', 'lines.costCenter']);
         $identity = $printIdentities->forCompany($record->company);
 
         return $pdf->stream('modules.finance.cash-vouchers.print', [
@@ -264,7 +277,7 @@ abstract class AbstractCashVoucherController extends Controller
 
     private function form(string $mode, ?CashVoucher $record = null, ?string $cloneSourceToken = null): View
     {
-        $record?->loadMissing(['cashbox.account', 'currency', 'lines.account']);
+        $record?->loadMissing(['cashbox.account', 'currency', 'lines.account', 'lines.costCenter']);
 
         return view('modules.finance.cash-vouchers.form', [
             'mode' => $mode,
@@ -279,6 +292,9 @@ abstract class AbstractCashVoucherController extends Controller
             'breadcrumbs' => $this->breadcrumbs($mode, $record),
             'cloneSourceToken' => $cloneSourceToken,
             'isLocked' => $record?->isLockedForEditing() ?? false,
+            'isScheduledPurchasePayment' => $record?->isPayment() && $record->isApproved()
+                && PurchaseInvoicePaymentSchedule::query()->where('company_id', $record->company_id)->where('cash_voucher_id', $record->id)->exists()
+                && ! SupplierPaymentContext::query()->where('cash_voucher_id', $record->id)->exists(),
             'cashboxOption' => $this->cashboxOption($record),
             'currencyOption' => $this->currencyOption($record),
             'mainCurrencyDocNum' => $this->mainCurrencyDocNum(),
@@ -344,6 +360,8 @@ abstract class AbstractCashVoucherController extends Controller
             ->where('company_id', $companyId)
             ->where('voucher_type', $this->voucherType())
             ->where('doc_num', $docNum)
+            ->orderByRaw('CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END')
+            ->orderByDesc('id')
             ->firstOrFail();
     }
 

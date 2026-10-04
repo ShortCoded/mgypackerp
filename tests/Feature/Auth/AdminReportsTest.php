@@ -2291,6 +2291,23 @@ test('report pdf shell uses inline disposition and shared header footer data', f
         ->toContain(__('reports.page').' {PAGENO}/{nbpg}');
 });
 
+test('report pdf header keeps logo at the outer edge for both text directions', function () {
+    $payload = [
+        'companyLogoPath' => null,
+        'companyName' => 'Mgy Pack',
+        'printDate' => '30/09/2026',
+        'reportTitle' => 'Stock valuation',
+    ];
+
+    $arabic = view('reports.partials.header', [...$payload, 'direction' => 'rtl'])->render();
+    $english = view('reports.partials.header', [...$payload, 'direction' => 'ltr'])->render();
+
+    expect(strpos($arabic, 'report-meta'))->toBeLessThan(strpos($arabic, 'report-title'))
+        ->and(strpos($arabic, 'report-title'))->toBeLessThan(strpos($arabic, 'report-header-logo'))
+        ->and(strpos($english, 'report-header-logo'))->toBeLessThan(strpos($english, 'report-title'))
+        ->and(strpos($english, 'report-title'))->toBeLessThan(strpos($english, 'report-meta'));
+});
+
 test('report pdf branding header logo uses company logo then default logo then text fallback', function () {
     app()->setLocale('en');
 

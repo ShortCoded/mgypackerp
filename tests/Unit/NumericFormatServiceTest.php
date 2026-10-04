@@ -33,6 +33,18 @@ test('it preserves empty values separately from zero', function () {
         ->and($formatter->normalize('0'))->toBe('0');
 });
 
+test('it presents monetary values with a minimum of two decimals without rounding meaningful precision', function () {
+    $formatter = app(NumericFormatService::class);
+
+    expect($formatter->formatWithMinimumDecimals('225454.5000', 2))->toBe('225,454.50')
+        ->and($formatter->formatWithMinimumDecimals('1.2345', 2))->toBe('1.2345')
+        ->and($formatter->formatWithMinimumDecimals('0', 2))->toBe('0.00')
+        ->and($formatter->formatWithMinimumDecimals('-1250.5', 2))->toBe('-1,250.50')
+        ->and($formatter->formatWithMinimumDecimals(null, 2))->toBe('')
+        ->and(fn () => $formatter->formatWithMinimumDecimals('1', -1))
+        ->toThrow(InvalidArgumentException::class);
+});
+
 test('it normalizes valid grouped input to a canonical decimal string', function (mixed $input, ?string $expected) {
     expect(app(NumericFormatService::class)->normalize($input))->toBe($expected);
 })->with([

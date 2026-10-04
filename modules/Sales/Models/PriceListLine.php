@@ -18,7 +18,7 @@ class PriceListLine extends Model
 
     protected function casts(): array
     {
-        return ['unit_price' => 'decimal:4', 'allowed_discount_value' => 'decimal:4'];
+        return ['unit_price' => 'decimal:8', 'allowed_discount_value' => 'decimal:4'];
     }
 
     public function priceList(): BelongsTo

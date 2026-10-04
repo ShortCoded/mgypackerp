@@ -163,7 +163,7 @@
                         <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.reject', $record->doc_num) }}" class="d-flex gap-2">@csrf<x-forms.input class="form-control form-control-sm" name="rejection_reason" placeholder="{{ __('Rejection reason') }}" required /><button class="btn btn-danger btn-sm">{{ __('Reject') }}</button></form>
                         @endcan
                     @endif
-                    @if(($isOwnBranch || ($isAdministrativeBranch ?? false)) && !in_array($record->status, ['cancelled', 'closed', 'partially_converted', 'fully_converted'], true) && $record->closed_at === null && ! $record->hasDownstreamDocuments())
+                    @if(($isOwnBranch || ($isAdministrativeBranch ?? false)) && !in_array($record->status, ['cancelled', 'closed', 'partially_converted', 'fully_converted'], true) && $record->closed_at === null && ! ($record->approved_at !== null && $record->status !== \Modules\Purchases\Models\PurchaseRequisition::StatusApproved) && ! $record->hasDownstreamDocuments())
                         @can('purchases.purchase_requisitions.cancel')
                         <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.cancel', $record->doc_num) }}" class="d-flex gap-2">@csrf<x-forms.input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" required /><button class="btn btn-falcon-danger btn-sm">{{ __('Cancel') }}</button></form>
                         @endcan
@@ -298,6 +298,13 @@
                     <form method="POST" action="{{ route('admin.purchases.supplier-payments.approve', $record->doc_num) }}">@csrf<button class="btn btn-success btn-sm">{{ __('Approve payment') }}</button></form>
                     @endcan
                     @endcan
+                    @can('supplier_payments.cancel')
+                    <form method="POST" action="{{ route('admin.purchases.supplier-payments.cancel', $record->doc_num) }}" class="d-flex gap-2">
+                        @csrf
+                        <x-forms.input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" />
+                        <button class="btn btn-danger btn-sm">{{ __('Cancel') }}</button>
+                    </form>
+                    @endcan
                 @endif
                 @if($type === 'supplier_payment' && $record->isApproved())
                     @can('supplier_payments.cancel')
@@ -350,6 +357,14 @@
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Payment method') }}</div><div>{{ __('procurement.statuses.'.$record->payment_method) }}</div></div>
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Payment date') }}</div><div dir="ltr">{{ $dates->formatDate($record->payment_date, '—') }}</div></div>
                     <div class="col-md-3"><div class="text-600 fs-10">{{ __('Amount') }}</div><div class="fw-semibold" dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($record->amount) }}</div></div>
+                    @if($record->isCancelled() && $record->journalEntry?->reversedEntry)
+                        <div class="col-12"><div class="alert alert-info mb-0">
+                            {{ __('open_documents.messages.payment_recovery_posted', ['document' => $record->journalEntry->reversedEntry->doc_num,
+                                'date' => $dates->formatDate($record->journalEntry->reversedEntry->entry_date, '—')]) }}
+                            <div class="mt-1">{{ $record->cancel_reason }}</div>
+                            @can('journal_entries.view')<a href="{{ route('admin.accounting.journal-entries.show', $record->journalEntry->reversedEntry->doc_num) }}">{{ $record->journalEntry->reversedEntry->doc_num }}</a>@endcan
+                        </div></div>
+                    @endif
                     @if($record->bankAccount)
                         <div class="col-md-6"><div class="text-600 fs-10">{{ __('Bank / branch / account') }}</div><div>{{ $record->bankAccount->bank?->name ?? $record->bankAccount->bank?->name_en }} / {{ $record->bankAccount->bank_branch_name ?: '—' }} / <span dir="ltr">{{ $record->bankAccount->account_number }}</span></div></div>
                     @endif
@@ -437,7 +452,7 @@
                                 @endphp
                                 <tr>
                                     <td>{{ $index + 1 }}</td>
-                                    <td>{{ $item }}</td>
+                                    <td>{{ $item }} @include('modules.purchases.procurement.serial-details', ['line' => $line])</td>
                                     <td dir="ltr">{{ $source }}</td>
                                     <td class="text-end" dir="ltr">{{ is_numeric($quantity) ? app(\Modules\Core\Services\NumericFormatService::class)->format($quantity) : $quantity }}</td>
                                     @if($type === 'purchase_requisition')

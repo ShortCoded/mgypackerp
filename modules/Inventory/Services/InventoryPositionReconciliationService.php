@@ -7,10 +7,13 @@ use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
+use Modules\Inventory\Models\InventoryCostPolicy;
 use Modules\Inventory\Models\InventoryTransaction;
 
 class InventoryPositionReconciliationService
 {
+    public function __construct(private readonly InventoryCostPolicyService $costPolicies) {}
+
     public function reconcileNegativeNullBatchPosition(
         int $companyId,
         int $financialPeriodId,
@@ -29,6 +32,11 @@ class InventoryPositionReconciliationService
             $transactionDate,
             $reference,
         ): int {
+            $this->costPolicies->assertPostingDateAllowed($companyId, $branchStoreId, $transactionDate);
+            $costPolicy = $this->costPolicies->resolve($companyId, $branchStoreId, $transactionDate);
+            if ($costPolicy['method'] === InventoryCostPolicy::Fifo) {
+                throw new DomainException(__('Historical position reconciliation requires a separate FIFO cost revaluation.'));
+            }
             $period = FinancialPeriod::query()->lockForUpdate()->findOrFail($financialPeriodId);
             $store = BranchStore::query()->lockForUpdate()->findOrFail($branchStoreId);
             $product = Product::query()->lockForUpdate()->findOrFail($productId);
@@ -95,6 +103,9 @@ class InventoryPositionReconciliationService
                     'source_doc_num' => $reference,
                     'unit_cost' => $unitCost,
                     'total_cost' => $totalCost,
+                    'cost_method' => $costPolicy['method'],
+                    'cost_policy_id' => $costPolicy['policy_id'],
+                    'cost_basis' => 'historical_reconciliation',
                     'notes' => 'Historical stock-position reconciliation; aggregate quantity, value, and receipt-layer availability are unchanged.',
                     'created_by' => auth()->id(),
                 ];

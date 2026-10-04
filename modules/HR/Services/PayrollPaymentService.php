@@ -11,6 +11,7 @@ use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\AccountClassification;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\JournalEntryService;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\NumericFormatService;
@@ -35,6 +36,7 @@ final class PayrollPaymentService
     public function createCashPayment(int $payrollRunId, int $companyId, array $data): array
     {
         return DB::transaction(function () use ($payrollRunId, $companyId, $data): array {
+            Company::query()->whereKey($companyId)->active()->lockForUpdate()->firstOrFail();
             if (! isset($data['payslip_id'])) {
                 $payslipIds = DB::table('hr_payslips')->where('payroll_run_id', $payrollRunId)->where('company_id', $companyId)->limit(2)->pluck('id');
                 if ($payslipIds->count() !== 1) {
@@ -42,40 +44,14 @@ final class PayrollPaymentService
                 }
                 $data['payslip_id'] = (int) $payslipIds->first();
             }
-            $existing = DB::table('hr_payroll_payments as payment')
-                ->join('cash_vouchers as voucher', 'voucher.id', '=', 'payment.cash_voucher_id')
-                ->join('cashboxes as cashbox', 'cashbox.id', '=', 'voucher.cashbox_id')
-                ->where('payment.company_id', $companyId)
-                ->where('payment.idempotency_key', $data['idempotency_key'])
-                ->first([
-                    'payment.*',
-                    'voucher.doc_num as voucher_doc_num',
-                    'voucher.voucher_date',
-                    'voucher.description as voucher_description',
-                    'cashbox.doc_num as cashbox_doc_num',
-                ]);
-            if ($existing !== null) {
-                $expectedAmount = bcadd((string) $data['amount'], '0', 4);
-                $samePayload = (int) $existing->payroll_run_id === $payrollRunId
-                    && (int) $existing->payslip_id === (int) $data['payslip_id']
-                    && hash_equals(trim((string) $existing->cashbox_doc_num), trim((string) $data['cashbox_doc_num']))
-                    && CarbonImmutable::parse($existing->voucher_date)->isSameDay($data['payment_date'])
-                    && bccomp((string) $existing->amount, $expectedAmount, 4) === 0;
-                if (filled($data['reference'] ?? null)) {
-                    $samePayload = $samePayload
-                        && hash_equals(trim((string) $existing->voucher_description), trim((string) $data['reference']));
-                }
-                if (! $samePayload) {
-                    throw new DomainException(__('hr_payroll.messages.payment_idempotency_conflict'));
-                }
-
-                return [
-                    'payment' => $existing,
-                    'voucher' => CashVoucher::query()->findOrFail($existing->cash_voucher_id),
-                ];
+            if (($replayed = $this->replayedCashPayment($payrollRunId, $companyId, $data)) !== null) {
+                return $replayed;
             }
 
             $run = $this->run($payrollRunId, $companyId, lock: true);
+            if (($replayed = $this->replayedCashPayment($payrollRunId, $companyId, $data)) !== null) {
+                return $replayed;
+            }
             if ($run->status !== 'posted') {
                 throw new DomainException(__('hr_payroll.messages.payment_requires_posted_run'));
             }
@@ -158,9 +134,52 @@ final class PayrollPaymentService
         }, attempts: 3);
     }
 
+    /**
+     * @param  array{payslip_id: int, cashbox_doc_num: string, amount: mixed, payment_date: string, idempotency_key: string, reference?: string|null}  $data
+     * @return array{payment: object, voucher: CashVoucher}|null
+     */
+    private function replayedCashPayment(int $payrollRunId, int $companyId, array $data): ?array
+    {
+        $existing = DB::table('hr_payroll_payments as payment')
+            ->join('cash_vouchers as voucher', 'voucher.id', '=', 'payment.cash_voucher_id')
+            ->join('cashboxes as cashbox', 'cashbox.id', '=', 'voucher.cashbox_id')
+            ->where('payment.company_id', $companyId)
+            ->where('payment.idempotency_key', $data['idempotency_key'])
+            ->first([
+                'payment.*',
+                'voucher.doc_num as voucher_doc_num',
+                'voucher.voucher_date',
+                'voucher.description as voucher_description',
+                'cashbox.doc_num as cashbox_doc_num',
+            ]);
+        if ($existing === null) {
+            return null;
+        }
+
+        $expectedAmount = bcadd((string) $data['amount'], '0', 4);
+        $samePayload = (int) $existing->payroll_run_id === $payrollRunId
+            && (int) $existing->payslip_id === (int) $data['payslip_id']
+            && hash_equals(trim((string) $existing->cashbox_doc_num), trim((string) $data['cashbox_doc_num']))
+            && CarbonImmutable::parse($existing->voucher_date)->isSameDay($data['payment_date'])
+            && bccomp((string) $existing->amount, $expectedAmount, 4) === 0;
+        if (filled($data['reference'] ?? null)) {
+            $samePayload = $samePayload
+                && hash_equals(trim((string) $existing->voucher_description), trim((string) $data['reference']));
+        }
+        if (! $samePayload) {
+            throw new DomainException(__('hr_payroll.messages.payment_idempotency_conflict'));
+        }
+
+        return [
+            'payment' => $existing,
+            'voucher' => CashVoucher::query()->findOrFail($existing->cash_voucher_id),
+        ];
+    }
+
     public function postApprovedVoucher(CashVoucher $voucher): ?JournalEntry
     {
         return DB::transaction(function () use ($voucher): ?JournalEntry {
+            Company::query()->whereKey($voucher->company_id)->active()->lockForUpdate()->firstOrFail();
             $payment = DB::table('hr_payroll_payments')
                 ->where('cash_voucher_id', $voucher->getKey())
                 ->lockForUpdate()
@@ -244,9 +263,25 @@ final class PayrollPaymentService
         }, attempts: 3);
     }
 
+    public function voidDeletedDraftVoucher(CashVoucher $voucher): void
+    {
+        DB::transaction(function () use ($voucher): void {
+            Company::query()->whereKey($voucher->company_id)->active()->lockForUpdate()->firstOrFail();
+            $payment = DB::table('hr_payroll_payments')->where('cash_voucher_id', $voucher->getKey())->lockForUpdate()->first();
+            if ($payment === null) {
+                return;
+            }
+            if (! $voucher->trashed() || ! $voucher->isDraft() || $payment->journal_entry_id !== null) {
+                throw new DomainException(__('hr_payroll_correction.cancel_payments_first'));
+            }
+            $this->reverseCancelledVoucher($voucher);
+        });
+    }
+
     public function reverseCancelledVoucher(CashVoucher $voucher): ?JournalEntry
     {
         return DB::transaction(function () use ($voucher): ?JournalEntry {
+            Company::query()->whereKey($voucher->company_id)->active()->lockForUpdate()->firstOrFail();
             $payment = DB::table('hr_payroll_payments')
                 ->where('cash_voucher_id', $voucher->getKey())
                 ->lockForUpdate()

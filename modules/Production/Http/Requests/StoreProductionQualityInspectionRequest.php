@@ -7,6 +7,7 @@ use Illuminate\Validation\Rule;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Production\Models\ProductionQualityInspection;
+use Modules\Production\Services\ProductionCorrectionContextService;
 
 class StoreProductionQualityInspectionRequest extends FormRequest
 {
@@ -43,7 +44,7 @@ class StoreProductionQualityInspectionRequest extends FormRequest
                 'integer',
                 Rule::exists('production_runs', 'id')->where(fn ($query) => $query
                     ->where('company_id', $context['company_id'])
-                    ->where('financial_period_id', $context['financial_period_id'])
+                    ->tap(fn ($builder) => app(ProductionCorrectionContextService::class)->scopeRunsForPeriod($builder, (int) $context['financial_period_id']))
                     ->where('branch_id', $context['branch_id'])
                     ->whereNull('deleted_at')),
             ],
