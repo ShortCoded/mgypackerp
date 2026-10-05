@@ -2,17 +2,23 @@
 
 namespace Modules\Production\Services;
 
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use Carbon\CarbonImmutable;
 use DomainException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Schema;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
+use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
+use Modules\Core\Services\OperatingContextService;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\HR\Models\HrEmployee;
 use Modules\Inventory\Models\InventoryDocument;
@@ -106,20 +112,38 @@ class ProductionCycleService
     public function updateDraftOrder(ProductionOrder $order, array $header, array $lines): ProductionOrder
     {
         return DB::transaction(function () use ($order, $header, $lines): ProductionOrder {
-            $locked = ProductionOrder::query()->withCount('runs')->lockForUpdate()->findOrFail($order->getKey());
+            Company::query()->whereKey($order->company_id)->lockForUpdate()->firstOrFail();
+            $locked = ProductionOrder::query()->lockForUpdate()->findOrFail($order->getKey());
+            $this->assertOrderAmendable($locked);
 
-            if ($locked->status !== ProductionOrder::StatusDraft || $locked->runs_count > 0) {
-                throw new DomainException(__('production_execution.messages.order_draft_only'));
+            if (! hash_equals($locked->amendmentToken(), (string) ($header['amendment_token'] ?? ''))) {
+                throw new DomainException(__('production_execution.amendment.stale'));
+            }
+            if (($header['source_type'] ?? 'make_to_stock') !== $locked->source_type
+                || ($header['source_id'] ?? null) !== $locked->source_id
+                || ($header['sales_order_id'] ?? null) !== $locked->sales_order_id) {
+                throw new DomainException(__('production_execution.amendment.source_locked'));
+            }
+            $reason = trim((string) ($header['amendment_reason'] ?? ''));
+            if ($reason === '' || mb_strlen($reason) > 2000) {
+                throw new DomainException(__('production_execution.amendment.reason_required'));
             }
             if ($lines === []) {
                 throw new DomainException(__('A production order requires at least one finished-product line.'));
             }
 
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate(
+                (int) $locked->company_id, $header['production_order_date'], (int) $locked->financial_period_id, lockForUpdate: true,
+            );
+            $before = ['order' => $locked->getAttributes(), 'lines' => $locked->lines()->get()->toArray(),
+                'stages' => $locked->stageSnapshots()->get()->toArray()];
+            $this->lockProductionSource($locked);
+            $this->adjustSalesDemand($locked, subtract: true);
+
             $locked->update([
-                'sales_order_id' => $header['sales_order_id'] ?? null,
-                'customer_id' => $header['customer_id'] ?? null,
-                'source_type' => $header['source_type'] ?? 'make_to_stock',
-                'source_id' => $header['source_id'] ?? null,
+                'status' => ProductionOrder::StatusDraft,
+                'released_by' => null,
+                'released_at' => null,
                 'production_order_date' => $header['production_order_date'],
                 'expected_start_date' => $header['expected_start_date'] ?? null,
                 'expected_finish_date' => $header['expected_finish_date'] ?? null,
@@ -129,17 +153,43 @@ class ProductionCycleService
                 'production_notes' => $header['production_notes'] ?? null,
                 'updated_by' => auth()->id(),
             ]);
-            $this->lockProductionSource($locked);
-            $this->adjustSalesDemand($locked, subtract: true);
             $locked->lines()->forceDelete();
             app(ProductionRoutingService::class)->snapshotOrderRoute(
                 $locked,
                 $header['order_stage_public_ids'] ?? [],
             );
-            $this->createOrderLines($locked, $lines);
+            $this->createOrderLines($locked, $lines, preserveSourceSnapshots: true);
+
+            $locked->refresh()->load('lines', 'stageSnapshots');
+            app(ActivityLogger::class)->log(request(), 'production', 'production.order.amended', 'success', [
+                'subject' => $locked, 'causer' => auth()->user(), 'company_id' => $locked->company_id,
+                'properties_only' => true, 'properties' => ['reason' => $reason, 'before' => $before,
+                    'after' => ['order' => $locked->getAttributes(), 'lines' => $locked->lines->toArray(),
+                        'stages' => $locked->stageSnapshots->toArray()]],
+            ]);
 
             return $locked->refresh()->load('lines.product');
         });
+    }
+
+    public function assertOrderAmendable(ProductionOrder $order): void
+    {
+        Gate::authorize('production.orders.edit');
+        if ($order->status !== ProductionOrder::StatusDraft) {
+            Gate::authorize('production.orders.release');
+        }
+        $context = app(OperatingContextService::class)->snapshot(request());
+        if ((int) $order->company_id !== (int) $context['company_id']
+            || (int) $order->branch_id !== (int) $context['branch_id']
+            || (int) $order->financial_period_id !== (int) $context['financial_period_id']) {
+            throw new DomainException(__('production_execution.messages.operating_context_required'));
+        }
+        app(FinancialPeriodService::class)->resolveOpenForPostingDate(
+            (int) $order->company_id, $order->production_order_date, (int) $order->financial_period_id, lockForUpdate: DB::transactionLevel() > 0,
+        );
+        if (! $order->canAmendBeforeExecution()) {
+            throw new DomainException(__('production_execution.amendment.execution_blocked'));
+        }
     }
 
     public function deleteDraftOrder(ProductionOrder $order): void
@@ -177,7 +227,7 @@ class ProductionCycleService
     }
 
     /** @param list<array<string, mixed>> $lines */
-    private function createOrderLines(ProductionOrder $order, array $lines): void
+    private function createOrderLines(ProductionOrder $order, array $lines, bool $preserveSourceSnapshots = false): void
     {
         $source = $this->lockProductionSource($order);
 
@@ -197,6 +247,15 @@ class ProductionCycleService
             }
 
             [$salesLine, $invoiceLine] = $this->sourceLinesForInput($source, $product, $input);
+            $sourceLine = $invoiceLine ?? $salesLine;
+            if ($preserveSourceSnapshots && $sourceLine !== null) {
+                if ((int) $snapshot['unit_id'] !== (int) $sourceLine->unit_id
+                    || bccomp((string) $sourceLine->conversion_factor, '0', 8) <= 0) {
+                    throw new DomainException(__('production_execution.amendment.source_locked'));
+                }
+                $snapshot['conversion_factor'] = (string) $sourceLine->conversion_factor;
+                $snapshot['base_quantity'] = bcmul((string) $input['quantity'], $snapshot['conversion_factor'], 8);
+            }
             $this->assertSourceDemand($order, $product, $snapshot['base_quantity'], $salesLine, $invoiceLine);
 
             $line = $order->lines()->create([
@@ -209,7 +268,7 @@ class ProductionCycleService
                 'quantity' => $input['quantity'],
                 'conversion_factor' => $snapshot['conversion_factor'],
                 'base_quantity' => $snapshot['base_quantity'],
-                'specifications' => $input['specifications'] ?? null,
+                'specifications' => $preserveSourceSnapshots && $salesLine !== null ? $salesLine->specifications : ($input['specifications'] ?? null),
                 'production_notes' => $input['production_notes'] ?? null,
                 'mandatory_specs_resolved' => true,
             ]);
@@ -217,7 +276,7 @@ class ProductionCycleService
 
             if ($line->sales_order_line_id !== null) {
                 $salesLine = SalesOrderLine::query()->lockForUpdate()->findOrFail($line->sales_order_line_id);
-                $salesLine->increment('production_requested_quantity', $line->quantity);
+                $salesLine->increment('production_requested_quantity', bcdiv((string) $line->base_quantity, (string) $salesLine->conversion_factor, 8));
                 $salesLine->increment('production_requested_base_quantity', $line->base_quantity);
             }
         }
@@ -230,7 +289,7 @@ class ProductionCycleService
         foreach ($order->lines->whereNotNull('sales_order_line_id') as $line) {
             $salesLine = SalesOrderLine::query()->lockForUpdate()->findOrFail($line->sales_order_line_id);
             $method = $subtract ? 'decrement' : 'increment';
-            $salesLine->{$method}('production_requested_quantity', $line->quantity);
+            $salesLine->{$method}('production_requested_quantity', bcdiv((string) $line->base_quantity, (string) $salesLine->conversion_factor, 8));
             $salesLine->{$method}('production_requested_base_quantity', $line->base_quantity);
         }
     }
@@ -1206,7 +1265,9 @@ class ProductionCycleService
                 throw new DomainException(__('Every material requirement must have an issue before the run starts.'));
             }
 
-            $this->assertPreviousStageOutputAvailable($locked);
+            if (! app(ProductionOutputEvidenceService::class)->isFactoryWorkflow($locked)) {
+                $this->assertPreviousStageOutputAvailable($locked);
+            }
 
             $locked->update([
                 'status' => ProductionRun::StatusRunning,
@@ -1291,14 +1352,91 @@ class ProductionCycleService
         });
     }
 
+    /** @param list<array{requirement_public_id: string, basis: string}> $definitions */
+    public function enableOutputEvidence(ProductionRun $run, array $definitions, string $executionStructure, array $stageRoles = []): ProductionRun
+    {
+        return DB::transaction(function () use ($run, $definitions, $executionStructure, $stageRoles): ProductionRun {
+            Company::query()->whereKey($run->company_id)->lockForUpdate()->firstOrFail();
+            $locked = ProductionRun::query()->with(['requirements', 'order.orderStageSnapshots', 'orderLine.stageSnapshots'])->lockForUpdate()->findOrFail($run->id);
+            $context = app(OperatingContextService::class)->snapshot(request());
+            if ((int) $locked->company_id !== (int) $context['company_id'] || (int) $locked->branch_id !== (int) $context['branch_id']
+                || (int) $locked->financial_period_id !== (int) $context['financial_period_id']) {
+                throw new DomainException(__('production_execution.messages.operating_context_required'));
+            }
+            Gate::authorize('production.runs.account_materials');
+            if ($locked->material_accounting_mode !== 'legacy' || $locked->correction_sequence > 0
+                || in_array($locked->status, [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled], true)
+                || bccomp((string) $locked->total_output_base_quantity, '0', 8) > 0
+                || bccomp((string) $locked->received_base_quantity, '0', 8) > 0
+                || $locked->requirements->contains(fn (ProductionMaterialRequirement $requirement): bool => bccomp(bcadd((string) $requirement->consumed_quantity, (string) $requirement->waste_quantity, 8), '0', 8) > 0)) {
+                throw new DomainException(__('production_execution.evidence.activation_requires_unexecuted_run'));
+            }
+            $policy = app(ProductionOutputEvidenceService::class)->policy($locked, $definitions, $executionStructure, $stageRoles);
+            if ($executionStructure === ProductionOutputEvidenceService::StructureFactoryWorkflow) {
+                Gate::authorize('production.orders.release');
+                Gate::authorize('production.runs.setup');
+                $roles = collect($stageRoles)->keyBy('stage_public_id');
+                $physical = $locked->order->orderStageSnapshots->firstWhere('public_id', $roles->where('role', 'manufacturing')->keys()->sole());
+                if (bccomp(bcadd($this->committedRunQuantity($locked->orderLine, $physical->id, $locked->id), (string) $locked->planned_base_quantity, 8), (string) $locked->orderLine->base_quantity, 8) > 0) {
+                    throw new DomainException(__('production_execution.messages.run_quantity_exceeds_remaining'));
+                }
+                foreach ($locked->order->orderStageSnapshots->where('is_required', true) as $stage) {
+                    if ($stage->sequence < $physical->sequence && $stage->status !== ProductionOrderStageSnapshot::StatusCompleted) {
+                        if (blank($roles[$stage->public_id]['confirmation_reason'] ?? null)) {
+                            throw new DomainException(__('production_execution.evidence.checklist_confirmation_required'));
+                        }
+                        $before = $stage->status;
+                        $stage->update(['status' => ProductionOrderStageSnapshot::StatusCompleted, 'completed_at' => now(), 'completed_by' => auth()->id()]);
+                        app(ProductionRoutingService::class)->recordStageEvent($stage, 'checklist_confirmed', $before, $stage->status, $locked->id);
+                    }
+                }
+                if (! QualityInspectionType::query()->where('company_id', $locked->company_id)->where('is_active', true)->where('is_final_production', true)->exists()) {
+                    throw new DomainException(__('production_execution.evidence.final_quality_type_required'));
+                }
+                $policy['previous_stage_snapshot_id'] = $locked->production_order_stage_snapshot_id;
+                $locked->production_order_stage_snapshot_id = $physical->id;
+                $locked->save();
+                if ($locked->status === ProductionRun::StatusRunning) {
+                    $before = $physical->status;
+                    $physical->update(['status' => ProductionOrderStageSnapshot::StatusInProgress, 'started_at' => $physical->started_at ?? now()]);
+                    app(ProductionRoutingService::class)->recordStageEvent($physical, 'factory_execution_assigned', $before, $physical->status, $locked->id);
+                }
+            }
+            $locked->update(['material_accounting_mode' => ProductionOutputEvidenceService::Mode, 'material_evidence_policy' => $policy, 'updated_by' => auth()->id()]);
+            app(ActivityLogger::class)->log(request(), 'production', 'production.run.output_evidence_enabled', 'success', ['subject' => $locked, 'causer' => auth()->user(), 'company_id' => $locked->company_id, 'properties_only' => true, 'properties' => ['policy' => $policy]]);
+
+            return $locked->refresh();
+        });
+    }
+
+    public function confirmWorkflowChecklist(ProductionRun $run, string $stagePublicId, string $reason): void
+    {
+        DB::transaction(function () use ($run, $stagePublicId, $reason): void {
+            Company::query()->whereKey($run->company_id)->lockForUpdate()->firstOrFail();
+            $locked = ProductionRun::query()->with(['order.orderStageSnapshots', 'orderLine.stageSnapshots'])->lockForUpdate()->findOrFail($run->id);
+            Gate::authorize('production.orders.release');
+            $stage = $locked->order->orderStageSnapshots->firstWhere('public_id', $stagePublicId);
+            $role = collect($locked->material_evidence_policy['stage_roles'] ?? [])->firstWhere('stage_public_id', $stagePublicId)['role'] ?? null;
+            if (! app(ProductionOutputEvidenceService::class)->isFactoryWorkflow($locked) || $stage === null || ! in_array($role, ['checklist', 'quality_notification'], true)
+                || trim($reason) === '' || in_array($locked->status, [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled], true)) {
+                throw new DomainException(__('production_execution.evidence.checklist_confirmation_required'));
+            }
+            $before = $stage->status;
+            $stage->update(['status' => ProductionOrderStageSnapshot::StatusCompleted, 'completed_at' => now(), 'completed_by' => auth()->id()]);
+            app(ProductionRoutingService::class)->recordStageEvent($stage, 'checklist_confirmed', $before, $stage->status, $locked->id);
+            app(ActivityLogger::class)->log(request(), 'production', 'production.run.checklist_confirmed', 'success', ['subject' => $locked, 'causer' => auth()->user(), 'company_id' => $locked->company_id, 'properties_only' => true, 'properties' => ['stage_id' => $stage->id, 'reason' => trim($reason)]]);
+        });
+    }
+
     /** @param array<string, mixed> $data */
     public function recordProgress(ProductionRun $run, array $data): ProductionProgressEntry
     {
         return DB::transaction(function () use ($run, $data): ProductionProgressEntry {
             Company::query()->whereKey($run->company_id)->lockForUpdate()->firstOrFail();
-            $locked = ProductionRun::query()->with('order')->lockForUpdate()->findOrFail($run->getKey());
+            $locked = ProductionRun::query()->with(['order', 'requirements.product', 'requirements.unit'])->lockForUpdate()->findOrFail($run->getKey());
 
-            if ($locked->status !== ProductionRun::StatusRunning) {
+            $usesEvidence = $locked->material_accounting_mode === ProductionOutputEvidenceService::Mode;
+            if ($locked->status !== ProductionRun::StatusRunning && ! ($usesEvidence && $locked->status === ProductionRun::StatusHeld)) {
                 throw new DomainException(__('Progress can only be recorded against a running production run.'));
             }
 
@@ -1306,8 +1444,17 @@ class ProductionCycleService
                 ->mapWithKeys(fn (string $field): array => [$field => (string) ($data[$field] ?? 0)])
                 ->all();
 
+            if ($usesEvidence) {
+                $values = array_map(fn (string $value): string => app(ProductionOutputEvidenceService::class)->quantity($value), $values);
+            }
+            if ($locked->status === ProductionRun::StatusHeld && collect($values)->contains(fn (string $value): bool => bccomp($value, '0', 8) > 0)) {
+                throw new DomainException(__('Progress can only be recorded against a running production run.'));
+            }
+            $materialEvidence = $usesEvidence ? app(ProductionOutputEvidenceService::class)->materials($locked, [...$data, ...$values]) : [];
+            app(ProductionShiftEvidenceService::class)->assertProgressEntry($locked, isset($data['production_shift_entry_id']) ? (int) $data['production_shift_entry_id'] : null);
             if (collect($values)->contains(fn (string $value): bool => bccomp($value, '0', 8) < 0)
-                || collect($values)->every(fn (string $value): bool => bccomp($value, '0', 8) === 0)) {
+                || (collect($values)->every(fn (string $value): bool => bccomp($value, '0', 8) === 0)
+                    && (! $usesEvidence || (blank($data['notes'] ?? null) && collect($materialEvidence)->every(fn (array $row): bool => bccomp($row['waste_quantity'], '0', 8) === 0))))) {
                 throw new DomainException(__('Progress quantities must be non-negative and at least one must be positive.'));
             }
             foreach (['good_weight_kg', 'production_scrap_weight_kg'] as $weightField) {
@@ -1340,7 +1487,14 @@ class ProductionCycleService
                 'recorded_at' => now(),
                 'notes' => $data['notes'] ?? null,
                 'recorded_by' => auth()->id(),
+                'material_evidence' => $usesEvidence ? $materialEvidence : null,
+                'production_shift_entry_id' => $data['production_shift_entry_id'] ?? null,
             ]);
+
+            if ($usesEvidence) {
+                $documents = $this->postOutputMaterialEvidence($locked, $materialEvidence);
+                $entry->update(['material_documents' => $documents]);
+            }
 
             foreach ($values as $field => $value) {
                 $locked->increment($field, $value);
@@ -1348,6 +1502,61 @@ class ProductionCycleService
 
             return $entry;
         });
+    }
+
+    /** @param list<array<string, mixed>> $evidence @return list<array{kind: string, doc_num: string}> */
+    private function postOutputMaterialEvidence(ProductionRun $run, array $evidence): array
+    {
+        $documents = [];
+        foreach ($evidence as $row) {
+            $requirement = $run->requirements->firstWhere('id', $row['requirement_id']);
+            foreach (['consumption' => 'consumed_quantity', 'waste' => 'waste_quantity'] as $kind => $field) {
+                $remaining = $row[$field];
+                if (bccomp($remaining, '0', 8) <= 0) {
+                    continue;
+                }
+                Gate::authorize('production.runs.account_materials');
+                $positions = InventoryTransaction::query()->where('company_id', $run->company_id)->where('branch_id', $run->branch_id)
+                    ->where('production_run_id', $run->id)->where('source_line_type', ProductionMaterialRequirement::class)->where('source_line_id', $requirement->id)
+                    ->where('stock_status', InventoryTransaction::StatusProductionStaging)
+                    ->whereDate('transaction_date', '<=', $this->movementContext($run, 0)['document_date'])
+                    ->groupBy('branch_store_id')->havingRaw('sum(quantity_in - quantity_out) > 0')->orderBy('branch_store_id')
+                    ->get(['branch_store_id', DB::raw('sum(quantity_in - quantity_out) as quantity')]);
+                foreach ($positions as $position) {
+                    if (bccomp($remaining, '0', 8) <= 0) {
+                        break;
+                    }
+                    $capacity = BigDecimal::of((string) $position->quantity)->toScale(8, RoundingMode::HalfUp)->__toString();
+                    $slice = bccomp($remaining, $capacity, 8) <= 0 ? $remaining : $capacity;
+                    $selected = $row[$kind === 'consumption' ? 'consumed_receipt_layer_ids' : 'waste_receipt_layer_ids'];
+                    if ($requirement->product->tracks_serials) {
+                        $selected = InventoryReceiptLayer::query()->whereIn('id', $selected)->where('branch_store_id', $position->branch_store_id)->pluck('id')->all();
+                        $slice = (string) count($selected);
+                        if (bccomp($slice, $remaining, 8) > 0) {
+                            throw new DomainException(__('inventory_serial.staging_selection'));
+                        }
+                    }
+                    if (bccomp($slice, '0', 8) <= 0) {
+                        continue;
+                    }
+                    $plan = $this->materialStagingLines($requirement, (int) $position->branch_store_id, [$kind => $slice], null, [$kind => $selected]);
+                    $document = $this->movements->createAndPost([
+                        ...$this->movementContext($run, (int) $position->branch_store_id),
+                        'document_type' => $kind === 'consumption' ? InventoryDocument::TypeMaterialConsumption : InventoryDocument::TypeProductionWaste,
+                        'purpose' => $kind === 'consumption' ? 'Production output material evidence' : 'Production waste: '.$row['waste_classification'].' — '.$row['notes'],
+                        'source_stock_status' => InventoryTransaction::StatusProductionStaging,
+                    ], $plan[$kind]);
+                    $documents[] = ['kind' => $kind, 'doc_num' => $document->doc_num];
+                    $remaining = bcsub($remaining, $slice, 8);
+                }
+                if (bccomp($remaining, '0', 8) !== 0) {
+                    throw new DomainException(__('inventory_cost_policy.errors.staging'));
+                }
+                $requirement->increment($field, $row[$field]);
+            }
+        }
+
+        return $documents;
     }
 
     /** @param array<string, mixed> $data */
@@ -1573,6 +1782,8 @@ class ProductionCycleService
                 'disposition' => $data['disposition'] ?? ($data['result'] === 'passed' ? 'release' : 'hold'),
                 'defect_code' => $data['defect_code'] ?? null,
                 'affected_base_quantity' => $data['affected_base_quantity'] ?? null,
+                'production_quality_output_batch_id' => app(ProductionQualityQuantityService::class)->reserve($locked, $inspectionTypeId, $data['affected_base_quantity'] ?? null),
+                'accepted_base_quantity' => $data['accepted_base_quantity'] ?? null,
                 'inspector_id' => auth()->id(),
                 'notes' => $data['notes'] ?? null,
                 'rework_notes' => $data['rework_notes'] ?? null,
@@ -1588,6 +1799,8 @@ class ProductionCycleService
                 'started_at' => now(),
                 'created_by' => auth()->id(),
             ]);
+
+            app(ProductionQualityQuantityService::class)->assertInspectionQuantity($inspection, $inspection->affected_base_quantity, $inspection->accepted_base_quantity);
 
             foreach (array_values($data['results'] ?? []) as $index => $result) {
                 $inspection->results()->create([
@@ -1628,6 +1841,9 @@ class ProductionCycleService
     {
         return DB::transaction(function () use ($inspection, $approved, $reason): ProductionQualityInspection {
             Company::query()->whereKey($inspection->company_id)->lockForUpdate()->firstOrFail();
+            if ($inspection->production_run_id !== null) {
+                ProductionRun::query()->whereKey($inspection->production_run_id)->lockForUpdate()->firstOrFail();
+            }
             $locked = ProductionQualityInspection::query()->with('run')->lockForUpdate()->findOrFail($inspection->getKey());
 
             if ($locked->run?->active_correction_id !== null) {
@@ -1644,6 +1860,8 @@ class ProductionCycleService
             if (! $approved && blank($reason)) {
                 throw new DomainException(__('production_execution.messages.quality_rejection_reason_required'));
             }
+            app(ProductionQualityQuantityService::class)->assertInspectionQuantity($locked, $locked->affected_base_quantity, $locked->accepted_base_quantity);
+            app(ProductionQualityQuantityService::class)->assertFailedDispositionAllowed($locked, $approved ? $locked->result : 'failed', $locked->disposition ?? 'hold');
 
             $locked->update($approved ? [
                 'status' => ProductionQualityInspection::StatusApproved,
@@ -1682,6 +1900,9 @@ class ProductionCycleService
             $locked = ProductionRun::query()->with(['requirements', 'order'])->lockForUpdate()->findOrFail($run->getKey());
             $consumptionLines = [];
             $wasteLines = [];
+            if ($locked->material_accounting_mode === ProductionOutputEvidenceService::Mode) {
+                throw new DomainException(__('production_execution.evidence.use_progress_material_evidence'));
+            }
             $requirementIds = $locked->requirements->modelKeys();
             $submittedRequirementIds = array_map('intval', array_keys($accountingByRequirementId));
             sort($requirementIds);
@@ -1834,7 +2055,9 @@ class ProductionCycleService
             }
 
             $stageSnapshots = $this->effectiveStageSnapshots($locked->order, $locked->orderLine);
-            if ($stageSnapshots->isNotEmpty()) {
+            $usesEvidence = $locked->material_accounting_mode === ProductionOutputEvidenceService::Mode;
+            $factoryWorkflow = app(ProductionOutputEvidenceService::class)->isFactoryWorkflow($locked);
+            if ($stageSnapshots->isNotEmpty() && ! $factoryWorkflow) {
                 $currentStage = $stageSnapshots->firstWhere('id', $locked->production_order_stage_snapshot_id);
                 $finalStage = $stageSnapshots->last();
 
@@ -1850,7 +2073,7 @@ class ProductionCycleService
                 throw new DomainException(__('Finished-goods receipt exceeds recorded good output.'));
             }
 
-            foreach ($locked->requirements as $requirement) {
+            foreach ($usesEvidence ? [] : $locked->requirements as $requirement) {
                 $issuedLessReturned = bcsub(
                     bcadd((string) $requirement->issued_quantity, (string) $requirement->additional_issued_quantity, 8),
                     (string) $requirement->returned_quantity,
@@ -1878,7 +2101,10 @@ class ProductionCycleService
                     ->first()
                 : null;
 
-            if ($finalInspectionRequired
+            if ($usesEvidence && bccomp($baseQuantity, app(ProductionQualityQuantityService::class)->availableQuantity($locked), 8) > 0) {
+                throw new DomainException(__('production_execution.evidence.quality_receipt_exceeded'));
+            }
+            if (! $usesEvidence && $finalInspectionRequired
                 && (! in_array($latestFinalInspection?->status, [ProductionQualityInspection::StatusApproved, ProductionQualityInspection::StatusClosed], true)
                     || $latestFinalInspection?->approved_at === null
                     || $latestFinalInspection?->result !== 'passed'
@@ -1916,8 +2142,25 @@ class ProductionCycleService
                 'destination_stock_status' => InventoryTransaction::StatusAvailable,
             ], $receiptLines);
 
+            if ($usesEvidence) {
+                app(ProductionQualityQuantityService::class)->allocateReceipt($locked, $document, $baseQuantity);
+            }
+
             $locked->increment('received_base_quantity', $baseQuantity);
             $locked->orderLine()->increment('received_base_quantity', $baseQuantity);
+            if ($factoryWorkflow) {
+                $roles = collect($locked->material_evidence_policy['stage_roles'])->keyBy('stage_public_id');
+                $allReceived = $locked->order->lines()->get()->every(fn (ProductionOrderLine $line): bool => bccomp((string) $line->received_base_quantity, (string) $line->base_quantity, 8) >= 0);
+                foreach ($locked->order->orderStageSnapshots->where('is_required', true) as $stage) {
+                    if (! in_array($roles[$stage->public_id]['role'], ['quality', 'receipt'], true)) {
+                        continue;
+                    }
+                    $before = $stage->status;
+                    $stage->update(['status' => $allReceived ? ProductionOrderStageSnapshot::StatusCompleted : ProductionOrderStageSnapshot::StatusInProgress,
+                        'started_at' => $stage->started_at ?? now(), 'completed_at' => $allReceived ? now() : null, 'completed_by' => $allReceived ? auth()->id() : null]);
+                    app(ProductionRoutingService::class)->recordStageEvent($stage, 'accepted_output_received', $before, $stage->status, $locked->id);
+                }
+            }
 
             if ($salesLine) {
                 $transactionQuantity = bcdiv($baseQuantity, (string) $salesLine->conversion_factor, 8);
@@ -1992,7 +2235,14 @@ class ProductionCycleService
 
             $stages = $this->effectiveStageSnapshots($locked->order, $locked->orderLine);
             $currentStage = $stages->firstWhere('id', $locked->production_order_stage_snapshot_id);
-            $isFinalStage = $stages->isEmpty()
+            $factoryWorkflow = app(ProductionOutputEvidenceService::class)->isFactoryWorkflow($locked);
+            if ($factoryWorkflow) {
+                $roles = collect($locked->material_evidence_policy['stage_roles'])->keyBy('stage_public_id');
+                if ($locked->order->orderStageSnapshots->where('is_required', true)->contains(fn ($stage): bool => in_array($roles[$stage->public_id]['role'], ['checklist', 'quality_notification'], true) && $stage->status !== ProductionOrderStageSnapshot::StatusCompleted)) {
+                    throw new DomainException(__('production_execution.evidence.checklist_confirmation_required'));
+                }
+            }
+            $isFinalStage = $factoryWorkflow || $stages->isEmpty()
                 || ($currentStage && (int) $stages->last()->getKey() === (int) $currentStage->getKey());
 
             if (bccomp((string) $locked->good_base_quantity, '0', 8) <= 0) {
@@ -2000,6 +2250,10 @@ class ProductionCycleService
             }
             if ($isFinalStage && bccomp((string) $locked->received_base_quantity, (string) $locked->good_base_quantity, 8) !== 0) {
                 throw new DomainException(__('production_execution.messages.final_run_receipt_required'));
+            }
+            if ($locked->material_accounting_mode === ProductionOutputEvidenceService::Mode
+                && bccomp($this->costs->runPosition($locked)['wip'], '0', 8) !== 0) {
+                throw new DomainException(__('production_execution.evidence.close_requires_zero_wip'));
             }
 
             $latestInspection = $locked->inspections()->where('correction_sequence', $locked->correction_sequence)->reorder()->latest('sampled_at')->latest('id')->first();
@@ -2012,6 +2266,9 @@ class ProductionCycleService
             }
 
             $approvedLaborDetails = $this->approvePieceQuantities($locked);
+            if (Schema::hasTable('production_shift_entries')) {
+                app(ProductionShiftEvidenceService::class)->closeForRunCompletion($locked);
+            }
             if (collect($approvedLaborDetails)->contains(fn (array $labor): bool => isset($labor['approved_piece_quantity']))) {
                 $this->invalidateCalculatedPayrollForPieceOutput($locked);
             }

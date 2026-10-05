@@ -1,0 +1,16 @@
+<tr data-correction-line>
+    <td><x-forms.input type="hidden" name="lines[{{ $index }}][original_line_public_id]" :value="$line['original_line_public_id'] ?? ''" />
+        <x-forms.select class="js-select2-ajax" name="lines[{{ $index }}][product_doc_num]" data-url="{{ route($kind === 'sales' ? 'admin.sales.select2.quotation-products' : 'admin.purchases.select2.products') }}" data-correction-product required>
+        @if(filled($line['product_doc_num'] ?? null))<option selected value="{{ $line['product_doc_num'] }}">{{ $line['product_text'] ?? $line['product_doc_num'] }}</option>@endif
+        </x-forms.select></td>
+    <td><x-forms.select name="lines[{{ $index }}][unit_doc_num]" data-correction-unit required>
+        @php($selectedProduct = \Modules\Core\Models\Product::query()->where('company_id', $invoice->company_id)->where('doc_num', $line['product_doc_num'] ?? null)->first())
+        @if($selectedProduct) @foreach(app(\Modules\Core\Services\ProductComponentUnitOptionsService::class)->options($selectedProduct) as $option)<option value="{{ $option['id'] }}" @selected(($line['unit_doc_num'] ?? '') === $option['id'])>{{ $option['text'] }}</option>@endforeach @endif
+        </x-forms.select></td>
+    <td><x-forms.numeric-input name="lines[{{ $index }}][quantity]" :scale="8" :value="$line['quantity'] ?? ''" min="0.00000001" required /></td>
+    <td>@if($kind === 'purchase')<x-forms.numeric-input name="lines[{{ $index }}][unit_price]" :scale="8" :value="$line['unit_price'] ?? ''" min="0" required />@else<small>{{ __('posted_invoice_correction.price_calculated') }}</small>@endif</td>
+    <td>@if($kind === 'purchase')<x-forms.select name="lines[{{ $index }}][discount_type]"><option value="fixed" @selected(($line['discount_type'] ?? '') !== 'percentage')>{{ __('Fixed') }}</option><option value="percentage" @selected(($line['discount_type'] ?? '') === 'percentage')>{{ __('Percentage') }}</option></x-forms.select><x-forms.numeric-input name="lines[{{ $index }}][discount_value]" :value="$line['discount_value'] ?? 0" min="0" />@else<x-forms.numeric-input name="lines[{{ $index }}][discount_amount]" :value="$line['discount_amount'] ?? 0" min="0" />@endif</td>
+    <td><x-forms.numeric-input name="lines[{{ $index }}][{{ $kind === 'purchase' ? 'tax_rate' : 'tax_amount' }}]" :value="$kind === 'purchase' ? ($line['tax_rate'] ?? 0) : ($line['tax_amount'] ?? 0)" min="0" /></td>
+    @if($hasSource)<td><x-forms.select class="js-select2-local" name="lines[{{ $index }}][source_line_public_id]"><option value="">{{ __('Select') }}</option>@foreach($sourceOptions as $option)<option value="{{ $option['id'] }}" @selected(($line['source_line_public_id'] ?? '') === $option['id'])>{{ $option['text'] }}</option>@endforeach</x-forms.select></td>@if($kind === 'purchase')<td><x-forms.select class="js-select2-local" name="lines[{{ $index }}][receipt_line_public_id]"><option value="">{{ __('Select') }}</option>@foreach($receiptOptions as $option)<option value="{{ $option['id'] }}" @selected(($line['receipt_line_public_id'] ?? '') === $option['id'])>{{ $option['text'] }}</option>@endforeach</x-forms.select></td>@endif @endif
+    <td><button type="button" class="btn btn-link text-danger" data-correction-remove aria-label="{{ __('Remove line') }}">&times;</button></td>
+</tr>

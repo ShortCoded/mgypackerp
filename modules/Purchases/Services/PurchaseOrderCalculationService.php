@@ -14,7 +14,7 @@ class PurchaseOrderCalculationService
      * @param  list<array<string, mixed>>  $lines
      * @return array{order: array<string, string>, lines: list<array<string, mixed>>}
      */
-    public function calculate(array $lines, mixed $freightAmount = 0): array
+    public function calculate(array $lines, mixed $freightAmount = 0, ?string $headerDiscountType = null, mixed $headerDiscountValue = 0, array $bookedAllocations = []): array
     {
         $calculatedLines = [];
         $totalOrderedQuantity = '0.00000000';
@@ -69,14 +69,33 @@ class PurchaseOrderCalculationService
             $totalAmount = bcadd($totalAmount, $lineTotal, 4);
         }
 
+        $headerBase = bcsub($subtotalAmount, array_reduce($calculatedLines, fn (string $sum, array $line): string => bcadd($sum, $line['discount_amount'], 4), '0.0000'), 4);
+        if ($bookedAllocations !== []) {
+            $headerBase = array_reduce($bookedAllocations, fn (string $sum, array $row): string => bcadd($sum, bcsub($row['gross'], $row['discount'], 4), 4), '0.0000');
+        }
+        $headerValue = $this->numbers->normalize($headerDiscountValue ?? 0);
+        if (! in_array($headerDiscountType, [null, 'fixed', 'percentage'], true) || ! is_string($headerValue)
+            || ! preg_match('/^\d{1,14}(?:\.\d{1,4})?$/D', $headerValue)
+            || ($headerDiscountType === null && bccomp($headerValue, '0', 4) > 0)
+            || ($headerDiscountType === 'percentage' && bccomp($headerValue, '100', 4) > 0)
+            || ($headerDiscountType === 'fixed' && bccomp($headerValue, $headerBase, 4) > 0)) {
+            throw new \DomainException(__('purchase_orders.header_discount_invalid'));
+        }
+
+        $commercial = app(PurchaseInvoiceCalculationService::class)->calculate(array_map(fn (array $line): array => [...$line, 'quantity' => $line['ordered_quantity']], $calculatedLines), $headerDiscountType, $headerDiscountValue, $freightAmount, 0, $bookedAllocations);
+        $calculatedLines = array_map(fn (array $line): array => [...$line, 'line_total' => $line['total_after_tax']], $commercial['lines']);
+
         return [
             'order' => [
                 'total_ordered_quantity' => $totalOrderedQuantity,
                 'total_received_quantity' => $totalReceivedQuantity,
                 'total_remaining_quantity' => $totalRemainingQuantity,
-                'subtotal_amount' => $subtotalAmount,
+                'subtotal_amount' => $commercial['invoice']['subtotal_amount'],
                 'freight_amount' => $freightAmount,
-                'total_amount' => bcadd($totalAmount, $freightAmount, 4),
+                'header_discount_type' => $commercial['invoice']['header_discount_type'],
+                'header_discount_value' => $commercial['invoice']['header_discount_value'],
+                'header_discount_amount' => $commercial['invoice']['header_discount_amount'],
+                'total_amount' => $commercial['invoice']['total_amount'],
             ],
             'lines' => $calculatedLines,
         ];

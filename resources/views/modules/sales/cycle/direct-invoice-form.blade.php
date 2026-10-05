@@ -22,7 +22,7 @@
 @section('title', __('sales_ui.create_invoice'))
 
 @section('content')
-<form class="js-sales-cycle-form" data-sales-ui data-sales-document-summary data-index-url="{{ route('admin.sales.sales-invoices.index') }}" data-create-url="{{ route('admin.sales.sales-invoices.create', ['direct' => 1]) }}" action="{{ route('admin.sales.sales-invoices.store') }}" method="POST" novalidate>
+<form class="js-sales-cycle-form" data-sales-ui data-sales-document-summary data-sales-discount-inputs data-index-url="{{ route('admin.sales.sales-invoices.index') }}" data-create-url="{{ route('admin.sales.sales-invoices.create', ['direct' => 1]) }}" action="{{ route('admin.sales.sales-invoices.store') }}" method="POST" novalidate>
     @csrf
     <x-forms.line-item-cards :line-label="__('sales_ui.line')" />
     <div class="alert alert-danger d-none js-sales-form-alert"></div>
@@ -79,14 +79,16 @@
         <div class="table-responsive">
             <table class="table table-sm table-bordered align-middle sales-order-grid mb-0">
                 <thead class="bg-100"><tr><th>#</th><th class="product-column">{{ __('Product') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th><th>{{ __('Unit price') }}</th><th>{{ __('Discount') }}</th><th>{{ __('Tax') }}</th><th>{{ __('Line total') }}</th><th></th></tr></thead>
-                <tbody data-sales-lines>@foreach($lineRows as $index => $line)@include('modules.sales.cycle.partials.sales-order-line', ['index' => $index, 'line' => $line, 'products' => $products, 'productUnits' => $productUnits, 'showRequestedDate' => false])@endforeach</tbody>
+                <tbody data-sales-lines>@foreach($lineRows as $index => $line)@include('modules.sales.cycle.partials.sales-order-line', ['index' => $index, 'line' => $line, 'products' => $products, 'productUnits' => $productUnits, 'showRequestedDate' => false, 'discountInputsEnabled' => true])@endforeach</tbody>
             </table>
         </div>
+        @include('modules.sales.cycle.partials.invoice-discount-inputs', ['record' => null])
+        @include('modules.sales.cycle.partials.withholding-inputs')
         <x-forms.document-summary />
     </div>
 </form>
 
-<template id="sales-order-line-template">@include('modules.sales.cycle.partials.sales-order-line', ['index' => '__INDEX__', 'line' => [], 'products' => $products, 'productUnits' => $productUnits, 'showRequestedDate' => false])</template>
+<template id="sales-order-line-template">@include('modules.sales.cycle.partials.sales-order-line', ['index' => '__INDEX__', 'line' => [], 'products' => $products, 'productUnits' => $productUnits, 'showRequestedDate' => false, 'discountInputsEnabled' => true])</template>
 @endsection
 
 @push('scripts')

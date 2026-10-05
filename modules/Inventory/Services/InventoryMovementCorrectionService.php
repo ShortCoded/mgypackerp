@@ -8,10 +8,13 @@ use Illuminate\Support\Facades\Gate;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\Core\Models\Product;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\OperatingScopeAccessService;
+use Modules\Core\Services\ProductComponentUnitConversionService;
+use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\Inventory\Models\InventoryCostPolicy;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryDocumentLine;
@@ -49,6 +52,9 @@ final class InventoryMovementCorrectionService
                 'target' => FinancialPeriod::query()->where('company_id', $document->company_id)
                     ->find(request()->session()->get(OperatingContextService::FinancialPeriodIdKey)),
                 'reverse_only' => $document->document_type === InventoryDocument::TypeSalesDelivery,
+                'item_correction_supported' => $this->supportsSource($document)
+                    && in_array($document->document_type, [InventoryDocument::TypeReceipt, InventoryDocument::TypeIssue], true)
+                    && ! FinancialPeriod::query()->findOrFail($document->financial_period_id)->is_closed,
                 'history' => InventoryMovementCorrection::query()->with(['preparer', 'approver', 'replacementDocument'])
                     ->where('company_id', $document->company_id)->where('inventory_document_id', $document->id)->latest('id')->paginate(20)];
         });
@@ -128,11 +134,18 @@ final class InventoryMovementCorrectionService
             $snapshot = $this->snapshot($document, $steps, $legacy ? $this->preparedLegacyProposalId($document) : null);
             if (! $this->matches((string) ($data['source_fingerprint'] ?? ''), $snapshot)
                 || mb_strlen(trim((string) ($data['reason'] ?? ''))) < 5 || mb_strlen((string) $data['reason']) > 3000
-                || ! in_array($data['operation'] ?? '', ['reverse', 'replace', 'repair_lineage'], true)
+                || ! in_array($data['operation'] ?? '', ['reverse', 'replace', 'replace_items', 'repair_lineage'], true)
                 || ($legacy && bccomp($snapshot['legacy_repair']['misplaced_quantity'], '0', 8) <= 0)) {
                 throw new DomainException(__('inventory_correction.stale'));
             }
-            $payload = $data['operation'] === 'replace' ? $this->payload($document, $data['lines'] ?? []) : [];
+            if ($data['operation'] === 'replace_items') {
+                $this->assertItemCorrectionScope($document, $target);
+            }
+            $payload = match ($data['operation']) {
+                'replace' => $this->payload($document, $data['lines'] ?? []),
+                'replace_items' => $this->itemPayload($document, $data['lines'] ?? []),
+                default => [],
+            };
             $proposal = new InventoryMovementCorrection(['company_id' => $document->company_id, 'branch_id' => $document->branch_id,
                 'inventory_document_id' => $document->id, 'source_financial_period_id' => $document->financial_period_id,
                 'posting_financial_period_id' => $target->id, 'posting_date' => $data['posting_date'], 'operation' => $data['operation'],
@@ -178,7 +191,13 @@ final class InventoryMovementCorrectionService
             if ($proposal->status !== 'prepared' || $steps !== [] || ! $this->matches($proposal->source_fingerprint, $this->snapshot($document, $steps, $legacy ? (int) $proposal->id : null))) {
                 throw new DomainException(__('inventory_correction.stale'));
             }
-            $this->target($document, $proposal->posting_date->toDateString(), (int) $proposal->posting_financial_period_id);
+            $target = $this->target($document, $proposal->posting_date->toDateString(), (int) $proposal->posting_financial_period_id);
+            if ($proposal->operation === 'replace_items') {
+                $this->assertItemCorrectionScope($document, $target);
+                if ($this->itemPayload($document, $proposal->replacement_payload) !== $proposal->replacement_payload) {
+                    throw new DomainException(__('inventory_correction.stale'));
+                }
+            }
             if (! $legacy) {
                 app(InventoryAccountingPostingService::class)->assertManualCorrectionAccounting($document);
             }
@@ -197,12 +216,13 @@ final class InventoryMovementCorrectionService
             }
             app(InventoryDocumentPostingService::class)->reverseForManualCorrection($document, (int) $proposal->id);
             $replacement = null;
-            if ($proposal->operation === 'replace') {
+            if (in_array($proposal->operation, ['replace', 'replace_items'], true)) {
                 $header = $document->only(['company_id', 'branch_id', 'branch_store_id', 'branch_hall_id', 'warehouse_location_id',
                     'destination_branch_store_id', 'destination_warehouse_location_id', 'document_type', 'purpose', 'movement_reason',
                     'source_stock_status', 'destination_stock_status']);
                 $header = [...$header, 'financial_period_id' => $proposal->posting_financial_period_id, 'document_date' => $proposal->posting_date->toDateString(), 'notes' => $proposal->reason];
-                $replacement = app(InventoryMovementService::class)->createDraft($header, $this->replacementLines($document, $proposal));
+                $replacement = app(InventoryMovementService::class)->createDraft($header, $proposal->operation === 'replace_items'
+                    ? $this->itemReplacementLines($document, $proposal) : $this->replacementLines($document, $proposal));
                 $proposal->forceFill(['replacement_document_id' => $replacement->id]);
                 $proposal->approval_fingerprint = $this->digest($this->approvalData($proposal));
                 $proposal->save();
@@ -263,11 +283,20 @@ final class InventoryMovementCorrectionService
         $proposal = InventoryMovementCorrection::query()->findOrFail($id);
         $this->execution((int) $id, (int) $proposal->inventory_document_id);
         $originId = (int) ($line->product_snapshot['inventory_movement_correction']['line_id'] ?? 0);
-        $approvedLine = collect($proposal->replacement_payload)->firstWhere('line_id', $originId);
+        $approvedLine = collect($proposal->replacement_payload)->firstWhere(
+            $proposal->operation === 'replace_items' ? 'row_key' : 'line_id',
+            $proposal->operation === 'replace_items' ? (int) ($line->product_snapshot['inventory_movement_correction']['row_key'] ?? 0) : $originId);
         if ((int) $proposal->replacement_document_id !== (int) $transaction->source_id || $approvedLine === null
             || bccomp($approvedLine['quantity'], (string) $transaction->quantity_in, 8) !== 0
-            || bccomp($approvedLine['unit_cost'] ?? '0', (string) ($transaction->unit_cost ?? '0'), 8) !== 0) {
+            || bccomp($approvedLine['unit_cost'] ?? '0', (string) ($transaction->unit_cost ?? '0'), 8) !== 0
+            || ($proposal->operation === 'replace_items' && ((int) $approvedLine['product_id'] !== (int) $transaction->product_id
+                || (int) $approvedLine['unit_id'] !== (int) $transaction->unit_id || (int) $approvedLine['line_id'] !== $originId))) {
             throw new DomainException(__('inventory_correction.stale'));
+        }
+        if ($proposal->operation === 'replace_items'
+            && ($originId === 0 || ! InventoryDocumentLine::query()->where('inventory_document_id', $proposal->inventory_document_id)
+                ->whereKey($originId)->where('product_id', $transaction->product_id)->exists())) {
+            return null;
         }
         $original = InventoryTransaction::query()->where('source_type', InventoryDocument::class)->where('source_id', $proposal->inventory_document_id)
             ->where('posting_key', "inventory-document:{$proposal->inventory_document_id}:line:{$originId}:in")->where('is_reversal', false)->where('quantity_in', '>', 0)->sole();
@@ -412,6 +441,115 @@ final class InventoryMovementCorrectionService
                 }
             }
         }
+    }
+
+    /** @param list<array<string, mixed>> $input @return list<array<string, mixed>> */
+    private function itemPayload(InventoryDocument $document, array $input): array
+    {
+        if ($input === [] || count($input) > 100) {
+            throw new DomainException(__('inventory_correction.payload'));
+        }
+        $seen = $payload = [];
+        foreach (array_values($input) as $index => $row) {
+            $origin = filled($row['line_id'] ?? null) ? $document->lines()->find($row['line_id']) : null;
+            if (filled($row['line_id'] ?? null) && ($origin === null || isset($seen[$origin->id]))) {
+                throw new DomainException(__('inventory_correction.payload'));
+            }
+            if ($origin !== null) {
+                $seen[$origin->id] = true;
+            }
+            $product = Product::query()->where('company_id', $document->company_id)->active()
+                ->whereIn('item_classification', Product::stockableItemClassifications())
+                ->where('doc_num', $row['product_doc_num'] ?? '')->lockForUpdate()->first();
+            $unit = $product === null ? null : app(ProductComponentUnitOptionsService::class)
+                ->unitForProduct($product, $row['unit_doc_num'] ?? '', (int) $document->company_id);
+            $quantity = (string) ($row['input_quantity'] ?? $row['quantity'] ?? '');
+            $cost = $row['unit_cost'] ?? null;
+            if ($product === null || $unit === null || $unit->status !== 'active' || $product->unit === null
+                || $product->unit->trashed() || $product->unit->status !== 'active'
+                || preg_match('/^\d{1,12}(?:\.\d{1,8})?$/D', $quantity) !== 1 || bccomp($quantity, '0', 8) <= 0
+                || ($cost !== null && preg_match('/^\d{1,12}(?:\.\d{1,8})?$/D', (string) $cost) !== 1)) {
+                throw new DomainException(__('inventory_correction.payload'));
+            }
+            $factor = app(ProductComponentUnitConversionService::class)->convert('1', $product, $unit, $product, $product->unit, 8);
+            if ($factor === null || bccomp($factor, '0', 8) <= 0) {
+                throw new DomainException(__('inventory_correction.payload'));
+            }
+            $baseQuantity = bcmul($quantity, $factor, 8);
+            if ($product->tracks_serials && bccomp($baseQuantity, '1', 8) !== 0) {
+                throw new DomainException(__('inventory_serial.exact_unit_required'));
+            }
+            $sameProduct = (int) $origin?->product_id === (int) $product->id;
+            $receipt = $document->document_type === InventoryDocument::TypeReceipt;
+            if ($receipt && $product->item_classification === Product::ClassificationFinishedProduct) {
+                throw new DomainException(__('inventory.movements.messages.finished_goods_require_production_receipt'));
+            }
+            $serial = trim((string) ($row['serial_number'] ?? ($sameProduct && $origin?->inventory_serial_identity_id !== null
+                ? InventorySerialIdentity::findOrFail($origin->inventory_serial_identity_id)->serial_number : '')));
+            $layerId = $receipt ? null : ($row['selected_receipt_layer_id'] ?? ($sameProduct ? $origin?->selected_receipt_layer_id : null));
+            $payload[] = ['row_key' => $index + 1, 'line_id' => $origin?->id, 'product_doc_num' => $product->doc_num,
+                'unit_doc_num' => $unit->doc_num, 'product_id' => $product->id, 'unit_id' => $product->item_unit_id,
+                'transaction_unit_id' => $unit->id, 'conversion_factor' => $factor, 'input_quantity' => bcadd($quantity, '0', 8),
+                'transaction_quantity' => bcadd($quantity, '0', 8), 'quantity' => $baseQuantity,
+                'unit_cost' => $receipt && $cost !== null ? bcadd((string) $cost, '0', 8) : null,
+                'selected_receipt_layer_id' => filled($layerId) ? (int) $layerId : null, 'serial_number' => $receipt ? ($serial ?: null) : null,
+                'batch_lot' => $row['batch_lot'] ?? ($sameProduct ? $origin?->batch_lot : null),
+                'manufacture_date' => $row['manufacture_date'] ?? ($sameProduct ? $origin?->manufacture_date?->toDateString() : null),
+                'expiry_date' => $row['expiry_date'] ?? ($sameProduct ? $origin?->expiry_date?->toDateString() : null),
+                'evidence' => ['product' => $product->getAttributes(), 'unit' => $unit->getAttributes(),
+                    'base_unit' => $product->unit?->getAttributes(),
+                    'transactions' => InventoryTransaction::query()->where('company_id', $document->company_id)
+                        ->where('branch_store_id', $document->branch_store_id)->where('product_id', $product->id)->orderBy('id')->get()->map->getAttributes()->all(),
+                    'layers' => InventoryReceiptLayer::query()->where('company_id', $document->company_id)
+                        ->where('branch_store_id', $document->branch_store_id)->where('product_id', $product->id)->orderBy('id')->get()->map->getAttributes()->all()]];
+        }
+
+        return $payload;
+    }
+
+    private function assertItemCorrectionScope(InventoryDocument $document, FinancialPeriod $target): void
+    {
+        if (! $this->supportsSource($document) || ! in_array($document->document_type, [InventoryDocument::TypeReceipt, InventoryDocument::TypeIssue], true)
+            || (int) $target->id !== (int) $document->financial_period_id || $target->is_closed) {
+            throw new DomainException(__('inventory_correction.items_scope'));
+        }
+        Gate::authorize($document->document_type === InventoryDocument::TypeReceipt ? 'inventory.documents.receive' : 'inventory.documents.issue');
+        $transactions = $document->transactions()->where('is_reversal', false)->get();
+        $later = InventoryTransaction::query()->where('company_id', $document->company_id)
+            ->where('branch_store_id', $document->branch_store_id)->whereIn('product_id', $transactions->pluck('product_id'))
+            ->where('id', '>', $transactions->max('id'))->orderBy('id')->first();
+        if ($later !== null) {
+            throw new DomainException(__('inventory_correction.items_later', ['document' => $later->source_doc_num]));
+        }
+        if (InventoryReceiptLayer::query()->whereIn('receipt_transaction_id', $transactions->where('quantity_in', '>', 0)->pluck('id'))
+            ->whereColumn('remaining_quantity', '<', 'original_quantity')->exists()) {
+            throw new DomainException(__('inventory_correction.items_consumed'));
+        }
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function itemReplacementLines(InventoryDocument $document, InventoryMovementCorrection $proposal): array
+    {
+        $output = [];
+        foreach ($proposal->replacement_payload as $row) {
+            $origin = $row['line_id'] === null ? null : $document->lines()->findOrFail($row['line_id']);
+            $input = collect($row)->except(['row_key', 'line_id', 'product_doc_num', 'unit_doc_num', 'input_quantity', 'evidence'])->all();
+            $parts = [$input];
+            if ($origin !== null && (int) $origin->product_id === (int) $row['product_id'] && $origin->selected_receipt_layer_id !== null
+                && (int) $origin->selected_receipt_layer_id === (int) $row['selected_receipt_layer_id']) {
+                $parts = $this->replacementLines($document, new InventoryMovementCorrection(['replacement_payload' => [
+                    ['line_id' => $origin->id, 'quantity' => $row['quantity'], 'unit_cost' => $row['unit_cost']],
+                ]]));
+            }
+            foreach ($parts as $part) {
+                $output[] = [...$input, ...$part, 'unit_id' => $row['unit_id'], 'transaction_unit_id' => $row['transaction_unit_id'],
+                    'conversion_factor' => $row['conversion_factor'], 'transaction_quantity' => bcdiv((string) $part['quantity'], $row['conversion_factor'], 8),
+                    'product_snapshot' => ['doc_num' => $row['product_doc_num'], 'name' => $row['evidence']['product']['name'],
+                        'inventory_movement_correction' => ['proposal_id' => $proposal->id, 'line_id' => $row['line_id'], 'row_key' => $row['row_key']]]];
+            }
+        }
+
+        return $output;
     }
 
     /** @param list<array<string, mixed>> $input @return list<array<string, mixed>> */

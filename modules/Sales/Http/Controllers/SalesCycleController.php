@@ -481,7 +481,7 @@ class SalesCycleController extends Controller
 
     public function updateInvoice(AmendCustomerInvoiceRequest $request, CustomerInvoice $customerInvoice, CustomerInvoiceService $service): JsonResponse
     {
-        $invoice = $service->amend($customerInvoice, $request->validated('lines'), $request->validated('payment_schedules'));
+        $invoice = $service->amend($customerInvoice, $request->validated('lines'), $request->validated('payment_schedules'), $request->validated('withholding_rate'), $request->safe()->only(['discount_type', 'discount_value']), $request->validated('withholding_basis'));
 
         return response()->json(['data' => ['doc_num' => $invoice->doc_num, 'url' => route('admin.sales.sales-invoices.show', $invoice)]]);
     }
@@ -735,7 +735,7 @@ class SalesCycleController extends Controller
                     ->where('company_id', $context['company_id'])
                     ->where('posting_status', 'posted')
                     ->when($customerId, fn ($query) => $query->where('customer_id', $customerId)))
-                ->whereColumn('amount', '>', DB::raw('collected_amount + credited_amount'))
+                ->whereColumn('amount', '>', DB::raw('collected_amount + credited_amount + actual_withholding_amount'))
                 ->orderBy('due_date')
                 ->get(),
             'selectedInvoice' => $invoice,
@@ -747,6 +747,11 @@ class SalesCycleController extends Controller
     public function reopenInvoice(SalesOrderActionRequest $request, CustomerInvoice $customerInvoice, CustomerInvoiceService $service): JsonResponse
     {
         return response()->json(['data' => $service->reopen($customerInvoice, (string) $request->validated('reason'))]);
+    }
+
+    public function cancelDirectServiceInvoice(SalesOrderActionRequest $request, CustomerInvoice $customerInvoice, CustomerInvoiceService $service): JsonResponse
+    {
+        return response()->json(['data' => $service->cancelDirectService($customerInvoice, (string) $request->validated('reason'))]);
     }
 
     public function priceSuggestion(Request $request): JsonResponse

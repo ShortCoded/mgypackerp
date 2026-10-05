@@ -49,6 +49,7 @@ class SalesReturnService
                 throw new DomainException(__('Select each return invoice line once and enter its total quantity.'));
             }
             $source = CustomerInvoice::query()->with('deliveries')->lockForUpdate()->findOrFail($invoice->getKey());
+            app(CustomerInvoiceBalanceService::class)->assertNoActiveWithholding($source);
             $proposal = $correctionId === null ? null : app(SalesReturnCorrectionService::class)->execution($correctionId, 'replacement',
                 (int) SalesReturnCorrection::query()->findOrFail($correctionId)->sales_return_id);
             if ($proposal !== null && (int) data_get($proposal->source_snapshot, 'return.customer_invoice_id') !== (int) $source->id) {
@@ -471,6 +472,9 @@ class SalesReturnService
             $postingReturn = $this->postingCopy($locked);
             $invoice = $locked->customer_invoice_id === null ? null : CustomerInvoice::query()
                 ->lockForUpdate()->findOrFail($locked->customer_invoice_id);
+            if ($invoice) {
+                app(CustomerInvoiceBalanceService::class)->assertNoActiveWithholding($invoice);
+            }
             if (! $invoice) {
                 $locked->update(['status' => SalesReturn::StatusClosed, 'closed_by' => auth()->id(), 'closed_at' => now(), 'updated_by' => auth()->id()]);
                 $this->recordStatus($locked, $fromStatus, SalesReturn::StatusClosed);
@@ -513,10 +517,7 @@ class SalesReturnService
             }
             $journal = $this->accounting->postCreditNote($credit);
             $credit->update(['status' => CustomerInvoice::StatusPosted, 'posting_status' => 'posted', 'is_closed' => true, 'journal_entry_id' => $journal->getKey(), 'issued_by' => auth()->id(), 'issued_at' => now()]);
-            $outstandingBeforeCredit = $this->amounts->subtract(
-                $this->amounts->subtract($invoice->total_amount, $invoice->paid_amount),
-                $invoice->credited_amount,
-            );
+            $outstandingBeforeCredit = app(CustomerInvoiceBalanceService::class)->remaining($invoice);
             $appliedToOriginal = $this->amounts->compare($locked->total_amount, $outstandingBeforeCredit) > 0
                 ? $outstandingBeforeCredit
                 : (string) $locked->total_amount;
@@ -953,7 +954,7 @@ class SalesReturnService
             || $this->amounts->compare($invoice->credited_amount, $applied) < 0
             || $this->amounts->compare(
                 $invoice->remaining_amount,
-                $this->amounts->subtract($this->amounts->subtract($invoice->total_amount, $invoice->paid_amount), $invoice->credited_amount),
+                app(CustomerInvoiceBalanceService::class)->remaining($invoice),
             ) !== 0) {
             throw new DomainException(__('sales_return_correction.closed_credit_mismatch'));
         }
@@ -981,7 +982,7 @@ class SalesReturnService
         $newCredited = $this->amounts->subtract($invoice->credited_amount, $applied);
         $invoice->forceFill([
             'credited_amount' => $newCredited,
-            'remaining_amount' => $this->amounts->subtract($this->amounts->subtract($invoice->total_amount, $invoice->paid_amount), $newCredited),
+            'remaining_amount' => app(CustomerInvoiceBalanceService::class)->remaining($invoice, credited: $newCredited),
         ])->save();
         $credit->forceFill([
             'status' => CustomerInvoice::StatusCancelled,

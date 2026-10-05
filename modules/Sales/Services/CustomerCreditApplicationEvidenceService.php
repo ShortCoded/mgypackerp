@@ -258,7 +258,7 @@ final class CustomerCreditApplicationEvidenceService
             || bccomp($refunded, (string) $credit->credit_refunded_amount, 4) !== 0
             || bccomp($applied, '0', 4) < 0 || bccomp($applied, (string) $invoice->credited_amount, 4) > 0
             || bccomp((string) $credit->total_amount, (string) $return->total_amount, 4) !== 0
-            || bccomp((string) $invoice->remaining_amount, bcsub(bcsub((string) $invoice->total_amount, (string) $invoice->paid_amount, 4), (string) $invoice->credited_amount, 4), 4) !== 0
+            || bccomp((string) $invoice->remaining_amount, app(CustomerInvoiceBalanceService::class)->remaining($invoice), 4) !== 0
             || bccomp($this->sum($journal->lines->pluck('debit_amount')->all()), (string) $credit->total_amount, 4) !== 0
             || bccomp($this->sum($journal->lines->pluck('credit_amount')->all()), (string) $credit->total_amount, 4) !== 0
             || $arLines->count() !== 1 || bccomp((string) $arLines->first()?->credit_amount, (string) $credit->total_amount, 4) !== 0

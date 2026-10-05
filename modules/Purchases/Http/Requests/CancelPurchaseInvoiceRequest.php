@@ -8,7 +8,9 @@ class CancelPurchaseInvoiceRequest extends FormRequest
 {
     public function authorize(): bool
     {
-        return (bool) $this->user()?->can('purchase_invoices.cancel');
+        $ability = $this->routeIs('admin.purchases.purchase-invoices.reverse') ? 'reverse' : 'cancel';
+
+        return (bool) $this->user()?->can('purchase_invoices.'.$ability);
     }
 
     public function rules(): array

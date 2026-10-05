@@ -5,6 +5,7 @@ namespace Modules\Purchases\Services;
 use DomainException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
@@ -44,7 +45,8 @@ class PurchaseOrderService
             $context = $this->currentContext();
             app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $data['document_date'], $context['financial_period_id'], lockForUpdate: true);
             $lines = $this->linesForCalculation($data['lines'] ?? [], $context);
-            $calculation = $this->calculator->calculate($lines, $data['freight_amount'] ?? 0);
+            $calculation = $this->calculator->calculate($lines, $data['freight_amount'] ?? 0, $data['header_discount_type'] ?? null, $data['header_discount_value'] ?? 0,
+                app(SupplierQuotationDiscountService::class)->orderAllocations($lines, $context, null, $data['header_discount_type'] ?? null, $data['header_discount_value'] ?? 0));
             $record = PurchaseOrder::query()->create([
                 ...$this->values($data, $context),
                 ...$calculation['order'],
@@ -62,18 +64,50 @@ class PurchaseOrderService
 
     public function update(PurchaseOrder $record, array $data): array
     {
-        return DB::transaction(function () use ($record, $data): array {
+        return $this->updateRecord($record, $data);
+    }
+
+    /** @param array<string, mixed> $values */
+    public function applyUnexecutedLineChange(PurchaseOrder $record, array $values): PurchaseOrder
+    {
+        Gate::authorize('purchases.purchase_order_change_requests.approve');
+        $result = $this->updateRecord($record, [
+            'supplier_doc_num' => $record->supplier->doc_num,
+            'branch_store_uuid' => $record->branchStore->public_uuid,
+            'currency_doc_num' => $record->currency?->doc_num,
+            'exchange_rate' => $record->exchange_rate,
+            'document_date' => $record->document_date->toDateString(),
+            'freight_amount' => $record->freight_amount,
+            ...Arr::only($values, ['expected_delivery_date', 'payment_terms', 'notes', 'lines']),
+        ], controlledLineChange: true);
+
+        return $result['record'];
+    }
+
+    /** @param array<string, mixed> $data */
+    private function updateRecord(PurchaseOrder $record, array $data, bool $controlledLineChange = false): array
+    {
+        return DB::transaction(function () use ($record, $data, $controlledLineChange): array {
             $context = $this->currentContext();
 
             /** @var PurchaseOrder $locked */
             $locked = PurchaseOrder::query()->lockForUpdate()->findOrFail($record->getKey());
             $this->assertInCurrentContext($locked, $context);
-            $this->assertEditable($locked);
+            if ($controlledLineChange) {
+                if (! $locked->isApproved() || ! $locked->canReplaceUnexecutedLines()) {
+                    throw new DomainException(__('procurement.messages.line_correction_execution_blocked'));
+                }
+            } else {
+                $this->assertEditable($locked);
+            }
 
             $oldDocNumber = $locked->doc_number === null ? null : (int) $locked->doc_number;
             $oldDocNum = $locked->doc_num;
             $lines = $this->linesForCalculation($data['lines'] ?? [], $context, $locked);
-            $calculation = $this->calculator->calculate($lines, $data['freight_amount'] ?? $locked->freight_amount);
+            $headerType = array_key_exists('header_discount_type', $data) ? $data['header_discount_type'] : $locked->header_discount_type;
+            $headerValue = $data['header_discount_value'] ?? $locked->header_discount_value ?? 0;
+            $calculation = $this->calculator->calculate($lines, $data['freight_amount'] ?? $locked->freight_amount, $headerType, $headerValue,
+                app(SupplierQuotationDiscountService::class)->orderAllocations($lines, $context, $locked, $headerType, $headerValue));
             $values = [
                 ...$this->values($data, $context, $locked),
                 ...$calculation['order'],
@@ -218,13 +252,13 @@ class PurchaseOrderService
                 'header' => Arr::only($locked->attributesToArray(), [
                     'doc_num', 'document_date', 'supplier_id', 'branch_store_id', 'currency_id',
                     'exchange_rate', 'expected_delivery_date', 'freight_amount', 'subtotal_amount',
-                    'total_amount', 'payment_terms', 'notes', 'approved_by', 'approved_at',
+                    'total_amount', 'header_discount_type', 'header_discount_value', 'header_discount_amount', 'payment_terms', 'notes', 'approved_by', 'approved_at',
                     'closed_by', 'closed_at',
                 ]),
                 'lines' => $locked->lines()->orderBy('line_number')->get()->map(
                     fn (PurchaseOrderLine $line): array => Arr::only($line->attributesToArray(), [
                         'public_id', 'line_number', 'product_id', 'unit_id', 'ordered_quantity',
-                        'unit_price', 'discount_type', 'discount_value', 'discount_amount',
+                        'unit_price', 'discount_type', 'discount_value', 'discount_amount', 'header_discount_amount',
                         'tax_rate', 'tax_amount', 'subtotal_amount', 'total_after_tax',
                         'purchase_requisition_line_id', 'specification',
                     ]),
@@ -596,7 +630,7 @@ class PurchaseOrderService
                 'description' => $line['description'] ?? null,
                 'discount_type' => $line['discount_type'],
                 'discount_value' => $line['discount_value'],
-                'discount_amount' => $line['discount_amount'],
+                'discount_amount' => $line['discount_amount'], 'header_discount_amount' => $line['header_discount_amount'],
                 'tax_rate' => $line['tax_rate'],
                 'tax_amount' => $line['tax_amount'],
                 'subtotal_amount' => $line['subtotal_amount'],
@@ -898,6 +932,9 @@ class PurchaseOrderService
 
         if ($record->hasReceipts()) {
             throw new DomainException(__('purchase_orders.messages.received_edit_forbidden'));
+        }
+        if (! $record->canReplaceUnexecutedLines()) {
+            throw new DomainException(__('procurement.messages.line_correction_execution_blocked'));
         }
     }
 

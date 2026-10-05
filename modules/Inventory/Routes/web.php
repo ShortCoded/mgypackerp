@@ -144,6 +144,12 @@ Route::middleware('auth')
                 ->name('receipt-cost-reject');
             Route::get('/{inventoryDocument}', 'show')->middleware('can:inventory.documents.view')->name('show');
         });
+        Route::get('/reports/stock-card', [InventoryReportController::class, 'stockCard'])
+            ->middleware('can:inventory.reports.operations.view')->name('reports.stock-card');
+        Route::get('/reports/stock-card/export.xlsx', [InventoryReportController::class, 'stockCardExport'])
+            ->middleware(['can:inventory.reports.operations.view', 'can:inventory.reports.operations.export'])->name('reports.stock-card.export');
+        Route::get('/reports/stock-card/print', [InventoryReportController::class, 'stockCardPrint'])
+            ->middleware(['can:inventory.reports.operations.view', 'can:inventory.reports.operations.print'])->name('reports.stock-card.print');
         Route::get('/reports/operations', [InventoryReportController::class, 'index'])
             ->middleware('can:inventory.reports.operations.view')
             ->name('reports.index');

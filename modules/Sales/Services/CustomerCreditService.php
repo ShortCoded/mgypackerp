@@ -76,7 +76,7 @@ class CustomerCreditService
             $this->amounts->assertNotGreaterThan($amount, (string) $invoice->remaining_amount, __('Credit allocation exceeds the target Invoice outstanding amount.'), 4);
 
             $lockedSchedule = $schedule === null
-                ? $invoice->paymentSchedules()->whereRaw('(amount - collected_amount - credited_amount) > 0')->orderBy('due_date')->lockForUpdate()->first()
+                ? $invoice->paymentSchedules()->whereRaw('(amount - collected_amount - credited_amount - actual_withholding_amount) > 0')->orderBy('due_date')->lockForUpdate()->first()
                 : CustomerInvoicePaymentSchedule::query()->lockForUpdate()->findOrFail($schedule->getKey());
             if (! $lockedSchedule instanceof CustomerInvoicePaymentSchedule
                 || (int) $lockedSchedule->customer_invoice_id !== (int) $invoice->getKey()) {
@@ -157,7 +157,7 @@ class CustomerCreditService
                 || $this->amounts->compare($credit->credit_allocated_amount, $amount) < 0
                 || $this->amounts->compare(
                     $invoice->remaining_amount,
-                    $this->amounts->subtract($this->amounts->subtract($invoice->total_amount, $invoice->paid_amount), $invoice->credited_amount),
+                    app(CustomerInvoiceBalanceService::class)->remaining($invoice),
                 ) !== 0) {
                 throw new DomainException(__('sales_return_correction.allocation_not_reversible'));
             }

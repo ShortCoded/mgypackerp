@@ -24,6 +24,9 @@
         @if(in_array($record->status, [\Modules\Production\Models\ProductionMaterialRequest::StatusApproved, \Modules\Production\Models\ProductionMaterialRequest::StatusShortage, \Modules\Production\Models\ProductionMaterialRequest::StatusPartiallyIssued], true) && auth()->user()?->canAny(['production.material_requests.issue', 'inventory.documents.issue']))
             <a class="dropdown-item text-primary" href="{{ route('admin.production.material-requests.show', $record) }}#production-material-partial-issue">{{ __('production_execution.actions.issue') }}</a>
         @endif
+        @if(! $record->purchase_requisition_id && in_array($record->status, [\Modules\Production\Models\ProductionMaterialRequest::StatusShortage, \Modules\Production\Models\ProductionMaterialRequest::StatusPartiallyIssued], true) && $hasShortage && $canView && auth()->user()?->can('purchases.purchase_requisitions.create'))
+            <button class="dropdown-item text-primary" type="button" data-action="post" data-url="{{ route('admin.production.material-requests.purchase-requisition', $record) }}">{{ __('production_execution.manual_purchase_action') }}</button>
+        @endif
         @if($canDelete)<div class="dropdown-divider"></div><button class="dropdown-item text-danger" type="button" data-action="delete" data-confirm="{{ __('production_execution.messages.confirm_delete') }}" data-url="{{ route('admin.production.material-requests.destroy', $record) }}">{{ __('common.actions.delete') }}</button>@endif
         @if($canRestore)<button class="dropdown-item text-success" type="button" data-action="restore" data-url="{{ route('admin.production.material-requests.restore', $record->doc_num) }}">{{ __('common.actions.restore') }}</button>@endif
     </div>

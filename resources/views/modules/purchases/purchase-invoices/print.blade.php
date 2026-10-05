@@ -51,7 +51,7 @@
                     <td>{{ $line->unit?->name }}</td>
                     <td class="text-end" dir="ltr">{{ $numbers->format($line->quantity) }}</td>
                     <td class="text-end" dir="ltr">{{ $numbers->format($line->unit_price) }}</td>
-                    <td class="text-end" dir="ltr">{{ $numbers->format($line->discount_amount) }}</td>
+                    <td class="text-end" dir="ltr">{{ $numbers->format($line->discount_amount) }}<div>{{ __('purchase_invoices.discount_types.'.($line->discount_type ?: 'fixed')) }}: {{ $numbers->format($line->discount_value) }}{{ $line->discount_type === 'percentage' ? '%' : '' }}</div></td>
                     <td class="text-end" dir="ltr">{{ $numbers->format($line->tax_amount) }}</td>
                     <td class="text-end" dir="ltr">{{ $numbers->format($line->total_after_tax) }}</td>
                 </tr>
@@ -61,7 +61,7 @@
 
     <table class="document-totals-table">
         <tr><th>{{ __('purchase_invoices.totals.subtotal') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->subtotal_amount) }}</td><th>{{ __('purchase_invoices.totals.line_discounts') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->line_discount_amount) }}</td></tr>
-        <tr><th>{{ __('purchase_invoices.totals.header_discount') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->header_discount_amount) }}</td><th>{{ __('Freight') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->freight_amount) }}</td></tr>
+        <tr><th>{{ __('purchase_invoices.totals.header_discount') }}@if($record->header_discount_type) ({{ __('purchase_invoices.discount_types.'.$record->header_discount_type) }}: {{ $numbers->format($record->header_discount_value) }}{{ $record->header_discount_type === 'percentage' ? '%' : '' }})@endif</th><td class="text-end" dir="ltr">{{ $numbers->format($record->header_discount_amount) }}</td><th>{{ __('Freight') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->freight_amount) }}</td></tr>
         <tr><th>{{ __('purchase_invoices.totals.tax') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->tax_amount) }}</td><th>{{ __('purchase_invoices.totals.net_total') }}</th><td class="text-end" dir="ltr"><strong>{{ $numbers->format($record->total_amount) }} {{ $record->currency?->code }}</strong></td></tr>
         <tr><th>{{ __('purchase_invoices.totals.paid') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->paid_amount) }}</td><th>{{ __('purchase_invoices.totals.credited') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->credited_amount) }}</td></tr>
         <tr><th>{{ __('purchase_invoices.totals.remaining') }}</th><td class="text-end" dir="ltr">{{ $numbers->format($record->remaining_amount) }}</td><th>{{ __('purchase_invoices.attributes.payment_status') }}</th><td>{{ __('purchase_invoices.payment_statuses.'.$record->payment_status) }}</td></tr>

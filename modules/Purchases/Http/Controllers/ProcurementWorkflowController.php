@@ -398,6 +398,21 @@ class ProcurementWorkflowController extends Controller
         return $this->execute($request, fn () => $this->sourcing->createSupplierSelection($requestForQuotation, $request->validated()), 'admin.purchases.supplier-selection.show');
     }
 
+    public function editSelection(SupplierSelection $supplierSelection): View
+    {
+        $this->assertCurrent($supplierSelection);
+        abort_unless($supplierSelection->status === 'draft', 403);
+        $supplierSelection->load(['lines', 'requestForQuotation']);
+
+        return view('modules.purchases.procurement.selection-form', ['record' => $supplierSelection->requestForQuotation,
+            'draft' => $supplierSelection, 'lines' => $this->sourcing->comparison($supplierSelection->requestForQuotation)]);
+    }
+
+    public function updateSelection(ProcurementWorkflowRequest $request, SupplierSelection $supplierSelection): JsonResponse|RedirectResponse
+    {
+        return $this->execute($request, fn () => $this->sourcing->updateSupplierSelection($supplierSelection, $request->validated()), 'admin.purchases.supplier-selection.show');
+    }
+
     public function showSelection(SupplierSelection $supplierSelection): View
     {
         $this->assertCurrent($supplierSelection);
@@ -1480,6 +1495,21 @@ class ProcurementWorkflowController extends Controller
         $selectedCurrency = $draft?->currency
             ?? ($source instanceof PurchaseOrder ? $source->currency : null)
             ?? Currency::query()->forCompany($context['company_id'])->where('is_main', true)->first();
+
+        if (request()->session()->hasOldInput('supplier_doc_num')) {
+            $supplierDocNum = request()->old('supplier_doc_num');
+            $selectedSupplier = is_string($supplierDocNum) && $supplierDocNum !== ''
+                ? Supplier::query()->active()->forCompany($context['company_id'])
+                    ->when($source instanceof RequestForQuotation, fn ($query) => $query->whereIn('id', $source->suppliers->modelKeys()))
+                    ->where('doc_num', $supplierDocNum)->first()
+                : null;
+        }
+        if (request()->session()->hasOldInput('currency_doc_num')) {
+            $currencyDocNum = request()->old('currency_doc_num');
+            $selectedCurrency = is_string($currencyDocNum) && $currencyDocNum !== ''
+                ? Currency::query()->active()->forCompany($context['company_id'])->where('doc_num', $currencyDocNum)->first()
+                : null;
+        }
 
         return view('modules.purchases.procurement.quotation-form', [
             'record' => $source,

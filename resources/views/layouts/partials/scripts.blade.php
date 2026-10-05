@@ -20,6 +20,8 @@
 <script src="{{ $erpAsset->url('vendors/datatables.net-buttons/js/buttons.colVis.min.js') }}"></script>
 <script src="{{ $erpAsset->url('vendors/flatpickr/flatpickr.min.js') }}"></script>
 <script src="{{ $erpAsset->url('vendors/select2/select2.full.min.js') }}"></script>
+@include('layouts.partials.select2-config')
+<script src="{{ $erpAsset->url('assets/js/modules/Core/select2-ajax.js') }}"></script>
 <script>window.dataTableTranslations = @json(__('datatables'));</script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/datatables-defaults.js') }}"></script>
 <script src="{{ $erpAsset->url('assets/js/modules/Core/numeric-input.js') }}"></script>
@@ -42,19 +44,6 @@
             'tableSearchTitle' => __('common.shortcuts.table_search'),
         ];
         $appNumericInputMessages = __('common.numeric_input');
-        $appSelect2 = [
-            'perPage' => (int) config('select2.pagination.per_page', 25),
-            'delay' => (int) config('select2.delay', 250),
-            'minimumInputLength' => (int) config('select2.minimum_input_length', 0),
-            'clearAllLabel' => __('common.actions.clear_all'),
-            'messages' => [
-                'errorLoading' => __('common.messages.unexpected_error'),
-                'inputTooShort' => __('common.placeholders.search'),
-                'loadingMore' => __('common.messages.loading'),
-                'noResults' => __('common.messages.no_results_found'),
-                'searching' => __('common.messages.searching'),
-            ],
-        ];
         $dateFormatService = app(\Modules\Core\Services\DateFormatService::class);
         $appDatePicker = [
             'dateFormat' => $dateFormatService->jsDateFormat(),
@@ -186,7 +175,6 @@
         window.AppSession = @json($appSession);
         window.AppShortcuts = @json($appShortcuts);
         window.AppNumericInputMessages = @json($appNumericInputMessages);
-        window.AppSelect2 = @json($appSelect2);
         window.AppDatePicker = @json($appDatePicker);
         window.AppNotificationSoundConfig = @json($appNotificationSound);
         window.AppPushNotifications = @json($appPushNotifications);
@@ -208,7 +196,6 @@
         <script src="{{ $erpAsset->url('assets/js/modules/Core/production-guard.js') }}"></script>
     @endproduction
     <script src="{{ $erpAsset->url('assets/js/modules/Core/shortcuts.js') }}"></script>
-    <script src="{{ $erpAsset->url('assets/js/modules/Core/select2-ajax.js') }}"></script>
     <script src="{{ $erpAsset->url('assets/js/modules/Core/flatpickr-locales.js') }}"></script>
     <script src="{{ $erpAsset->url('assets/js/modules/Core/date-picker.js') }}"></script>
     <script src="{{ $erpAsset->url('assets/js/modules/Core/notification-sound.js') }}"></script>

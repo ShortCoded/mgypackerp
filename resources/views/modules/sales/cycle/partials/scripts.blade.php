@@ -12,4 +12,5 @@
 <script>
     window.salesCycleMessages = @json($salesCycleMessages);
 </script>
+<script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Sales/sales-discounts.js') }}"></script>
 <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Sales/sales-cycle.js') }}"></script>

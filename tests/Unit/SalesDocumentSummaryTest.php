@@ -14,6 +14,7 @@ const source = fs.readFileSync(process.argv[1], 'utf8').replace(
 );
 const outputs = {};
 const makeRow = ({product, quantity, price, discount, tax}) => ({
+    dataset: {},
     querySelector(selector) {
         const values = {
             '[name$="[product_doc_num]"]': product,

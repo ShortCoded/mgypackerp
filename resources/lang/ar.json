@@ -107,6 +107,7 @@
     "An order with deliveries or invoices must be reversed through downstream documents.": "يجب عكس الأمر المرتبط بتسليمات أو فواتير من خلال المستندات اللاحقة المرتبطة.",
     "An order with reservations, production, deliveries, or invoices cannot be amended; use controlled downstream reversal documents.": "لا يمكن تعديل أمر مرتبط بحجوزات أو إنتاج أو تسليمات أو فواتير؛ استخدم مستندات العكس المنضبطة للمستندات اللاحقة المرتبطة.",
     "Applied": "مستخدم",
+    "Applying": "جاري التنفيذ",
     "Applied Amount": "المبلغ المستخدم",
     "Apply": "تطبيق",
     "Apply Credit": "استخدام الرصيد الدائن",

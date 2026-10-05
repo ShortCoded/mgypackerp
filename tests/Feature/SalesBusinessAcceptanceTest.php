@@ -113,7 +113,7 @@ test('a customer request stops on unpriced items then preserves the resolved com
         'discount_amount' => 999,
         'tax_amount' => 999,
     ])->all();
-    $unchanged = app(SalesOrderService::class)->update($order, [
+    expect(fn () => app(SalesOrderService::class)->update($order, [
         'company_id' => $order->company_id,
         'branch_id' => $order->branch_id,
         'customer_id' => $order->customer_id,
@@ -123,7 +123,8 @@ test('a customer request stops on unpriced items then preserves the resolved com
         'exchange_rate' => $order->exchange_rate,
         'lines' => $tamperedLines,
         'payment_schedules' => [],
-    ]);
+    ]))->toThrow(DomainException::class);
+    $unchanged = $order->fresh('lines');
     expect($unchanged->lines->keyBy('product_id')[$fixture['finished']->id]->unit_price)->toBe('15.00000000')
         ->and($unchanged->lines->keyBy('product_id')[$fixture['service']->id]->unit_price)->toBe('80.00000000');
 });

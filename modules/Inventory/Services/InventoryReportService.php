@@ -165,7 +165,7 @@ class InventoryReportService
         $showHallBreakdown = ! empty($filters['branch_hall_id']);
         $showLocationBreakdown = ! empty($filters['warehouse_location_id']);
 
-        $rows = InventoryTransaction::query()
+        $rows = $this->stockPositionTransactions($companyId, $allowedBranchIds, $filters)
             ->selectRaw('company_id, branch_id, branch_store_id, product_id')
             ->selectRaw($showHallBreakdown ? 'branch_hall_id' : 'NULL as branch_hall_id')
             ->selectRaw($showLocationBreakdown ? 'warehouse_location_id' : 'NULL as warehouse_location_id')
@@ -175,18 +175,9 @@ class InventoryReportService
             ->selectRaw('round(sum('.InventoryTransaction::signedValueSql().'), 8) as inventory_value')
             ->selectRaw('round(sum('.InventoryTransaction::unvaluedQuantitySql().'), 8) as unvalued_quantity')
             ->selectRaw('sum(case when unit_cost is null or total_cost is null then 1 else 0 end) as unvalued_row_count')
-            ->where('company_id', $companyId)
-            ->whereIn('branch_id', $allowedBranchIds)
-            ->whereDate('transaction_date', '<=', $filters['as_of'] ?? today()->toDateString())
-            ->when($filters['branch_id'] ?? null, fn (Builder $query, int $branchId) => $query->where('branch_id', $branchId))
-            ->when($filters['branch_store_id'] ?? null, fn (Builder $query, int $storeId) => $query->where('branch_store_id', $storeId))
-            ->when($filters['branch_hall_id'] ?? null, fn (Builder $query, int $hallId) => $query->where('branch_hall_id', $hallId))
-            ->when($filters['warehouse_location_id'] ?? null, fn (Builder $query, int $locationId) => $query->where('warehouse_location_id', $locationId))
-            ->when($filters['stock_status'] ?? null, fn (Builder $query, string $status) => $query->where('stock_status', $status))
-            ->whereHas('product', fn (Builder $query) => $this->applyStockBalanceProductFilters($query, $companyId, $filters))
             ->with([
                 'branch:id,doc_num,name,type',
-                'branchStore:id,branch_id,name,classification,deleted_at',
+                'branchStore:id,public_uuid,branch_id,name,classification,deleted_at',
                 'branchHall:id,branch_id,name',
                 'warehouseLocation:id,branch_store_id,code,name,zone_code,deleted_at',
                 'product' => fn ($query) => $query->withTrashed()->with(['unit', 'category', 'group', 'itemModel', 'size', 'color', 'decal', 'originCountry']),
@@ -493,24 +484,60 @@ class InventoryReportService
     }
 
     /** @param array<string, mixed> $filters */
-    public function stockCard(int $companyId, int $productId, array $filters = []): Collection
+    public function stockCard(int $companyId, int $productId, array $filters = [], ?int $page = null): Collection
     {
-        $rows = InventoryTransaction::query()
-            ->where('company_id', $companyId)
+        $history = $this->stockPositionTransactions($companyId, $filters['allowed_branch_ids'] ?? null, $filters)
             ->where('product_id', $productId)
-            ->when($filters['financial_period_id'] ?? null, fn ($query, $periodId) => $query->where('financial_period_id', $periodId))
-            ->when($filters['branch_id'] ?? null, fn ($query, $branchId) => $query->whereHas('branchStore', fn ($storeQuery) => $storeQuery->where('branch_id', $branchId)))
-            ->when($filters['branch_store_id'] ?? null, fn ($query, $storeId) => $query->where('branch_store_id', $storeId))
+            ->select('inventory_transactions.*')
+            ->selectRaw('sum(quantity_in - quantity_out) over (partition by company_id, product_id order by transaction_date, id rows between unbounded preceding and current row) as running_balance');
+        $query = InventoryTransaction::query()->fromSub($history, 'inventory_transactions')
             ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereDate('transaction_date', '>=', $from))
-            ->when($filters['to'] ?? null, fn ($query, $to) => $query->whereDate('transaction_date', '<=', $to))
-            ->with(['branchStore', 'warehouseLocation', 'productionRun'])
+            ->with(['product.unit', 'branchStore', 'warehouseLocation', 'productionRun', 'serialIdentity'])
             ->orderBy('transaction_date')
-            ->orderBy('id')
-            ->get();
+            ->orderBy('id');
+        if ($page !== null) {
+            $query->offset((max(1, $page) - 1) * self::MovementPageSize)->limit(self::MovementPageSize);
+        }
+        $rows = $query->get()->each(fn (InventoryTransaction $row) => $row->setAttribute('running_balance', $this->decimal($row->running_balance)));
 
         $this->hydrateMovementSources($rows);
 
         return $rows;
+    }
+
+    /** @param array<string, mixed> $filters @return array<string, string|int> */
+    public function stockCardTotals(int $companyId, int $productId, array $filters = []): array
+    {
+        $history = $this->stockPositionTransactions($companyId, $filters['allowed_branch_ids'] ?? null, $filters)->where('product_id', $productId);
+        $opening = isset($filters['from']) ? (clone $history)->whereDate('transaction_date', '<', $filters['from'])
+            ->selectRaw('coalesce(sum(quantity_in - quantity_out), 0) as quantity')->value('quantity') : '0';
+        $totals = $history->when($filters['from'] ?? null, fn ($query, $from) => $query->whereDate('transaction_date', '>=', $from))
+            ->selectRaw('coalesce(sum(quantity_in), 0) as quantity_in, coalesce(sum(quantity_out), 0) as quantity_out, count(*) as movement_count')->first();
+
+        return ['opening_balance' => $this->decimal($opening), 'quantity_in' => $this->decimal($totals->quantity_in),
+            'quantity_out' => $this->decimal($totals->quantity_out), 'movement_count' => (int) $totals->movement_count,
+            'closing_balance' => bcadd($this->decimal($opening), bcsub($this->decimal($totals->quantity_in), $this->decimal($totals->quantity_out), 8), 8)];
+    }
+
+    /** @param list<int>|null $allowedBranchIds @param array<string, mixed> $filters */
+    private function stockPositionTransactions(int $companyId, ?array $allowedBranchIds, array $filters): Builder
+    {
+        $cutoff = $filters['as_of'] ?? $filters['to'] ?? today()->toDateString();
+        if (filled($filters['to'] ?? null)) {
+            $cutoff = min($cutoff, $filters['to']);
+        }
+
+        return InventoryTransaction::query()->where('company_id', $companyId)
+            ->when($allowedBranchIds !== null, fn ($query) => $query->whereIn('branch_id', $allowedBranchIds))
+            ->whereDate('transaction_date', '<=', $cutoff)
+            ->when($filters['financial_period_id'] ?? null, fn ($query, $period) => $query->where('financial_period_id', $period))
+            ->when($filters['branch_id'] ?? null, fn ($query, $branch) => $query->where('branch_id', $branch))
+            ->when($filters['branch_store_id'] ?? null, fn ($query, $store) => $query->where('branch_store_id', $store))
+            ->when($filters['branch_hall_id'] ?? null, fn ($query, $hall) => $query->where('branch_hall_id', $hall))
+            ->when($filters['warehouse_location_id'] ?? null, fn ($query, $location) => $query->where('warehouse_location_id', $location))
+            ->when($filters['stock_status'] ?? null, fn ($query, $status) => $query->where('stock_status', $status))
+            ->when($filters['batch_lot'] ?? null, fn ($query, $batch) => $query->where('batch_lot', $batch))
+            ->whereHas('product', fn (Builder $query) => $this->applyStockBalanceProductFilters($query, $companyId, $filters));
     }
 
     /** @param array<string, mixed> $filters */

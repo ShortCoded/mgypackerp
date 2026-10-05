@@ -152,10 +152,15 @@ abstract class JournalEntryRequest extends FormRequest
             'description' => __('journal_entries.attributes.description'),
             'notes' => __('journal_entries.attributes.notes'),
             'lines' => __('journal_entries.attributes.lines'),
+            'lines.*' => __('journal_entries.attributes.lines'),
             'lines.*.account_doc_num' => __('journal_entries.attributes.account'),
             'lines.*.debit_amount' => __('journal_entries.attributes.debit'),
             'lines.*.credit_amount' => __('journal_entries.attributes.credit'),
             'lines.*.cost_center_doc_num' => __('journal_entries.attributes.cost_center'),
+            'lines.*.description' => __('journal_entries.attributes.line_description'),
+            'lines.*.customer_doc_num' => __('journal_entries.attributes.customer'),
+            'lines.*.supplier_doc_num' => __('journal_entries.attributes.supplier'),
+            'lines.*.employee_doc_num' => __('journal_entries.attributes.employee'),
         ];
     }
 

@@ -1,6 +1,11 @@
 <?php
 
 return [
+    'header_discount' => 'Order discount',
+    'header_discount_value' => 'Entered order discount',
+    'header_discount_help' => 'Applied after line discounts and allocated once before tax.',
+    'header_discount_invalid' => 'Choose a valid fixed or percentage discount, at most 100% and no more than the remaining subtotal.',
+
     'title' => 'Purchase Orders',
     'singular' => 'Purchase Order',
     'create' => 'Create Purchase Order',

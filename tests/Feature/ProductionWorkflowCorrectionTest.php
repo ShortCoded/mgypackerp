@@ -256,7 +256,14 @@ test('standalone production orders support safe draft crud and human quantities'
         ->and($order->lines)->toHaveCount(1)
         ->and(app(NumericFormatService::class)->format($order->lines->sole()->quantity))->toBe('12.5');
 
-    $updated = $service->updateDraftOrder($order, [...$header, 'priority' => 'urgent'], [[
+    Permission::findOrCreate('production.orders.edit', 'web');
+    $user->givePermissionTo('production.orders.edit');
+    request()->setUserResolver(fn (): User => $user);
+    request()->setLaravelSession(app('session.store'));
+    request()->session()->put([OperatingContextService::CompanyIdKey => $company->id, OperatingContextService::CompanyDocNumKey => $company->doc_num,
+        OperatingContextService::BranchIdKey => $branch->id, OperatingContextService::BranchDocNumKey => $branch->doc_num,
+        OperatingContextService::FinancialPeriodIdKey => $period->id, OperatingContextService::FinancialPeriodDocNumKey => $period->doc_num]);
+    $updated = $service->updateDraftOrder($order, [...$header, 'priority' => 'urgent', 'amendment_token' => $order->amendmentToken(), 'amendment_reason' => 'Synthetic draft correction'], [[
         'product_id' => $product->getKey(),
         'unit_id' => $unit->getKey(),
         'quantity' => '15',

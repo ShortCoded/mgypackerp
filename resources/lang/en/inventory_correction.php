@@ -1,6 +1,28 @@
 <?php
 
 return [
+    'before' => 'Original items', 'after' => 'Reviewed replacement items',
+    'card' => [
+        'title' => 'Item stock card',
+        'date' => 'Date',
+        'source' => 'Document',
+        'store' => 'Store',
+        'type' => 'Movement',
+        'unit' => 'Base unit',
+        'in' => 'In',
+        'out' => 'Out',
+        'balance' => 'Running balance',
+        'reversal' => 'Reversal',
+        'opening' => 'Opening balance',
+        'closing' => 'Closing balance',
+    ],
+    'replace_items' => 'Replace, add or remove items',
+    'items_scope' => 'Item correction is allowed only for manual receipts and issues in their original open financial period. Linked and production documents require their source recovery workflow.',
+    'items_later' => 'Later stock movement :document prevents this correction. Review that document and its source recovery first.',
+    'items_consumed' => 'Original receipt stock has been consumed. Review the consuming documents before correcting the item.',
+    'item_quantity' => 'Quantity in selected unit',
+    'base_cost' => 'Receipt cost per base unit',
+    'items_review' => 'Review the full replacement item list. Removed original lines are reversed; approval posts only the replacement lines below.',
     'legacy_exchange_details' => 'Allocation exchange and unchanged issue costs',
     'legacy_from_layer' => 'Current issue layer', 'legacy_to_layer' => 'Correct issue layer',
     'legacy_unit_cost' => 'Recorded issue unit cost', 'legacy_issue_total' => 'Recorded whole issue value',

@@ -5,6 +5,7 @@ namespace Modules\Production\Services;
 use DomainException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Services\ActivityLogger;
@@ -263,10 +264,8 @@ class ProductionMaterialRequestService
                 $hasShortage = $hasShortage || bccomp($shortage, '0', 8) > 0;
             }
 
-            $purchaseRequisition = $hasShortage ? $this->createShortageRequisition($locked) : null;
             $locked->update([
                 'status' => $hasShortage ? ProductionMaterialRequest::StatusShortage : ProductionMaterialRequest::StatusApproved,
-                'purchase_requisition_id' => $purchaseRequisition?->getKey(),
                 'approved_by' => auth()->id(),
                 'approved_at' => now(),
                 'updated_by' => auth()->id(),
@@ -535,6 +534,37 @@ class ProductionMaterialRequestService
 
             return $locked->refresh()->load(['lines.product', 'purchaseRequisition']);
         });
+    }
+
+    public function createPurchaseRequisition(ProductionMaterialRequest $request): PurchaseRequisition
+    {
+        Gate::authorize('production.material_requests.view');
+        Gate::authorize('purchases.purchase_requisitions.create');
+
+        return DB::transaction(function () use ($request): PurchaseRequisition {
+            $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
+            $locked = ProductionMaterialRequest::query()->with(['lines.product', 'lines.unit', 'run.order', 'run.orderLine', 'store'])->lockForUpdate()->findOrFail($request->getKey());
+            $this->assertContext($locked, $context);
+            if ($locked->purchase_requisition_id !== null) {
+                return PurchaseRequisition::withTrashed()->where('company_id', $context['company_id'])->findOrFail($locked->purchase_requisition_id);
+            }
+            if (! in_array($locked->status, [ProductionMaterialRequest::StatusShortage, ProductionMaterialRequest::StatusPartiallyIssued], true)
+                || ! $locked->lines->contains(fn ($line): bool => bccomp((string) $line->shortage_quantity, '0', 8) > 0)
+                || in_array($locked->run->status, [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled], true)) {
+                throw new DomainException(__('production_execution.messages.material_request_has_no_shortage'));
+            }
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], now()->toDateString(), $context['financial_period_id'], lockForUpdate: true);
+            $requisition = $this->createShortageRequisition($locked);
+            $locked->update(['purchase_requisition_id' => $requisition->getKey(), 'updated_by' => auth()->id()]);
+            $this->activityLogger->log(request(), 'production', 'production_material_request.purchase_requisition_created', 'success', [
+                'subject' => $locked, 'company_id' => $locked->company_id, 'branch_id' => $locked->branch_id,
+                'financial_period_id' => $locked->financial_period_id,
+                'properties' => ['purchase_requisition' => $requisition->doc_num],
+            ]);
+
+            return $requisition;
+        }, 3);
     }
 
     private function createShortageRequisition(ProductionMaterialRequest $request): PurchaseRequisition

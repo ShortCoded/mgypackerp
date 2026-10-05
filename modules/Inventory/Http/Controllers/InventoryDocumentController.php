@@ -34,6 +34,7 @@ use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Inventory\Services\InventoryCostPolicyService;
+use Modules\Inventory\Services\InventoryDocumentLineageService;
 use Modules\Inventory\Services\InventoryDocumentPostingService;
 use Modules\Inventory\Services\InventoryLayerService;
 use Modules\Inventory\Services\InventoryMovementService;
@@ -346,7 +347,8 @@ class InventoryDocumentController extends Controller
 
     public function receiptLayers(Request $request, DataTableSearchService $search, Select2ResponseService $select2): JsonResponse
     {
-        abort_unless($request->user()?->canAny(['inventory.documents.create', 'inventory.documents.edit', 'production.material_requests.issue', 'production.runs.issue', 'production.runs.account_materials', 'production.runs.return', 'purchases.purchase_returns.create', 'purchases.purchase_returns.edit']), 403);
+        $canCorrectIssue = $request->user()?->can('inventory.documents.correct_prepare') && $request->user()?->can('inventory.documents.issue');
+        abort_unless($canCorrectIssue || $request->user()?->canAny(['inventory.documents.create', 'inventory.documents.edit', 'production.material_requests.issue', 'production.runs.issue', 'production.runs.account_materials', 'production.runs.return', 'purchases.purchase_returns.create', 'purchases.purchase_returns.edit']), 403);
         $request->validate(['branch_store_uuid' => ['nullable', 'uuid'], 'product_doc_num' => ['nullable', 'string', 'max:100'],
             'branch_store_id' => ['nullable', 'integer', 'min:1'],
             'document_date' => ['nullable', 'string', 'max:50'], 'stock_status' => ['nullable', 'string', 'max:50'],
@@ -379,7 +381,7 @@ class InventoryDocumentController extends Controller
             $source = $receiptLine === null ? null : InventoryTransaction::query()->where('company_id', $context['company_id'])
                 ->where('posting_key', "purchase-receipt:{$receiptLine->id}")->first();
             $query->whereIn('receipt_transaction_id', $source === null ? [] : app(InventoryLayerService::class)->receiptLineageTransactionIds($source->id));
-        } elseif (! $request->user()?->canAny(['inventory.documents.create', 'inventory.documents.edit', 'production.material_requests.issue', 'production.runs.issue', 'production.runs.account_materials', 'production.runs.return'])) {
+        } elseif (! $canCorrectIssue && ! $request->user()?->canAny(['inventory.documents.create', 'inventory.documents.edit', 'production.material_requests.issue', 'production.runs.issue', 'production.runs.account_materials', 'production.runs.return'])) {
             $query->whereRaw('1 = 0');
         }
         if ($request->filled('material_request_line_id')) {
@@ -594,7 +596,7 @@ class InventoryDocumentController extends Controller
 
         $record = $inventoryDocument->load([
             'lines.product', 'lines.unit', 'transactions', 'branchStore',
-            'lines.reservation.productionMaterialRequirement', 'destinationBranchStore',
+            'destinationBranchStore',
             'productionOrder.salesOrder', 'productionRun.order.salesOrder', 'productionMaterialRequest', 'salesOrder',
             'costProposals.preparedBy', 'costProposals.approvedBy', 'costProposals.valueAdjustment.journalEntry',
         ]);
@@ -604,7 +606,9 @@ class InventoryDocumentController extends Controller
             }
         }
 
-        return view('modules.inventory.documents.show', compact('record'));
+        $lineageRows = app(InventoryDocumentLineageService::class)->forDocument($record);
+
+        return view('modules.inventory.documents.show', compact('record', 'lineageRows'));
     }
 
     public function print(Request $request, InventoryDocument $inventoryDocument): Response
@@ -618,6 +622,7 @@ class InventoryDocumentController extends Controller
         return $this->pdf->stream('reports.inventory.document', [
             'title' => $this->pdf->stockDocumentTitle($record).' — '.$record->doc_num,
             'record' => $record,
+            'lineageRows' => app(InventoryDocumentLineageService::class)->forDocument($record),
             'companyPrintIdentity' => $record->print_identity_snapshot ?: $this->printIdentity->forCompany($record->company),
         ], str('inventory-'.$record->document_type.'-'.$record->doc_num)->slug().'.pdf');
     }

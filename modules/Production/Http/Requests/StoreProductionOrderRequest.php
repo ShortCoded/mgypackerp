@@ -73,6 +73,8 @@ class StoreProductionOrderRequest extends FormRequest
             'priority' => ['required', Rule::in(['low', 'normal', 'high', 'urgent'])],
             'overproduction_tolerance_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'production_notes' => ['nullable', 'string', 'max:5000'],
+            'amendment_token' => [$this->isMethod('POST') ? 'nullable' : 'required', 'string', 'size:64'],
+            'amendment_reason' => [$this->isMethod('POST') ? 'nullable' : 'required', 'string', 'max:2000'],
             'order_stage_public_ids' => ['nullable', 'array', 'max:50'],
             'order_stage_public_ids.*' => [
                 'required',
@@ -141,22 +143,8 @@ class StoreProductionOrderRequest extends FormRequest
                 return;
             }
 
-            if ($source !== null) {
-                $existingOrder = $this->route('productionOrder');
-                $requiredLines = $existingOrder instanceof ProductionOrder
-                    ? $existingOrder->lines()
-                        ->with(['salesOrderLine', 'customerInvoiceLine'])
-                        ->get()
-                        ->mapWithKeys(function (ProductionOrderLine $line) use ($sourceType): array {
-                            $reference = $sourceType === 'sales_order'
-                                ? $line->salesOrderLine?->public_id
-                                : $line->customerInvoiceLine?->public_id;
-
-                            return $reference === null
-                                ? []
-                                : [($sourceType === 'sales_order' ? 'sales_order_line:' : 'customer_invoice_line:').$reference => (string) $line->quantity];
-                        })
-                    : ($sourceType === 'sales_order'
+            if ($source !== null && ! $this->route('productionOrder') instanceof ProductionOrder) {
+                $requiredLines = $sourceType === 'sales_order'
                     ? $source->lines()
                         ->where('product_classification_snapshot', Product::ClassificationFinishedProduct)
                         ->whereHas('product', fn ($products) => $products
@@ -184,7 +172,7 @@ class StoreProductionOrderRequest extends FormRequest
                             return bccomp($remainingBase, '0', 8) > 0
                                 ? ['customer_invoice_line:'.$line->public_id => bcdiv($remainingBase, (string) $line->conversion_factor, 8)]
                                 : [];
-                        }));
+                        });
                 $submittedLines = collect($this->input('lines', []))->keyBy('source_line_reference');
 
                 foreach ($requiredLines as $reference => $requiredQuantity) {

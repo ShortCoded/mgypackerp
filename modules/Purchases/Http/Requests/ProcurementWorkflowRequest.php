@@ -10,6 +10,7 @@ use Modules\Core\Models\Product;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Purchases\Models\SupplierPaymentContext;
+use Modules\Purchases\Services\SupplierQuotationDiscountService;
 
 class ProcurementWorkflowRequest extends FormRequest
 {
@@ -24,7 +25,7 @@ class ProcurementWorkflowRequest extends FormRequest
     {
         $this->normalizeNumericInput([
             'lines.*.requested_quantity', 'approved_quantities.*', 'lines.*.quantity', 'lines.*.offered_quantity',
-            'lines.*.unit_price', 'lines.*.discount_amount', 'lines.*.tax_rate', 'lines.*.selected_quantity',
+            'lines.*.unit_price', 'lines.*.discount_amount', 'lines.*.discount_value', 'header_discount_value', 'freight_amount', 'lines.*.tax_rate', 'lines.*.selected_quantity',
             'schedules.*.scheduled_quantity', 'lines.*.delivered_quantity', 'lines.*.accepted_quantity',
             'lines.*.rejected_quantity', 'lines.*.quantity', 'amount', 'allocations.*.amount',
             'requested_values.lines.*.ordered_quantity', 'requested_values.lines.*.unit_price', 'exchange_rate',
@@ -56,7 +57,7 @@ class ProcurementWorkflowRequest extends FormRequest
             }
         }
         $route = (string) $this->route()?->getName();
-        if ($route === 'admin.purchases.supplier-selection.store') {
+        if (in_array($route, ['admin.purchases.supplier-selection.store', 'admin.purchases.supplier-selection.update'], true)) {
             $data['lines'] = array_values(array_filter($data['lines'] ?? [], fn (array $line): bool => filled($line['selected_quantity'] ?? null)));
         }
         if (in_array($route, ['admin.purchases.goods-receipt-notes.store', 'admin.purchases.goods-receipt-notes.update', 'admin.purchases.purchase-returns.store', 'admin.purchases.purchase-returns.update'], true)) {
@@ -100,7 +101,7 @@ class ProcurementWorkflowRequest extends FormRequest
             ],
             'admin.purchases.request-for-quotations.store', 'admin.purchases.request-for-quotations.update' => $this->rfqRules(),
             'admin.purchases.supplier-quotation-entry.store', 'admin.purchases.supplier-quotation-entry.store-source', 'admin.purchases.supplier-quotation-entry.update' => $this->quotationRules(),
-            'admin.purchases.supplier-selection.store' => $this->selectionRules(),
+            'admin.purchases.supplier-selection.store', 'admin.purchases.supplier-selection.update' => $this->selectionRules(),
             'admin.purchases.purchase-order-delivery-schedule.store' => $this->deliveryScheduleRules(),
             'admin.purchases.supply-orders.store', 'admin.purchases.supply-orders.update' => $this->supplyOrderRules(),
             'admin.purchases.supply-orders.cancel' => ['cancel_reason' => ['required', 'string', 'max:2000']],
@@ -146,6 +147,21 @@ class ProcurementWorkflowRequest extends FormRequest
 
                     if ($product instanceof Product && ! $product->isPurchasable()) {
                         $validator->errors()->add("lines.{$index}.product_doc_num", __('procurement.messages.purchase_product_type_invalid'));
+                    }
+                }
+            }
+
+            if ($this->routeIs('admin.purchases.supplier-quotation-entry.store', 'admin.purchases.supplier-quotation-entry.store-source', 'admin.purchases.supplier-quotation-entry.update') && $validator->errors()->isEmpty()) {
+                try {
+                    app(SupplierQuotationDiscountService::class)->calculate($this->all());
+                } catch (\DomainException $exception) {
+                    $validator->errors()->add('header_discount_value', $exception->getMessage());
+                }
+            }
+            if ($this->routeIs('admin.purchases.supplier-selection.store', 'admin.purchases.supplier-selection.update')) {
+                foreach ($this->input('lines', []) as $index => $line) {
+                    if (($line['discount_type'] ?? null) === 'percentage' && is_numeric($line['discount_value'] ?? null) && bccomp((string) $line['discount_value'], '100', 4) > 0) {
+                        $validator->errors()->add("lines.{$index}.discount_value", __('procurement.messages.commercial_discount_invalid'));
                     }
                 }
             }
@@ -223,6 +239,8 @@ class ProcurementWorkflowRequest extends FormRequest
             'lead_time_days' => ['nullable', 'integer', 'min:0'],
             'payment_terms' => ['nullable', 'string', 'max:255'],
             'freight_amount' => ['nullable', 'numeric', 'decimal:0,4', 'min:0'],
+            'header_discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
+            'header_discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'commercial_notes' => ['nullable', 'string'],
             'attachment_file_doc_nums' => ['nullable', Rule::prohibitedIf(fn (): bool => ! $this->user()?->can('file_manager.view')), 'array', 'max:20'],
             'attachment_file_doc_nums.*' => ['string', 'max:100', 'distinct'],
@@ -233,6 +251,8 @@ class ProcurementWorkflowRequest extends FormRequest
             'lines.*.offered_quantity' => ['required', 'numeric', 'decimal:0,8', 'gt:0'],
             'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,8', 'regex:/^\d{1,14}(?:\.\d{1,8})?$/D', 'min:0'],
             'lines.*.discount_amount' => ['nullable', 'numeric', 'decimal:0,4', 'min:0'],
+            'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
+            'lines.*.discount_value' => ['nullable', 'required_with:lines.*.discount_type', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'between:0,100'],
             'lines.*.delivery_date' => ['nullable', 'date'],
             'lines.*.notes' => ['nullable', 'string'],
@@ -245,7 +265,10 @@ class ProcurementWorkflowRequest extends FormRequest
             'selection_date' => ['required', 'date'],
             'selection_reason' => ['nullable', 'string'],
             'lines' => ['required', 'array', 'min:1'],
-            'lines.*.quotation_line_public_id' => ['required', 'uuid'],
+            'lines.*.quotation_line_public_id' => ['required', 'uuid', 'distinct'],
+            'lines.*.inherit_source_discount' => ['nullable', 'boolean'],
+            'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
+            'lines.*.discount_value' => ['nullable', 'required_with:lines.*.discount_type', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.selected_quantity' => ['required', 'numeric', 'decimal:0,8', 'gt:0'],
             'lines.*.reason' => ['nullable', 'string'],
         ];
@@ -333,6 +356,7 @@ class ProcurementWorkflowRequest extends FormRequest
     private function changeRequestRules(): array
     {
         $companyId = $this->companyId();
+        $replaceLines = $this->boolean('requested_values.replace_lines');
 
         return [
             'requester_employee_id' => ['required', 'integer', Rule::exists('hr_employees', 'id')->where(fn ($query) => $query->where('company_id', $companyId)->whereNull('deleted_at'))],
@@ -342,10 +366,13 @@ class ProcurementWorkflowRequest extends FormRequest
             'requested_values.expected_delivery_date' => ['nullable', 'date'],
             'requested_values.payment_terms' => ['nullable', 'string', 'max:255'],
             'requested_values.notes' => ['nullable', 'string'],
-            'requested_values.lines' => ['nullable', 'array'],
-            'requested_values.lines.*.public_id' => ['required', 'uuid'],
-            'requested_values.lines.*.ordered_quantity' => ['nullable', 'numeric', 'decimal:0,8', 'gt:0'],
-            'requested_values.lines.*.unit_price' => ['nullable', 'numeric', 'decimal:0,8', 'regex:/^\d{1,14}(?:\.\d{1,8})?$/D', 'min:0'],
+            'requested_values.replace_lines' => ['sometimes', 'boolean'],
+            'requested_values.lines' => [Rule::requiredIf($replaceLines), 'nullable', 'array', 'min:1'],
+            'requested_values.lines.*.public_id' => [Rule::requiredIf(! $replaceLines), 'nullable', 'uuid', 'distinct'],
+            'requested_values.lines.*.product_doc_num' => [Rule::requiredIf($replaceLines), 'string', Rule::exists('products', 'doc_num')->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at'))],
+            'requested_values.lines.*.unit_doc_num' => [Rule::requiredIf($replaceLines), 'string'],
+            'requested_values.lines.*.ordered_quantity' => [Rule::requiredIf($replaceLines), 'nullable', 'numeric', 'decimal:0,8', 'gt:0'],
+            'requested_values.lines.*.unit_price' => [Rule::requiredIf($replaceLines), 'nullable', 'numeric', 'decimal:0,8', 'regex:/^\d{1,14}(?:\.\d{1,8})?$/D', 'min:0'],
             'requested_values.lines.*.required_delivery_date' => ['nullable', 'date'],
         ];
     }

@@ -2,6 +2,8 @@
 
 namespace Modules\Production\Services;
 
+use Brick\Math\BigDecimal;
+use Brick\Math\RoundingMode;
 use DomainException;
 use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Support\Collection;
@@ -164,7 +166,20 @@ class ProductionCostService
         }
         $remainingGood = bcsub((string) $run->good_base_quantity, (string) $run->received_base_quantity, 8);
 
-        if (bccomp($receiptBaseQuantity, $remainingGood, 8) === 0) {
+        if ($run->material_accounting_mode === ProductionOutputEvidenceService::Mode) {
+            $consumption = DB::table('inventory_document_lines as line')->join('inventory_documents as document', 'document.id', '=', 'line.inventory_document_id')
+                ->where('document.company_id', $run->company_id)->where('document.branch_id', $run->branch_id)->where('document.production_run_id', $run->id)
+                ->where('document.status', InventoryDocument::StatusPosted)->where('document.document_type', InventoryDocument::TypeMaterialConsumption)
+                ->whereNull('document.deleted_at')->whereNull('line.deleted_at');
+            if ((clone $consumption)->whereNull('line.total_cost')->exists()) {
+                throw new DomainException(__('production_execution.messages.unvalued_material_cost'));
+            }
+            $consumedCost = (string) BigDecimal::of((string) $consumption->sum('line.total_cost'))->toScale(8, RoundingMode::HalfUp);
+            $eligible = bcadd(bcadd(bcadd($consumedCost, $position['other_direct_cost'], 8), $position['direct_labor_cost'], 8), $position['allocated_overhead'], 8);
+            $unreceivedCost = bcsub(bcsub($eligible, $position['finished_goods'], 8), $position['standard_variance'], 8);
+            $receiptCost = bccomp($receiptBaseQuantity, $remainingGood, 8) === 0 ? $unreceivedCost
+                : bcdiv(bcmul($unreceivedCost, $receiptBaseQuantity, 16), $remainingGood, 8);
+        } elseif (bccomp($receiptBaseQuantity, $remainingGood, 8) === 0) {
             $receiptCost = $position['wip'];
         } else {
             $receiptCost = bcdiv(

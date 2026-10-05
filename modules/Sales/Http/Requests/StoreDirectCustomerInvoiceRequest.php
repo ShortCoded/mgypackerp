@@ -3,9 +3,12 @@
 namespace Modules\Sales\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Sales\Services\SalesWithholdingService;
 
 class StoreDirectCustomerInvoiceRequest extends FormRequest
 {
@@ -39,12 +42,14 @@ class StoreDirectCustomerInvoiceRequest extends FormRequest
                     'unit_doc_num' => filled($line['unit_doc_num'] ?? null) ? trim((string) $line['unit_doc_num']) : null,
                     'quantity' => filled($line['quantity'] ?? null) ? trim((string) $line['quantity']) : null,
                     'unit_price' => filled($line['unit_price'] ?? null) ? trim((string) $line['unit_price']) : null,
+                    'discount_type' => $line['discount_type'] ?? null,
+                    'discount_value' => $line['discount_value'] ?? '0',
                     'discount_amount' => filled($line['discount_amount'] ?? null) ? trim((string) $line['discount_amount']) : '0',
                     'tax_amount' => filled($line['tax_amount'] ?? null) ? trim((string) $line['tax_amount']) : '0',
                 ])->filter(fn (array $line): bool => filled($line['product_doc_num']))->values()->all(),
         ]);
 
-        $this->normalizeNumericInput([
+        $this->normalizeNumericInput(['withholding_rate', 'discount_value', 'lines.*.discount_value', 'lines.*.discount_amount',
             'exchange_rate', 'lines.*.quantity', 'lines.*.unit_price', 'lines.*.discount_amount', 'lines.*.tax_amount',
         ]);
     }
@@ -53,6 +58,12 @@ class StoreDirectCustomerInvoiceRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
+            'discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,16}(?:\.\d{1,4})?$/D', 'min:0'],
+            'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
+            'lines.*.discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,16}(?:\.\d{1,4})?$/D', 'min:0'],
+            'withholding_basis' => ['nullable', Rule::in([SalesWithholdingService::GrossIncludingTax, SalesWithholdingService::EtaNetExcludingTax])],
+            'withholding_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,3}(?:\.\d{1,4})?$/D', 'between:0,100'],
             'company_id' => ['required', 'integer', 'exists:companies,id'],
             'financial_period_id' => ['required', 'integer', 'exists:financial_periods,id'],
             'branch_id' => ['required', 'integer', 'exists:branches,id'],
@@ -69,8 +80,32 @@ class StoreDirectCustomerInvoiceRequest extends FormRequest
             'lines.*.unit_doc_num' => ['required', 'string'],
             'lines.*.quantity' => ['required', 'numeric', 'gt:0'],
             'lines.*.unit_price' => ['nullable', 'numeric', 'decimal:0,8', 'regex:/^\d{1,16}(?:\.\d{1,8})?$/D', 'gt:0'],
-            'lines.*.discount_amount' => ['nullable', 'numeric', 'min:0'],
+            'lines.*.discount_amount' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,16}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.tax_amount' => ['nullable', 'numeric', 'min:0'],
         ];
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $validator): void {
+            $inputs = ['discount_value' => [$this->input('discount_type'), $this->input('discount_value')]];
+            foreach ($this->input('lines', []) as $index => $line) {
+                $inputs["lines.{$index}.discount_value"] = [$line['discount_type'] ?? null, $line['discount_value'] ?? null];
+            }
+            foreach ($inputs as $field => [$type, $value]) {
+                if (! is_scalar($value) || ! preg_match('/^\d{1,16}(?:\.\d{1,4})?$/D', (string) $value)) {
+                    continue;
+                }
+                if ((blank($type) && bccomp((string) $value, '0', 4) > 0) || ($type === 'percentage' && bccomp((string) $value, '100', 4) > 0)) {
+                    $validator->errors()->add($field, __('sales_ui.discount_invalid'));
+                }
+            }
+        });
+    }
+
+    public function attributes(): array
+    {
+        return ['withholding_rate' => __('sales_ui.withholding_rate'), 'discount_type' => __('quotations.attributes.discount_type'), 'discount_value' => __('quotations.attributes.discount_value'),
+            'lines.*.discount_type' => __('quotations.attributes.discount_type'), 'lines.*.discount_value' => __('quotations.attributes.discount_value')];
     }
 }

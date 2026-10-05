@@ -15,9 +15,9 @@ class SupplierSelectionLine extends Model
 
     protected $fillable = [
         'public_id', 'supplier_selection_id', 'supplier_quotation_line_id', 'purchase_requisition_line_id',
-        'supplier_id', 'product_id', 'unit_id', 'selected_quantity', 'unit_price', 'discount_amount',
+        'supplier_id', 'product_id', 'unit_id', 'selected_quantity', 'unit_price', 'discount_amount', 'discount_type', 'discount_value', 'subtotal_amount', 'header_discount_amount',
         'tax_rate', 'tax_amount', 'line_total',
-        'purchase_order_id', 'reason',
+        'purchase_order_id', 'reason', 'header_discount_type', 'header_discount_value', 'source_discount_snapshot',
     ];
 
     protected static function booted(): void
@@ -30,6 +30,8 @@ class SupplierSelectionLine extends Model
     protected function casts(): array
     {
         return [
+            'discount_value' => 'decimal:4', 'subtotal_amount' => 'decimal:4', 'header_discount_amount' => 'decimal:4',
+            'header_discount_value' => 'decimal:4', 'source_discount_snapshot' => 'array',
             'selected_quantity' => 'decimal:8',
             'unit_price' => 'decimal:8',
             'discount_amount' => 'decimal:4',

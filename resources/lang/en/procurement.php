@@ -1,6 +1,7 @@
 <?php
 
 return [
+    'line_correction_help' => 'For an unexecuted order, replace products or units and add or remove lines below. Submit the complete corrected list for approval. Purchase request references must remain consistent with their approved source.',
     'ui' => [
         'inventory_context_required' => 'Purchase requests require a factory or warehouse context.',
         'administrative_context_required' => 'This purchasing action requires an administrative branch context.',
@@ -62,6 +63,11 @@ return [
         ],
     ],
     'messages' => [
+        'commercial_discount_invalid' => 'The discount input is invalid or exceeds its discount base.',
+        'line_correction_execution_blocked' => 'Item replacement or removal requires a request or order without downstream documents. Correct the dependent documents separately first.',
+        'line_correction_stale' => 'The purchase order changed after this correction was requested. Submit a new correction using its current values.',
+        'line_correction_requires_lines' => 'Keep at least one item in the corrected purchase order.',
+        'line_correction_identity_invalid' => 'Each existing purchase item must belong to this order and appear only once.',
         'purchase_product_type_invalid' => 'Finished products and services cannot be selected in purchase lines.',
         'purchase_requisition_context_invalid' => 'Purchase orders require approved purchase request lines from a factory or warehouse in the same company and receiving warehouse.',
         'quality_before_receipt_posting' => 'Create the warehouse receipt from an accepted purchase inspection before posting it.',
@@ -142,6 +148,8 @@ return [
         ],
     ],
     'fields' => [
+        'commercial_header_discount' => 'Header discount',
+        'commercial_header_discount_value' => 'Entered header discount',
         'print' => 'Print',
         'supplier' => 'Supplier',
         'purchase_order' => 'Purchase Order',

@@ -12,6 +12,7 @@ use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Concerns\SnapshotsCompanyPrintIdentity;
 use Modules\Core\Models\Currency;
+use Modules\Core\Models\PostedInvoiceLineCorrection;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Inventory\Models\InventoryDocument;
 
@@ -40,8 +41,10 @@ class CustomerInvoice extends Model
         return [
             'invoice_date' => 'date', 'due_date' => 'date', 'exchange_rate' => 'decimal:6',
             'subtotal_amount' => 'decimal:4', 'discount_amount' => 'decimal:4', 'taxable_amount' => 'decimal:4',
+            'discount_value' => 'decimal:4', 'header_discount_amount' => 'decimal:4',
+            'withholding_rate' => 'decimal:4', 'withholding_basis_amount' => 'decimal:4', 'withholding_amount' => 'decimal:4', 'net_payable_amount' => 'decimal:4',
             'tax_amount' => 'decimal:4', 'total_amount' => 'decimal:4', 'applied_advance_amount' => 'decimal:4',
-            'paid_amount' => 'decimal:4', 'credited_amount' => 'decimal:4', 'remaining_amount' => 'decimal:4',
+            'paid_amount' => 'decimal:4', 'credited_amount' => 'decimal:4', 'actual_withholding_amount' => 'decimal:4', 'remaining_amount' => 'decimal:4',
             'credit_available_amount' => 'decimal:4', 'credit_allocated_amount' => 'decimal:4',
             'credit_refunded_amount' => 'decimal:4',
             'payment_terms_snapshot' => 'array', 'credit_application_snapshot' => 'array', 'is_closed' => 'boolean', 'issued_at' => 'datetime',
@@ -55,6 +58,11 @@ class CustomerInvoice extends Model
     public function getRouteKeyName(): string
     {
         return 'doc_num';
+    }
+
+    public function withholdingSettlements(): HasMany
+    {
+        return $this->hasMany(CustomerWithholdingSettlement::class);
     }
 
     public function resolveRouteBinding($value, $field = null): ?self
@@ -96,6 +104,40 @@ class CustomerInvoice extends Model
         return $this->document_type === self::TypeInvoice
             && $this->source_type !== 'fixed_asset_disposal'
             && $this->isEditable();
+    }
+
+    public function canCancelDirectService(): bool
+    {
+        return $this->document_type === self::TypeInvoice
+            && $this->source_type === 'direct'
+            && $this->source_id === null
+            && $this->sales_order_id === null
+            && $this->delivery_document_id === null
+            && $this->status === self::StatusPosted
+            && $this->posting_status === 'posted'
+            && (int) $this->posting_revision === 0
+            && $this->reversal_journal_entry_id === null
+            && bccomp((string) $this->paid_amount, '0', 4) === 0
+            && bccomp((string) $this->credited_amount, '0', 4) === 0
+            && bccomp((string) $this->applied_advance_amount, '0', 4) === 0
+            && bccomp((string) $this->remaining_amount, (string) $this->total_amount, 4) === 0
+            && bccomp((string) $this->withholding_amount, '0', 4) === 0
+            && $this->electronic_invoice_uuid === null
+            && $this->electronic_invoice_submitted_at === null
+            && in_array($this->electronic_invoice_status, ['not_configured', 'draft', 'rejected'], true)
+            && $this->lines()->exists()
+            && ! $this->lines()->where('is_service', false)->exists()
+            && ! $this->issueOrder()->exists()
+            && ! $this->deliveries()->exists()
+            && ! $this->deliveryReceipts()->exists()
+            && ! $this->returns()->exists()
+            && ! $this->creditNotes()->exists()
+            && ! $this->allocations()->exists()
+            && ! $this->appliedCredits()->exists()
+            && ! $this->electronicInvoiceSubmissions()->exists()
+            && ! PostedInvoiceLineCorrection::query()
+                ->where('company_id', $this->company_id)->where('kind', 'sales')
+                ->where('invoice_id', $this->getKey())->exists();
     }
 
     public function hasApprovedCorrection(): bool

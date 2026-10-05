@@ -19,6 +19,18 @@ return [
     'User Code' => 'كود المستخدم',
     'Customize' => 'تخصيص',
     'bulk_action' => 'إجراء جماعي',
+    'select2' => [
+        'errorLoading' => 'تعذر تحميل النتائج.',
+        'inputTooShort' => 'أدخل :count من الأحرف الإضافية.',
+        'inputTooLong' => 'احذف :count من الأحرف.',
+        'loadingMore' => 'جاري تحميل المزيد...',
+        'maximumSelected' => 'الحد الأقصى للاختيار هو :count.',
+        'noResults' => 'لا توجد نتائج',
+        'removeAllItems' => 'مسح جميع الاختيارات',
+        'removeItem' => 'إزالة الاختيار',
+        'search' => 'بحث',
+        'searching' => 'جاري البحث...',
+    ],
     'trash' => [
         'active' => 'السجلات الفعلية',
         'all' => 'كل السجلات',

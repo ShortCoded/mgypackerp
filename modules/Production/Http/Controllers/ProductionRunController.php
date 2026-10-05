@@ -9,6 +9,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
@@ -25,6 +26,7 @@ use Modules\FixedAssets\Models\FixedAsset;
 use Modules\HR\Models\HrEmployee;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Production\DataTables\ProductionExecutionDataTable;
+use Modules\Production\Http\Requests\ProductionShiftEvidenceRequest;
 use Modules\Production\Http\Requests\RecordProductionLaborRequest;
 use Modules\Production\Http\Requests\StoreProductionRunRequest;
 use Modules\Production\Models\ProductionMachine;
@@ -33,8 +35,10 @@ use Modules\Production\Models\ProductionOrderLine;
 use Modules\Production\Models\ProductionOrderStageSnapshot;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Models\ProductionRunBatch;
+use Modules\Production\Models\ProductionShift;
 use Modules\Production\Services\ProductionCorrectionContextService;
 use Modules\Production\Services\ProductionCycleService;
+use Modules\Production\Services\ProductionShiftEvidenceService;
 
 class ProductionRunController extends Controller
 {
@@ -405,6 +409,8 @@ class ProductionRunController extends Controller
                 'inventoryDocuments.journalEntry', 'materialRequests', 'expenseRequests',
             ]),
             'stores' => BranchStore::query()->where('branch_id', $productionRun->branch_id)->orderBy('position')->get(),
+            'shiftEntries' => Schema::hasTable('production_shift_entries') ? app(ProductionShiftEvidenceService::class)->report($productionRun) : collect(),
+            'productionShifts' => ProductionShift::query()->where('company_id', $productionRun->company_id)->where('branch_id', $productionRun->branch_id)->where('is_active', true)->get(),
             'workers' => HrEmployee::withTrashed()->where('company_id', $productionRun->company_id)->where('branch_id', $productionRun->branch_id)
                 ->whereIn('id', collect(old('labor_details', $productionRun->labor_details ?? []))->pluck('employee_id'))->get()->keyBy('id'),
         ]);
@@ -584,6 +590,70 @@ class ProductionRunController extends Controller
         return $this->runTransition($request, $this->guard(fn (): ProductionRun => $this->cycle->cancelRun($productionRun, $validated['reason'])));
     }
 
+    public function shiftDefaults(ProductionShiftEvidenceRequest $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
+    {
+        $this->assertRunInCurrentContext($request, $productionRun);
+        $shift = $this->guard(fn () => app(ProductionShiftEvidenceService::class)->saveDefaults($productionRun, $request->validated()));
+
+        return $this->respond($request, ['shift_id' => $shift->id], route('admin.production.runs.show', $productionRun));
+    }
+
+    public function recordShift(ProductionShiftEvidenceRequest $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
+    {
+        $this->assertRunInCurrentContext($request, $productionRun);
+        $entry = $this->guard(fn () => app(ProductionShiftEvidenceService::class)->record($productionRun, $request->validated()));
+
+        return $this->respond($request, ['entry_id' => $entry->id], route('admin.production.runs.show', $productionRun));
+    }
+
+    public function closeShift(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
+    {
+        $this->assertRunInCurrentContext($request, $productionRun);
+        $data = $request->validate(['entry_id' => ['required', 'integer', 'min:1'], 'ended_at' => ['required', 'date'],
+            'downtime_minutes' => ['nullable', 'numeric', 'min:0', 'max:1440']]);
+        $this->guard(fn () => app(ProductionShiftEvidenceService::class)->close($productionRun, (int) $data['entry_id'], $data['ended_at'], $data['downtime_minutes'] ?? null));
+
+        return $this->respond($request, ['entry_id' => (int) $data['entry_id']], route('admin.production.runs.show', $productionRun));
+    }
+
+    public function printShift(Request $request, ProductionRun $productionRun): Response
+    {
+        $this->assertRunInCurrentContext($request, $productionRun, true);
+        $productionRun->load(['order.company', 'order.branch', 'orderLine', 'product', 'fixedAsset', 'machine']);
+
+        return $this->pdf->stream('reports.production.shift', ['title' => __('production_execution.shift_evidence.report_title'),
+            'record' => $productionRun, 'shiftEntries' => app(ProductionShiftEvidenceService::class)->report($productionRun),
+            'companyPrintIdentity' => $productionRun->order->print_identity_snapshot ?: $this->printIdentity->forCompany($productionRun->order->company)],
+            str('production-shift-'.$productionRun->run_number)->slug().'.pdf', 'L');
+    }
+
+    public function outputEvidence(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
+    {
+        $this->assertRunInCurrentContext($request, $productionRun);
+        $data = $request->validate([
+            'execution_structure' => ['required', Rule::in(['physical_route', 'factory_workflow'])],
+            'requirements' => ['required', 'array', 'min:1'],
+            'requirements.*.requirement_public_id' => ['required', 'uuid', 'distinct'],
+            'requirements.*.basis' => ['required', Rule::in(['output_components', 'measured_material'])],
+            'stage_roles' => ['nullable', 'array'],
+            'stage_roles.*.stage_public_id' => ['required', 'uuid', 'distinct'],
+            'stage_roles.*.role' => ['nullable', Rule::in(['checklist', 'manufacturing', 'quality_notification', 'quality', 'receipt'])],
+            'stage_roles.*.confirmation_reason' => ['nullable', 'string', 'max:2000'],
+        ]);
+        $record = $this->guard(fn () => $this->cycle->enableOutputEvidence($productionRun, $data['requirements'], $data['execution_structure'], $data['stage_roles'] ?? []));
+
+        return $this->respond($request, ['run_number' => $record->run_number], route('admin.production.runs.show', $record));
+    }
+
+    public function confirmChecklist(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
+    {
+        $this->assertRunInCurrentContext($request, $productionRun);
+        $data = $request->validate(['stage_public_id' => ['required', 'uuid'], 'reason' => ['required', 'string', 'max:2000']]);
+        $this->guard(fn () => $this->cycle->confirmWorkflowChecklist($productionRun, $data['stage_public_id'], $data['reason']));
+
+        return $this->respond($request, [], route('admin.production.runs.show', $productionRun));
+    }
+
     public function progress(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
         $this->assertRunInCurrentContext($request, $productionRun);
@@ -595,6 +665,17 @@ class ProductionRunController extends Controller
             'good_weight_kg' => ['nullable', 'numeric', 'gt:0', 'decimal:0,8'],
             'production_scrap_weight_kg' => ['nullable', 'numeric', 'min:0', 'decimal:0,8'],
             'notes' => ['nullable', 'string'],
+            'material_evidence' => ['nullable', 'array', 'max:1000'],
+            'production_shift_entry_id' => ['nullable', 'integer', 'min:1'],
+            'material_evidence.*.requirement_public_id' => ['required', 'uuid', 'distinct'],
+            'material_evidence.*.measured_quantity' => ['nullable', 'numeric', 'min:0', 'decimal:0,8'],
+            'material_evidence.*.waste_quantity' => ['nullable', 'numeric', 'min:0', 'decimal:0,8'],
+            'material_evidence.*.waste_classification' => ['nullable', Rule::in(['process_scrap', 'packaging_loss', 'roll_trim', 'rejected_output'])],
+            'material_evidence.*.notes' => ['nullable', 'string', 'max:2000'],
+            'material_evidence.*.consumed_receipt_layer_ids' => ['nullable', 'array', 'max:10000'],
+            'material_evidence.*.consumed_receipt_layer_ids.*' => ['required', 'integer', 'min:1', 'distinct'],
+            'material_evidence.*.waste_receipt_layer_ids' => ['nullable', 'array', 'max:10000'],
+            'material_evidence.*.waste_receipt_layer_ids.*' => ['required', 'integer', 'min:1', 'distinct'],
         ]);
         $entry = $this->guard(fn () => $this->cycle->recordProgress($productionRun, $data));
 

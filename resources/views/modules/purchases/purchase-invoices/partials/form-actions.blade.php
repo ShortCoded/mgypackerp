@@ -19,6 +19,7 @@
     @endif
 
     @if($isView && $record && ! $isTrashed && $canManageInCurrentBranch)
+        @if($record->isApproved()) @can('purchase_invoices.reverse')<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-invoices.line-corrections.index', $record->doc_num) }}">{{ __('posted_invoice_correction.title') }}</a>@endcan @endif
         @can('purchase_invoices.edit')
             @if(! $record->isLockedForEditing())
                 <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.purchases.purchase-invoices.edit', $record->doc_num) }}">
@@ -37,7 +38,7 @@
                     <span class="fas fa-check me-1"></span>{{ __('purchase_invoices.actions.approve') }}
                 </button>
             @endcan
-            @can('purchase_invoices.reverse')
+            @can('purchase_invoices.cancel')
                 <button class="btn btn-falcon-danger btn-sm js-purchase-invoice-action" type="button" data-url="{{ route('admin.purchases.purchase-invoices.cancel', $record->doc_num) }}" data-method="POST" data-action="cancel">
                     <span class="fas fa-ban me-1"></span>{{ __('purchase_invoices.actions.cancel') }}
                 </button>

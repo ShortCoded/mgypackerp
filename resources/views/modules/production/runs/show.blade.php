@@ -9,8 +9,9 @@
         $numbers = app(\Modules\Core\Services\NumericFormatService::class);
         $readOnlyReport = $readOnlyReport ?? false;
         $laborRows = collect(old('labor_details', $record->labor_details ?? []));
-        $requiredStages = $record->orderLine?->stageSnapshots?->where('is_required', true)->sortBy('sequence') ?? collect();
-        $isFinalStage = $requiredStages->isEmpty() || (int) $record->stageSnapshot?->sequence === (int) $requiredStages->max('sequence');
+        $requiredStages = app(\Modules\Production\Services\ProductionCycleService::class)->stagesForLine($record->order, $record->orderLine);
+        $factoryWorkflow = app(\Modules\Production\Services\ProductionOutputEvidenceService::class)->isFactoryWorkflow($record);
+        $isFinalStage = $factoryWorkflow || $requiredStages->isEmpty() || (int) $record->stageSnapshot?->sequence === (int) $requiredStages->max('sequence');
         $runFormulaBasis = is_array($record->orderLine?->bom_snapshot)
             ? bcmul((string) $record->planned_base_quantity, (string) ($record->orderLine->bom_snapshot['basis_base_quantity'] ?? '1'), 8)
             : null;
@@ -37,6 +38,7 @@
             @if($readOnlyReport)
                 @can('production.reports.control.print')<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.production.reports.control.runs.print', $record) }}">{{ __('Print traveler') }}</a>@endcan
             @else
+                @if(in_array($record->status, [\Modules\Production\Models\ProductionRun::StatusRunning, \Modules\Production\Models\ProductionRun::StatusHeld], true) && auth()->user()->canAny(['production.runs.correct', 'production.runs.correct_approve']))<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.production.runs.material-substitutions.index', $record) }}">{{ __('production_material_substitution.title') }}</a>@endif
                 @if($record->status === \Modules\Production\Models\ProductionRun::StatusCompleted && auth()->user()->canAny(['production.runs.correct','production.runs.correct_approve']))<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.production.runs.corrections.index', $record) }}">{{ __('production_run_correction.title') }}</a>@endif
                 @can('production.runs.print')<div class="btn-group"><a class="btn btn-falcon-default btn-sm" href="{{ route('admin.production.runs.print', $record) }}">{{ __('Print traveler') }}</a><button class="btn btn-falcon-default btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown"></button><div class="dropdown-menu"><a class="dropdown-item" href="{{ route('admin.production.runs.materials.print', $record) }}">{{ __('Material Requirement') }}</a><a class="dropdown-item" href="{{ route('admin.production.runs.quality.print', $record) }}">{{ __('In-Process QC') }}</a><a class="dropdown-item" href="{{ route('admin.production.runs.completion.print', $record) }}">{{ __('Completion Summary') }}</a></div></div>@endcan
             @endif
@@ -76,6 +78,25 @@
         </table></div>
     </div>
     @endif
+
+    @if(($shiftEntries ?? collect())->isNotEmpty())
+    <div class="card mb-3" data-production-shift-report><div class="card-header d-flex justify-content-between"><h5>{{ __('production_execution.shift_evidence.report_title') }}</h5>@can('production.runs.print')<a class="btn btn-outline-primary btn-sm" href="{{ route('admin.production.runs.shifts.print', $record) }}">{{ __('production_execution.shift_evidence.print') }}</a>@endcan</div><div class="card-body">
+        @foreach($shiftEntries as $entry)
+            @include('reports.production.partials.shift-sheet')
+            @if(!$readOnlyReport && $entry->ended_at === null)
+            @can('production.runs.progress')
+            <form method="POST" action="{{ route('admin.production.runs.shifts.close', $record) }}" class="row g-2 my-3">@csrf
+                <x-forms.input type="hidden" name="entry_id" :value="$entry->id" />
+                <div class="col-md-4"><x-forms.label :label="__('production_execution.shift_evidence.actual_end')" /><x-forms.input type="datetime-local" name="ended_at" step="1" :value="now()->format('Y-m-d\\TH:i:s')" required /></div>
+                <div class="col-md-4"><x-forms.label :label="__('production_execution.shift_evidence.downtime')" /><x-forms.numeric-input name="downtime_minutes" :value="$entry->downtime_minutes" :scale="4" min="0" max="1440" step="1" /></div>
+                <div class="col-md-4 align-self-end"><button class="btn btn-primary btn-sm">{{ __('production_execution.shift_evidence.close_shift') }}</button></div>
+            </form>
+            @endcan
+            @endif
+        @endforeach
+    </div></div>
+    @endif
+    @unless($readOnlyReport) @include('modules.production.runs.partials.shift-evidence') @endunless
 
     <div class="card mb-3">
         <div class="card-header"><h5 class="mb-0">{{ __('Material Reconciliation') }}</h5></div>
@@ -198,12 +219,45 @@
         @endcan
         @endif
 
-        @if($record->status === 'running')
+        @if($record->material_accounting_mode === 'legacy' && bccomp((string) $record->total_output_base_quantity, '0', 8) === 0 && !in_array($record->status, ['completed', 'cancelled'], true))
+        @can('production.runs.account_materials')
+        <div class="col-12"><form class="card mb-3" method="POST" action="{{ route('admin.production.runs.output-evidence', $record) }}">
+            @csrf
+            <div class="card-header"><h6>{{ __('production_execution.evidence.title') }}</h6></div>
+            <div class="card-body"><p>{{ __('production_execution.evidence.policy_help') }}</p>
+                <x-forms.label :label="__('production_execution.evidence.execution_structure')" /><x-forms.select variant="local" name="execution_structure" required><option value="">—</option><option value="physical_route">{{ __('production_execution.evidence.physical_route') }}</option><option value="factory_workflow">{{ __('production_execution.evidence.factory_workflow') }}</option></x-forms.select>
+                @foreach($record->order->orderStageSnapshots->where('is_required', true)->sortBy('sequence') as $index => $stage)
+                <div class="row g-2 my-2"><div class="col-md-4">{{ $stage->stage_name }}</div><div class="col-md-4"><x-forms.input type="hidden" name="stage_roles[{{ $index }}][stage_public_id]" :value="$stage->public_id" /><x-forms.select variant="local" name="stage_roles[{{ $index }}][role]"><option value="">—</option>@foreach(['checklist', 'manufacturing', 'quality_notification', 'quality', 'receipt'] as $role)<option value="{{ $role }}">{{ __('production_execution.evidence.role_'.$role) }}</option>@endforeach</x-forms.select></div><div class="col-md-4"><x-forms.input name="stage_roles[{{ $index }}][confirmation_reason]" :placeholder="__('production_execution.evidence.confirmation_reason')" /></div></div>
+                @endforeach
+                @foreach($record->requirements as $index => $line)
+                <div class="row g-2 mb-2"><div class="col-md-6">{{ $line->product?->name }} — {{ $line->unit?->name }}</div><div class="col-md-6">
+                    <x-forms.input type="hidden" name="requirements[{{ $index }}][requirement_public_id]" :value="$line->public_id" />
+                    <x-forms.select variant="local" name="requirements[{{ $index }}][basis]" required><option value="">—</option><option value="output_components">{{ __('production_execution.evidence.output_components') }}</option><option value="measured_material">{{ __('production_execution.evidence.measured_material') }}</option></x-forms.select>
+                </div></div>
+                @endforeach
+            </div><div class="card-footer"><button class="btn btn-primary btn-sm">{{ __('production_execution.evidence.enable') }}</button></div>
+        </form></div>
+        @endcan
+        @endif
+
+        @if($factoryWorkflow && !in_array($record->status, ['completed', 'cancelled'], true))
+        @can('production.orders.release')
+        @foreach($record->order->orderStageSnapshots->where('is_required', true) as $stage)
+            @php($role = collect($record->material_evidence_policy['stage_roles'])->firstWhere('stage_public_id', $stage->public_id)['role'])
+            @if(in_array($role, ['checklist', 'quality_notification'], true) && $stage->status !== 'completed')
+            <div class="col-lg-6"><form class="card" method="POST" action="{{ route('admin.production.runs.checklist', $record) }}">@csrf<x-forms.input type="hidden" name="stage_public_id" :value="$stage->public_id" /><div class="card-header">{{ $stage->stage_name }}</div><div class="card-body"><x-forms.input name="reason" :placeholder="__('production_execution.evidence.confirmation_reason')" required /></div><div class="card-footer"><button class="btn btn-primary">{{ __('production_execution.evidence.confirm_checklist') }}</button></div></form></div>
+            @endif
+        @endforeach
+        @endcan
+        @endif
+
+        @if($record->status === 'running' || ($record->material_accounting_mode === 'output_evidence' && $record->status === 'held'))
         @can('production.runs.progress')
         <div class="col-lg-4"><form class="card h-100" method="POST" action="{{ route('admin.production.runs.progress', $record) }}">
             @csrf
             <div class="card-header"><h6 class="mb-0">{{ __('Production Progress') }}</h6></div>
             <div class="card-body row g-2">
+                @if(($shiftEntries ?? collect())->isNotEmpty())<div class="col-12"><x-forms.label :label="__('production_execution.fields.shift')" /><x-forms.select variant="local" name="production_shift_entry_id" required><option value="">—</option>@foreach($shiftEntries->whereNull('ended_at') as $shiftEntry)<option value="{{ $shiftEntry->id }}">{{ $shiftEntry->work_date }} — {{ $shiftEntry->sheet_fields['shift_name'] }}</option>@endforeach</x-forms.select></div>@endif
                 <div class="col-6"><x-forms.numeric-input :scale="8" step="0.00000001" arrow-step="1" min="0" name="good_base_quantity" placeholder="{{ __('Good') }}" /></div>
                 <div class="col-6"><x-forms.numeric-input :scale="8" step="0.00000001" arrow-step="1" min="0" name="rejected_base_quantity" placeholder="{{ __('Rejected') }}" /></div>
                 <div class="col-6"><x-forms.numeric-input :scale="8" step="0.00000001" arrow-step="1" min="0" name="rework_base_quantity" placeholder="{{ __('Rework') }}" /></div>
@@ -211,6 +265,23 @@
                 <div class="col-6"><x-forms.label for="progress-good-weight" :label="__('production_execution.fields.good_weight_kg')" /><x-forms.numeric-input id="progress-good-weight" :scale="8" step="0.00000001" arrow-step="0.1" min="0" name="good_weight_kg" /></div>
                 <div class="col-6"><x-forms.label for="progress-scrap-weight" :label="__('production_execution.fields.production_scrap_weight_kg')" /><x-forms.numeric-input id="progress-scrap-weight" :scale="8" step="0.00000001" arrow-step="0.1" min="0" name="production_scrap_weight_kg" /></div>
                 <div class="col-12"><x-forms.input class="form-control" name="notes" placeholder="{{ __('production_execution.fields.notes') }}" /></div>
+                @if($record->material_accounting_mode === 'output_evidence')
+                <div class="col-12"><div class="form-text mb-2">{{ __('production_execution.evidence.progress_help') }}</div>
+                @foreach($record->requirements as $index => $line)
+                    @php($basis = $record->material_evidence_policy['requirements'][$line->public_id]['basis'] ?? null)
+                    <fieldset class="border rounded p-2 mb-2"><legend class="float-none w-auto fs-10 px-1">{{ $line->product?->name }} — {{ $line->unit?->name }}</legend>
+                        <x-forms.input type="hidden" name="material_evidence[{{ $index }}][requirement_public_id]" :value="$line->public_id" />
+                        @if($basis === 'measured_material')
+                        <x-forms.label :label="__('production_execution.evidence.measured_quantity')" /><x-forms.numeric-input name="material_evidence[{{ $index }}][measured_quantity]" :scale="8" min="0" step="0.00000001" arrow-step="1" />
+                        @else <div class="form-text">{{ __('production_execution.evidence.output_components') }}</div> @endif
+                        <x-forms.label :label="__('production_execution.evidence.waste_quantity')" /><x-forms.numeric-input name="material_evidence[{{ $index }}][waste_quantity]" :scale="8" min="0" step="0.00000001" arrow-step="1" />
+                        <x-forms.select variant="local" name="material_evidence[{{ $index }}][waste_classification]"><option value="">—</option>@foreach(['process_scrap', 'packaging_loss', 'roll_trim', 'rejected_output'] as $kind)<option value="{{ $kind }}">{{ __('production_execution.evidence.'.$kind) }}</option>@endforeach</x-forms.select>
+                        <x-forms.input name="material_evidence[{{ $index }}][notes]" :placeholder="__('production_execution.evidence.waste_notes')" />
+                    </fieldset>
+                @endforeach
+                </div>
+                @endif
+
             </div>
             <div class="card-footer text-end"><button class="btn btn-primary btn-sm">{{ __('Record progress') }}</button></div>
         </form></div>
@@ -229,7 +300,7 @@
         @endcan
         @endif
 
-        @if(in_array($record->status, ['running', 'held'], true))
+        @if($record->material_accounting_mode === 'legacy' && in_array($record->status, ['running', 'held'], true))
         @can('production.runs.account_materials')
         <div class="col-lg-6"><form class="card h-100" method="POST" action="{{ route('admin.production.runs.account', $record) }}">
             @csrf
@@ -238,7 +309,7 @@
                 <x-forms.select id="serial-account-store" variant="local" class="form-select mb-2" name="branch_store_id" required>@foreach ($stores as $store)<option value="{{ $store->id }}">{{ $store->name }}</option>@endforeach</x-forms.select>
                 @foreach ($record->requirements as $index => $line)
                     @php($unaccounted = bcsub(bcsub(bcadd($line->issued_quantity, $line->additional_issued_quantity, 8), $line->returned_quantity, 8), bcadd($line->consumed_quantity, $line->waste_quantity, 8), 8))
-                    <div class="row g-2 mb-2"><x-forms.input type="hidden" name="lines[{{ $index }}][requirement_id]" value="{{ $line->id }}" /><div class="col-4">{{ $line->product?->name }}</div><div class="col-4"><x-forms.numeric-input class="form-control-sm" :scale="8" step="0.00000001" arrow-step="1" min="0" name="lines[{{ $index }}][consumed_quantity]" :value="$unaccounted" aria-label="{{ __('Consumed') }}" /></div><div class="col-4"><x-forms.numeric-input class="form-control-sm" :scale="8" step="0.00000001" arrow-step="1" min="0" name="lines[{{ $index }}][waste_quantity]" value="0" aria-label="{{ __('Waste') }}" /></div></div>
+                    <div class="row g-2 mb-2"><x-forms.input type="hidden" name="lines[{{ $index }}][requirement_id]" value="{{ $line->id }}" /><div class="col-4">{{ $line->product?->name }}</div><div class="col-4"><x-forms.numeric-input class="form-control-sm" :scale="8" step="0.00000001" arrow-step="1" min="0" name="lines[{{ $index }}][consumed_quantity]" aria-label="{{ __('Consumed') }}" /></div><div class="col-4"><x-forms.numeric-input class="form-control-sm" :scale="8" step="0.00000001" arrow-step="1" min="0" name="lines[{{ $index }}][waste_quantity]" value="0" aria-label="{{ __('Waste') }}" /></div></div>
                     @if($line->product?->tracks_serials)
                         @php($serialUrl = route('admin.inventory.documents.select2.receipt-layers', ['stock_status' => 'production_staging', 'production_run_public_id' => $record->public_id, 'product_doc_num' => $line->product->doc_num, 'document_date' => now()->toDateString()]))
                         <div class="row g-2 mb-3">

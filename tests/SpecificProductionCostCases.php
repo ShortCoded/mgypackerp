@@ -13,6 +13,9 @@ use Modules\Inventory\Models\InventoryReservation;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryCostPolicyService;
 use Modules\Inventory\Services\InventoryMovementService;
+use Modules\Production\Models\ProductionOrder;
+use Modules\Production\Models\ProductionRun;
+use Modules\Production\Models\QualityInspectionType;
 use Modules\Production\Services\ProductionCostService;
 use Modules\Production\Services\ProductionMaterialRequestService;
 use Spatie\Permission\Models\Permission;
@@ -242,3 +245,57 @@ test('selected batch issue preserves approved request reservations while replaci
     expect($fixture['requirement']->fresh()->issued_quantity)->toBe('10.00000000')
         ->and($line->fresh()->issued_quantity)->toBe('6.00000000');
 });
+
+test('finished goods HTTP receipt requires resolved materials and quality and completes only after all partial receipts', function (string $locale): void {
+    $this->travelTo(Carbon::parse('2026-10-01 12:00:00'));
+    $f = specificProductionFixture();
+    $finalType = QualityInspectionType::query()->create([
+        'company_id' => $f['company']->id, 'code' => 'SYNTHETIC-FINAL-RECEIPT', 'name' => 'SYNTHETIC final quality release',
+        'is_final_production' => true, 'is_active' => true,
+    ]);
+    foreach (['production.runs.view', 'production.runs.setup', 'production.runs.progress', 'production.runs.account_materials', 'production.runs.receive', 'production.runs.complete'] as $ability) {
+        Permission::findOrCreate($ability, 'web');
+        $f['user']->givePermissionTo($ability);
+    }
+    $this->withSession(['locale' => $locale]);
+    $this->postJson(route('admin.production.material-requests.issue', $f['materialRequest']), specificProductionPayload($f, [
+        ['layer_id' => $f['cheapLayer']->id, 'quantity' => '4'], ['layer_id' => $f['expensiveLayer']->id, 'quantity' => '6'],
+    ]))->assertOk();
+    foreach (['setup.start', 'setup.complete', 'start'] as $action) {
+        $this->postJson(route('admin.production.runs.'.$action, $f['run']), ['_submission_token' => (string) Str::uuid()])->assertOk();
+    }
+    $this->postJson(route('admin.production.runs.progress', $f['run']), ['_submission_token' => (string) Str::uuid(), 'good_base_quantity' => '5'])->assertOk();
+    $receive = route('admin.production.runs.receive', $f['run']);
+    $payload = ['_submission_token' => (string) Str::uuid(), 'branch_store_id' => $f['store']->id, 'base_quantity' => '2'];
+    $this->postJson($receive, $payload)->assertUnprocessable();
+    $this->postJson(route('admin.production.runs.account', $f['run']), ['_submission_token' => (string) Str::uuid(), 'branch_store_id' => $f['store']->id,
+        'lines' => [['requirement_id' => $f['requirement']->id, 'consumed_quantity' => '10', 'waste_quantity' => '0']]])->assertOk();
+    $this->postJson($receive, [...$payload, '_submission_token' => (string) Str::uuid()])->assertUnprocessable();
+    $inspection = $f['cycle']->recordInspection($f['run']->fresh(), ['quality_inspection_type_id' => $finalType->id, 'result' => 'passed', 'disposition' => 'release']);
+    $f['cycle']->reviewInspection($inspection, true);
+    $this->get(route('admin.production.runs.show', $f['run']))->assertOk()->assertSee('admin/production/runs', false);
+    $first = $this->postJson($receive, $payload)->assertOk();
+    $this->postJson($receive, $payload)->assertOk()->assertJsonPath('data.doc_num', $first->json('data.doc_num'));
+    expect($f['run']->fresh()->received_base_quantity)->toBe('2.00000000');
+    $this->postJson(route('admin.production.runs.complete', $f['run']), [])->assertUnprocessable();
+    $this->postJson($receive, [...$payload, '_submission_token' => (string) Str::uuid(), 'base_quantity' => '3'])->assertOk();
+    $this->postJson(route('admin.production.runs.complete', $f['run']), [])->assertOk();
+    $run = $f['run']->fresh();
+    expect($run->status)->toBe(ProductionRun::StatusCompleted)->and($run->received_base_quantity)->toBe('5.00000000')
+        ->and($run->order->status)->toBe(ProductionOrder::StatusCompleted)
+        ->and(app(ProductionCostService::class)->runPosition($run)['wip'])->toBe('0.00000000');
+    $receipts = InventoryDocument::query()->where('production_run_id', $run->id)->where('document_type', InventoryDocument::TypeProductionReceipt)->get();
+    expect($receipts)->toHaveCount(2);
+    $costs = $receipts->map(fn ($receipt): string => $receipt->transactions->sole()->total_cost)->all();
+    expect(bcadd($costs[0], $costs[1], 8))->toBe('160.00000000')->and(bcadd($costs[0], '0', 8))->toBe('64.00000000')
+        ->and(bcadd($costs[1], '0', 8))->toBe('96.00000000');
+    foreach ($receipts as $receipt) {
+        $journal = $receipt->journalEntry;
+        expect(bccomp((string) $journal->lines->sum('debit_amount'), (string) $journal->lines->sum('credit_amount'), 4))->toBe(0)
+            ->and(bccomp((string) $journal->lines->sum('debit_amount'), $receipt->transactions->sole()->total_cost, 4))->toBe(0);
+    }
+    $stock = InventoryTransaction::query()->where('product_id', $f['finished']->id)->where('branch_store_id', $f['store']->id)
+        ->where('stock_status', InventoryTransaction::StatusAvailable)->selectRaw('coalesce(sum(quantity_in - quantity_out),0) as quantity')->first()->quantity;
+    expect(bcadd((string) $stock, '0', 8))->toBe('5.00000000');
+    $this->postJson($receive, [...$payload, '_submission_token' => (string) Str::uuid(), 'base_quantity' => '1'])->assertUnprocessable();
+})->with(['ar', 'en']);

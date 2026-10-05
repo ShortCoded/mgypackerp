@@ -680,6 +680,7 @@
   }
 
   function calculateTotals($form) {
+    if ($form.attr('data-readonly') === '1') return;
     const numbers = window.AppNumbers;
     let subtotal = '0';
     let lineDiscount = '0';
@@ -736,6 +737,70 @@
     $form.find('.js-purchase-invoice-remaining').text(formatAmount(nonNegative(numbers.subtract(total, paid))));
     $form.find('.js-purchase-invoice-schedule-total').text(formatAmount(scheduleTotal));
     $form.find('.js-purchase-invoice-schedule-difference').text(formatAmount(numbers.subtract(total, scheduleTotal)));
+    queueDiscountPreview($form);
+  }
+
+  function queueDiscountPreview($form) {
+    const order = $form.find('#purchase_order_doc_num').val();
+    const url = $form.attr('data-discount-preview-url');
+    window.clearTimeout($form.data('discountPreviewTimer'));
+    const previous = $form.data('discountPreviewXhr');
+    if (previous) previous.abort();
+    const revision = ($form.data('discountPreviewRevision') || 0) + 1;
+    $form.data('discountPreviewRevision', revision);
+    $form.data('discountPreviewPending', false);
+    if (!order || !url) return;
+    const lines = [];
+    $form.find('.js-purchase-invoice-line').each(function () {
+      const $row = $(this);
+      const field = name => $row.find('[name$="[' + name + ']"]').val();
+      lines.push({public_id: field('public_id') || null, purchase_order_line_public_id: field('purchase_order_line_public_id') || null,
+        product_doc_num: field('product_doc_num'), unit_doc_num: field('unit_doc_num'), quantity: decimalValue(field('quantity')),
+        unit_price: decimalValue(field('unit_price')), discount_type: field('discount_type'), discount_value: decimalValue(field('discount_value')),
+        tax_rate: decimalValue(field('tax_rate')), inherit_source_discount: $row.attr('data-inherit-source-discount') === '1' ? 1 : 0});
+    });
+    if (!lines.length || lines.some(line => !line.product_doc_num || !line.unit_doc_num || window.AppNumbers.compare(line.quantity, '0') <= 0)) return;
+    const data = {invoice_doc_num: $form.attr('data-invoice-doc-num') || null, purchase_order_doc_num: order,
+      header_discount_type: $form.find('.js-purchase-invoice-header-discount-type').val(), header_discount_value: decimalValue($form.find('.js-purchase-invoice-header-discount-value').val()),
+      freight_amount: decimalValue($form.find('.js-purchase-invoice-freight').val()), freight_tax_rate: decimalValue($form.find('.js-purchase-invoice-freight-tax-rate').val()),
+      inherit_header_discount: $form.attr('data-inherit-header-discount') === '1' ? 1 : 0, lines: lines};
+    $form.data('discountPreviewPending', true);
+    $form.data('discountPreviewTimer', window.setTimeout(function () {
+      const xhr = $.ajax({url: url, method: 'POST', headers: headers(), data: data});
+      $form.data('discountPreviewXhr', xhr);
+      xhr.done(function (response) {
+        if ($form.data('discountPreviewRevision') !== revision) return;
+        const result = response.data;
+        const invoice = result.calculation.invoice;
+        if (data.inherit_header_discount) {
+          $form.find('.js-purchase-invoice-header-discount-type').val(result.defaults.header_discount_type || 'fixed');
+          $form.find('.js-purchase-invoice-header-discount-value').val(result.defaults.header_discount_value);
+        }
+        $form.find('.js-purchase-invoice-line').each(function (index) {
+          const $row = $(this);
+          const line = result.calculation.lines[index];
+          if (!line) return;
+          if (data.lines[index].inherit_source_discount) {
+            $row.find('.js-purchase-invoice-discount-type').val(result.defaults.lines[index].discount_type);
+            $row.find('.js-purchase-invoice-discount-value').val(result.defaults.lines[index].discount_value);
+          }
+          [['subtotal', 'subtotal_amount'], ['discount', 'discount_amount'], ['tax', 'tax_amount'], ['total', 'total_after_tax']].forEach(([selector, key]) => $row.find('.js-purchase-invoice-line-' + selector).text(formatAmount(line[key])));
+        });
+        [['subtotal', 'subtotal_amount'], ['line-discounts', 'line_discount_amount'], ['header-discount', 'header_discount_amount'], ['taxable', 'taxable_amount'], ['tax', 'tax_amount'], ['total', 'total_amount']].forEach(([selector, key]) => $form.find('.js-purchase-invoice-' + selector).text(formatAmount(invoice[key])));
+        const paid = decimalValue($form.find('.js-purchase-invoice-paid').text());
+        $form.find('.js-purchase-invoice-remaining').text(formatAmount(nonNegative(window.AppNumbers.subtract(invoice.total_amount, paid))));
+        const schedules = $form.find('.js-purchase-invoice-schedule-amount');
+        if (schedules.length === 1) schedules.val(invoice.total_amount);
+        const scheduled = calculateScheduleTotals($form);
+        $form.find('.js-purchase-invoice-schedule-total').text(formatAmount(scheduled));
+        $form.find('.js-purchase-invoice-schedule-difference').text(formatAmount(window.AppNumbers.subtract(invoice.total_amount, scheduled)));
+      }).fail(function (xhr) {
+        if (xhr.statusText === 'abort' || $form.data('discountPreviewRevision') !== revision) return;
+        if (xhr.responseJSON && xhr.responseJSON.errors) showValidationErrors($form, xhr.responseJSON.errors);
+      }).always(function () {
+        if ($form.data('discountPreviewRevision') === revision) $form.data('discountPreviewPending', false);
+      });
+    }, 200));
   }
 
   function updateFreightMatch($form, fillRemaining) {
@@ -944,6 +1009,13 @@
     });
     calculateTotals($form);
 
+    $form.on('input change', '.js-purchase-invoice-discount-type, .js-purchase-invoice-discount-value, .js-purchase-invoice-unit-price, .js-purchase-invoice-tax-rate, .js-purchase-invoice-product, .js-purchase-invoice-unit', function () {
+      $(this).closest('.js-purchase-invoice-line').attr('data-inherit-source-discount', '0').find('[name$="[inherit_source_discount]"]').val('0');
+    });
+    $form.on('input change', '.js-purchase-invoice-header-discount-type, .js-purchase-invoice-header-discount-value', function () {
+      $(this).closest('.js-purchase-invoice-form').attr('data-inherit-header-discount', '0').find('[name="inherit_header_discount"]').val('0');
+    });
+
     $form.on('select2:select', '.js-purchase-invoice-product', function (event) {
       const data = event.params && event.params.data ? event.params.data : null;
       const $row = $(this).closest('.js-purchase-invoice-line');
@@ -1052,6 +1124,7 @@
 
     $form.on('submit', function (event) {
       event.preventDefault();
+      if ($form.data('discountPreviewPending')) return;
 
       const $submit = $form.find('.js-purchase-invoice-save[type="submit"]').filter(':focus').first();
       const $button = $submit.length ? $submit : $form.find('.js-purchase-invoice-save').first();

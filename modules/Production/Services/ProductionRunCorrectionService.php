@@ -60,6 +60,9 @@ final class ProductionRunCorrectionService
         return DB::transaction(function () use ($run, $output, $reason, $fingerprint, $postingDate, $receiptDates, $dateEvidence, $mode): object {
             Company::query()->whereKey($this->companies->requireCompanyId())->lockForUpdate()->firstOrFail();
             $run = $this->scopedRun($run, true);
+            if ($run->material_accounting_mode === ProductionOutputEvidenceService::Mode) {
+                throw new DomainException(__('production_execution.evidence.correction_requires_review'));
+            }
             $snapshot = $this->snapshot($run, true);
             $this->assertCorrectable($run, $snapshot);
             $this->assertFingerprint($snapshot, $fingerprint);

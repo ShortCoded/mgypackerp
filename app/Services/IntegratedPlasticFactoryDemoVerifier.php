@@ -53,7 +53,7 @@ class IntegratedPlasticFactoryDemoVerifier
             ->whereNull('journals.deleted_at')
             ->select('journals.id')
             ->groupBy('journals.id')
-            ->havingRaw('abs(sum(lines.debit_amount) - sum(lines.credit_amount)) > 0.001')
+            ->havingRaw('abs(round(sum(lines.debit_amount) - sum(lines.credit_amount), 4)) > 0')
             ->count();
         $zeroValueJournals = DB::table('journal_entries as journals')
             ->join('journal_entry_lines as lines', 'lines.journal_entry_id', '=', 'journals.id')
@@ -61,7 +61,7 @@ class IntegratedPlasticFactoryDemoVerifier
             ->whereNull('journals.deleted_at')
             ->select('journals.id')
             ->groupBy('journals.id')
-            ->havingRaw('sum(lines.debit_amount) <= 0.001')
+            ->havingRaw('sum(lines.debit_amount) <= 0')
             ->count();
         $negativePositions = DB::table('inventory_transactions')
             ->where('company_id', $companyId)

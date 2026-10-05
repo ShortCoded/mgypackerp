@@ -18,6 +18,7 @@ use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\Supplier;
+use Modules\Purchases\Services\PurchaseOrderCalculationService;
 
 class StorePurchaseOrderRequest extends FormRequest
 {
@@ -32,7 +33,7 @@ class StorePurchaseOrderRequest extends FormRequest
     {
         $this->normalizeNumericInput([
             'exchange_rate',
-            'freight_amount',
+            'freight_amount', 'header_discount_value',
             'lines.*.ordered_quantity',
             'lines.*.unit_price',
             'lines.*.discount_value',
@@ -54,6 +55,8 @@ class StorePurchaseOrderRequest extends FormRequest
             'document_date' => $this->trimmed('document_date'),
             'exchange_rate' => $this->decimalInput('exchange_rate', '1'),
             'freight_amount' => $this->decimalInput('freight_amount', '0'),
+            'header_discount_type' => $this->trimmed('header_discount_type'),
+            'header_discount_value' => $this->decimalInput('header_discount_value', '0'),
             'expected_delivery_date' => $this->trimmed('expected_delivery_date'),
             'supplier_reference' => $this->trimmed('supplier_reference'),
             'payment_terms' => $this->trimmed('payment_terms'),
@@ -95,6 +98,8 @@ class StorePurchaseOrderRequest extends FormRequest
             }],
             'exchange_rate' => ['required', 'numeric', 'decimal:0,6', 'regex:/^\d{1,12}(?:\.\d{1,6})?$/D', 'gt:0'],
             'freight_amount' => ['nullable', 'numeric', 'decimal:0,4', 'min:0'],
+            'header_discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
+            'header_discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'expected_delivery_date' => ['nullable', function (string $attribute, mixed $value, Closure $fail): void {
                 if ($value !== null && $value !== '' && ! app(DateFormatService::class)->isValidDate(is_string($value) ? $value : null)) {
                     $fail(__('purchase_orders.messages.expected_delivery_date_invalid'));
@@ -224,6 +229,13 @@ class StorePurchaseOrderRequest extends FormRequest
         $this->validateSupplier($validator, $companyId);
         $this->validateLines($validator, $companyId, $current);
         $this->validateDirectProcurement($validator, $current);
+        if ($validator->errors()->isEmpty()) {
+            try {
+                app(PurchaseOrderCalculationService::class)->calculate($this->input('lines', []), $this->input('freight_amount', 0), $this->input('header_discount_type'), $this->input('header_discount_value', 0));
+            } catch (\DomainException $exception) {
+                $validator->errors()->add('header_discount_value', $exception->getMessage());
+            }
+        }
     }
 
     private function validateDateInsidePeriod(Validator $validator, ?FinancialPeriod $period): void

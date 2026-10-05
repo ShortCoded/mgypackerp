@@ -76,7 +76,11 @@ class ProcurementSourcingService
         return DB::transaction(function () use ($requisition, $data): PurchaseRequisition {
             $locked = $this->lockRequisition($requisition);
             $this->requireStatus($locked->status, [PurchaseRequisition::StatusDraft]);
+            if ($locked->hasDownstreamDocuments()) {
+                throw new DomainException(__('procurement.messages.line_correction_execution_blocked'));
+            }
             $context = $this->context();
+            $beforeLines = $locked->lines()->get()->map->attributesToArray()->all();
             $locked->fill($this->requisitionValues($data, $context, $locked));
             $changed = $this->syncRequisitionLines($locked, $data, $context);
             $changed = $this->attachments->attach(
@@ -87,7 +91,10 @@ class ProcurementSourcingService
             ) || $changed;
             if ($locked->isDirty() || $changed) {
                 $locked->forceFill(['updated_by' => auth()->id()])->save();
-                $this->audit->record($locked, 'purchase_requisition.updated');
+                $this->audit->record($locked, 'purchase_requisition.updated', [
+                    'before_lines' => $beforeLines,
+                    'after_lines' => $locked->lines()->get()->map->attributesToArray()->all(),
+                ]);
             }
 
             return $locked->refresh();
@@ -211,6 +218,25 @@ class ProcurementSourcingService
             throw new DomainException(__('A purchase request requires at least one line.'));
         }
         $existing = $requisition->lines()->get()->keyBy('public_id');
+        $inputs = array_values($data['lines']);
+        $seen = [];
+        $renumber = false;
+        foreach ($inputs as $index => $input) {
+            $publicId = $input['public_id'] ?? null;
+            if ($publicId && (! $existing->has($publicId) || isset($seen[$publicId]))) {
+                throw new DomainException(__('The selected purchase request line is invalid.'));
+            }
+            if ($publicId) {
+                $seen[$publicId] = true;
+            }
+            $renumber = $renumber || ($existing->isNotEmpty() && (! $publicId || (int) $existing->get($publicId)?->line_number !== $index + 1));
+        }
+        if ($renumber) {
+            $offset = (int) $existing->max('line_number') + count($inputs) + 1;
+            foreach ($existing as $line) {
+                $line->forceFill(['line_number' => $line->line_number + $offset])->save();
+            }
+        }
         $kept = [];
         $changed = false;
         foreach (array_values($data['lines']) as $index => $input) {
@@ -598,9 +624,7 @@ class ProcurementSourcingService
                 $changed = true;
             }
 
-            $subtotal = '0.0000';
-            $discount = '0.0000';
-            $tax = '0.0000';
+            $commercial = app(SupplierQuotationDiscountService::class)->calculate($data, $draft);
 
             foreach (array_values($data['lines']) as $index => $input) {
                 $sourceLine = $locked->lines->firstWhere('public_id', $input['source_line_public_id'] ?? $input['rfq_line_public_id'] ?? null);
@@ -613,17 +637,8 @@ class ProcurementSourcingService
                 $quantity = $numbers->normalizeToScale($input['offered_quantity'], 8);
                 $sourceQuantity = $this->supplierQuotationSourceQuantity($sourceLine);
                 $unitPrice = $numbers->normalizeToScale($input['unit_price'], 8);
-                $lineDiscount = $numbers->normalizeToScale($input['discount_amount'] ?? 0, 4);
-                $lineSubtotal = bcround(bcmul($quantity, $unitPrice, 16), 4);
-                $taxable = bccomp($lineSubtotal, $lineDiscount, 4) > 0
-                    ? bcsub($lineSubtotal, $lineDiscount, 4)
-                    : '0.0000';
-                $taxRate = $numbers->normalizeToScale($input['tax_rate'] ?? 0, 4);
-                $lineTax = bcround(bcdiv(bcmul($taxable, $taxRate, 12), '100', 12), 4);
-                $lineTotal = bcadd($taxable, $lineTax, 4);
-
-                if (bccomp($quantity, '0', 8) <= 0 || bccomp($quantity, $sourceQuantity, 8) > 0
-                    || bccomp($unitPrice, '0', 8) < 0 || bccomp($lineDiscount, $lineSubtotal, 4) > 0) {
+                $calculated = $commercial['lines'][$index];
+                if (bccomp($quantity, '0', 8) <= 0 || bccomp($quantity, $sourceQuantity, 8) > 0 || bccomp($unitPrice, '0', 8) < 0) {
                     throw new DomainException(__('Supplier quotation line values are invalid.'));
                 }
 
@@ -642,10 +657,10 @@ class ProcurementSourcingService
                     'unit_id' => $sourceLine->unit_id,
                     'offered_quantity' => $quantity,
                     'unit_price' => $unitPrice,
-                    'discount_amount' => $lineDiscount,
-                    'tax_rate' => $taxRate,
-                    'tax_amount' => $lineTax,
-                    'line_total' => $lineTotal,
+                    'discount_type' => $calculated['discount_type'], 'discount_value' => $calculated['discount_value'],
+                    'subtotal_amount' => $calculated['subtotal_amount'], 'discount_amount' => $calculated['discount_amount'],
+                    'header_discount_amount' => $calculated['header_discount_amount'], 'tax_rate' => $calculated['tax_rate'],
+                    'tax_amount' => $calculated['tax_amount'], 'line_total' => $calculated['total_after_tax'],
                     'delivery_date' => $input['delivery_date'] ?? null,
                     'notes' => $input['notes'] ?? null,
                 ]);
@@ -660,17 +675,16 @@ class ProcurementSourcingService
                 ) || $changed;
                 $keptLineIds[] = $savedLine->getKey();
 
-                $subtotal = bcadd($subtotal, $lineSubtotal, 4);
-                $discount = bcadd($discount, $lineDiscount, 4);
-                $tax = bcadd($tax, $lineTax, 4);
             }
 
-            $freight = (string) $quotation->freight_amount;
             $quotation->forceFill([
-                'subtotal_amount' => $subtotal,
-                'discount_amount' => $discount,
-                'tax_amount' => $tax,
-                'total_amount' => bcadd(bcadd(bcsub($subtotal, $discount, 4), $tax, 4), $freight, 4),
+                'subtotal_amount' => $commercial['order']['subtotal_amount'],
+                'discount_amount' => array_reduce($commercial['lines'], fn (string $sum, array $line): string => bcadd($sum, $line['discount_amount'], 4), '0.0000'),
+                'tax_amount' => array_reduce($commercial['lines'], fn (string $sum, array $line): string => bcadd($sum, $line['tax_amount'], 4), '0.0000'),
+                'total_amount' => $commercial['order']['total_amount'],
+                'header_discount_type' => $commercial['order']['header_discount_type'],
+                'header_discount_value' => $commercial['order']['header_discount_value'],
+                'header_discount_amount' => $commercial['order']['header_discount_amount'],
             ]);
             if ($quotation->isDirty()) {
                 $quotation->save();
@@ -747,24 +761,38 @@ class ProcurementSourcingService
 
     public function createSupplierSelection(RequestForQuotation $rfq, array $data): SupplierSelection
     {
-        return DB::transaction(function () use ($data, $rfq): SupplierSelection {
+        return $this->saveSupplierSelection($rfq, $data);
+    }
+
+    public function updateSupplierSelection(SupplierSelection $selection, array $data): SupplierSelection
+    {
+        return $this->saveSupplierSelection($selection->requestForQuotation, $data, $selection);
+    }
+
+    private function saveSupplierSelection(RequestForQuotation $rfq, array $data, ?SupplierSelection $draft = null): SupplierSelection
+    {
+        return DB::transaction(function () use ($data, $rfq, $draft): SupplierSelection {
             $context = $this->context();
+            if ($draft) {
+                $draft = SupplierSelection::query()->with('lines')->lockForUpdate()->findOrFail($draft->id);
+                $this->assertContext($draft, $context);
+                $this->requireStatus($draft->status, ['draft']);
+                if ($draft->lines->contains(fn ($line) => $line->purchase_order_id !== null)) {
+                    throw new DomainException(__('purchase_orders.messages.document_locked'));
+                }
+            }
             app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $data['selection_date'], $context['financial_period_id'], lockForUpdate: true);
-            $locked = RequestForQuotation::query()->with('lines.requisitionLine')->lockForUpdate()->findOrFail($rfq->getKey());
+            $locked = RequestForQuotation::query()->with('lines.requisitionLine')->lockForUpdate()->findOrFail($rfq->id);
             $this->assertContext($locked, $context, true);
             $this->requireStatus($locked->status, ['issued']);
-
-            $selection = SupplierSelection::query()->create([
-                ...$this->number('supplier_selections', SupplierSelection::class, $context),
-                ...$context,
-                'request_for_quotation_id' => $locked->getKey(),
-                'selection_date' => $data['selection_date'],
-                'status' => 'draft',
-                'selection_reason' => $data['selection_reason'] ?? null,
-                'selected_by' => auth()->id(),
-                'created_by' => auth()->id(),
-            ]);
-
+            $selection = $draft ?? new SupplierSelection;
+            $selection->fill([...($draft ? [] : $this->number('supplier_selections', SupplierSelection::class, $context)), ...$context,
+                'request_for_quotation_id' => $locked->id, 'selection_date' => $data['selection_date'], 'status' => 'draft',
+                'selection_reason' => $data['selection_reason'] ?? null, 'selected_by' => $draft?->selected_by ?? auth()->id(),
+                'created_by' => $draft?->created_by ?? auth()->id(), 'updated_by' => $draft ? auth()->id() : null])->save();
+            $previousLines = $draft?->lines->keyBy('supplier_quotation_line_id') ?? collect();
+            $keptIds = [];
+            $seen = [];
             $pendingByRequirement = [];
             foreach (array_values($data['lines']) as $input) {
                 $quotationLine = SupplierQuotationLine::query()
@@ -779,6 +807,10 @@ class ProcurementSourcingService
                     throw new DomainException(__('Only submitted quotation lines from this RFQ may be selected.'));
                 }
 
+                if (isset($seen[$quotationLine->id])) {
+                    throw new DomainException(__('procurement.messages.commercial_discount_invalid'));
+                }
+                $seen[$quotationLine->id] = true;
                 $quantityDecimal = $this->quantity($input['selected_quantity']);
                 if (bccomp($quantityDecimal, '0', 8) <= 0 || bccomp($quantityDecimal, (string) $quotationLine->offered_quantity, 8) > 0) {
                     throw new DomainException(__('Selected quantity exceeds the supplier offer.'));
@@ -791,16 +823,25 @@ class ProcurementSourcingService
                     8,
                 );
                 $this->assertSelectionCapacity($requirementLine, $selection, $pendingByRequirement[$requirementLine->getKey()]);
-                $discount = bcround(bcdiv(
-                    bcmul((string) $quotationLine->discount_amount, $quantityDecimal, 16),
-                    (string) $quotationLine->offered_quantity,
-                    16,
-                ), 4);
-                $subtotal = bcround(bcmul($quantityDecimal, (string) $quotationLine->unit_price, 16), 4);
-                $taxable = bccomp($subtotal, $discount, 4) > 0 ? bcsub($subtotal, $discount, 4) : '0.0000';
-                $tax = bcround(bcdiv(bcmul($taxable, (string) $quotationLine->tax_rate, 12), '100', 12), 4);
-
-                $selection->lines()->create([
+                $allocation = app(SupplierQuotationDiscountService::class)->selectionAllocation($quotationLine, $quantityDecimal, $selection, $previousLines->get($quotationLine->id));
+                $type = $quotationLine->discount_type ?: 'fixed';
+                $value = $type === 'percentage' ? $quotationLine->discount_value : $allocation['discount'];
+                if (empty($input['inherit_source_discount']) && filled($input['discount_type'] ?? null)) {
+                    $type = $input['discount_type'];
+                    $value = $input['discount_value'] ?? 0;
+                }
+                $headerType = $quotationLine->quotation->header_discount_type;
+                $headerValue = $headerType === 'percentage' ? $quotationLine->quotation->header_discount_value : $allocation['header'];
+                $inherited = $type === ($quotationLine->discount_type ?: 'fixed') && bccomp((string) $value, (string) (($quotationLine->discount_type === 'percentage') ? $quotationLine->discount_value : $allocation['discount']), 4) === 0;
+                $native = $inherited ? null : app(SupplierQuotationDiscountService::class)->calculate(['header_discount_type' => $headerType,
+                    'header_discount_value' => $headerValue, 'lines' => [['offered_quantity' => $quantityDecimal, 'unit_price' => $quotationLine->unit_price,
+                        'discount_type' => $type, 'discount_value' => $value, 'tax_rate' => $quotationLine->tax_rate]]]);
+                $calculated = $inherited ? ['subtotal_amount' => $allocation['gross'], 'discount_amount' => $allocation['discount'],
+                    'header_discount_amount' => $allocation['header'], 'tax_amount' => $allocation['tax'],
+                    'line_total' => bcadd(bcsub(bcsub($allocation['gross'], $allocation['discount'], 4), $allocation['header'], 4), $allocation['tax'], 4)]
+                    : [...$native['lines'][0], 'line_total' => $native['lines'][0]['total_after_tax']];
+                $savedLine = $previousLines->get($quotationLine->id) ?? $selection->lines()->make();
+                $savedLine->fill([
                     'supplier_quotation_line_id' => $quotationLine->getKey(),
                     'purchase_requisition_line_id' => $requirementLine->getKey(),
                     'supplier_id' => $quotationLine->quotation->supplier_id,
@@ -808,16 +849,19 @@ class ProcurementSourcingService
                     'unit_id' => $quotationLine->unit_id,
                     'selected_quantity' => $quantityDecimal,
                     'unit_price' => $quotationLine->unit_price,
-                    'discount_amount' => $discount,
-                    'tax_rate' => $quotationLine->tax_rate,
-                    'tax_amount' => $tax,
-                    'line_total' => bcadd($taxable, $tax, 4),
+                    'discount_type' => $type, 'discount_value' => $value, 'subtotal_amount' => $calculated['subtotal_amount'],
+                    'discount_amount' => $calculated['discount_amount'], 'header_discount_type' => $headerType,
+                    'header_discount_value' => $headerValue, 'header_discount_amount' => $calculated['header_discount_amount'],
+                    'source_discount_snapshot' => [...$allocation, 'inherited' => $inherited],
+                    'tax_rate' => $quotationLine->tax_rate, 'tax_amount' => $calculated['tax_amount'], 'line_total' => $calculated['line_total'],
                     'reason' => $input['reason'] ?? null,
-                ]);
+                ])->save();
+                $keptIds[] = $savedLine->id;
             }
 
+            $selection->lines()->whereNotIn('id', $keptIds)->delete();
             $selection = $selection->refresh()->load(['lines.supplier', 'lines.product', 'requestForQuotation']);
-            $this->audit->record($selection, 'supplier_selection.created', ['line_count' => $selection->lines->count()]);
+            $this->audit->record($selection, $draft ? 'supplier_selection.updated' : 'supplier_selection.created', ['line_count' => $selection->lines->count()]);
 
             return $selection;
         }, 3);
@@ -866,6 +910,8 @@ class ProcurementSourcingService
                     'purchase_type' => 'standard',
                     'payment_terms' => $quotation->payment_terms,
                     'freight_amount' => $quotation->freight_amount,
+                    'header_discount_type' => $quotation->header_discount_type,
+                    'header_discount_value' => $quotation->header_discount_type === 'percentage' ? $quotation->header_discount_value : $lines->reduce(fn (string $sum, SupplierSelectionLine $line): string => bcadd($sum, $line->header_discount_amount ?? '0', 4), '0.0000'),
                     'notes' => $locked->selection_reason,
                     'lines' => $lines->values()->map(function (SupplierSelectionLine $line): array {
                         return [
@@ -873,8 +919,8 @@ class ProcurementSourcingService
                             'unit_doc_num' => $line->unit->doc_num,
                             'ordered_quantity' => $line->selected_quantity,
                             'unit_price' => $line->unit_price,
-                            'discount_type' => 'fixed',
-                            'discount_value' => $line->discount_amount,
+                            'discount_type' => $line->discount_type ?: 'fixed',
+                            'discount_value' => $line->discount_value ?? $line->discount_amount,
                             'tax_rate' => $line->tax_rate,
                             'purchase_requisition_line_id' => $line->purchase_requisition_line_id,
                             'request_for_quotation_line_id' => $line->quotationLine->request_for_quotation_line_id,

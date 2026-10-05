@@ -5,11 +5,13 @@ namespace Modules\Sales\Services;
 use DomainException;
 use Illuminate\Support\Facades\DB;
 use Modules\Accounting\Services\JournalEntryService;
+use Modules\Core\Models\Company;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Finance\Models\Cheque;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerInvoicePaymentSchedule;
 use Modules\Sales\Models\CustomerReceipt;
+use Modules\Sales\Models\CustomerWithholdingSettlement;
 
 class CustomerReceiptSettlementService
 {
@@ -23,6 +25,7 @@ class CustomerReceiptSettlementService
     public function synchronizeCheque(Cheque $cheque): void
     {
         DB::transaction(function () use ($cheque): void {
+            Company::query()->whereKey($cheque->company_id)->lockForUpdate()->firstOrFail();
             $receipt = CustomerReceipt::query()->where('cheque_id', $cheque->id)->lockForUpdate()->first();
             if (! $receipt || $receipt->status !== CustomerReceipt::StatusApproved) {
                 return;
@@ -52,6 +55,7 @@ class CustomerReceiptSettlementService
     public function deferLegacyCheque(CustomerReceipt $receipt): CustomerReceipt
     {
         return DB::transaction(function () use ($receipt): CustomerReceipt {
+            Company::query()->whereKey($receipt->company_id)->lockForUpdate()->firstOrFail();
             $locked = CustomerReceipt::query()->with('cheque')->lockForUpdate()->findOrFail($receipt->id);
             if (! $locked->journal_entry_id || $locked->status !== CustomerReceipt::StatusApproved || ! $locked->cheque || ! in_array($locked->cheque->status, [Cheque::StatusReceived, Cheque::StatusDeposited], true)) {
                 throw new DomainException(__('Only a prematurely posted pending cheque can be deferred.'));
@@ -71,6 +75,7 @@ class CustomerReceiptSettlementService
     public function reverse(CustomerReceipt $receipt, string $reason): CustomerReceipt
     {
         return DB::transaction(function () use ($receipt, $reason): CustomerReceipt {
+            Company::query()->whereKey($receipt->company_id)->lockForUpdate()->firstOrFail();
             if (trim($reason) === '') {
                 throw new DomainException(__('A reversal reason is required.'));
             }
@@ -80,6 +85,9 @@ class CustomerReceiptSettlementService
             }
             if ($locked->status !== CustomerReceipt::StatusApproved) {
                 throw new DomainException(__('Only an approved collection can be reversed.'));
+            }
+            if (CustomerWithholdingSettlement::query()->where('customer_receipt_id', $locked->id)->where('status', 'approved')->exists()) {
+                throw new DomainException(__('sales_ui.wht.recovery_required'));
             }
             $reversal = null;
             if ($locked->journalEntry) {
@@ -121,7 +129,6 @@ class CustomerReceiptSettlementService
 
     private function refreshInvoice(CustomerInvoice $invoice): void
     {
-        $paid = (string) $invoice->paymentSchedules()->sum('collected_amount');
-        $invoice->update(['paid_amount' => $paid, 'remaining_amount' => bcsub(bcsub($invoice->total_amount, $paid, 4), $invoice->credited_amount, 4)]);
+        app(CustomerInvoiceBalanceService::class)->refresh($invoice);
     }
 }

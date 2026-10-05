@@ -244,6 +244,16 @@ class ProductionMaterialRequestController extends Controller
                 ->with('success', __('production_execution.messages.material_request_reservation_repaired'));
     }
 
+    public function createPurchaseRequisition(Request $request, ProductionMaterialRequest $productionMaterialRequest): JsonResponse|RedirectResponse
+    {
+        $this->assertProductionRequest($request, $productionMaterialRequest);
+        $record = $this->guard(fn () => $this->service->createPurchaseRequisition($productionMaterialRequest));
+
+        return $request->expectsJson()
+            ? response()->json(['success' => true, 'doc_num' => $record->doc_num, 'message' => __('production_execution.manual_purchase_created')])
+            : to_route('admin.production.material-requests.show', $productionMaterialRequest)->with('success', __('production_execution.manual_purchase_created'));
+    }
+
     public function allocateShortage(Request $request, ProductionMaterialRequest $productionMaterialRequest): JsonResponse
     {
         $this->assertProductionRequest($request, $productionMaterialRequest);

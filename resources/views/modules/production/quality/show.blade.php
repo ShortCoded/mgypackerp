@@ -183,6 +183,9 @@
                                 <label class="form-label" for="quality-affected-base-quantity">{{ __('production_execution.fields.affected_quantity') }}</label>
                                 <x-forms.numeric-input id="quality-affected-base-quantity" name="affected_base_quantity" :scale="8" min="0" step="0.00000001" arrow-step="1" :value="old('affected_base_quantity', $record->affected_base_quantity)" />
                             </div>
+                            @if($record->production_quality_output_batch_id !== null)
+                            <div class="col-12 col-md-6"><x-forms.label for="quality-accepted-quantity" :label="__('production_execution.evidence.accepted_quantity')" /><x-forms.numeric-input id="quality-accepted-quantity" name="accepted_base_quantity" :scale="8" min="0" step="0.00000001" arrow-step="1" :value="old('accepted_base_quantity', $record->accepted_base_quantity ?? $record->affected_base_quantity)" /><div class="form-text">{{ __('production_execution.evidence.accepted_help') }}</div></div>
+                            @endif
                             <div class="col-12" data-quality-exception-details>
                                 <div class="row g-3">
                                     <div class="col-12 col-md-6"><label class="form-label" for="quality-corrective-action">{{ __('production_execution.fields.corrective_action') }}</label><x-forms.textarea id="quality-corrective-action" name="corrective_action" rows="3">{{ old('corrective_action') }}</x-forms.textarea></div>

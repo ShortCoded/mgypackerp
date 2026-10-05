@@ -108,6 +108,23 @@
             </div>
         </form>
 
+        @if($isView && $record && ($record->purchase_requisition_id || $record->lines->contains(fn ($line) => bccomp((string) $line->shortage_quantity, '0', 8) > 0)))
+            <div class="card mb-3"><div class="card-body">
+                @if($record->purchase_requisition_id)
+                    <div>{{ __('production_execution.manual_purchase_linked') }}: <strong>{{ $record->purchaseRequisition?->doc_num }}</strong></div>
+                    @can('purchases.purchase_requisitions.view') @if($record->purchaseRequisition && ! $record->purchaseRequisition->trashed())<a href="{{ route('admin.purchases.purchase-requisitions.show', $record->purchaseRequisition) }}">{{ __('common.actions.view') }}</a>@endif @endcan
+                @else
+                    <p class="text-700">{{ __('production_execution.manual_purchase_help') }}</p>
+                    @can('purchases.purchase_requisitions.create')
+                    <form method="POST" action="{{ route('admin.production.material-requests.purchase-requisition', $record) }}">
+                        @csrf <x-forms.input type="hidden" name="_submission_token" value="{{ (string) \Illuminate\Support\Str::uuid() }}" />
+                        <button class="btn btn-primary btn-sm" type="submit">{{ __('production_execution.manual_purchase_action') }}</button>
+                    </form>
+                    @endcan
+                @endif
+            </div></div>
+        @endif
+
         @if($isView && $record && $issuableLines->isNotEmpty() && in_array($record->status, [\Modules\Production\Models\ProductionMaterialRequest::StatusApproved, \Modules\Production\Models\ProductionMaterialRequest::StatusShortage, \Modules\Production\Models\ProductionMaterialRequest::StatusPartiallyIssued], true))
             @canany(['production.material_requests.issue', 'inventory.documents.issue'])
                 <form method="POST" action="{{ route('admin.production.material-requests.issue', $record) }}" novalidate>

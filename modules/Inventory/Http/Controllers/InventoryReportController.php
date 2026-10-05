@@ -35,9 +35,11 @@ use Modules\Inventory\Exports\InventoryBookValuationExport;
 use Modules\Inventory\Exports\InventoryPeriodicCostCloseExport;
 use Modules\Inventory\Exports\InventoryReportExport;
 use Modules\Inventory\Exports\InventorySalesValuationExport;
+use Modules\Inventory\Exports\InventoryStockCardExport;
 use Modules\Inventory\Exports\InventoryValuationComparisonExport;
 use Modules\Inventory\Exports\StockBalanceInquiryExport;
 use Modules\Inventory\Http\Requests\InventoryBookValuationRequest;
+use Modules\Inventory\Http\Requests\InventoryStockCardRequest;
 use Modules\Inventory\Http\Requests\StockBalanceInquiryRequest;
 use Modules\Inventory\Services\InventoryReportService;
 use Modules\Inventory\Services\InventoryValuationService;
@@ -326,6 +328,44 @@ class InventoryReportController extends Controller
         ]);
     }
 
+    public function stockCard(InventoryStockCardRequest $request): View
+    {
+        return view('modules.inventory.reports.stock-card', $this->stockCardReport($request));
+    }
+
+    public function stockCardExport(InventoryStockCardRequest $request): BinaryFileResponse
+    {
+        $report = $this->stockCardReport($request, true);
+
+        return Excel::download(new InventoryStockCardExport($report['movements'], $report['totals']), 'stock-card.xlsx');
+    }
+
+    public function stockCardPrint(InventoryStockCardRequest $request): Response
+    {
+        $report = $this->stockCardReport($request, true);
+
+        return $this->pdf->stream('reports.inventory.stock-card', [...$report,
+            'title' => __('inventory_correction.card.title'),
+            'companyPrintIdentity' => $this->printIdentity->forCompany(Company::findOrFail($report['context']['company_id']))], 'stock-card.pdf', 'L');
+    }
+
+    /** @return array<string, mixed> */
+    private function stockCardReport(InventoryStockCardRequest $request, bool $all = false): array
+    {
+        [$context, $filters, $options, , $queryFilters, $branchIds] = $this->stockBalanceReport($request);
+        $product = $options['selected_product'];
+        abort_unless($product, 404);
+        $queryFilters['allowed_branch_ids'] = $branchIds;
+        $totals = $this->reports->stockCardTotals((int) $context['company_id'], (int) $product->id, $queryFilters);
+        $page = max(1, (int) ($filters['movement_page'] ?? 1));
+        $pages = max(1, (int) ceil($totals['movement_count'] / InventoryReportService::MovementPageSize));
+        abort_if(! $all && $page > $pages, 404);
+
+        return ['context' => $context, 'filters' => $filters, 'product' => $product, 'totals' => $totals,
+            'movements' => $this->reports->stockCard((int) $context['company_id'], (int) $product->id, $queryFilters, $all ? null : $page),
+            'movementPage' => $page, 'movementPages' => $pages, 'numbers' => $this->numbers];
+    }
+
     public function stockBalancesExport(StockBalanceInquiryRequest $request): BinaryFileResponse
     {
         [, , , $report] = $this->stockBalanceReport($request);
@@ -449,7 +489,7 @@ class InventoryReportController extends Controller
         return [$context, $filters, $options, $valuation];
     }
 
-    /** @return array{0: array<string, mixed>, 1: array<string, mixed>, 2: array<string, mixed>, 3: array<string, mixed>}
+    /** @return array{0: array<string, mixed>, 1: array<string, mixed>, 2: array<string, mixed>, 3: array<string, mixed>, 4: array<string, mixed>, 5: list<int>}
      */
     private function stockBalanceReport(StockBalanceInquiryRequest $request): array
     {
@@ -503,7 +543,7 @@ class InventoryReportController extends Controller
             'selected_lookups' => $this->selectedStockBalanceLookups((int) $context['company_id'], $filters),
         ];
 
-        return [$context, $filters, $options, $report];
+        return [$context, $filters, $options, $report, $queryFilters, $branchIds];
     }
 
     private function selectedOption(Collection $options, string $attribute, mixed $value, string $field): mixed

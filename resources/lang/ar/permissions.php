@@ -582,4 +582,10 @@ return [
     'customer_invoices.correct_approve' => 'اعتماد تصحيح الفاتورة والتسليم',
     'customer_invoices.correct_later_period' => 'تصحيح الفاتورة والتسليم في فترة لاحقة',
     'customer_invoices.correct_company_warehouse' => 'تصحيح تسليم الفاتورة من مخزن فرع آخر',
+    'customer_withholding_settlements.view' => 'عرض شهادات استقطاع العملاء',
+    'customer_withholding_settlements.prepare' => 'إعداد شهادة استقطاع عميل',
+    'customer_withholding_settlements.approve' => 'اعتماد شهادة استقطاع عميل بصورة مستقلة',
+    'customer_withholding_settlements.reverse' => 'عكس استقطاع عميل بعد استرداد موثق',
+    'customer_withholding_settlements.print' => 'طباعة شهادة استقطاع عميل',
+
 ];

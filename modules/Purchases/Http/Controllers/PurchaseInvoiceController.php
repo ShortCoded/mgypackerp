@@ -28,6 +28,7 @@ use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Purchases\DataTables\PurchaseInvoicesDataTable;
 use Modules\Purchases\Http\Requests\BulkDeletePurchaseInvoicesRequest;
 use Modules\Purchases\Http\Requests\CancelPurchaseInvoiceRequest;
+use Modules\Purchases\Http\Requests\PurchaseDiscountPreviewRequest;
 use Modules\Purchases\Http\Requests\StorePurchaseInvoiceRequest;
 use Modules\Purchases\Http\Requests\UpdatePurchaseInvoiceAssetTreatmentRequest;
 use Modules\Purchases\Http\Requests\UpdatePurchaseInvoiceDocumentNumberSettingsRequest;
@@ -35,6 +36,7 @@ use Modules\Purchases\Http\Requests\UpdatePurchaseInvoiceRequest;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseInvoiceLine;
 use Modules\Purchases\Models\PurchaseOrder;
+use Modules\Purchases\Services\PurchaseDiscountSourceService;
 use Modules\Purchases\Services\PurchaseInvoiceMatchingService;
 use Modules\Purchases\Services\PurchaseInvoiceService;
 
@@ -109,7 +111,7 @@ class PurchaseInvoiceController extends Controller
                     'product_id' => $orderLine->product_id, 'unit_id' => $orderLine->unit_id,
                     'purchase_order_line_id' => $orderLine->getKey(), 'receipt_line_id' => $receiptLine?->getKey(),
                     'quantity' => $quantity, 'unit_price' => $orderLine->unit_price,
-                    'discount_type' => 'fixed', 'discount_value' => bcdiv(bcmul((string) ($orderLine->discount_amount ?? 0), $quantity, 12), (string) $orderLine->ordered_quantity, 4),
+                    'discount_type' => $orderLine->discount_type ?: 'fixed', 'discount_value' => $orderLine->discount_type === 'percentage' ? $orderLine->discount_value : bcdiv(bcmul((string) ($orderLine->discount_amount ?? 0), $quantity, 12), (string) $orderLine->ordered_quantity, 4),
                     'tax_rate' => $orderLine->tax_rate, 'notes' => $orderLine->notes,
                 ]);
                 $line->setRelation('product', $orderLine->product)->setRelation('unit', $orderLine->unit)
@@ -127,7 +129,31 @@ class PurchaseInvoiceController extends Controller
         $draft->setRelation('purchaseOrder', $order)->setRelation('supplier', $order->supplier)->setRelation('currency', $order->currency)
             ->setRelation('financialPeriod', FinancialPeriod::query()->findOrFail($context['financial_period_id']))->setRelation('lines', new Collection($sourceLines->all()));
 
+        $discountData = ['purchase_order_doc_num' => $order->doc_num, 'inherit_header_discount' => true, 'lines' => $sourceLines->map(fn ($line): array => [...$line->getAttributes(),
+            'product_doc_num' => $line->product->doc_num, 'unit_doc_num' => $line->unit->doc_num,
+            'purchase_order_line_public_id' => $line->purchaseOrderLine->public_id, 'inherit_source_discount' => true])->all()];
+        $commercial = app(PurchaseDiscountSourceService::class)->calculate($discountData, suggestDefaults: true);
+        $draft->fill($commercial['calculation']['invoice']);
+        foreach ($sourceLines as $index => $line) {
+            $line->fill($commercial['calculation']['lines'][$index]);
+        }
+
         return $this->form('create', $draft);
+    }
+
+    public function discountPreview(PurchaseDiscountPreviewRequest $request): JsonResponse
+    {
+        $this->assertAdministrativeBranch($request);
+        $context = $this->operatingContext->snapshot($request);
+        $invoice = $request->filled('invoice_doc_num') ? PurchaseInvoice::query()->where('company_id', $context['company_id'])->where('doc_num', $request->input('invoice_doc_num'))->firstOrFail() : null;
+        abort_if($invoice?->isLockedForEditing(), 403, __('purchase_invoices.messages.document_locked'));
+        try {
+            $result = app(PurchaseDiscountSourceService::class)->calculate($request->validated(), $invoice, suggestDefaults: true);
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
+        return response()->json(['data' => $result]);
     }
 
     public function store(StorePurchaseInvoiceRequest $request): JsonResponse

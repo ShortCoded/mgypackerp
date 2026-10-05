@@ -216,20 +216,31 @@
     updateDependencyDisabled($select, dependsOn);
   }
 
+  function countedMessage(template, count) {
+    return String(template || '').replace(':count', String(Math.max(0, count)));
+  }
+
   function language($select) {
     const messages = defaults.messages || {};
-    const noResults = $select.data('no-results');
+    const noResults = $select ? $select.data('no-results') : null;
 
     return {
       errorLoading: function () { return messages.errorLoading || ''; },
-      inputTooShort: function () { return messages.inputTooShort || ''; },
+      inputTooShort: function (args) { return countedMessage(messages.inputTooShort, args.minimum - args.input.length); },
+      inputTooLong: function (args) { return countedMessage(messages.inputTooLong, args.input.length - args.maximum); },
       loadingMore: function () { return messages.loadingMore || ''; },
+      maximumSelected: function (args) { return countedMessage(messages.maximumSelected, args.maximum); },
       noResults: function () { return noResults || messages.noResults || ''; },
-      removeAllItems: function () { return defaults.clearAllLabel || ''; },
-      removeItem: function () { return defaults.clearAllLabel || ''; },
-      search: function () { return messages.searching || ''; },
+      removeAllItems: function () { return messages.removeAllItems || defaults.clearAllLabel || ''; },
+      removeItem: function () { return messages.removeItem || defaults.clearAllLabel || ''; },
+      search: function () { return messages.search || ''; },
       searching: function () { return messages.searching || ''; }
     };
+  }
+
+  if ($.fn.select2) {
+    $.fn.select2.defaults.set('language', language());
+    $.fn.select2.defaults.set('placeholder', defaults.placeholder || '');
   }
 
   function dropdownParent($select) {
@@ -266,7 +277,7 @@
       dropdownParent: dropdownParent($select),
       language: language($select),
       minimumInputLength: minimumInputLength,
-      placeholder: $select.data('placeholder') || '',
+      placeholder: $select.data('placeholder') || defaults.placeholder || '',
       theme: 'bootstrap-5',
       width: '100%'
     };

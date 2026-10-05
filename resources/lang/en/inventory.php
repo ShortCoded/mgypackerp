@@ -477,6 +477,11 @@ return [
         ],
     ],
     'movements' => [
+        'lineage' => [
+            'title' => 'Item sources and reservation lineage',
+            'help' => 'Rows follow the movement note line order and show the material request, requirement and run references.',
+            'unavailable' => 'Source reference unavailable',
+        ],
         'title' => 'Inventory Movements',
         'reversal' => [
             'posting_date' => 'Reversal posting date',

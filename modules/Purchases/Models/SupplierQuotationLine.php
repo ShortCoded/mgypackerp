@@ -16,7 +16,7 @@ class SupplierQuotationLine extends Model
     protected $fillable = [
         'public_id', 'supplier_quotation_id', 'request_for_quotation_line_id', 'purchase_requisition_line_id',
         'purchase_order_line_id', 'line_number', 'product_id',
-        'unit_id', 'offered_quantity', 'unit_price', 'discount_amount', 'tax_rate', 'tax_amount',
+        'unit_id', 'offered_quantity', 'unit_price', 'discount_amount', 'discount_type', 'discount_value', 'subtotal_amount', 'header_discount_amount', 'tax_rate', 'tax_amount',
         'line_total', 'delivery_date', 'notes',
     ];
 
@@ -30,6 +30,7 @@ class SupplierQuotationLine extends Model
     protected function casts(): array
     {
         return [
+            'discount_value' => 'decimal:4', 'subtotal_amount' => 'decimal:4', 'header_discount_amount' => 'decimal:4',
             'offered_quantity' => 'decimal:8', 'unit_price' => 'decimal:8', 'discount_amount' => 'decimal:4',
             'tax_rate' => 'decimal:4', 'tax_amount' => 'decimal:4', 'line_total' => 'decimal:4', 'delivery_date' => 'date',
         ];

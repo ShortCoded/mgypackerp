@@ -4,6 +4,7 @@ use App\Http\Middleware\IdempotentDocumentSubmission;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Modules\Auth\Services\PermissionRegistryService;
+use Modules\Core\Http\Controllers\PostedInvoiceLineCorrectionController;
 use Modules\Purchases\Http\Controllers\ProcurementWorkflowController;
 use Modules\Purchases\Http\Controllers\PurchaseInvoiceController;
 use Modules\Purchases\Http\Controllers\PurchaseOrderController;
@@ -171,6 +172,7 @@ Route::middleware('auth')
             Route::get('/', 'index')->middleware('can:purchase_invoices.view')->name('index');
             Route::get('/data', 'data')->middleware('can:purchase_invoices.view')->name('data');
             Route::get('/create', 'create')->middleware('can:purchase_invoices.create')->name('create');
+            Route::post('/discount-preview', 'discountPreview')->name('discount-preview');
             Route::post('/', 'store')->middleware(IdempotentDocumentSubmission::class)->name('store');
             Route::delete('/bulk-delete', 'bulkDelete')->middleware('can:purchase_invoices.delete')->name('bulk-delete');
             Route::put('/document-number-settings', 'updateDocumentNumberSettings')->middleware('can:purchase_invoices.document_number_settings.update')->name('document-number-settings.update');
@@ -263,6 +265,8 @@ Route::middleware('auth')
                 Route::get('/', 'selectionsIndex')->middleware('can:purchases.supplier_selection.view')->name('index');
                 Route::get('/create/{requestForQuotation}', 'createSelection')->middleware(['can:purchases.supplier_selection.create', 'can:purchases.prices.view'])->name('create');
                 Route::post('/from/{requestForQuotation}', 'storeSelection')->middleware(['can:purchases.supplier_selection.create', 'can:purchases.prices.view'])->middleware(IdempotentDocumentSubmission::class)->name('store');
+                Route::get('/{supplierSelection}/edit', 'editSelection')->middleware(['can:purchases.supplier_selection.approve', 'can:purchases.prices.view'])->name('edit');
+                Route::put('/{supplierSelection}', 'updateSelection')->middleware(['can:purchases.supplier_selection.approve', 'can:purchases.prices.view'])->name('update');
                 Route::get('/{supplierSelection}', 'showSelection')->middleware('can:purchases.supplier_selection.view')->name('show');
                 Route::post('/{supplierSelection}/approve', 'approveSelection')->middleware(['can:purchases.supplier_selection.approve', 'can:purchases.prices.view'])->name('approve');
             });
@@ -369,4 +373,12 @@ Route::middleware('auth')
         Route::get('/export/excel', 'exportExcel')->middleware('can:reports.suppliers.export')->name('export.excel');
         Route::get('/export/csv', 'exportCsv')->middleware('can:reports.suppliers.export')->name('export.csv');
         Route::get('/export/pdf', 'exportPdf')->middleware('can:reports.suppliers.pdf')->name('export.pdf');
+    });
+
+Route::middleware('auth')->prefix('/admin/purchases/purchase-invoices/{invoice}/line-corrections')->name('admin.purchases.purchase-invoices.line-corrections.')
+    ->controller(PostedInvoiceLineCorrectionController::class)->group(function (): void {
+        Route::get('/', 'index')->defaults('kind', 'purchase')->name('index');
+        Route::post('/', 'store')->defaults('kind', 'purchase')->name('store');
+        Route::post('/{correction}/approve', 'approve')->defaults('kind', 'purchase')->whereNumber('correction')->name('approve');
+        Route::post('/{correction}/reject', 'reject')->defaults('kind', 'purchase')->whereNumber('correction')->name('reject');
     });

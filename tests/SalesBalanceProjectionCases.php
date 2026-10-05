@@ -264,3 +264,109 @@ test('receipt history follows retained signing keys and refuses scope drift or d
     $f['invoice']->update(['customer_id' => $otherCustomer->id]);
     expect(fn () => $history->assertEvidence($f['company']->id))->toThrow(DomainException::class, __('sales_balance_report.invalid_receipt_evidence'));
 });
+
+test('receipt event seals bind signing keys and authenticate legacy history through rotation and dated reversal', function (): void {
+    $f = laterReturnFixture();
+    $receipt = CustomerReceipt::query()->where('company_id', $f['company']->id)->sole();
+    $allocation = $receipt->allocations()->sole();
+    $history = app(CustomerReceiptApplicationHistoryService::class);
+    $event = (array) DB::table('customer_receipt_application_events')->where('allocation_id', $allocation->id)->sole();
+    $eventSeal = new ReflectionMethod($history, 'seal');
+    $manifestSeal = new ReflectionMethod($history, 'manifestSeal');
+    $key = config('app.key');
+    $previous = config('app.previous_keys');
+    expect($eventSeal->invoke($history, $event, 'SYNTHETIC-first-signing-key'))
+        ->not->toBe($eventSeal->invoke($history, $event, 'SYNTHETIC-second-signing-key'))
+        ->and($event['evidence_seal'])->toBe($eventSeal->invoke($history, $event, $key));
+
+    $event['evidence_seal'] = $eventSeal->invoke($history, $event, 'created_by');
+    DB::table('customer_receipt_application_events')->where('id', $event['id'])->update(['evidence_seal' => $event['evidence_seal']]);
+    $manifest = ['count' => 1, 'digest' => hash('sha256', $event['id'].'|'.$event['evidence_seal'])];
+    $manifest['seal'] = $manifestSeal->invoke($history, $allocation, $manifest, $key);
+    $allocation->update(['settlement_evidence' => $manifest]);
+    $history->assertEvidence($f['company']->id);
+
+    try {
+        $newKey = 'base64:'.base64_encode(str_repeat('R', 32));
+        config(['app.key' => $newKey, 'app.previous_keys' => [$key]]);
+        $history->assertEvidence($f['company']->id);
+        config(['app.previous_keys' => []]);
+        expect(fn () => $history->assertEvidence($f['company']->id))
+            ->toThrow(DomainException::class, __('sales_balance_report.invalid_receipt_evidence'));
+        config(['app.previous_keys' => [$key]]);
+
+        $journal = $receipt->journalEntry;
+        $sourceType = $journal->source_type;
+        $journal->update(['source_type' => 'SYNTHETIC-untrusted-receipt-source']);
+        expect(fn () => $history->assertEvidence($f['company']->id))
+            ->toThrow(DomainException::class, __('sales_balance_report.invalid_receipt_evidence'));
+        $journal->update(['source_type' => $sourceType]);
+
+        $f = laterReturnCloseSource($f);
+        app(CustomerReceiptSettlementService::class)->reverse($receipt, 'SYNTHETIC authenticated legacy reversal');
+        expect((array) DB::table('customer_receipt_application_events')->where('id', $event['id'])->sole())->toBe($event);
+        $inverse = (array) DB::table('customer_receipt_application_events')->where('allocation_id', $allocation->id)->orderByDesc('id')->first();
+        expect($inverse['evidence_seal'])->toBe($eventSeal->invoke($history, $inverse, $newKey))
+            ->not->toBe($eventSeal->invoke($history, $inverse, 'created_by'));
+        config(['app.previous_keys' => []]);
+        $history->assertEvidence($f['company']->id);
+        $projection = app(SalesBalanceProjectionService::class);
+        $projection->assertCorrectionEvidence($f['company']->id);
+        foreach (['2026-09-30' => '80', '2026-10-02' => '80', '2026-10-03' => '0'] as $date => $paid) {
+            $invoice = $projection->invoicesAt($f['company']->id, $date)->findOrFail($f['invoice']->id);
+            $schedule = $projection->schedulesAt($f['company']->id, $date)->where('customer_invoice_id', $invoice->id)->sole();
+            expect(bccomp($invoice->paid_amount, $paid, 4))->toBe(0)
+                ->and(bccomp((string) $schedule->collected_amount, $paid, 4))->toBe(0);
+        }
+    } finally {
+        config(['app.key' => $key, 'app.previous_keys' => $previous]);
+    }
+});
+
+test('legacy receipt event evidence rejects company drift public resealing and missing manifests', function (): void {
+    $f = laterReturnFixture();
+    $receipt = CustomerReceipt::query()->where('company_id', $f['company']->id)->sole();
+    $allocation = $receipt->allocations()->sole();
+    $history = app(CustomerReceiptApplicationHistoryService::class);
+    $event = (array) DB::table('customer_receipt_application_events')->where('allocation_id', $allocation->id)->sole();
+    $otherCompanyId = DB::table('companies')->where('id', '!=', $f['company']->id)->value('id');
+    expect($otherCompanyId)->not->toBeNull();
+    DB::table('customer_receipt_application_events')->where('id', $event['id'])->update(['company_id' => $otherCompanyId]);
+    expect(fn () => $history->assertEvidence($f['company']->id))
+        ->toThrow(DomainException::class, __('sales_balance_report.invalid_receipt_evidence'));
+    DB::table('customer_receipt_application_events')->where('id', $event['id'])->update(['company_id' => $event['company_id']]);
+
+    $eventSeal = new ReflectionMethod($history, 'seal');
+    $manifestSeal = new ReflectionMethod($history, 'manifestSeal');
+    $event['evidence_seal'] = $eventSeal->invoke($history, $event, 'created_by');
+    DB::table('customer_receipt_application_events')->where('id', $event['id'])->update(['evidence_seal' => $event['evidence_seal']]);
+    $manifest = ['count' => 1, 'digest' => hash('sha256', $event['id'].'|'.$event['evidence_seal'])];
+    $manifest['seal'] = $manifestSeal->invoke($history, $allocation, $manifest, config('app.key'));
+    $allocation->update(['settlement_evidence' => $manifest]);
+    $history->assertEvidence($f['company']->id);
+
+    $forgedEvent = [...$event, 'created_by' => $f['reviewer']->id];
+    $forgedEvent['evidence_seal'] = $eventSeal->invoke($history, $forgedEvent, 'created_by');
+    DB::table('customer_receipt_application_events')->where('id', $event['id'])->update([
+        'created_by' => $forgedEvent['created_by'], 'evidence_seal' => $forgedEvent['evidence_seal'],
+    ]);
+    expect(fn () => $history->assertEvidence($f['company']->id))
+        ->toThrow(DomainException::class, __('sales_balance_report.invalid_receipt_evidence'));
+    $forgedManifest = ['count' => 1, 'digest' => hash('sha256', $event['id'].'|'.$forgedEvent['evidence_seal'])];
+    $forgedManifest['seal'] = $manifestSeal->invoke($history, $allocation, $forgedManifest, 'created_by');
+    $allocation->update(['settlement_evidence' => $forgedManifest]);
+    expect(fn () => $history->assertEvidence($f['company']->id))
+        ->toThrow(DomainException::class, __('sales_balance_report.invalid_receipt_evidence'));
+    $allocation->update(['settlement_evidence' => null]);
+    expect(fn () => $history->assertEvidence($f['company']->id))
+        ->toThrow(DomainException::class, __('sales_balance_report.invalid_receipt_evidence'));
+
+    DB::table('customer_receipt_application_events')->where('id', $event['id'])->update([
+        'created_by' => $event['created_by'], 'evidence_seal' => $event['evidence_seal'],
+    ]);
+    $allocation->update(['settlement_evidence' => $manifest]);
+    $history->assertEvidence($f['company']->id);
+    DB::table('customer_receipt_application_events')->where('id', $event['id'])->delete();
+    expect(fn () => $history->assertEvidence($f['company']->id))
+        ->toThrow(DomainException::class, __('sales_balance_report.invalid_receipt_evidence'));
+});

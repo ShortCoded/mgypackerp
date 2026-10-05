@@ -2164,7 +2164,12 @@ test('linked production orders cannot collectively exceed the sales source quant
 
     expect(fn () => $cycle->createMakeToStockOrder($header, $line('0.00000001')))
         ->toThrow(DomainException::class, __('production_execution.messages.source_quantity_exceeds_remaining'));
-    expect(fn () => $cycle->updateDraftOrder($first, $header, $line('6.00000001')))
+    Permission::findOrCreate('production.orders.edit', 'web');
+    $fixture['user']->givePermissionTo('production.orders.edit');
+    request()->setUserResolver(fn () => $fixture['user']);
+    request()->setLaravelSession(app('session.store'));
+    request()->session()->put(salesCycleSession($fixture));
+    expect(fn () => $cycle->updateDraftOrder($first, [...$header, 'amendment_token' => $first->amendmentToken(), 'amendment_reason' => 'Synthetic capped correction'], $line('6.00000001')))
         ->toThrow(DomainException::class, __('production_execution.messages.source_quantity_exceeds_remaining'));
 
     expect((string) ProductionOrderLine::query()
@@ -3170,7 +3175,7 @@ test('sales reports separate operational fulfillment financial aging and product
         ->assertSee('Sales financial summary')
         ->assertSee('Quotation Status / History')
         ->assertSee('Invoice to Delivery Fulfillment')
-        ->assertSee('Invoiced')
+        ->assertSee(__('sales_ui.gross_invoiced_quantity'))
         ->assertSee('Remaining Delivery')
         ->assertSee($order->doc_num)
         ->assertSee($invoice->doc_num)

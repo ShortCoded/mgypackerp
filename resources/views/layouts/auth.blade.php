@@ -162,6 +162,8 @@
     <script src="{{ asset('vendors/lodash/lodash.min.js') }}"></script>
     <script src="{{ asset('vendors/list.js/list.min.js') }}"></script>
     <script src="{{ asset('vendors/select2/select2.full.min.js') }}"></script>
+    @include('layouts.partials.select2-config')
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Core/select2-ajax.js') }}"></script>
     <script src="{{ asset('vendors/simplebar/simplebar.min.js') }}"></script>
     <script src="{{ asset('assets/js/theme.js') }}"></script>
     <script src="{{ asset('assets/js/modules/Core/client-context.js') }}"></script>

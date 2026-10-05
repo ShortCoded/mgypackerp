@@ -186,7 +186,7 @@
                     @foreach([
                         ['invoice_count', 'invoice_count', false], ['gross_sales', 'gross_sales', true],
                         ['credit_notes', 'credit_notes_returns', true], ['net_sales', 'net_sales', true],
-                        ['collections', 'collections', true], ['outstanding', 'outstanding', true],
+                        ['collections', 'collections', true], ['actual_withholding', 'wht.actual', true], ['outstanding', 'outstanding', true],
                         ['overdue_outstanding', 'overdue_outstanding', true],
                     ] as [$key, $label, $showCurrency])
                         <div class="col-12 col-sm-6 col-lg-4 col-xl-3"><div class="border rounded h-100 p-3 bg-white"><div class="text-600 fs-11 mb-1">{{ __('sales_ui.'.$label) }}</div><div class="w-100 fs-5 fw-bold text-900 text-end white-space-nowrap" dir="ltr">{{ $numbers->format($financialSummary[$key]) }} @if($showCurrency)<small>{{ $reportCurrency?->code }}</small>@endif</div></div></div>

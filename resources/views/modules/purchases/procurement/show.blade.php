@@ -206,6 +206,7 @@
                     @endcan
                 @endif
                 @if($type === 'supplier_selection' && $record->status === 'draft')
+                    @can('purchases.supplier_selection.approve') @can('purchases.prices.view')<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.supplier-selection.edit', $record) }}">{{ __('Edit') }}</a>@endcan @endcan
                     @can('purchases.supplier_selection.approve')
                     @can('purchases.prices.view')
                     <form method="POST" action="{{ route('admin.purchases.supplier-selection.approve', $record->doc_num) }}">@csrf<button class="btn btn-success btn-sm">{{ __('Approve and generate POs') }}</button></form>
@@ -436,7 +437,7 @@
                             <th>#</th><th>{{ __('Item / Invoice') }}</th><th>{{ __('Source') }}</th><th class="text-end">{{ __('Quantity') }}</th>
                             @if($type === 'purchase_requisition')<th>{{ __('Approved Quantity') }}</th><th>{{ __('Ordered Quantity') }}</th><th>{{ __('Remaining to order') }}</th>@endif
                             @if($type === 'goods_receipt_inspection')<th class="text-end">{{ __('Accepted') }}</th><th class="text-end">{{ __('Rejected') }}</th><th class="text-end">{{ __('Received') }}</th><th class="text-end">{{ __('Remaining') }}</th>@endif
-                            @if($showPrices)<th class="text-end">{{ __('Unit price') }}</th><th class="text-end">{{ __('Total') }}</th>@endif
+                            @if($showPrices)@if(in_array($type, ['supplier_quotation', 'supplier_selection'], true))<th>{{ __('Discount') }}</th><th>{{ __('procurement.fields.commercial_header_discount') }}</th>@endif<th class="text-end">{{ __('Unit price') }}</th><th class="text-end">{{ __('Total') }}</th>@endif
                             <th>{{ __('Disposition / Notes') }}</th>
                             @if($lineAttachmentsSupported)<th>{{ __('Attachments') }}</th>@endif
                         </tr></thead>
@@ -467,6 +468,7 @@
                                         <td class="text-end" dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($line->remainingReceiptQuantity()) }}</td>
                                     @endif
                                     @if($showPrices)
+                                        @if(in_array($type, ['supplier_quotation', 'supplier_selection'], true))<td>@include('modules.purchases.procurement.partials.discount-details', ['discountType' => $line->discount_type ?: 'fixed', 'discountValue' => $line->discount_value ?? $line->discount_amount, 'discountAmount' => $line->discount_amount])</td><td>@include('modules.purchases.procurement.partials.discount-details', ['discountType' => $type === 'supplier_quotation' ? $record->header_discount_type : $line->header_discount_type, 'discountValue' => $type === 'supplier_quotation' ? $record->header_discount_value : $line->header_discount_value, 'discountAmount' => $line->header_discount_amount])</td>@endif
                                         <td class="text-end" dir="ltr">{{ isset($line->unit_price) ? app(\Modules\Core\Services\NumericFormatService::class)->format($line->unit_price) : '—' }}</td>
                                         <td class="text-end" dir="ltr">{{ isset($line->line_total) ? app(\Modules\Core\Services\NumericFormatService::class)->format($line->line_total) : (isset($line->amount) ? app(\Modules\Core\Services\NumericFormatService::class)->format($line->amount) : '—') }}</td>
                                     @endif

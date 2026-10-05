@@ -2,7 +2,9 @@
     $isTrashed = $record->trashed();
     $canView = ! $isTrashed && auth()->user()?->can('production.orders.view');
     $canClone = $canManage && ! $isTrashed && auth()->user()?->can('production.orders.clone');
-    $canEdit = $canManage && ! $isTrashed && $record->status === \Modules\Production\Models\ProductionOrder::StatusDraft && $record->runs_count === 0 && auth()->user()?->can('production.orders.edit');
+    $canEdit = $canManage && ! $isTrashed && auth()->user()?->can('production.orders.edit')
+        && ($record->status === \Modules\Production\Models\ProductionOrder::StatusDraft || auth()->user()?->can('production.orders.release'))
+        && $record->canAmendBeforeExecution();
     $canDelete = $canManage && ! $isTrashed && $record->status === \Modules\Production\Models\ProductionOrder::StatusDraft && $record->runs_count === 0 && auth()->user()?->can('production.orders.delete');
     $canRestore = $canManage && $isTrashed && auth()->user()?->can('production.orders.restore');
 @endphp

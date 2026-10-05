@@ -11,10 +11,10 @@
     $productionOrder = $record->productionOrder ?? $record->productionRun?->order;
     $salesOrder = $productionOrder?->salesOrder ?? $record->salesOrder;
     $relatedDocuments = collect([
-        ['label' => __('inventory.movements.production_material_request'), 'number' => $record->productionMaterialRequest?->doc_num, 'url' => $record->productionMaterialRequest ? route('admin.production.material-requests.show', $record->productionMaterialRequest) : null, 'permission' => 'production.material_requests.view'],
-        ['label' => __('Production Run'), 'number' => $record->productionRun?->run_number, 'url' => $record->productionRun ? route('admin.production.runs.show', $record->productionRun) : null, 'permission' => 'production.runs.view'],
-        ['label' => __('Production Order'), 'number' => $productionOrder?->doc_num, 'url' => $productionOrder ? route('admin.production.work-orders.show', $productionOrder) : null, 'permission' => 'production.orders.view'],
         ['label' => __('Sales Requirement / Order'), 'number' => $salesOrder?->doc_num, 'url' => $salesOrder ? route('admin.sales.sales-orders.show', $salesOrder) : null, 'permission' => 'sales_orders.view'],
+        ['label' => __('Production Order'), 'number' => $productionOrder?->doc_num, 'url' => $productionOrder ? route('admin.production.work-orders.show', $productionOrder) : null, 'permission' => 'production.orders.view'],
+        ['label' => __('Production Run'), 'number' => $record->productionRun?->run_number, 'url' => $record->productionRun ? route('admin.production.runs.show', $record->productionRun) : null, 'permission' => 'production.runs.view'],
+        ['label' => __('inventory.movements.production_material_request'), 'number' => $record->productionMaterialRequest?->doc_num, 'url' => $record->productionMaterialRequest ? route('admin.production.material-requests.show', $record->productionMaterialRequest) : null, 'permission' => 'production.material_requests.view'],
     ]);
 @endphp
 <div>
@@ -52,10 +52,29 @@
     <div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>#</th><th>{{ __('Product') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th><th>{{ __('Batch / lot') }}</th>@if($record->lines->contains('inventory_serial_identity_id', '!=', null))<th>{{ __('inventory_serial.number') }}</th>@endif</tr></thead><tbody>@foreach($record->lines as $line)<tr><td>{{ $line->line_number }}</td><td>{{ $line->product?->doc_num }} — {{ $line->product?->name }}</td><td>{{ $line->unit?->name ?: '—' }}</td><td>{{ $numbers->format($line->quantity) }}</td><td>{{ $line->batch_lot ?: '—' }}</td>@if($record->lines->contains('inventory_serial_identity_id', '!=', null))<td dir="ltr">{{ $line->serialIdentity?->serial_number ?: '—' }}</td>@endif</tr>@endforeach</tbody></table></div>
 </div>
 @include('modules.inventory.documents.partials.receipt-cost-card')
-<x-related-documents :documents="$relatedDocuments" />
-@if($record->lines->contains(fn ($line) => $line->reservation))
-<div class="card mb-3"><div class="card-header"><h6 class="mb-0">{{ __('Reservation and BOM requirement lineage') }}</h6></div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>{{ __('Line') }}</th><th>{{ __('Reservation') }}</th><th>{{ __('BOM requirement') }}</th><th>{{ __('Run') }}</th></tr></thead><tbody>@foreach($record->lines as $line)@if($line->reservation)<tr><td>{{ $line->line_number }}</td><td>{{ $line->reservation->public_id }}</td><td>{{ $line->reservation->productionMaterialRequirement?->public_id }} · {{ __('line') }} {{ $line->reservation->productionMaterialRequirement?->line_number }}</td><td>{{ $line->productionRun?->run_number ?? $record->productionRun?->run_number }}</td></tr>@endif
-@endforeach</tbody></table></div></div>
+<div data-inventory-source-chain><x-related-documents :documents="$relatedDocuments" /></div>
+@if($lineageRows)
+<div class="card mb-3" data-inventory-lineage><div class="card-header"><h6 class="mb-0">{{ __('inventory.movements.lineage.title') }}</h6><p class="small text-muted mb-0">{{ __('inventory.movements.lineage.help') }}</p></div>
+<div class="table-responsive"><table class="table table-sm align-middle mb-0" dir="{{ app()->isLocale('ar') ? 'rtl' : 'ltr' }}"><thead><tr><th>{{ __('Line') }}</th><th>{{ __('Product') }}</th><th>{{ __('inventory.movements.production_material_request') }}</th><th>{{ __('Reservation') }}</th><th>{{ __('BOM requirement') }}</th><th>{{ __('Run') }}</th></tr></thead><tbody>
+@foreach($lineageRows as $row)<tr>
+<td><bdi dir="ltr">{{ $numbers->format($row['line_number']) }}</bdi></td>
+<td class="text-wrap" style="min-width:14rem;max-width:26rem;overflow-wrap:anywhere;">@if($row['item_code'])<div><bdi dir="ltr">{{ $row['item_code'] }}</bdi></div>@endif<div>{{ $row['item_name'] }}</div></td>
+<td class="text-wrap">@if($row['request_number'])@if($row['request_url'])<a href="{{ $row['request_url'] }}"><bdi dir="ltr">{{ $row['request_number'] }}</bdi></a>@else<bdi dir="ltr">{{ $row['request_number'] }}</bdi>@endif<div class="small">{{ __('Line') }} <bdi dir="ltr">{{ $numbers->format($row['request_line']) }}</bdi></div>@else{{ __('inventory.movements.lineage.unavailable') }}@endif</td>
+<td>@if($row['reservation_quantity'] !== null)<bdi dir="ltr">{{ $numbers->format($row['reservation_quantity']) }}</bdi> {{ $row['unit_name'] }}<div class="small">{{ __(str($row['reservation_status'])->replace('_', ' ')->title()->toString()) }}</div>@else{{ __('inventory.movements.lineage.unavailable') }}@endif</td>
+<td>@if($row['requirement_line'] !== null){{ __('Line') }} <bdi dir="ltr">{{ $numbers->format($row['requirement_line']) }}</bdi>@else{{ __('inventory.movements.lineage.unavailable') }}@endif</td>
+<td>
+    @if($row['run_number'])
+        @if($row['run_url'])
+            <a href="{{ $row['run_url'] }}"><bdi dir="ltr">{{ $row['run_number'] }}</bdi></a>
+        @else
+            <bdi dir="ltr">{{ $row['run_number'] }}</bdi>
+        @endif
+    @else
+        {{ __('inventory.movements.lineage.unavailable') }}
+    @endif
+</td>
+</tr>@endforeach
+</tbody></table></div></div>
 @endif
 </div>
 @endsection

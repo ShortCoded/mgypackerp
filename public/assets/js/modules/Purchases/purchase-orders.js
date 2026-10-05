@@ -407,6 +407,7 @@
     let totalTax = '0';
     const freightAmount = nonNegative(value($('#freight_amount').val() || $('#freight_amount').text()));
     let totalAmount = freightAmount;
+    const calculatedLines = [];
 
     $('.js-purchase-order-line').each(function () {
       const $row = $(this);
@@ -429,6 +430,7 @@
       $row.find('.js-line-total').text(formatAmount(lineTotal));
       $row.find('.js-line-remaining').text(formatQuantity(remaining));
 
+      calculatedLines.push({ $row: $row, taxable: lineTaxable, taxRate: taxRate });
       totalOrdered = sum(totalOrdered, quantity);
       totalReceived = sum(totalReceived, received);
       totalRemaining = sum(totalRemaining, remaining);
@@ -439,6 +441,36 @@
       totalAmount = sum(totalAmount, lineTotal);
     });
 
+    const headerType = $('#header_discount_type').val();
+    const headerValue = nonNegative(value($('#header_discount_value').val()));
+    let headerDiscount = headerType === 'percentage' ? money(product(totalTaxable, product(rate(headerValue), '0.01'))) : (headerType === 'fixed' ? headerValue : '0');
+    headerDiscount = decimals.compare(headerDiscount, totalTaxable) > 0 ? totalTaxable : headerDiscount;
+    let allocated = '0';
+    let remainingBase = totalTaxable;
+    const positiveLines = calculatedLines.filter(entry => decimals.compare(entry.taxable, '0') > 0);
+    totalTax = '0';
+    calculatedLines.forEach(entry => {
+      let share = decimals.compare(entry.taxable, '0') > 0 ? money(decimals.divide(product(headerDiscount, entry.taxable), totalTaxable, 16)) : '0';
+      const remaining = nonNegative(decimals.subtract(headerDiscount, allocated));
+      if (entry === positiveLines[positiveLines.length - 1]) share = remaining;
+      if (decimals.compare(share, remaining) > 0) share = remaining;
+      remainingBase = nonNegative(decimals.subtract(remainingBase, entry.taxable));
+      const minimumShare = nonNegative(decimals.subtract(remaining, remainingBase));
+      if (decimals.compare(share, minimumShare) < 0) {
+        share = minimumShare;
+      }
+      if (decimals.compare(share, entry.taxable) > 0) {
+        share = entry.taxable;
+      }
+      allocated = sum(allocated, share);
+      const base = nonNegative(decimals.subtract(entry.taxable, share));
+      const tax = money(product(base, product(entry.taxRate, '0.01')));
+      entry.$row.find('.js-line-total').text(formatAmount(sum(base, tax)));
+      totalTax = sum(totalTax, tax);
+    });
+    totalTaxable = nonNegative(decimals.subtract(totalTaxable, headerDiscount));
+    totalAmount = sum(sum(totalTaxable, totalTax), freightAmount);
+    $('.js-total-header-discount').text(formatAmount(headerDiscount));
     $('.js-total-ordered').text(formatQuantity(totalOrdered));
     $('.js-total-received').text(formatQuantity(totalReceived));
     $('.js-total-remaining').text(formatQuantity(totalRemaining));
@@ -767,7 +799,8 @@
       populateUnits($(this).closest('.js-purchase-order-line'), [], null);
     });
 
-    $(document).on('input change', '#freight_amount, .js-line-quantity, .js-line-unit-price, .js-line-discount-type, .js-line-discount-value, .js-line-tax-rate', calculateTotals);
+    $(document).on('change', '#header_discount_type', function () { if (!this.value) $('#header_discount_value').val('0'); });
+    $(document).on('input change', '#freight_amount, #header_discount_type, #header_discount_value, .js-line-quantity, .js-line-unit-price, .js-line-discount-type, .js-line-discount-value, .js-line-tax-rate', calculateTotals);
 
     $(document).on('click', '.js-finance-submit-action', function () {
       $(this).closest('form').find('[name="submit_action"]').val($(this).data('submit-action') || 'save');

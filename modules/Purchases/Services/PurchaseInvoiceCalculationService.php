@@ -20,6 +20,7 @@ class PurchaseInvoiceCalculationService
 
     /**
      * @param  list<array<string, mixed>>  $lines
+     * @param  array<int, array{quantity: string, gross: string, discount: string, header: string, tax: string}>  $bookedAllocations
      * @return array{invoice: array<string, string|null>, lines: list<array<string, mixed>>}
      */
     public function calculate(
@@ -28,16 +29,21 @@ class PurchaseInvoiceCalculationService
         mixed $headerDiscountValue,
         mixed $freightAmount = 0,
         mixed $freightTaxRate = 0,
+        array $bookedAllocations = [],
     ): array {
         $calculatedLines = [];
         $subtotal = $this->zero();
         $lineDiscountTotal = $this->zero();
 
-        foreach ($lines as $line) {
+        foreach ($lines as $index => $line) {
             $quantity = $this->normalize($line['quantity'] ?? 0, self::QuantityScale);
             $unitPrice = $this->numbers->normalize($this->normalize($line['unit_price'] ?? 0, 8)) ?? '0';
             $lineSubtotal = $this->round(bcmul($quantity, $unitPrice, self::IntermediateScale));
             $lineDiscount = $this->discountAmount($lineSubtotal, $line['discount_type'] ?? null, $line['discount_value'] ?? 0);
+            if (isset($bookedAllocations[$index])) {
+                $lineSubtotal = $bookedAllocations[$index]['gross'];
+                $lineDiscount = $bookedAllocations[$index]['discount'];
+            }
             $totalBeforeTax = $this->nonNegative(bcsub($lineSubtotal, $lineDiscount, self::AmountScale));
             $taxRate = $this->nonNegative($this->normalize($line['tax_rate'] ?? 0));
             $lineTax = $this->percentageOf($totalBeforeTax, $taxRate);
@@ -62,23 +68,43 @@ class PurchaseInvoiceCalculationService
 
         $headerDiscountBase = $this->nonNegative(bcsub($subtotal, $lineDiscountTotal, self::AmountScale));
         $headerDiscount = $this->discountAmount($headerDiscountBase, $headerDiscountType, $headerDiscountValue);
+        if ($bookedAllocations !== []) {
+            $headerDiscount = array_reduce($bookedAllocations, fn (string $sum, array $row): string => bcadd($sum, $row['header'], 4), $this->zero());
+        }
         $itemTaxableAmount = $this->nonNegative(bcsub($headerDiscountBase, $headerDiscount, self::AmountScale));
         $taxTotal = $this->zero();
         $allocatedHeaderDiscount = $this->zero();
-        $lastLineIndex = max(0, count($calculatedLines) - 1);
+        $remainingBase = $headerDiscountBase;
+        $positiveBases = array_keys(array_filter($calculatedLines, fn (array $line): bool => bccomp($line['total_before_tax'], '0', 4) > 0));
+        $lastLineIndex = $positiveBases === [] ? null : end($positiveBases);
 
         foreach ($calculatedLines as $index => &$line) {
             $lineBase = $this->normalize($line['total_before_tax']);
-            $headerDiscountShare = $this->allocationShare(
+            $headerDiscountShare = bccomp($lineBase, '0', 4) > 0 ? $this->allocationShare(
                 $headerDiscount,
                 $allocatedHeaderDiscount,
                 $lineBase,
                 $headerDiscountBase,
                 $index === $lastLineIndex,
-            );
+            ) : $this->zero();
+            $remainingBase = $this->nonNegative(bcsub($remainingBase, $lineBase, 4));
+            $minimumShare = $this->nonNegative(bcsub(bcsub($headerDiscount, $allocatedHeaderDiscount, 4), $remainingBase, 4));
+            if (bccomp($headerDiscountShare, $minimumShare, 4) < 0) {
+                $headerDiscountShare = $minimumShare;
+            }
+            if (bccomp($headerDiscountShare, $lineBase, 4) > 0) {
+                $headerDiscountShare = $lineBase;
+            }
+            if (isset($bookedAllocations[$index])) {
+                $headerDiscountShare = $bookedAllocations[$index]['header'];
+            }
             $allocatedHeaderDiscount = bcadd($allocatedHeaderDiscount, $headerDiscountShare, self::AmountScale);
             $lineTaxableAmount = $this->nonNegative(bcsub($lineBase, $headerDiscountShare, self::AmountScale));
             $lineTax = $this->percentageOf($lineTaxableAmount, $this->nonNegative($line['tax_rate']));
+            if (isset($bookedAllocations[$index])) {
+                $lineTax = $bookedAllocations[$index]['tax'];
+            }
+            $line['header_discount_amount'] = $headerDiscountShare;
             $line['tax_amount'] = $lineTax;
             $line['total_after_tax'] = bcadd($lineTaxableAmount, $lineTax, self::AmountScale);
             $taxTotal = bcadd($taxTotal, $lineTax, self::AmountScale);
@@ -179,6 +205,10 @@ class PurchaseInvoiceCalculationService
     public function netAmountsByLine(PurchaseInvoice $invoice): array
     {
         $invoice->loadMissing('lines');
+        $storedHeaderTotal = $invoice->lines->reduce(fn (string $total, PurchaseInvoiceLine $line): string => bcadd($total, (string) ($line->header_discount_amount ?? 0), 4), $this->zero());
+        if (bccomp($storedHeaderTotal, (string) $invoice->header_discount_amount, 4) === 0) {
+            return $invoice->lines->mapWithKeys(fn (PurchaseInvoiceLine $line): array => [$line->getKey() => $this->nonNegative(bcsub((string) $line->total_before_tax, (string) ($line->header_discount_amount ?? 0), 4))])->all();
+        }
         $lineBaseTotal = $invoice->lines->reduce(
             fn (string $total, PurchaseInvoiceLine $line): string => bcadd(
                 $total,

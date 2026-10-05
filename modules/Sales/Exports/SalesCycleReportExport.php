@@ -45,30 +45,30 @@ class SalesCycleReportExport implements WithMultipleSheets
         if ($ledgerSource instanceof Paginator) {
             $ledgerSource = $ledgerSource->items();
         }
-        $ledgerRows = collect($ledgerSource)->map(fn ($row): array => [$dateValue($row->invoice_date), $row->customer?->name, $row->doc_num, $row->order?->doc_num, $row->deliveries->pluck('doc_num')->implode(', '), $row->currency?->code, $row->subtotal_amount, $row->discount_amount, $row->tax_amount, $row->total_amount, $row->returns_amount ?? '0', bcsub($row->total_amount, (string) ($row->returns_amount ?? 0), 4), $row->paid_amount, $row->remaining_amount]);
-        $ledgerRows->push(['', '', $totalLabel.' ('.($ledgerSummary['invoice_count'] ?? 0).')', '', '', '', '', '', '', $ledgerSummary['gross_sales'] ?? 0, $ledgerSummary['returns_amount'] ?? 0, $ledgerSummary['net_sales'] ?? 0, $ledgerSummary['collected'] ?? 0, $ledgerSummary['outstanding'] ?? 0]);
+        $ledgerRows = collect($ledgerSource)->map(fn ($row): array => [$dateValue($row->invoice_date), $row->customer?->name, $row->doc_num, $row->order?->doc_num, $row->deliveries->pluck('doc_num')->implode(', '), $row->currency?->code, $row->subtotal_amount, $row->discount_amount, $row->tax_amount, $row->total_amount, $row->returns_amount ?? '0', bcsub($row->total_amount, (string) ($row->returns_amount ?? 0), 4), $row->paid_amount, $row->remaining_amount, ...$this->discountColumns($row), $row->actual_withholding_amount]);
+        $ledgerRows->push(['', '', $totalLabel.' ('.($ledgerSummary['invoice_count'] ?? 0).')', '', '', '', '', '', '', $ledgerSummary['gross_sales'] ?? 0, $ledgerSummary['returns_amount'] ?? 0, $ledgerSummary['net_sales'] ?? 0, $ledgerSummary['collected'] ?? 0, $ledgerSummary['outstanding'] ?? 0, '', '', '', $ledgerSummary['actual_withholding'] ?? 0]);
         $quantity = app(SalesCycleReadService::class)->reportQuantity(...);
         $invoiceLineRows = collect($ledgerSource)->flatMap(fn ($invoice) => $invoice->lines->map(fn ($line): array => [
             $invoice->doc_num, $invoice->customer?->name, $line->product?->name, $line->product?->category?->name,
             $line->quantity, $line->unit_price, $line->discount_amount, $line->tax_amount, $line->line_total,
-            $quantity($line->returned_quantity ?? 0), bcsub((string) $line->quantity, $quantity($line->returned_quantity ?? 0), 8),
+            $quantity($line->returned_quantity ?? 0), bcsub((string) $line->quantity, $quantity($line->returned_quantity ?? 0), 8), ...$this->discountColumns($line),
         ]));
         $invoiceCsvRows = collect($ledgerSource)->flatMap(function ($invoice) use ($quantity, $dateValue): Collection {
             $netSales = bcsub((string) $invoice->total_amount, (string) ($invoice->returns_amount ?? 0), 4);
             $header = [$this->label('row_types.invoice'), $invoice->doc_num, $invoice->customer?->name, $dateValue($invoice->invoice_date), $invoice->order?->doc_num, $invoice->currency?->code,
-                '', '', '', '', '', '', '', '', '', $invoice->total_amount, $invoice->returns_amount ?? '0', $netSales, $invoice->paid_amount, $invoice->remaining_amount];
+                '', '', '', '', '', '', '', '', '', $invoice->total_amount, $invoice->returns_amount ?? '0', $netSales, $invoice->paid_amount, $invoice->remaining_amount, ...$this->discountColumns($invoice), $invoice->actual_withholding_amount];
             $lines = $invoice->lines->map(fn ($line): array => [
                 $this->label('row_types.line'), $invoice->doc_num, '', '', '', '', $line->product?->name, $line->product?->category?->name,
                 $line->quantity, $line->unit_price, $line->discount_amount, $line->tax_amount, $line->line_total,
                 $quantity($line->returned_quantity ?? 0), bcsub((string) $line->quantity, $quantity($line->returned_quantity ?? 0), 8),
-                '', '', '', '', '',
+                '', '', '', '', '', ...$this->discountColumns($line), '',
             ]);
 
             return collect([$header])->concat($lines);
         });
         $invoiceCsvRows->push([$this->label('row_types.total'), $totalLabel.' ('.($ledgerSummary['invoice_count'] ?? 0).')', '', '', '', '', '', '', '', '', '', '', '', '', '',
             $ledgerSummary['gross_sales'] ?? '0', $ledgerSummary['returns_amount'] ?? '0', $ledgerSummary['net_sales'] ?? '0',
-            $ledgerSummary['collected'] ?? '0', $ledgerSummary['outstanding'] ?? '0']);
+            $ledgerSummary['collected'] ?? '0', $ledgerSummary['outstanding'] ?? '0', '', '', '', $ledgerSummary['actual_withholding'] ?? '0']);
         $customerRows = collect($this->report['salesByCustomer'] ?? [])->map(fn ($row): array => [$row->doc_num, $row->name, $row->sales_value, $row->outstanding]);
         $customerRows->push([$totalLabel.' ('.($customerSummary['customer_count'] ?? 0).')', '', $customerSummary['sales_value'] ?? 0, $customerSummary['outstanding'] ?? 0]);
         $productRows = collect($this->report['salesByItem'] ?? [])->map(fn ($row): array => [$row->doc_num, $row->name, $row->sold_quantity, $row->sales_value]);
@@ -119,8 +119,8 @@ class SalesCycleReportExport implements WithMultipleSheets
                 [$this->label('metrics.overdue_outstanding'), $summary['overdue_outstanding'] ?? 0], [$this->label('metrics.collection_rate'), $summary['collection_rate'] ?? 0],
                 [$this->label('metrics.return_rate'), $summary['return_rate'] ?? 0],
             ]), ['B']),
-            'ledger' => $this->sheet($this->label('sheets.ledger'), $this->headings(['invoice_date', 'customer', 'invoice', 'order', 'deliveries', 'currency', 'gross', 'discount', 'tax', 'net_invoice', 'credit_notes_returns', 'net_sales', 'collected', 'outstanding']), $ledgerRows, range('G', 'N')),
-            'invoice_lines' => $this->sheet($this->label('sheets.invoice_lines'), $this->headings(['invoice', 'customer', 'item', 'category', 'quantity', 'price', 'discount', 'tax', 'value', 'returned', 'net_sold']), $invoiceLineRows, range('E', 'K')),
+            'ledger' => $this->sheet($this->label('sheets.ledger'), $this->headings(['invoice_date', 'customer', 'invoice', 'order', 'deliveries', 'currency', 'gross', 'discount', 'tax', 'net_invoice', 'credit_notes_returns', 'net_sales', 'collected', 'outstanding', 'discount_type', 'discount_value', 'header_discount_amount', 'actual_withholding']), $ledgerRows, [...range('G', 'N'), 'P', 'Q', 'R']),
+            'invoice_lines' => $this->sheet($this->label('sheets.invoice_lines'), $this->headings(['invoice', 'customer', 'item', 'category', 'quantity', 'price', 'discount', 'tax', 'value', 'returned', 'net_sold', 'discount_type', 'discount_value', 'header_discount_amount']), $invoiceLineRows, [...range('E', 'K'), 'M', 'N']),
             'quotations' => $this->sheet($this->label('sheets.quotations'), $this->headings(['quotation', 'customer', 'date', 'valid_until', 'status', 'revision', 'total']), collect($this->report['quotations'] ?? [])->map(fn ($row): array => [$row->doc_num, $row->customer?->name, $dateValue($row->quotation_date), $dateValue($row->valid_until), __('quotations.statuses.'.$row->status), $row->currentRevision?->revision_code, $row->currentRevision?->total]), ['G']),
             'requests' => $this->sheet($this->label('sheets.requests'), $this->headings(['document', 'date', 'customer', 'status', 'requested', 'converted', 'downstream_declined', 'net_converted', 'remaining']), $requestRows, range('E', 'I')),
             'request_declines' => $this->sheet($this->label('sheets.request_declines'), $this->headings(['document', 'date', 'customer', 'status', 'requested', 'converted', 'downstream_declined', 'net_converted', 'remaining']), $declinedRequestRows, range('E', 'I')),
@@ -152,8 +152,8 @@ class SalesCycleReportExport implements WithMultipleSheets
             return [$this->sheet($this->label('sheets.ledger'), $this->headings([
                 'row_type', 'invoice', 'customer', 'invoice_date', 'order', 'currency', 'item', 'category',
                 'quantity', 'price', 'discount', 'tax', 'value', 'returned', 'net_sold',
-                'net_invoice', 'credit_notes_returns', 'net_sales', 'collected', 'outstanding',
-            ]), $invoiceCsvRows, $this->csvTextColumns(20))];
+                'net_invoice', 'credit_notes_returns', 'net_sales', 'collected', 'outstanding', 'discount_type', 'discount_value', 'header_discount_amount', 'actual_withholding',
+            ]), $invoiceCsvRows, $this->csvTextColumns(24))];
         }
 
         if ($this->forCsv && ($this->report['reportType'] ?? null) === 'cost_of_sales') {
@@ -207,6 +207,13 @@ class SalesCycleReportExport implements WithMultipleSheets
         }
 
         return collect($keys)->map(fn (string $key): SalesCycleReportSheet => $sheets[$key])->all();
+    }
+
+    /** @return array{string, string, string} */
+    private function discountColumns(object $record): array
+    {
+        return [$record->discount_type ? __('quotations.discount_types.'.$record->discount_type) : '',
+            (string) ($record->discount_value ?? ''), (string) ($record->header_discount_amount ?? '0.0000')];
     }
 
     /** @param list<string> $headings */

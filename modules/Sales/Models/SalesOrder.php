@@ -52,7 +52,9 @@ class SalesOrder extends Model
     {
         return [
             'order_date' => 'date', 'expected_delivery_date' => 'date', 'exchange_rate' => 'decimal:6',
-            'subtotal_amount' => 'decimal:4', 'discount_amount' => 'decimal:4', 'tax_amount' => 'decimal:4',
+            'subtotal_amount' => 'decimal:4', 'discount_amount' => 'decimal:4', 'discount_value' => 'decimal:4', 'header_discount_amount' => 'decimal:4', 'tax_amount' => 'decimal:4',
+            'withholding_rate' => 'decimal:4', 'withholding_basis_amount' => 'decimal:4',
+            'withholding_amount' => 'decimal:4', 'net_payable_amount' => 'decimal:4',
             'total_amount' => 'decimal:4', 'credit_limit_snapshot' => 'decimal:4',
             'required_advance_amount' => 'decimal:4', 'terms_snapshot' => 'array',
             'payment_terms_snapshot' => 'array', 'execution_terms_snapshot' => 'array',
@@ -115,9 +117,9 @@ class SalesOrder extends Model
     {
         return hash('sha256', json_encode([
             $this->only(['id', 'status', 'customer_id', 'currency_id', 'branch_store_id', 'order_date',
-                'expected_delivery_date', 'total_amount', 'notes', 'internal_notes', 'updated_at', 'reopened_at']),
+                'expected_delivery_date', 'discount_type', 'discount_value', 'header_discount_amount', 'withholding_rate', 'total_amount', 'notes', 'internal_notes', 'updated_at', 'reopened_at']),
             $this->lines()->orderBy('id')->get()->map->only(['id', 'public_id', 'product_id', 'unit_id',
-                'quantity', 'base_quantity', 'unit_price', 'discount_amount', 'tax_amount', 'line_total',
+                'quantity', 'base_quantity', 'unit_price', 'discount_type', 'discount_value', 'header_discount_amount', 'discount_amount', 'tax_amount', 'line_total',
                 'reserved_quantity', 'production_requested_quantity', 'produced_quantity', 'delivered_quantity',
                 'declined_quantity', 'invoiced_quantity', 'remainder_credited_quantity'])->all(),
             $this->paymentSchedules()->orderBy('id')->get()->map->only(['id', 'title', 'due_date', 'amount', 'collected_amount', 'remaining_amount'])->all(),
@@ -164,6 +166,23 @@ class SalesOrder extends Model
         return in_array($this->status, [self::StatusApproved, self::StatusReopened, self::StatusClosed, self::StatusPartiallyFulfilled, self::StatusFulfilled], true)
             && ($this->sales_request_id !== null || $this->quotation_id !== null || $this->hasDownstreamDocuments()
                 || $this->lines()->where('reserved_quantity', '>', 0)->exists());
+    }
+
+    public function canReplaceUnexecutedLines(): bool
+    {
+        return ! $this->hasDownstreamDocuments()
+            && ! $this->remainderClosures()->exists()
+            && ! $this->lines()->where(function (Builder $query): void {
+                $query->whereHas('reservations')
+                    ->orWhereHas('productionLines')
+                    ->orWhereHas('invoiceLines');
+                foreach (['reserved_quantity', 'production_requested_quantity', 'produced_quantity',
+                    'delivered_quantity', 'invoiced_quantity', 'returned_quantity', 'declined_quantity',
+                    'remainder_credited_quantity'] as $field) {
+                    $query->orWhere($field, '!=', 0)
+                        ->orWhere(str_replace('_quantity', '_base_quantity', $field), '!=', 0);
+                }
+            })->exists();
     }
 
     public function canCancelSafely(): bool

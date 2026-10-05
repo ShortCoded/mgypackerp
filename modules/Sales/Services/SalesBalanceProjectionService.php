@@ -23,9 +23,10 @@ final class SalesBalanceProjectionService
         $cutoff = $this->cutoff($date);
         $paid = 'i.paid_amount + '.$this->receiptDelta($cutoff, false);
         $credited = 'i.credited_amount + '.$this->directCreditDelta($cutoff, false).' + '.$this->allocationDelta($cutoff, false);
+        $withheld = 'i.actual_withholding_amount + '.$this->withholdingDelta($cutoff, false);
         $source = DB::table('customer_invoices as i')->where('i.company_id', $companyId)
-            ->select($this->columns('customer_invoices', 'i', ['paid_amount', 'credited_amount', 'remaining_amount']))
-            ->selectRaw("($paid) as paid_amount, ($credited) as credited_amount, (i.total_amount - ($paid) - ($credited)) as remaining_amount");
+            ->select($this->columns('customer_invoices', 'i', ['paid_amount', 'credited_amount', 'actual_withholding_amount', 'remaining_amount']))
+            ->selectRaw("($paid) as paid_amount, ($credited) as credited_amount, ($withheld) as actual_withholding_amount, (i.total_amount - ($paid) - ($credited) - ($withheld)) as remaining_amount");
 
         return CustomerInvoice::query()->fromSub($source, 'customer_invoices');
     }
@@ -35,10 +36,11 @@ final class SalesBalanceProjectionService
         $cutoff = $this->cutoff($date);
         $collected = 's.collected_amount + '.$this->receiptDelta($cutoff, true);
         $credited = 's.credited_amount + '.$this->directCreditDelta($cutoff, true).' + '.$this->allocationDelta($cutoff, true);
+        $withheld = 's.actual_withholding_amount + '.$this->withholdingDelta($cutoff, true);
         $source = DB::table('customer_invoice_payment_schedules as s')->join('customer_invoices as i', 'i.id', '=', 's.customer_invoice_id')
             ->where('i.company_id', $companyId)
-            ->select($this->columns('customer_invoice_payment_schedules', 's', ['collected_amount', 'credited_amount']))
-            ->selectRaw("($collected) as collected_amount, ($credited) as credited_amount");
+            ->select($this->columns('customer_invoice_payment_schedules', 's', ['collected_amount', 'credited_amount', 'actual_withholding_amount']))
+            ->selectRaw("($collected) as collected_amount, ($credited) as credited_amount, ($withheld) as actual_withholding_amount");
 
         return DB::query()->fromSub($source, 'customer_invoice_payment_schedules');
     }
@@ -55,6 +57,7 @@ final class SalesBalanceProjectionService
     public function assertCorrectionEvidence(int $companyId): void
     {
         app(CustomerReceiptApplicationHistoryService::class)->assertEvidence($companyId);
+        app(CustomerWithholdingSettlementService::class)->assertEvidence($companyId);
         CustomerInvoiceCorrection::query()->where('company_id', $companyId)->where('status', 'approved')->orderBy('id')
             ->chunkById(100, function ($proposals): void {
                 foreach ($proposals as $proposal) {
@@ -149,5 +152,16 @@ final class SalesBalanceProjectionService
             WHERE application.customer_invoice_id = i.id AND receipt.company_id = i.company_id AND receipt.branch_id = i.branch_id
                 AND receipt.currency_id = i.currency_id AND receipt.customer_id = i.customer_id AND receipt.deleted_at IS NULL $scope
                 AND NOT EXISTS (SELECT 1 FROM customer_receipt_application_events AS recorded WHERE recorded.allocation_id = application.id))";
+    }
+
+    private function withholdingDelta(string $cutoff, bool $schedule): string
+    {
+        $scope = $schedule ? ' AND tax.payment_schedule_id = s.id' : '';
+
+        return "(SELECT COALESCE(SUM(tax.amount * ((CASE WHEN DATE(tax.posting_date) <= $cutoff AND
+            (tax.status = 'approved' OR (tax.status = 'reversed' AND DATE(tax.reversal_date) > $cutoff)) THEN 1 ELSE 0 END)
+            - (CASE WHEN tax.status = 'approved' THEN 1 ELSE 0 END))), 0) FROM customer_withholding_settlements AS tax
+            WHERE tax.customer_invoice_id = i.id AND tax.company_id = i.company_id AND tax.branch_id = i.branch_id
+            AND tax.currency_id = i.currency_id AND tax.customer_id = i.customer_id $scope)";
     }
 }

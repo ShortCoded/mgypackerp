@@ -85,7 +85,7 @@ class PriceListPricingService
             }
             $actualDiscount = $discountMode === 'quotation'
                 ? $this->quotationDiscountAmount($line, $price['unit_price'])
-                : (string) ($line['discount_amount'] ?? 0);
+                : app(SalesOrderDiscountService::class)->lineAmount($line, $price['unit_price']);
             if ($this->amounts->compare($actualDiscount, $price['maximum_discount_amount']) > 0) {
                 throw new DomainException(__('price_lists.messages.discount_exceeded', ['product' => $product->doc_num.' / '.$product->name, 'maximum' => $price['maximum_discount_amount']]));
             }
@@ -175,6 +175,10 @@ class PriceListPricingService
                     && ! in_array($storedLine->public_id, $identifiedSourceIds, true)
                     && (int) $storedLine->product_id === (int) $line['product_id']
                     && (int) $storedLine->unit_id === (int) ($line['unit_id'] ?? 0));
+            if ($source && ((int) $source->product_id !== (int) $line['product_id']
+                || (int) $source->unit_id !== (int) ($line['unit_id'] ?? 0))) {
+                $source = null;
+            }
             if ($source) {
                 $usedStoredLineIds[] = $source->getKey();
             }
@@ -190,7 +194,7 @@ class PriceListPricingService
             if (! $source) {
                 $product = Product::query()->forCompany($companyId)->active()->findOrFail($line['product_id']);
                 $price = $this->resolveFromCandidates($companyId, $customerId, $currencyId, $product, $line['unit_id'] ?? null, $line['quantity'], $date, $eligiblePriceListIds);
-                if ($this->amounts->compare((string) ($line['discount_amount'] ?? 0), $price['maximum_discount_amount']) > 0) {
+                if ($this->amounts->compare(app(SalesOrderDiscountService::class)->lineAmount($line, $price['unit_price']), $price['maximum_discount_amount']) > 0) {
                     throw new DomainException(__('price_lists.messages.discount_exceeded', ['product' => $product->doc_num.' / '.$product->name, 'maximum' => $price['maximum_discount_amount']]));
                 }
                 $result[] = [
@@ -203,7 +207,7 @@ class PriceListPricingService
             $product = Product::query()->forCompany($companyId)->active()->findOrFail($line['product_id']);
             $conversion = $this->unitConversions->snapshot($product, $line['unit_id'], $line['quantity']);
             $maximum = $this->maximumDiscountAmount($source->allowed_discount_type, (string) $source->allowed_discount_value, (string) $source->unit_price, (string) $line['quantity'], $conversion['conversion_factor']);
-            if ($this->amounts->compare((string) ($line['discount_amount'] ?? 0), $maximum) > 0) {
+            if ($this->amounts->compare(app(SalesOrderDiscountService::class)->lineAmount($line, (string) $source->unit_price), $maximum) > 0) {
                 throw new DomainException(__('price_lists.messages.discount_exceeded', ['product' => $product->doc_num.' / '.$product->name, 'maximum' => $maximum]));
             }
             $result[] = [
@@ -213,6 +217,15 @@ class PriceListPricingService
         }
 
         return $result;
+    }
+
+    /** @param array<string, mixed> $line */
+    public function assertOrderDiscountWithinSnapshot(array $line): void
+    {
+        $maximum = $this->maximumDiscountAmount($line['allowed_discount_type'] ?? null, (string) ($line['allowed_discount_value'] ?? 0), (string) $line['unit_price'], (string) $line['quantity'], (string) ($line['conversion_factor'] ?? 1));
+        if ($this->amounts->compare((string) $line['discount_amount'], $maximum) > 0) {
+            throw new DomainException(__('price_lists.messages.discount_exceeded', ['product' => $line['description'] ?? '', 'maximum' => $maximum]));
+        }
     }
 
     /** @param list<int> $productIds @return list<int> */

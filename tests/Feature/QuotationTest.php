@@ -21,7 +21,9 @@ use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\QuotationPaymentMilestone;
 use Modules\Sales\Models\QuotationRevision;
 use Modules\Sales\Models\SalesOrder;
+use Modules\Sales\Services\QuotationCalculationService;
 use Modules\Sales\Services\QuotationService;
+use Modules\Sales\Services\SalesOrderService;
 use Spatie\Permission\Models\Permission;
 use Spatie\Permission\PermissionRegistrar;
 use Symfony\Component\Process\Process;
@@ -1189,4 +1191,32 @@ test('quotation prints company identity without commercial or tax registration n
             file_put_contents($directory.'/quotation-identity-'.$locale.'.pdf', $pdf);
         }
     }
+});
+
+test('accepted quotation preserves commercial input modes and booked amounts on partial order conversion and unchanged edit', function (): void {
+    $f = createQuotationThroughHttp(['sales_orders.create', 'sales_orders.edit', 'sales_orders.view', 'sales_orders.view_prices'], [
+        'valid_until' => now()->addMonth()->toDateString(), 'payment_milestones' => [],
+        'lines' => [['product_doc_num' => 'Product-00901', 'unit_doc_num' => 'Unit-00501', 'quantity' => '3', 'unit_price' => '22.54545', 'discount_type' => null, 'discount_value' => '0', 'tax_rate' => '14']],
+    ]);
+    $quotation = $f['quotation'];
+    $revision = $quotation->currentRevision;
+    $line = $revision->lines()->sole();
+    $calculated = app(QuotationCalculationService::class)->calculate([
+        [...$line->attributesToArray(), 'discount_type' => 'percentage', 'discount_value' => '10', 'allowed_discount_type' => 'percentage', 'allowed_discount_value' => '100'],
+    ], 'fixed', '0.0002');
+    $line->update($calculated['lines'][0]);
+    $revision->update($calculated['revision']);
+    $this->postJson(route('admin.sales.quotations.mark-sent', $quotation))->assertOk();
+    $this->postJson(route('admin.sales.quotations.accept', $quotation))->assertOk();
+    $orders = app(SalesOrderService::class);
+    $context = ['company_id' => $quotation->company_id, 'branch_id' => $quotation->branch_id, 'financial_period_id' => $quotation->financial_period_id];
+    $order = $orders->createFromQuotation($quotation, $context, [['public_id' => $line->public_uuid, 'quantity' => '1']]);
+    expect($order->discount_type)->toBe('fixed')->and($order->discount_value)->toBe('0.0000')
+        ->and($order->lines->sole()->discount_type)->toBe('percentage')->and($order->lines->sole()->discount_value)->toBe('10.0000')
+        ->and($order->lines->sole()->discount_amount)->toBe('2.2545')->and($order->total_amount)->toBe('23.1317');
+    $storedLine = $order->lines->sole();
+    $payload = [...$order->attributesToArray(), 'lines' => [[...$storedLine->attributesToArray(), 'public_id' => $storedLine->public_id]], 'payment_schedules' => []];
+    $order = $orders->update($order, $payload);
+    expect($order->total_amount)->toBe('23.1317')->and($order->lines->sole()->discount_amount)->toBe('2.2545');
+    expect($quotation->fresh()->currentRevision->total)->toBe('69.3948');
 });

@@ -484,7 +484,7 @@ test('serialized opening decreases use the actual posting policy and exhaust exa
         ->and(InventoryReceiptLayer::query()->where('company_id', $fixture['company']->id)->orderBy('id')->get()->toArray())->toBe($beforeLayers);
     actAsOpeningQuantityApprover($fixture);
     $approved = $service->approve(request(), $fixture['opening'], $proposal, 'SYNTHETIC policy-specific exact value review');
-    $document = InventoryDocument::query()->with(['transactions', 'journalEntry.lines'])->findOrFail($approved->document_links[0]['id']);
+    $document = InventoryDocument::query()->with(['transactions' => fn ($query) => $query->orderBy('id'), 'journalEntry.lines'])->findOrFail($approved->document_links[0]['id']);
     expect($document->transactions->pluck('total_cost')->all())->toBe($expected)
         ->and($document->transactions->pluck('cost_method')->unique()->all())->toBe([$method])
         ->and($document->transactions->pluck('cost_basis')->unique()->all())->toBe([

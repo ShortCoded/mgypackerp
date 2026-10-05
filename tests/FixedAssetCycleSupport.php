@@ -89,6 +89,15 @@ function coreFixedAssetContext(bool $populated = false): array
         ]);
     }
 
+    $cashClassification = AccountClassification::query()->where('code', 'cash')->firstOrFail();
+    $postingAccounts[4] = Account::query()->create([
+        'company_id' => $company->getKey(), 'doc_number' => 98004, 'doc_num' => 'ACC-98004',
+        'account_code' => '98004', 'name' => 'Synthetic fixed asset settlement account',
+        'account_classification_id' => $cashClassification->id, 'account_type' => Account::TypeAsset,
+        'statement_type' => Account::StatementFinancialPosition, 'normal_balance' => Account::BalanceDebit,
+        'is_group' => false, 'is_postable' => true, 'status' => 'active',
+    ]);
+
     $destinationBranch = Branch::query()->create([
         'doc_number' => 99002,
         'doc_num' => 'BR-99002',

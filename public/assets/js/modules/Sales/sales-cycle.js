@@ -124,6 +124,24 @@
     });
   }
 
+  function syncIdentityPrice(row) {
+    if (!row?.hasAttribute('data-identity-editable')) return;
+    const product = row.querySelector('[name$="[product_doc_num]"]')?.value || '';
+    const unit = row.querySelector('[name$="[unit_doc_num]"]')?.value || '';
+    const sameIdentity = product === row.dataset.originalProduct && unit === row.dataset.originalUnit;
+    if (!sameIdentity) {
+      delete row.dataset.priceLocked;
+      return;
+    }
+    row.dataset.priceLocked = '1';
+    delete row.dataset.priceLookup;
+    const price = row.querySelector('[name$="[unit_price]"]');
+    if (price) price.value = row.dataset.originalPrice;
+    const display = row.querySelector('[data-price-display]');
+    if (display) display.textContent = window.AppNumbers.format(row.dataset.originalPrice);
+    row.querySelector('[data-price-source]')?.remove();
+  }
+
   async function suggestPrice(row) {
     const form = row?.closest('form');
     const price = row?.querySelector('[name$="[unit_price]"]');
@@ -170,6 +188,7 @@
     try {
       const response = await fetch(messages.priceUrl + '?' + key, { headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' } });
       const payload = await response.json();
+      if (row.dataset.priceLookup !== key) return;
       if (!response.ok) {
         resetPrice(payload.message || messages.unpriced || 'Unpriced', true);
         return;
@@ -191,6 +210,7 @@
       if (row.matches('.js-quotation-line')) price.dispatchEvent(new Event('input', {bubbles:true}));
       else calculateLineTotal(row);
     } catch (_) {
+      if (row.dataset.priceLookup !== key) return;
       resetPrice(messages.unexpectedError || 'Unexpected browser error.', true);
     }
   }
@@ -198,6 +218,10 @@
   window.AppSalesPricing = {suggest: suggestPrice};
 
   function calculateLineTotal(row) {
+    if (row.closest('form')?.hasAttribute?.('data-sales-discount-inputs')) {
+      calculateDocumentSummary(row.closest('form'));
+      return;
+    }
     const decimal = (selector) => window.AppNumbers.normalize(row.querySelector(selector)?.value || '0') || '0';
     const gross = window.AppNumbers.multiply(decimal('.js-sales-quantity'), decimal('.js-sales-price'), 4) || '0';
     const total = window.AppNumbers.add(
@@ -212,20 +236,43 @@
   function calculateDocumentSummary(form) {
     if (!form?.matches('[data-sales-document-summary], [data-sales-request-form]')) return;
     const rows = Array.from(form.querySelectorAll('[data-sales-lines] [data-sales-line]'));
+    rows.forEach(row => {
+      if (!row.dataset.invoiceBookedQuantity) return;
+      const ratio = window.AppNumbers.divide(window.AppNumbers.normalize(row.querySelector('.js-sales-quantity')?.value || '0') || '0', row.dataset.invoiceBookedQuantity, 12) || '0';
+      const taxInput = row.querySelector('.js-sales-tax');
+      if (taxInput) taxInput.value = window.AppNumbers.divide(window.AppNumbers.multiply(row.dataset.invoiceBookedTax || '0', ratio) || '0', '1', 4) || '0';
+    });
+    const typedDiscounts = form.hasAttribute?.('data-sales-discount-inputs') && window.AppSalesDiscounts
+      ? window.AppSalesDiscounts.calculate(rows.map(row => ({
+        quantity: window.AppNumbers.normalize(row.querySelector('.js-sales-quantity')?.value || '0') || '0',
+        unit_price: window.AppNumbers.normalize(row.querySelector('.js-sales-price')?.value || '0') || '0',
+        discount_type: row.querySelector('.js-sales-discount-type')?.value || 'fixed',
+        discount_value: window.AppNumbers.normalize(row.querySelector('.js-sales-discount-value')?.value || '0') || '0',
+        tax_amount: window.AppNumbers.normalize(row.querySelector('.js-sales-tax')?.value || '0') || '0',
+      })), form.querySelector('.js-sales-header-discount-type')?.value || null,
+      window.AppNumbers.normalize(form.querySelector('.js-sales-header-discount-value')?.value || '0') || '0') : null;
     const products = new Set();
     let quantity = '0';
     let subtotal = '0';
     let discounts = '0';
     let tax = '0';
     let total = '0';
-    rows.forEach((row) => {
+    rows.forEach((row, index) => {
       const product = row.querySelector('[name$="[product_doc_num]"]')?.value || '';
       const rowQuantity = window.AppNumbers.normalize(row.querySelector('.js-sales-quantity')?.value || '0') || '0';
       const rowPrice = window.AppNumbers.normalize(row.querySelector('.js-sales-price')?.value || '0') || '0';
-      const rowDiscount = window.AppNumbers.normalize(row.querySelector('.js-sales-discount')?.value || '0') || '0';
+      const rowDiscount = typedDiscounts?.lines[index].discount_amount ?? (window.AppNumbers.normalize(row.querySelector('.js-sales-discount')?.value || '0') || '0');
       const rowTax = window.AppNumbers.normalize(row.querySelector('.js-sales-tax')?.value || '0') || '0';
-      const rowSubtotal = window.AppNumbers.multiply(rowQuantity, rowPrice, 4) || '0';
+      const rowSubtotal = typedDiscounts?.lines[index].gross ?? (window.AppNumbers.multiply(rowQuantity, rowPrice, 4) || '0');
+      if (typedDiscounts) {
+        const hidden = row.querySelector('.js-sales-discount');
+        if (hidden) hidden.value = rowDiscount;
+        const own = row.querySelector('[data-sales-own-discount-amount]');
+        if (own) own.textContent = window.AppNumbers.format(typedDiscounts.lines[index].own_discount_amount);
+      }
       const rowTotal = window.AppNumbers.add(window.AppNumbers.subtract(rowSubtotal, rowDiscount) || '0', rowTax) || '0';
+      const output = row.querySelector('[data-sales-line-total]');
+      if (output) output.textContent = window.AppNumbers.format(rowTotal);
       if (product) products.add(product);
       quantity = window.AppNumbers.add(quantity, rowQuantity) || '0';
       subtotal = window.AppNumbers.add(subtotal, rowSubtotal) || '0';
@@ -237,6 +284,11 @@
       const element = form.querySelector(selector);
       if (element) element.textContent = value;
     };
+    if (form.hasAttribute?.('data-sales-auto-single-schedule')) {
+      const scheduleAmounts = form.querySelectorAll('[name^="payment_schedules["][name$="[amount]"]');
+      if (scheduleAmounts.length === 1) scheduleAmounts[0].value = total;
+    }
+    if (typedDiscounts) set('[data-sales-header-discount-amount]', window.AppNumbers.format(typedDiscounts.header_discount_amount));
     set('[data-sales-summary-lines]', String(rows.length));
     set('[data-sales-summary-products]', String(products.size));
     set('[data-sales-summary-quantity]', window.AppNumbers.format(quantity));
@@ -245,6 +297,14 @@
     set('[data-sales-summary-taxable]', window.AppNumbers.format(window.AppNumbers.subtract(subtotal, discounts) || '0'));
     set('[data-sales-summary-tax]', window.AppNumbers.format(tax));
     set('[data-sales-summary-total]', window.AppNumbers.format(total));
+    const withholdingInput = form.querySelector('.js-sales-withholding-rate');
+    if (withholdingInput && window.AppSalesDiscounts) {
+      const basis = form.querySelector('.js-sales-withholding-basis')?.value || 'gross_including_tax';
+      const withholding = window.AppSalesDiscounts.withholding(total, window.AppNumbers.normalize(withholdingInput.value || '0') || '0', basis, window.AppNumbers.subtract(subtotal, discounts) || '0');
+      set('[data-sales-withholding-amount]', window.AppNumbers.format(withholding.withholding_amount));
+      set('[data-sales-net-payable]', window.AppNumbers.format(withholding.net_payable_amount));
+      form.querySelector('[data-sales-withholding-pending]')?.classList.toggle('d-none', basis !== 'gross_including_tax' || window.AppNumbers.compare(withholdingInput.value || '0', '0') <= 0);
+    }
     const currency = form.querySelector('[name="currency_doc_num"]');
     set('[data-sales-summary-currency]', currency?.selectedOptions?.[0]?.textContent?.trim() || '');
   }
@@ -268,6 +328,7 @@
         const row = this.closest('tr'); const data = event.params.data;
         window.salesProductUnits ||= {}; window.salesProductUnits[this.value] = data.units || [];
         populateUnits(row);
+        syncIdentityPrice(row);
         let details = row.querySelector('[data-sales-product-details]');
         if (!details) {details = document.createElement('small'); details.dataset.salesProductDetails = ''; details.className = 'text-600'; this.parentElement.append(details);}
         details.textContent = [data.productData?.color, data.productData?.model, data.productData?.size].filter(Boolean).join(' · ');
@@ -275,6 +336,15 @@
       });
     }
     document.addEventListener('change', (event) => {
+      if (event.target.matches('.js-sales-header-discount-type') && !event.target.value) {
+        const value = event.target.closest('form')?.querySelector('.js-sales-header-discount-value');
+        if (value) value.value = '0';
+      }
+      if (event.target.matches('.js-sales-discount-type, .js-sales-header-discount-type')) calculateDocumentSummary(event.target.closest('form'));
+      if (event.target.matches('.js-sales-unit, .js-sales-product')) {
+        const row = event.target.closest('tr');
+        syncIdentityPrice(row);
+      }
       if (event.target.matches('.js-sales-product') && !event.target.matches('.js-select2-ajax')) populateUnits(event.target.closest('tr'));
       if (event.target.matches('.js-sales-unit, .js-sales-product:not(.js-select2-ajax)')) suggestPrice(event.target.closest('tr'));
       if (event.target.matches('[name="customer_doc_num"], [name="currency_doc_num"], [name="order_date"], [name="invoice_date"]')) {
@@ -295,8 +365,12 @@
     } else {
       source?.addEventListener('change', openSource);
     }
+    document.addEventListener('change', (event) => {
+      if (event.target.matches('.js-sales-withholding-basis')) calculateDocumentSummary(event.target.closest('form'));
+    });
     document.addEventListener('input', (event) => {
-      if (event.target.matches('.js-sales-quantity, .js-sales-price, .js-sales-discount, .js-sales-tax')) {
+      if (event.target.matches('.js-sales-header-discount-value, .js-sales-withholding-rate')) calculateDocumentSummary(event.target.closest('form'));
+      if (event.target.matches('.js-sales-quantity, .js-sales-price, .js-sales-discount, .js-sales-discount-value, .js-sales-tax')) {
         calculateLineTotal(event.target.closest('tr'));
         if (event.target.matches('.js-sales-quantity')) suggestPrice(event.target.closest('tr'));
       }

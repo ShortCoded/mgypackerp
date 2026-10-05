@@ -27,6 +27,20 @@
 @else<p>{{ __('inventory_correction.legacy_consistent') }}</p>@endif
 @elseif($document->status === \Modules\Inventory\Models\InventoryDocument::StatusPosted)
 @can('inventory.documents.correct_prepare')
+@if($item_correction_supported)
+<form method="POST" action="{{ route('admin.inventory.documents.corrections.store', $document) }}" class="border rounded p-3 mb-4" data-posted-document-correction data-store-uuid="{{ $document->branchStore->public_uuid }}" data-stock-status="{{ $document->source_stock_status ?? 'available' }}" novalidate>@csrf
+    <h6>{{ __('inventory_correction.replace_items') }}</h6><p>{{ __('inventory_correction.items_review') }}</p>
+    <x-forms.input type="hidden" name="operation" value="replace_items" /><x-forms.input type="hidden" name="source_fingerprint" value="{{ $source_fingerprint }}" />
+    <div class="row g-3 mb-3"><div class="col-md-4"><x-forms.label for="item-posting-date" :label="__('inventory_correction.posting_date')" required /><x-forms.date-input id="item-posting-date" name="posting_date" :value="old('posting_date', now()->toDateString())" required /></div><div class="col-md-8"><x-forms.label for="item-reason" :label="__('inventory_correction.reason')" required /><x-forms.textarea id="item-reason" name="reason">{{ old('reason') }}</x-forms.textarea></div></div>
+    <button type="button" class="btn btn-falcon-default mb-2" data-correction-add>{{ __('inventory.movements.actions.add_line') }}</button>
+    <div class="table-responsive"><table class="table"><thead><tr><th>{{ __('Item') }}</th><th>{{ __('Unit') }}</th><th>{{ __('inventory_correction.item_quantity') }}</th><th>{{ __('inventory_correction.base_cost') }}</th><th>{{ __('inventory_serial.numbers') }} / {{ __('Batch / lot') }}</th><th></th></tr></thead><tbody data-correction-lines>
+    @php($items = old('operation') === 'replace_items' ? old('lines', []) : $document->lines->map(fn ($line) => ['line_id' => $line->id, 'product_doc_num' => $line->product->doc_num, 'unit_doc_num' => $line->transactionUnit?->doc_num ?? $line->unit?->doc_num, 'quantity' => $line->transaction_quantity, 'unit_cost' => $line->unit_cost, 'selected_receipt_layer_id' => $line->selected_receipt_layer_id, 'serial_number' => $line->serialIdentity?->serial_number, 'batch_lot' => $line->batch_lot, 'manufacture_date' => $line->manufacture_date?->toDateString(), 'expiry_date' => $line->expiry_date?->toDateString()])->all())
+    @foreach($items as $index => $item)@include('modules.inventory.documents.partials.correction-item-line')@endforeach
+    </tbody></table></div>
+    <template data-correction-template>@include('modules.inventory.documents.partials.correction-item-line', ['index' => '__INDEX__', 'item' => []])</template>
+    <button class="btn btn-primary">{{ __('inventory_correction.prepare') }}</button>
+</form>
+@endif
 <form method="POST" action="{{ route('admin.inventory.documents.corrections.store', $document) }}" novalidate>@csrf
 <x-forms.input type="hidden" name="source_fingerprint" :value="$source_fingerprint" />
 <div class="row g-3 mb-3"><div class="col-md-4"><x-forms.label for="operation" :label="__('inventory_correction.action')" /><x-forms.select id="operation" name="operation">@unless($reverse_only)<option value="replace">{{ __('inventory_correction.replace') }}</option>@endunless<option value="reverse">{{ __('inventory_correction.reverse') }}</option></x-forms.select></div><div class="col-md-4"><x-forms.label for="posting_date" :label="__('inventory_correction.posting_date')" required /><x-forms.date-input id="posting_date" name="posting_date" :value="old('posting_date', now()->toDateString())" /></div><div class="col-md-4"><x-forms.label for="reason" :label="__('inventory_correction.reason')" required /><x-forms.textarea id="reason" name="reason">{{ old('reason') }}</x-forms.textarea></div></div>
@@ -40,7 +54,13 @@
 </div></div>
 <div class="card"><div class="card-header">{{ __('inventory_correction.history') }}</div><div class="card-body">
 @foreach($history as $proposal)<div class="border rounded p-3 mb-3"><h6>#{{ $proposal->id }} — {{ __('inventory_correction.'.$proposal->operation) }} — {{ __('inventory_correction.'.$proposal->status) }}</h6><p>{{ $dates->formatDate($proposal->posting_date) }} — {{ $proposal->reason }}</p><p>{{ __('inventory_correction.preparer') }}: {{ $proposal->preparer?->name }}</p>
-@if($proposal->replacement_payload)<div class="table-responsive"><table class="table table-sm"><thead><tr><th>{{ __('Item') }}</th><th>{{ __('Quantity') }}</th><th>{{ __('inventory_correction.cost') }}</th></tr></thead><tbody>@foreach($proposal->replacement_payload as $row)<tr><td>{{ $document->lines->firstWhere('id', $row['line_id'])?->product?->name }}</td><td>{{ $numbers->format($row['quantity']) }}</td><td>{{ $row['unit_cost'] === null ? '—' : $numbers->format($row['unit_cost']) }}</td></tr>@endforeach</tbody></table></div>@endif
+@if($proposal->operation === 'replace_items')
+<h6>{{ __('inventory_correction.before') }}</h6>
+<div class="table-responsive"><table class="table table-sm"><thead><tr><th>{{ __('Item') }}</th><th>{{ __('Quantity') }}</th><th>{{ __('inventory_correction.cost') }}</th></tr></thead><tbody>
+@foreach($proposal->source_snapshot['lines'] as $original)<tr><td>{{ $original['product_snapshot']['name'] ?? $document->lines->firstWhere('id', $original['id'])?->product?->name }}</td><td>{{ $numbers->format($original['quantity'], 8) }} {{ $document->lines->firstWhere('id', $original['id'])?->unit?->name }}</td><td>{{ $original['unit_cost'] === null ? '—' : $numbers->format($original['unit_cost'], 8) }}</td></tr>@endforeach
+</tbody></table></div><h6>{{ __('inventory_correction.after') }}</h6>
+@endif
+@if($proposal->replacement_payload)<div class="table-responsive"><table class="table table-sm"><thead><tr><th>{{ __('Item') }}</th><th>{{ __('Quantity') }}</th><th>{{ __('inventory_correction.cost') }}</th></tr></thead><tbody>@foreach($proposal->replacement_payload as $row)<tr><td>{{ $row['evidence']['product']['name'] ?? $document->lines->firstWhere('id', $row['line_id'])?->product?->name }}</td><td>{{ $numbers->format($row['quantity']) }}</td><td>{{ $row['unit_cost'] === null ? '—' : $numbers->format($row['unit_cost']) }}</td></tr>@endforeach</tbody></table></div>@endif
 @if($proposal->status === 'prepared')
 @can('inventory.documents.correct_approve')
 @if((int) $proposal->prepared_by !== (int) auth()->id())<form method="POST" action="{{ route('admin.inventory.documents.corrections.approve', [$document, $proposal->id]) }}" novalidate>@csrf<x-forms.label :for="'approval_reason_'.$proposal->id" :label="__('inventory_correction.approval_reason')" required /><x-forms.textarea :id="'approval_reason_'.$proposal->id" name="approval_reason"></x-forms.textarea><button class="btn btn-success mt-2">{{ __('inventory_correction.approve') }}</button></form>@endif
@@ -51,3 +71,4 @@
 {{ $history->links() }}
 </div></div>
 @endsection
+@push('scripts')<script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Core/posted-invoice-correction.js') }}"></script>@endpush

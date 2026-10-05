@@ -4,12 +4,14 @@ use App\Http\Middleware\IdempotentDocumentSubmission;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Modules\Auth\Services\PermissionRegistryService;
+use Modules\Core\Http\Controllers\PostedInvoiceLineCorrectionController;
 use Modules\Finance\Services\FinanceSelect2Service;
 use Modules\Sales\Http\Controllers\CustomerController;
 use Modules\Sales\Http\Controllers\CustomerCreditApplicationEvidenceController;
 use Modules\Sales\Http\Controllers\CustomerDataReportController;
 use Modules\Sales\Http\Controllers\CustomerInvoiceCorrectionController;
 use Modules\Sales\Http\Controllers\CustomerTermsController;
+use Modules\Sales\Http\Controllers\CustomerWithholdingSettlementController;
 use Modules\Sales\Http\Controllers\PriceListController;
 use Modules\Sales\Http\Controllers\QuotationController;
 use Modules\Sales\Http\Controllers\SalesCycleController;
@@ -24,6 +26,14 @@ Route::middleware('auth')
     ->prefix('admin/sales')
     ->as('admin.sales.')
     ->group(function (): void {
+        Route::get('/customer-withholding-settlements', [CustomerWithholdingSettlementController::class, 'index'])->middleware(['can:customer_withholding_settlements.view', 'can:customer_invoices.view', 'can:customer_invoices.view_prices'])->name('customer-withholding-settlements.index');
+        Route::controller(CustomerWithholdingSettlementController::class)->prefix('sales-invoices/{customerInvoice}/withholding')->name('sales-invoices.withholding.')->group(function (): void {
+            Route::get('/', 'show')->middleware('can:customer_withholding_settlements.view')->name('index');
+            Route::post('/', 'store')->middleware(['can:customer_withholding_settlements.prepare', IdempotentDocumentSubmission::class.':required'])->name('store');
+            Route::post('/{settlement}/approve', 'approve')->whereNumber('settlement')->middleware(['can:customer_withholding_settlements.approve', IdempotentDocumentSubmission::class.':required'])->name('approve');
+            Route::post('/{settlement}/reverse', 'reverse')->whereNumber('settlement')->middleware(['can:customer_withholding_settlements.reverse', IdempotentDocumentSubmission::class.':required'])->name('reverse');
+            Route::get('/{settlement}/print', 'print')->whereNumber('settlement')->middleware('can:customer_withholding_settlements.print')->name('print');
+        });
         Route::controller(CustomerInvoiceCorrectionController::class)->prefix('sales-invoices/{customerInvoice}/corrections')->name('sales-invoices.corrections.')->group(function (): void {
             Route::get('/', 'index')->name('index');
             Route::post('/', 'store')->middleware('can:customer_invoices.correct_prepare')->name('store');
@@ -99,6 +109,7 @@ Route::middleware('auth')
             Route::post('/sales-invoices/{customerInvoice}/credit-refunds/{customerCreditRefund}/reverse', 'reverseCustomerCreditRefund')->middleware('can:customer_credits.reverse_refund')->name('sales-invoices.credit-refunds.reverse');
             Route::post('/sales-invoices/{customerInvoice}/electronic-invoice', 'submitElectronicInvoice')->middleware('can:customer_invoices.electronic_invoice.submit')->name('sales-invoices.electronic-invoice.submit');
             Route::post('/sales-invoices/{customerInvoice}/reopen', 'reopenInvoice')->middleware('can:customer_invoices.reopen')->name('sales-invoices.reopen');
+            Route::post('/sales-invoices/{customerInvoice}/cancel-direct-service', 'cancelDirectServiceInvoice')->middleware('can:customer_invoices.cancel')->name('sales-invoices.cancel-direct-service');
             Route::get('/sales-invoices/{customerInvoice}/payment-schedule/print', 'printPaymentSchedule')->middleware('can:customer_invoices.print')->name('sales-invoices.payment-schedule.print');
             Route::post('/sales-invoices/{customerInvoice}/deliveries', 'deliverInvoice')->middleware('can:sales_deliveries.create')->middleware(IdempotentDocumentSubmission::class)->name('sales-invoices.deliveries.store');
 
@@ -277,4 +288,12 @@ Route::middleware('auth')
         Route::get('/export/excel', 'exportExcel')->middleware('can:reports.customers.export')->name('export.excel');
         Route::get('/export/csv', 'exportCsv')->middleware('can:reports.customers.export')->name('export.csv');
         Route::get('/export/pdf', 'exportPdf')->middleware('can:reports.customers.pdf')->name('export.pdf');
+    });
+
+Route::middleware('auth')->prefix('/admin/sales/sales-invoices/{invoice}/line-corrections')->name('admin.sales.sales-invoices.line-corrections.')
+    ->controller(PostedInvoiceLineCorrectionController::class)->group(function (): void {
+        Route::get('/', 'index')->defaults('kind', 'sales')->name('index');
+        Route::post('/', 'store')->defaults('kind', 'sales')->name('store');
+        Route::post('/{correction}/approve', 'approve')->defaults('kind', 'sales')->whereNumber('correction')->name('approve');
+        Route::post('/{correction}/reject', 'reject')->defaults('kind', 'sales')->whereNumber('correction')->name('reject');
     });

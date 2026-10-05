@@ -60,13 +60,7 @@ class PurchaseInvoiceService
             Company::query()->whereKey($this->operatingContext->snapshot(request())['company_id'])->lockForUpdate()->firstOrFail();
             $context = $this->context($data);
             app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $data['invoice_date'], $context['financial_period_id'], lockForUpdate: true);
-            $calculation = $this->calculator->calculate(
-                $data['lines'] ?? [],
-                $data['header_discount_type'] ?? null,
-                $data['header_discount_value'] ?? 0,
-                $data['freight_amount'] ?? 0,
-                $data['freight_tax_rate'] ?? 0,
-            );
+            $calculation = app(PurchaseDiscountSourceService::class)->calculate($data, null, lock: true)['calculation'];
             $record = PurchaseInvoice::query()->create([
                 ...$this->values($data, $context),
                 ...$calculation['invoice'],
@@ -96,13 +90,7 @@ class PurchaseInvoiceService
             $context = $this->context($data, $record);
             $oldDocNumber = $record->doc_number === null ? null : (int) $record->doc_number;
             $oldDocNum = $record->doc_num;
-            $calculation = $this->calculator->calculate(
-                $data['lines'] ?? [],
-                $data['header_discount_type'] ?? null,
-                $data['header_discount_value'] ?? 0,
-                $data['freight_amount'] ?? 0,
-                $data['freight_tax_rate'] ?? 0,
-            );
+            $calculation = app(PurchaseDiscountSourceService::class)->calculate($data, $record, lock: true)['calculation'];
             $values = [
                 ...$this->values($data, $context, $record),
                 ...$calculation['invoice'],
@@ -667,6 +655,7 @@ class PurchaseInvoiceService
                 'discount_type' => $line['discount_type'] ?? null,
                 'discount_value' => $line['discount_value'],
                 'discount_amount' => $line['discount_amount'],
+                'header_discount_amount' => $line['header_discount_amount'], 'source_discount_snapshot' => $line['source_discount_snapshot'] ?? null,
                 'tax_rate' => $line['tax_rate'],
                 'tax_amount' => $line['tax_amount'],
                 'subtotal_amount' => $line['subtotal_amount'],

@@ -91,6 +91,8 @@ class SalesOrderService
                 $this->amounts->assertNotGreaterThan($quantity, $remaining, __('Converted quantity exceeds the remaining quotation quantity.'));
                 $ratio = bcdiv($quantity, (string) $source->quantity, 12);
                 $convertedLines[] = [...$line, 'quantity' => $quantity,
+                    'discount_value' => $line['discount_type'] === 'fixed' ? $this->amounts->multiply($line['discount_value'], $ratio) : $line['discount_value'],
+                    'header_discount_amount' => $this->amounts->multiply($line['header_discount_amount'], $ratio),
                     'discount_amount' => $this->amounts->multiply($line['discount_amount'], $ratio),
                     'tax_amount' => $this->amounts->multiply($line['tax_amount'], $ratio)];
             }
@@ -122,19 +124,26 @@ class SalesOrderService
                 'warranty_terms_snapshot' => $this->termSnapshot($revision->warranty_terms_snapshot),
                 'technical_notes_snapshot' => $this->termSnapshot($revision->technical_notes_snapshot),
                 'delivery_terms_snapshot' => $this->termSnapshot($revision->delivery_terms_snapshot),
+                'discount_type' => $revision->discount_type,
+                'discount_value' => $revision->discount_type === 'fixed' ? $this->amounts->sum(array_column($convertedLines, 'header_discount_amount')) : $revision->discount_value,
+                'header_discount_amount' => $this->amounts->sum(array_column($convertedLines, 'header_discount_amount')),
                 'lines' => $convertedLines,
                 'payment_schedules' => $selection === null && $converted->isEmpty() ? $this->quotationPaymentSchedules($revision, $expectedDeliveryDate) : [],
-            ]);
+            ], preserveSourceDiscounts: true);
         });
     }
 
     /** @param array<string, mixed> $data */
-    public function create(array $data): SalesOrder
+    public function create(array $data, bool $preserveSourceDiscounts = false): SalesOrder
     {
-        return DB::transaction(function () use ($data): SalesOrder {
+        return DB::transaction(function () use ($data, $preserveSourceDiscounts): SalesOrder {
             $this->assertRequiredContext($data);
             $lines = $this->validatedLines($data['lines'] ?? [], (int) $data['company_id']);
+            $discounts = $preserveSourceDiscounts ? ['lines' => $lines] : app(SalesOrderDiscountService::class)->calculate($lines, $data['discount_type'] ?? null, $data['discount_value'] ?? '0');
+            $lines = $discounts['lines'];
+            $data = [...$data, ...collect($discounts)->except('lines')->all()];
             $totals = $this->totals($lines);
+            $totals = [...$totals, ...app(SalesWithholdingService::class)->calculate($totals['total_amount'], $data['withholding_rate'] ?? '0', $data['withholding_basis'] ?? null, $this->amounts->subtract($totals['subtotal_amount'], $totals['discount_amount']))];
             $agreement = CustomerCommercialAgreement::query()
                 ->where('company_id', $data['company_id'])->where('customer_id', $data['customer_id'])
                 ->where(fn ($query) => $query->whereNull('currency_id')->orWhere('currency_id', $data['currency_id'] ?? null))
@@ -197,39 +206,75 @@ class SalesOrderService
             $data['customer_id'] = $locked->customer_id;
             $data['currency_id'] = $locked->currency_id;
             $data['exchange_rate'] = $locked->exchange_rate;
-            if ($locked->quotation_id && ! $locked->canAppendProductionAmendment()) {
-                $data['payment_schedules'] = $locked->paymentSchedules()->orderBy('sequence')->get()->map(fn ($schedule): array => [
-                    'title' => $schedule->title,
-                    'due_date' => $schedule->due_date->toDateString(),
-                    'amount' => $schedule->amount,
-                    'notes' => $schedule->notes,
-                ])->all();
-            }
             $lines = $this->validatedLines($data['lines'] ?? [], (int) $locked->company_id);
             $currentLines = $locked->lines()->lockForUpdate()->get();
-            if ($locked->canAppendProductionAmendment()) {
+            if (array_key_exists('discount_type', $data) && $locked->canAppendProductionAmendment() && ! $locked->canReplaceUnexecutedLines()
+                && (($data['discount_type'] ?? null) !== $locked->discount_type || bccomp((string) ($data['discount_value'] ?? 0), (string) ($locked->discount_value ?? 0), 4) !== 0)) {
+                throw new DomainException(__('sales_ui.production_amendment_locked_terms'));
+            }
+            $replaceUnexecutedLines = $locked->canReplaceUnexecutedLines();
+            if ($locked->canAppendProductionAmendment() && ! $replaceUnexecutedLines) {
+                if (array_key_exists('withholding_rate', $data) && bccomp((string) ($data['withholding_rate'] ?? 0), (string) ($locked->withholding_rate ?? 0), 4) !== 0) {
+                    throw new DomainException(__('sales_ui.production_amendment_locked_terms'));
+                }
+
                 return $this->updateProductionAmendment($locked, $data, $lines, $currentLines);
             }
-            if ($locked->quotation_id || $locked->sales_request_id) {
-                if ($currentLines->count() !== count($lines)) {
-                    throw new DomainException(__('Source document lines must be preserved; create a separate order for changes.'));
+            if (! $replaceUnexecutedLines) {
+                throw new DomainException(__('sales_ui.line_correction_execution_blocked'));
+            }
+            $existingByPublicId = $currentLines->keyBy('public_id');
+            $seen = [];
+            foreach ($lines as $index => &$line) {
+                $publicId = $data['lines'][$index]['public_id'] ?? null;
+                $source = $publicId !== null ? $existingByPublicId->get($publicId) : null;
+                if ($publicId !== null && (! $source instanceof SalesOrderLine || isset($seen[$publicId]))) {
+                    throw new DomainException(__('sales_ui.production_amendment_line_identity'));
                 }
+                if ($source instanceof SalesOrderLine) {
+                    $seen[$publicId] = true;
+                    if (! array_key_exists('discount_type', $data['lines'][$index]) && ($source->discount_type !== null || bccomp((string) $source->header_discount_amount, '0', 4) > 0)) {
+                        $line['discount_type'] = $source->discount_type ?? 'fixed';
+                        $line['discount_value'] = $source->discount_value ?? $this->amounts->subtract($source->discount_amount, $source->header_discount_amount);
+                    }
+                    if ((int) $source->product_id !== (int) $line['product_id'] && $line['description'] === $source->description) {
+                        $line['description'] = Product::query()->forCompany((int) $locked->company_id)->findOrFail($line['product_id'])->name;
+                    }
+                }
+                $line['sales_request_line_id'] = $source?->sales_request_line_id;
+                $line['quotation_revision_line_id'] = $source?->quotation_revision_line_id;
+            }
+            unset($line);
+            $discountType = array_key_exists('discount_type', $data) ? $data['discount_type'] : $locked->discount_type;
+            $discountValue = $data['discount_value'] ?? $locked->discount_value ?? '0';
+            $preserveQuotationDiscounts = $locked->quotation_id !== null && $currentLines->count() === count($lines)
+                && $discountType === $locked->discount_type && bccomp((string) $discountValue, (string) ($locked->discount_value ?? 0), 4) === 0;
+            foreach ($lines as $index => $line) {
+                $source = $existingByPublicId->get($data['lines'][$index]['public_id'] ?? '');
+                $preserveQuotationDiscounts = $preserveQuotationDiscounts && $source instanceof SalesOrderLine
+                    && (int) $source->product_id === (int) $line['product_id'] && (int) $source->unit_id === (int) $line['unit_id']
+                    && bccomp((string) $source->quantity, (string) $line['quantity'], 8) === 0
+                    && bccomp((string) $source->unit_price, (string) $line['unit_price'], 8) === 0
+                    && $source->discount_type === ($line['discount_type'] ?? null)
+                    && bccomp((string) ($source->discount_value ?? 0), (string) ($line['discount_value'] ?? 0), 4) === 0
+                    && bccomp((string) $source->tax_amount, (string) $line['tax_amount'], 4) === 0;
+            }
+            if ($preserveQuotationDiscounts) {
                 foreach ($lines as $index => &$line) {
-                    $source = $currentLines[$index];
-                    if ((int) $source->product_id !== (int) $line['product_id'] || (int) $source->unit_id !== (int) $line['unit_id'] || bccomp((string) $source->quantity, (string) $line['quantity'], 8) !== 0) {
-                        throw new DomainException(__('Source document lines must be preserved; create a separate order for changes.'));
-                    }
-                    $line['quotation_revision_line_id'] = $source->quotation_revision_line_id;
-                    $line['sales_request_line_id'] = $source->sales_request_line_id;
-                    if ($locked->quotation_id) {
-                        foreach (['description', 'quantity', 'unit_price', 'discount_amount', 'tax_amount', 'line_total', 'conversion_factor', 'base_quantity', 'price_list_line_id', 'allowed_discount_type', 'allowed_discount_value', 'requested_date', 'specifications', 'customer_notes', 'warehouse_notes', 'production_notes'] as $field) {
-                            $line[$field] = $source->{$field};
-                        }
-                    }
+                    $source = $existingByPublicId->get($data['lines'][$index]['public_id']);
+                    $line['discount_amount'] = $source->discount_amount;
+                    $line['header_discount_amount'] = $source->header_discount_amount;
+                    $line['line_total'] = $source->line_total;
                 }
                 unset($line);
+                $discounts = ['lines' => $lines, 'discount_type' => $locked->discount_type, 'discount_value' => $locked->discount_value, 'header_discount_amount' => $locked->header_discount_amount];
+            } else {
+                $discounts = app(SalesOrderDiscountService::class)->calculate($lines, $discountType, $discountValue);
             }
+            $lines = $discounts['lines'];
+            $data = [...$data, ...collect($discounts)->except('lines')->all()];
             $totals = $this->totals($lines);
+            $totals = [...$totals, ...app(SalesWithholdingService::class)->calculate($totals['total_amount'], $data['withholding_rate'] ?? $locked->withholding_rate ?? '0', $data['withholding_basis'] ?? $locked->withholding_basis, $this->amounts->subtract($totals['subtotal_amount'], $totals['discount_amount']))];
             $sameLines = $currentLines->count() === count($lines) && $currentLines->values()->every(fn (SalesOrderLine $line, int $index): bool => ! (clone $line)->fill($lines[$index])->isDirty());
             $currentSchedules = $locked->paymentSchedules()->get();
             $inputSchedules = $data['payment_schedules'] ?? [];
@@ -250,15 +295,31 @@ class SalesOrderService
                 'required_advance_amount' => $this->requiredAdvance($agreement, $totals['total_amount']),
                 'updated_by' => auth()->id(),
             ]);
-            $locked->lines()->delete();
-            foreach ($lines as $index => $line) {
-                $locked->lines()->create([...$line, 'line_number' => $index + 1]);
+            $beforeLines = $currentLines->map->attributesToArray()->all();
+            $lineNumberOffset = (int) $currentLines->max('line_number') + count($lines) + 1;
+            $locked->lines()->increment('line_number', $lineNumberOffset);
+            foreach ($currentLines as $source) {
+                $source->forceFill(['line_number' => $source->line_number + $lineNumberOffset])->syncOriginalAttribute('line_number');
             }
+            $retainedLineIds = [];
+            foreach ($lines as $index => $line) {
+                $publicId = $data['lines'][$index]['public_id'] ?? null;
+                $source = $publicId !== null ? $existingByPublicId->get($publicId) : null;
+                if ($source instanceof SalesOrderLine) {
+                    $source->update([...$line, 'line_number' => $index + 1]);
+                    $retainedLineIds[] = $source->getKey();
+                } else {
+                    $retainedLineIds[] = $locked->lines()->create([...$line, 'line_number' => $index + 1])->getKey();
+                }
+            }
+            $locked->lines()->whereNotIn('id', $retainedLineIds)->delete();
             $locked->paymentSchedules()->delete();
             $this->syncPaymentSchedules($locked, $data['payment_schedules'] ?? []);
             $this->audit->record($locked, 'sales_order.amended', [
                 'status' => $locked->status,
                 'total_amount' => $locked->total_amount,
+                'before_lines' => $beforeLines,
+                'after_lines' => $locked->lines()->get()->map->attributesToArray()->all(),
             ]);
 
             return $locked->refresh()->load(['lines.product', 'paymentSchedules']);
@@ -291,6 +352,9 @@ class SalesOrderService
                     throw new DomainException(__('sales_ui.production_amendment_line_identity'));
                 }
                 $seen[$publicId] = true;
+                if (array_key_exists('discount_type', $line) && ($line['discount_type'] !== $source->discount_type || bccomp((string) ($line['discount_value'] ?? 0), (string) ($source->discount_value ?? 0), 4) !== 0)) {
+                    throw new DomainException(__('sales_ui.production_amendment_locked_terms'));
+                }
                 foreach (['product_id', 'unit_id', 'description', 'unit_price', 'discount_amount', 'tax_amount', 'conversion_factor'] as $field) {
                     $same = in_array($field, ['unit_price', 'conversion_factor'], true)
                         ? bccomp((string) $line[$field], (string) $source->{$field}, 8) === 0
@@ -316,6 +380,9 @@ class SalesOrderService
                     ]);
                 }
             } else {
+                if (filled($line['discount_type'] ?? null) || bccomp((string) ($line['discount_value'] ?? 0), '0', 4) > 0) {
+                    throw new DomainException(__('sales_ui.production_amendment_locked_terms'));
+                }
                 $nextLineNumber++;
                 $order->lines()->create([...$line, 'line_number' => $nextLineNumber]);
             }
@@ -737,6 +804,9 @@ class SalesOrderService
                 'price_list_line_id' => $line->price_list_line_id,
                 'allowed_discount_type' => $line->allowed_discount_type,
                 'allowed_discount_value' => $line->allowed_discount_value,
+                'discount_type' => $line->discount_type,
+                'discount_value' => $line->discount_value,
+                'header_discount_amount' => $share,
                 'discount_amount' => $this->amounts->add($line->discount_amount, $share),
                 'tax_amount' => $line->tax_amount,
                 'requested_date' => $line->requested_date,

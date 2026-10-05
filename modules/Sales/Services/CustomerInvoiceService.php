@@ -101,7 +101,7 @@ class CustomerInvoiceService
                     continue;
                 }
                 $unitPrice = $price['unit_price'];
-                $discount = (string) ($input['discount_amount'] ?? '0');
+                $discount = app(SalesOrderDiscountService::class)->lineAmount([...$input, 'unit_price' => $unitPrice]);
                 $tax = (string) ($input['tax_amount'] ?? '0');
                 $this->amounts->assertPositive($quantity, __('Invoice quantity must be greater than zero.'));
                 $this->amounts->assertPositive($unitPrice, __('Invoice unit price must be greater than zero.'));
@@ -122,10 +122,19 @@ class CustomerInvoiceService
                     'quantity' => $quantity,
                     'unit_price' => $unitPrice,
                     'discount' => $discount,
+                    'discount_amount' => $discount,
+                    'discount_type' => $input['discount_type'] ?? null,
+                    'discount_value' => $input['discount_value'] ?? '0',
                     'tax' => $tax,
+                    'tax_amount' => $tax,
                     'gross' => $gross,
                     'conversion' => $conversion,
                     'price' => $price,
+                    'price_list_line_id' => $price['price_list_line_id'],
+                    'allowed_discount_type' => $price['allowed_discount_type'],
+                    'allowed_discount_value' => $price['allowed_discount_value'],
+                    'conversion_factor' => $conversion['conversion_factor'],
+                    'description' => $product->name,
                     'line_total' => $this->amounts->add($this->amounts->subtract($gross, $discount), $tax),
                 ];
             }
@@ -136,8 +145,10 @@ class CustomerInvoiceService
                 throw new DomainException(__('A sales invoice requires at least one line.'));
             }
 
+            $discountInputs = app(SalesOrderDiscountService::class)->calculate($prepared, $data['discount_type'] ?? null, $data['discount_value'] ?? '0');
+            $prepared = $discountInputs['lines'];
             $subtotal = $this->amounts->sum(array_column($prepared, 'gross'));
-            $discount = $this->amounts->sum(array_column($prepared, 'discount'));
+            $discount = $this->amounts->sum(array_column($prepared, 'discount_amount'));
             $tax = $this->amounts->sum(array_column($prepared, 'tax'));
             $total = $this->amounts->add($this->amounts->subtract($subtotal, $discount), $tax);
             $numbers = $this->documents->nextForCompany('customer_invoices', CustomerInvoice::class, (int) $data['company_id']);
@@ -148,7 +159,10 @@ class CustomerInvoiceService
                 'invoice_date' => $data['invoice_date'], 'due_date' => $data['due_date'] ?? $data['invoice_date'],
                 'currency_id' => $currency->getKey(), 'exchange_rate' => $data['exchange_rate'] ?? 1,
                 'subtotal_amount' => $subtotal, 'discount_amount' => $discount,
+                'discount_type' => $discountInputs['discount_type'], 'discount_value' => $discountInputs['discount_value'],
+                'header_discount_amount' => $discountInputs['header_discount_amount'],
                 'taxable_amount' => $this->amounts->subtract($subtotal, $discount), 'tax_amount' => $tax,
+                ...app(SalesWithholdingService::class)->calculate($total, $data['withholding_rate'] ?? '0', $data['withholding_basis'] ?? null, $this->amounts->subtract($subtotal, $discount)),
                 'total_amount' => $total, 'remaining_amount' => $total,
                 'document_type' => CustomerInvoice::TypeInvoice, 'status' => CustomerInvoice::StatusDraft, 'posting_status' => 'unposted',
                 'source_type' => $source ? 'sales_request' : 'direct', 'source_id' => $source?->getKey(), 'source_doc_num' => $source?->doc_num,
@@ -161,7 +175,9 @@ class CustomerInvoiceService
                     'product_id' => $product->getKey(), 'unit_id' => $row['unit']->getKey(),
                     'description' => $product->name, 'quantity' => $row['quantity'],
                     'conversion_factor' => $row['conversion']['conversion_factor'], 'base_quantity' => $row['conversion']['base_quantity'],
-                    'unit_price' => $row['unit_price'], 'discount_amount' => $row['discount'], 'tax_amount' => $row['tax'],
+                    'unit_price' => $row['unit_price'], 'discount_amount' => $row['discount_amount'], 'tax_amount' => $row['tax'],
+                    'discount_type' => $row['discount_type'], 'discount_value' => $row['discount_value'],
+                    'header_discount_amount' => $row['header_discount_amount'],
                     'price_list_line_id' => $row['price']['price_list_line_id'],
                     'allowed_discount_type' => $row['price']['allowed_discount_type'],
                     'allowed_discount_value' => $row['price']['allowed_discount_value'],
@@ -187,6 +203,21 @@ class CustomerInvoiceService
 
             return $invoice->load(['customer', 'currency', 'lines.product', 'lines.unit', 'paymentSchedules']);
         });
+    }
+
+    /** @param list<array{sales_order_line_id: int, quantity: string}> $lines @return array{lines: list<array<string,mixed>>, total: string} */
+    public function quoteOrderCorrection(SalesOrder $order, array $lines, int $exceptInvoiceId): array
+    {
+        $allocated = [];
+        $rows = [];
+        foreach ($lines as $input) {
+            $line = $order->lines()->lockForUpdate()->findOrFail($input['sales_order_line_id']);
+            $amounts = $this->proratedAmounts($line, (string) $input['quantity'], $allocated, $exceptInvoiceId);
+            $rows[] = [...$input, ...$amounts, 'product' => $line->product->name, 'unit' => $line->unit->name, 'unit_price' => (string) $line->unit_price,
+                'total' => $this->amounts->add($this->amounts->subtract($amounts['gross'], $amounts['discount']), $amounts['tax'])];
+        }
+
+        return ['lines' => $rows, 'total' => $this->amounts->sum(array_column($rows, 'total'))];
     }
 
     /** @param list<array{sales_order_line_id: int, quantity: string|int|float, delivery_line_id?: int|null}> $lines @param list<array{due_date: string, amount: string|int|float, notes?: string|null}> $schedules */
@@ -228,11 +259,12 @@ class CustomerInvoiceService
                     $quantitiesByDeliveryLine[$deliveryLine->getKey()] = bcadd($quantitiesByDeliveryLine[$deliveryLine->getKey()] ?? '0', $quantity, 8);
                     $this->amounts->assertNotGreaterThan($quantitiesByDeliveryLine[$deliveryLine->getKey()], $this->amounts->subtract($deliveryLine->transaction_quantity, $alreadyInvoiced, 8), __('Invoice quantity exceeds the selected delivery line.'));
                 }
-                ['discount' => $discount, 'tax' => $tax, 'gross' => $gross] = $this->proratedAmounts($orderLine, $quantity, $allocatedAmounts);
+                ['discount' => $discount, 'tax' => $tax, 'gross' => $gross, 'header_discount_amount' => $headerDiscount] = $this->proratedAmounts($orderLine, $quantity, $allocatedAmounts);
                 $prepared[] = [
                     'order_line' => $orderLine, 'delivery_line' => $deliveryLine, 'quantity' => $quantity,
                     'discount' => $discount, 'tax' => $tax, 'gross' => $gross,
                     'line_total' => $this->amounts->add($this->amounts->subtract($gross, $discount), $tax),
+                    'header_discount_amount' => $headerDiscount,
                 ];
             }
             $total = $this->amounts->sum(array_column($prepared, 'line_total'));
@@ -250,8 +282,12 @@ class CustomerInvoiceService
                 'currency_id' => $salesOrder->currency_id, 'exchange_rate' => $salesOrder->exchange_rate,
                 'subtotal_amount' => $this->amounts->sum(array_column($prepared, 'gross')),
                 'discount_amount' => $this->amounts->sum(array_column($prepared, 'discount')),
+                'discount_type' => $salesOrder->discount_type,
+                'discount_value' => $salesOrder->discount_type === 'fixed' ? $this->amounts->sum(array_column($prepared, 'header_discount_amount')) : $salesOrder->discount_value,
+                'header_discount_amount' => $this->amounts->sum(array_column($prepared, 'header_discount_amount')),
                 'taxable_amount' => $this->amounts->sum(array_map(fn (array $row): string => $this->amounts->subtract($row['gross'], $row['discount']), $prepared)),
                 'tax_amount' => $this->amounts->sum(array_column($prepared, 'tax')), 'total_amount' => $total,
+                ...app(SalesWithholdingService::class)->calculate($total, $salesOrder->withholding_rate ?? '0', $salesOrder->withholding_basis, $this->amounts->sum(array_map(fn (array $row): string => $this->amounts->subtract($row['gross'], $row['discount']), $prepared))),
                 'remaining_amount' => $total, 'document_type' => CustomerInvoice::TypeInvoice,
                 'status' => CustomerInvoice::StatusDraft, 'posting_status' => 'unposted',
                 'payment_terms_snapshot' => $salesOrder->payment_terms_snapshot ?? $salesOrder->agreement_snapshot,
@@ -270,6 +306,9 @@ class CustomerInvoiceService
                     'allowed_discount_type' => $line->allowed_discount_type,
                     'allowed_discount_value' => $line->allowed_discount_value,
                     'discount_amount' => $row['discount'], 'tax_amount' => $row['tax'], 'line_total' => $row['line_total'],
+                    'discount_type' => $line->discount_type,
+                    'discount_value' => $line->discount_type === 'fixed' ? $this->amounts->subtract($row['discount'], $row['header_discount_amount']) : $line->discount_value,
+                    'header_discount_amount' => $row['header_discount_amount'],
                     'is_service' => $line->isService(), 'unit_cost' => $row['delivery_line']?->unit_cost ?? 0,
                     'source_snapshot' => [
                         'sales_order' => $salesOrder->doc_num,
@@ -360,12 +399,13 @@ class CustomerInvoiceService
     }
 
     /**
-     * @param  list<array{invoice_line_public_id: string, quantity: string|int|float}>  $lines
+     * @param  list<array{invoice_line_public_id: string, quantity: string|int|float, discount_type?: string|null, discount_value?: string|int|float|null, discount_amount?: string|int|float}>  $lines
      * @param  list<array{due_date: string, amount: string|int|float, notes?: string|null}>  $schedules
+     * @param  array{discount_type?: string|null, discount_value?: string|int|float|null}  $discountInputs
      */
-    public function amend(CustomerInvoice $invoice, array $lines, array $schedules): CustomerInvoice
+    public function amend(CustomerInvoice $invoice, array $lines, array $schedules, ?string $withholdingRate = null, array $discountInputs = [], ?string $withholdingBasis = null): CustomerInvoice
     {
-        return DB::transaction(function () use ($invoice, $lines, $schedules): CustomerInvoice {
+        return DB::transaction(function () use ($invoice, $lines, $schedules, $withholdingRate, $discountInputs, $withholdingBasis): CustomerInvoice {
             $locked = CustomerInvoice::query()->with(['lines', 'paymentSchedules'])->lockForUpdate()->findOrFail($invoice->getKey());
             $this->assertReopenContext($locked);
 
@@ -377,6 +417,15 @@ class CustomerInvoiceService
             if ($inputByPublicId->count() !== $locked->lines->count()) {
                 throw new DomainException(__('Every existing invoice line must be included in the correction.'));
             }
+
+            $isDirectInvoice = $locked->sales_order_id === null && $locked->lines->every(fn (CustomerInvoiceLine $line): bool => $line->sales_order_line_id === null);
+            $hasDiscountInputs = $discountInputs !== [] || collect($lines)->contains(fn (array $line): bool => array_key_exists('discount_type', $line)
+                || array_key_exists('discount_value', $line) || array_key_exists('discount_amount', $line));
+            if (! $isDirectInvoice && $hasDiscountInputs) {
+                throw new DomainException(__('sales_ui.invoice_source_discount_locked'));
+            }
+            $recalculateDirectDiscounts = $isDirectInvoice && ($hasDiscountInputs || $locked->discount_type !== null
+                || $locked->lines->contains(fn (CustomerInvoiceLine $line): bool => $line->discount_type !== null));
 
             $sourceRequest = null;
             if ($locked->source_type === 'sales_request') {
@@ -443,6 +492,16 @@ class CustomerInvoiceService
                         'discount' => $this->amounts->multiply((string) $invoiceLine->discount_amount, $ratio),
                         'tax' => $this->amounts->multiply((string) $invoiceLine->tax_amount, $ratio),
                         'gross' => $gross,
+                        'unit_price' => $invoiceLine->unit_price,
+                        'discount_type' => array_key_exists('discount_type', $input) ? $input['discount_type'] : $invoiceLine->discount_type,
+                        'discount_value' => $input['discount_value'] ?? $invoiceLine->discount_value ?? '0',
+                        'discount_amount' => $input['discount_amount'] ?? $this->amounts->multiply($this->amounts->subtract($invoiceLine->discount_amount, $invoiceLine->header_discount_amount ?? '0'), $ratio),
+                        'tax_amount' => $this->amounts->multiply((string) $invoiceLine->tax_amount, $ratio),
+                        'price_list_line_id' => $invoiceLine->price_list_line_id,
+                        'allowed_discount_type' => $invoiceLine->allowed_discount_type,
+                        'allowed_discount_value' => $invoiceLine->allowed_discount_value,
+                        'conversion_factor' => $invoiceLine->conversion_factor,
+                        'description' => $invoiceLine->description,
                     ];
 
                     continue;
@@ -469,9 +528,33 @@ class CustomerInvoiceService
                     $this->amounts->assertNotGreaterThan($correctedByOrder[$orderLine->id], $this->amounts->subtract($orderLine->quantity, $otherInvoiced, 8), __('Corrected service quantity exceeds the order quantity.'));
                 }
 
-                ['discount' => $discount, 'tax' => $tax, 'gross' => $gross] = $this->proratedAmounts($orderLine, $quantity, $allocatedAmounts, $locked->id);
+                ['discount' => $discount, 'tax' => $tax, 'gross' => $gross, 'header_discount_amount' => $headerDiscount] = $this->proratedAmounts($orderLine, $quantity, $allocatedAmounts, $locked->id);
                 $baseQuantity = bcmul($quantity, (string) $orderLine->conversion_factor, 8);
-                $prepared[] = compact('invoiceLine', 'orderLine', 'quantity', 'baseQuantity', 'discount', 'tax', 'gross');
+                $prepared[] = [...compact('invoiceLine', 'orderLine', 'quantity', 'baseQuantity', 'discount', 'tax', 'gross'),
+                    'discount_type' => $orderLine->discount_type,
+                    'discount_value' => $orderLine->discount_type === 'fixed' ? $this->amounts->subtract($discount, $headerDiscount) : $orderLine->discount_value,
+                    'header_discount_amount' => $headerDiscount];
+            }
+
+            $headerDiscountInputs = [];
+            if ($recalculateDirectDiscounts) {
+                $headerDiscountType = array_key_exists('discount_type', $discountInputs) ? $discountInputs['discount_type'] : $locked->discount_type;
+                $headerDiscountValue = array_key_exists('discount_value', $discountInputs) ? $discountInputs['discount_value'] : ($headerDiscountType === null ? '0' : ($locked->discount_value ?? '0'));
+                $calculated = app(SalesOrderDiscountService::class)->calculate($prepared, $headerDiscountType, $headerDiscountValue);
+                $prepared = array_map(function (array $row): array {
+                    $row['discount'] = $row['discount_amount'];
+                    $row['gross'] = $this->amounts->unitPriceTotal($row['quantity'], $row['unit_price']);
+                    if ($row['price_list_line_id']) {
+                        $this->priceLists->assertOrderDiscountWithinSnapshot($row);
+                    }
+
+                    return $row;
+                }, $calculated['lines']);
+                $headerDiscountInputs = collect($calculated)->except('lines')->all();
+            } elseif (! $isDirectInvoice) {
+                $headerAmount = $this->amounts->sum(array_column($prepared, 'header_discount_amount'));
+                $headerDiscountInputs = ['header_discount_amount' => $headerAmount,
+                    'discount_value' => $locked->discount_type === 'fixed' ? $headerAmount : $locked->discount_value];
             }
 
             $subtotal = $this->amounts->sum(array_column($prepared, 'gross'));
@@ -496,6 +579,7 @@ class CustomerInvoiceService
                     'quantity' => $row['quantity'], 'base_quantity' => $row['baseQuantity'],
                     'discount_amount' => $row['discount'], 'tax_amount' => $row['tax'],
                     'line_total' => $this->amounts->add($this->amounts->subtract($row['gross'], $row['discount']), $row['tax']),
+                    ...($recalculateDirectDiscounts || ! $isDirectInvoice ? collect($row)->only(['discount_type', 'discount_value', 'header_discount_amount'])->all() : []),
                 ]);
             }
             foreach ($orderLineChanges as $change) {
@@ -557,7 +641,9 @@ class CustomerInvoiceService
             }
             $locked->update([
                 'subtotal_amount' => $subtotal, 'discount_amount' => $discount,
+                ...$headerDiscountInputs,
                 'taxable_amount' => $this->amounts->subtract($subtotal, $discount),
+                ...app(SalesWithholdingService::class)->calculate($total, $withholdingRate ?? $locked->withholding_rate ?? '0', $withholdingBasis ?? $locked->withholding_basis, $this->amounts->subtract($subtotal, $discount)),
                 'tax_amount' => $tax, 'total_amount' => $total, 'remaining_amount' => $total,
                 'due_date' => collect($schedules)->max('due_date'), 'updated_by' => auth()->id(),
             ]);
@@ -689,6 +775,10 @@ class CustomerInvoiceService
                     || $sourceDisposal->status !== FixedAssetDisposal::StatusPosted)) {
                 throw new DomainException(__('Source-owned invoices must be corrected in their source workflow.'));
             }
+            app(CustomerInvoiceBalanceService::class)->assertNoActiveWithholding($locked);
+            if ($locked->withholdingSettlements()->whereIn('status', ['approved', 'reversed'])->exists()) {
+                throw new DomainException(__('sales_ui.wht.preserve_invoice_history'));
+            }
             if (blank($reason)) {
                 throw new DomainException(__('A reason is required for this action.'));
             }
@@ -724,6 +814,53 @@ class CustomerInvoiceService
         });
     }
 
+    public function cancelDirectService(CustomerInvoice $invoice, string $reason): CustomerInvoice
+    {
+        return DB::transaction(function () use ($invoice, $reason): CustomerInvoice {
+            Customer::query()->where('company_id', $invoice->company_id)->lockForUpdate()->findOrFail($invoice->customer_id);
+            $locked = CustomerInvoice::query()->lockForUpdate()->findOrFail($invoice->getKey());
+            $this->assertReopenContext($locked);
+            if (blank($reason)) {
+                throw new DomainException(__('A reason is required for this action.'));
+            }
+            if ($locked->document_type === CustomerInvoice::TypeInvoice
+                && $locked->source_type === 'direct'
+                && $locked->source_id === null
+                && $locked->sales_order_id === null
+                && $locked->status === CustomerInvoice::StatusCancelled
+                && $locked->posting_status === 'cancelled'
+                && $locked->cancelled_at !== null
+                && $locked->cancelled_by !== null
+                && filled($locked->cancel_reason)
+                && $locked->reversal_journal_entry_id !== null
+                && $locked->journalEntry?->reversed_entry_id === $locked->reversal_journal_entry_id
+                && $locked->reversalJournalEntry?->source_type === 'customer_invoice_reversal_'.$locked->posting_revision
+                && (int) $locked->reversalJournalEntry?->source_id === (int) $locked->getKey()
+                && $locked->reversalJournalEntry?->is_posted
+                && (int) $locked->reversalJournalEntry?->company_id === (int) $locked->company_id) {
+                return $locked;
+            }
+            if (! $locked->canCancelDirectService()) {
+                throw new DomainException(__('sales_ui.direct_service_cancel_ineligible'));
+            }
+            $revision = ((int) $locked->posting_revision) + 1;
+            $reversal = $this->accounting->reverseInvoice($locked, trim($reason), $revision);
+            $locked->update([
+                'status' => CustomerInvoice::StatusCancelled, 'posting_status' => 'cancelled',
+                'posting_revision' => $revision, 'is_closed' => true, 'remaining_amount' => '0',
+                'reversal_journal_entry_id' => $reversal->getKey(),
+                'cancelled_by' => auth()->id(), 'cancelled_at' => now(),
+                'cancel_reason' => trim($reason), 'updated_by' => auth()->id(),
+            ]);
+            $this->audit->record($locked, 'customer_invoice.cancelled', [
+                'reason' => trim($reason), 'journal_entry_id' => $locked->journal_entry_id,
+                'reversal_journal_entry_id' => $reversal->getKey(), 'scope' => 'direct_service',
+            ]);
+
+            return $locked->refresh();
+        }, attempts: 3);
+    }
+
     private function assertReopenContext(CustomerInvoice $invoice): void
     {
         $request = request();
@@ -750,8 +887,8 @@ class CustomerInvoiceService
     }
 
     /**
-     * @param  array<int, array{quantity: string, discount: string, tax: string, gross: string}>  $allocated
-     * @return array{discount: string, tax: string, gross: string}
+     * @param  array<int, array{quantity: string, discount: string, tax: string, gross: string, header_discount_amount: string}>  $allocated
+     * @return array{discount: string, tax: string, gross: string, header_discount_amount: string}
      */
     private function proratedAmounts(SalesOrderLine $line, string $quantity, array &$allocated, ?int $exceptInvoiceId = null): array
     {
@@ -762,13 +899,15 @@ class CustomerInvoiceService
                     ->whereDoesntHave('creditNotes', fn ($credit) => $credit->where('source_type', CustomerInvoiceCorrection::class)->where('posting_status', 'posted')))->get();
             $allocated[$line->id] = ['quantity' => $prior->reduce(fn ($sum, $row) => bcadd($sum, $row->quantity, 8), '0'),
                 'discount' => $this->amounts->sum($prior->pluck('discount_amount')), 'tax' => $this->amounts->sum($prior->pluck('tax_amount')),
+                'header_discount_amount' => $this->amounts->sum($prior->map(fn (CustomerInvoiceLine $row): string => $row->discount_type === null && bccomp($row->header_discount_amount ?? '0', '0', 4) === 0
+                    ? $this->amounts->multiply($line->header_discount_amount ?? '0', bcdiv($row->quantity, $line->quantity, 16)) : ($row->header_discount_amount ?? '0'))),
                 'gross' => $prior->reduce(fn ($sum, $row) => bcadd($sum, bcsub(bcadd($row->line_total, $row->discount_amount, 4), $row->tax_amount, 4), 4), '0')];
         }
         $state = &$allocated[$line->id];
         $newQuantity = bcadd($state['quantity'], $quantity, 8);
         $final = bccomp($newQuantity, $line->quantity, 8) === 0;
         $ratio = bcdiv($quantity, $line->quantity, 16);
-        $totals = ['discount' => $line->discount_amount, 'tax' => $line->tax_amount, 'gross' => $this->amounts->unitPriceTotal($line->quantity, $line->unit_price)];
+        $totals = ['discount' => $line->discount_amount, 'tax' => $line->tax_amount, 'gross' => $this->amounts->unitPriceTotal($line->quantity, $line->unit_price), 'header_discount_amount' => $line->header_discount_amount ?? '0'];
         $result = [];
         foreach ($totals as $key => $total) {
             $result[$key] = $final ? bcsub($total, $state[$key], 4) : ($key === 'gross' ? $this->amounts->unitPriceTotal($quantity, $line->unit_price) : $this->amounts->multiply($total, $ratio));

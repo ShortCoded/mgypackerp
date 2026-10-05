@@ -184,7 +184,7 @@ test('later-period proposal boundaries reject permission revocation, wrong branc
     $f['user']->revokePermissionTo('sales_returns.correct_later_period');
     $this->postJson($url, $payload)->assertForbidden();
     $f['user']->givePermissionTo('sales_returns.correct_later_period');
-    $branch = Branch::query()->create(['company_id' => $f['company']->id, 'doc_number' => 999876, 'doc_num' => 'SYNTHETIC-OTHER-RETURN-BRANCH', 'name' => 'SYNTHETIC other branch', 'type' => Branch::TypeAdministrative, 'status' => 'active']);
+    $branch = Branch::query()->create(['company_id' => $f['company']->id, 'doc_number' => (int) Branch::withTrashed()->max('doc_number') + 1, 'doc_num' => 'SYNTHETIC-OTHER-RETURN-BRANCH-'.((int) Branch::withTrashed()->max('doc_number') + 1), 'name' => 'SYNTHETIC other branch', 'type' => Branch::TypeAdministrative, 'status' => 'active']);
     $this->withSession([OperatingContextService::BranchIdKey => $branch->id, OperatingContextService::BranchDocNumKey => $branch->doc_num]);
     $this->postJson($url, $payload)->assertNotFound();
     laterReturnActor($f, $f['user']);

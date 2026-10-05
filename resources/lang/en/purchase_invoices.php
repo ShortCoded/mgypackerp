@@ -200,6 +200,7 @@ return [
         'updated_successfully' => 'Purchase invoice document number settings updated successfully.',
     ],
     'messages' => [
+        'source_discount_allocation_invalid' => 'The source discount allocation is inconsistent; refresh the source invoice quantities.',
         'created' => 'Purchase invoice created successfully.',
         'updated' => 'Purchase invoice updated successfully.',
         'deleted' => 'Purchase invoice deleted successfully.',

@@ -20,12 +20,18 @@ function field(initial = '') {
 }
 
 function formWithLine(rowFields, formFields, lineSelector) {
+  const data = {};
   const row = {
     find(selector) {
       return rowFields[selector] || field('0');
     }
   };
   const form = {
+    attr() { return ''; },
+    data(key, value) {
+      if (value !== undefined) data[key] = value;
+      return data[key];
+    },
     find(selector) {
       if (selector === lineSelector) {
         return { each(callback) { callback.call(row); } };
@@ -41,7 +47,7 @@ function formWithLine(rowFields, formFields, lineSelector) {
 }
 
 function preview(modulePath) {
-  const browser = {};
+  const browser = { clearTimeout() {} };
   const document = { readyState: 'loading', addEventListener() {} };
   const numbersSource = fs.readFileSync(path.join(__dirname, '../public/assets/js/modules/Core/numeric-input.js'), 'utf8');
   vm.runInNewContext(numbersSource, { window: browser, document, BigInt, Number, String, Math });

@@ -2462,8 +2462,7 @@ test('available material can be split between sales production orders and a shor
     expect($shortageRequest->status)->toBe('shortage')
         ->and($shortageRequest->lines->first()->reserved_quantity)->toBe('0.00000000')
         ->and($shortageRequest->lines->first()->shortage_quantity)->toBe('50.00000000')
-        ->and($shortageRequest->purchaseRequisition)->not->toBeNull()
-        ->and($shortageRequest->purchaseRequisition->lines->first()->requested_quantity)->toBe('50.00000000');
+        ->and($shortageRequest->purchaseRequisition)->toBeNull();
 
     $olderRequestLine = $olderAllocation->lines->firstOrFail();
     $olderIssue = $materialRequests->issue($olderAllocation->fresh(), [$olderRequestLine->getKey() => '20']);

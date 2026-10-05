@@ -55,7 +55,7 @@
                     <td>{{ $line->unit?->name ?? $snapshot['unit_label'] ?? '—' }}</td>
                     <td class="text-end" dir="ltr">{{ $numbers->format($line->ordered_quantity) }}</td>
                     <td class="text-end" dir="ltr">{{ $numbers->format($line->unit_price) }}</td>
-                    <td class="text-end" dir="ltr">{{ $numbers->format($line->discount_amount) }}</td>
+                    <td class="text-end" dir="ltr">{{ $numbers->format($line->discount_amount) }}<div>{{ __('purchase_orders.discount_types.'.($line->discount_type ?: 'fixed')) }}: {{ $numbers->format($line->discount_value) }}{{ $line->discount_type === 'percentage' ? '%' : '' }}</div></td>
                     <td class="text-end" dir="ltr">{{ $numbers->format($line->tax_amount) }}</td>
                     <td class="text-end" dir="ltr">{{ $numbers->format($line->line_total) }}</td>
                     <td class="text-end" dir="ltr">{{ $numbers->format($line->received_quantity) }}</td>
@@ -66,6 +66,7 @@
     </table>
 
     <table class="document-totals-table">
+        @if($record->header_discount_type)<tr><th>{{ __('purchase_orders.header_discount') }} ({{ __('purchase_orders.discount_types.'.$record->header_discount_type) }}: {{ $numbers->format($record->header_discount_value) }}{{ $record->header_discount_type === 'percentage' ? '%' : '' }})</th><td class="text-end" dir="ltr">{{ $numbers->format($record->header_discount_amount) }}</td></tr>@endif
         @foreach([__('Subtotal') => $record->subtotal_amount, __('Discount') => $record->lines->sum('discount_amount'), __('Tax') => $record->lines->sum('tax_amount'), __('Freight') => $record->freight_amount, __('Grand total') => $record->total_amount] as $label => $amount)
             <tr><th>{{ $label }}</th><td class="text-end" dir="ltr">{{ $numbers->format($amount) }} {{ $record->currency?->code }}</td></tr>
         @endforeach

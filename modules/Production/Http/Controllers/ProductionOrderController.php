@@ -99,7 +99,7 @@ class ProductionOrderController extends Controller
     {
         $this->requiredFactoryContext($request);
         $this->assertInCurrentContext($request, $productionOrder);
-        abort_unless($productionOrder->status === ProductionOrder::StatusDraft && ! $productionOrder->runs()->exists(), 409, __('production_execution.messages.order_draft_only'));
+        $this->guard(fn () => $this->cycle->assertOrderAmendable($productionOrder));
 
         return $this->form($productionOrder->load(['lines.product', 'lines.salesOrderLine', 'lines.customerInvoiceLine', 'salesOrder']), false);
     }
@@ -212,6 +212,7 @@ class ProductionOrderController extends Controller
         $input = $request->validate([
             'source_type' => ['nullable', Rule::in(['make_to_stock', 'sales_order', 'customer_invoice'])],
             'source_doc_num' => ['nullable', 'string', 'max:100'],
+            'production_order_doc_num' => ['nullable', 'string', 'max:100'],
         ]);
         $sourceType = $input['source_type'] ?? 'make_to_stock';
         $terms = $search->terms($request->input('q', $request->input('term')));
@@ -231,9 +232,21 @@ class ProductionOrderController extends Controller
         }
 
         abort_if(blank($input['source_doc_num'] ?? null), 422, __('production_execution.messages.select_source_first'));
+        $editingOrder = null;
+        if (filled($input['production_order_doc_num'] ?? null)) {
+            $editingOrder = ProductionOrder::query()->where('company_id', $context['company_id'])
+                ->where('doc_num', $input['production_order_doc_num'])->firstOrFail();
+            $this->assertInCurrentContext($request, $editingOrder);
+            $this->guard(fn () => $this->cycle->assertOrderAmendable($editingOrder));
+            $sourceDocumentNumber = $sourceType === 'sales_order'
+                ? SalesOrder::query()->whereKey($editingOrder->source_id)->value('doc_num')
+                : CustomerInvoice::query()->whereKey($editingOrder->source_id)->value('doc_num');
+            abort_unless($editingOrder->source_type === $sourceType && $sourceDocumentNumber === $input['source_doc_num'], 422,
+                __('production_execution.amendment.source_locked'));
+        }
         $rows = $sourceType === 'sales_order'
-            ? $this->salesOrderSourceLines($context['company_id'], (string) $input['source_doc_num'], $numbers)
-            : $this->invoiceSourceLines($context['company_id'], (string) $input['source_doc_num'], $salesCycle, $numbers);
+            ? $this->salesOrderSourceLines($context['company_id'], (string) $input['source_doc_num'], $numbers, $editingOrder)
+            : $this->invoiceSourceLines($context['company_id'], (string) $input['source_doc_num'], $salesCycle, $numbers, $editingOrder);
 
         if ($terms !== []) {
             $rows = $rows->filter(function (array $row) use ($terms): bool {
@@ -565,7 +578,9 @@ class ProductionOrderController extends Controller
             'customer_invoice' => CustomerInvoice::query()->where('company_id', $context['company_id'])->where('doc_num', $data['source_doc_num'])->firstOrFail(),
             default => null,
         };
-        $lines = collect($data['lines'])->map(function (array $line) use ($context, $source): array {
+        $existingOrder = $request->route('productionOrder');
+        $existingLines = $existingOrder instanceof ProductionOrder ? $existingOrder->lines()->get()->keyBy('product_id') : collect();
+        $lines = collect($data['lines'])->map(function (array $line) use ($context, $source, $existingLines): array {
             [$referenceType, $publicReference] = explode(':', $line['source_line_reference'], 2);
             $sourceLine = match ($referenceType) {
                 'sales_order_line' => SalesOrderLine::query()
@@ -589,7 +604,7 @@ class ProductionOrderController extends Controller
 
             return [
                 'product_id' => $product->getKey(),
-                'unit_id' => $sourceLine instanceof Product ? $product->item_unit_id : $sourceLine->unit_id,
+                'unit_id' => $sourceLine instanceof Product ? ($existingLines->get($product->getKey())?->unit_id ?? $product->item_unit_id) : $sourceLine->unit_id,
                 'sales_order_line_id' => $salesLine?->getKey(),
                 'customer_invoice_line_id' => $invoiceLine?->getKey(),
                 'quantity' => $line['quantity'],
@@ -609,13 +624,15 @@ class ProductionOrderController extends Controller
         ], $lines];
     }
 
-    private function salesOrderSourceLines(int $companyId, string $documentNumber, NumericFormatService $numbers): Collection
+    private function salesOrderSourceLines(int $companyId, string $documentNumber, NumericFormatService $numbers, ?ProductionOrder $editingOrder = null): Collection
     {
         $order = SalesOrder::query()
             ->where('company_id', $companyId)
             ->where('doc_num', $documentNumber)
             ->whereIn('status', [SalesOrder::StatusApproved, SalesOrder::StatusPartiallyFulfilled])
             ->firstOrFail();
+        $ownDemand = $editingOrder?->lines()->reorder()->selectRaw('sales_order_line_id, sum(base_quantity) as planned_base')
+            ->groupBy('sales_order_line_id')->pluck('planned_base', 'sales_order_line_id') ?? collect();
 
         return $order->lines()
             ->with(['product', 'unit'])
@@ -627,9 +644,11 @@ class ProductionOrderController extends Controller
                 ->where('status', 'active'))
             ->orderBy('line_number')
             ->get()
-            ->filter(fn (SalesOrderLine $line): bool => bccomp($line->remainingProductionDemandQuantity(), '0', 8) > 0)
-            ->map(function (SalesOrderLine $line) use ($numbers): array {
-                $remaining = $line->remainingProductionDemandQuantity();
+            ->map(function (SalesOrderLine $line) use ($numbers, $ownDemand): ?array {
+                $remaining = bcdiv(bcadd($line->remainingProductionDemandBaseQuantity(), (string) $ownDemand->get($line->id, '0'), 8), (string) $line->conversion_factor, 8);
+                if (bccomp($remaining, '0', 8) <= 0) {
+                    return null;
+                }
 
                 return [
                     'id' => 'sales_order_line:'.$line->public_id,
@@ -644,10 +663,10 @@ class ProductionOrderController extends Controller
                         'remaining' => $numbers->format($remaining),
                     ]),
                 ];
-            })->values();
+            })->filter()->values();
     }
 
-    private function invoiceSourceLines(int $companyId, string $documentNumber, SalesCycleReadService $salesCycle, NumericFormatService $numbers): Collection
+    private function invoiceSourceLines(int $companyId, string $documentNumber, SalesCycleReadService $salesCycle, NumericFormatService $numbers, ?ProductionOrder $editingOrder = null): Collection
     {
         $invoice = CustomerInvoice::query()
             ->where('company_id', $companyId)
@@ -656,6 +675,8 @@ class ProductionOrderController extends Controller
             ->where('status', CustomerInvoice::StatusPosted)
             ->with('order')
             ->firstOrFail();
+        $ownDemand = $editingOrder?->lines()->reorder()->selectRaw('customer_invoice_line_id, sum(base_quantity) as planned_base')
+            ->groupBy('customer_invoice_line_id')->pluck('planned_base', 'customer_invoice_line_id') ?? collect();
         $salesRows = $invoice->order
             ? $salesCycle->backorders($companyId, (int) $invoice->order->branch_id, ['order_id' => $invoice->order->getKey()])->keyBy(fn (array $row): int => (int) $row['line']->getKey())
             : collect();
@@ -666,17 +687,18 @@ class ProductionOrderController extends Controller
                 ->where('products.status', 'active')
                 ->where('products.item_classification', Product::ClassificationFinishedProduct))
             ->get()
-            ->map(function (CustomerInvoiceLine $line) use ($salesRows, $numbers): ?array {
+            ->map(function (CustomerInvoiceLine $line) use ($salesRows, $numbers, $ownDemand): ?array {
                 $alreadyPlanned = (string) ProductionOrderLine::query()
                     ->where('customer_invoice_line_id', $line->getKey())
                     ->whereHas('order')
                     ->sum('base_quantity');
-                $remainingBase = bcsub((string) $line->base_quantity, $alreadyPlanned, 8);
+                $remainingBase = bcadd(bcsub((string) $line->base_quantity, $alreadyPlanned, 8), (string) $ownDemand->get($line->id, '0'), 8);
                 $remainingBase = bccomp($remainingBase, '0', 8) < 0 ? '0.00000000' : $remainingBase;
                 $salesRow = $line->sales_order_line_id ? $salesRows->get((int) $line->sales_order_line_id) : null;
 
-                if ($salesRow !== null && bccomp((string) $salesRow['unplanned_base'], $remainingBase, 8) < 0) {
-                    $remainingBase = (string) $salesRow['unplanned_base'];
+                $salesRemainingBase = $salesRow === null ? null : bcadd((string) $salesRow['unplanned_base'], (string) $ownDemand->get($line->id, '0'), 8);
+                if ($salesRemainingBase !== null && bccomp($salesRemainingBase, $remainingBase, 8) < 0) {
+                    $remainingBase = $salesRemainingBase;
                 }
                 if (bccomp($remainingBase, '0', 8) <= 0 || ! $line->product) {
                     return null;

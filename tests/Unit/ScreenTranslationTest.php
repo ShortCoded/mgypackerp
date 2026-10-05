@@ -8,6 +8,7 @@ use Modules\Inventory\Http\Requests\StoreInventoryOperationRequest;
 use Modules\Production\Http\Requests\StoreProductionRunRequest;
 use Modules\Sales\Http\Requests\StoreCustomerInvoiceRequest;
 use Modules\Sales\Http\Requests\StoreCustomerReceiptRequest;
+use Modules\Sales\Http\Requests\StoreCustomerWithholdingSettlementRequest;
 use Modules\Sales\Http\Requests\StoreSalesOrderRequest;
 use Symfony\Component\Process\Process;
 use Tests\TestCase;
@@ -236,6 +237,7 @@ test('operational forms have localized validation attributes including nested li
     StoreSalesOrderRequest::class,
     StoreCustomerInvoiceRequest::class,
     StoreCustomerReceiptRequest::class,
+    StoreCustomerWithholdingSettlementRequest::class,
     StoreInventoryOperationRequest::class,
     StoreProductionRunRequest::class,
 ])->with(['ar', 'en']);

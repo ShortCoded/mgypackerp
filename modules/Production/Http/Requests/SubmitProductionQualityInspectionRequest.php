@@ -20,6 +20,7 @@ class SubmitProductionQualityInspectionRequest extends FormRequest
             'disposition' => ['required', Rule::in(['release', 'hold', 'rework', 'scrap', 'return'])],
             'defect_code' => ['nullable', 'string', 'max:100'],
             'affected_base_quantity' => ['nullable', 'numeric', 'min:0'],
+            'accepted_base_quantity' => ['nullable', 'numeric', 'min:0', 'decimal:0,8'],
             'corrective_action' => ['nullable', 'string', 'max:5000'],
             'rework_notes' => ['nullable', 'string', 'max:5000'],
             'notes' => ['nullable', 'string', 'max:5000'],

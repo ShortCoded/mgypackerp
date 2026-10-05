@@ -118,7 +118,7 @@
                 @if($isReceipt || $type === 'goods-receipt-inspection')<th>{{ __('Accepted') }}</th>@endif
                 @if($showRejected || $type === 'goods-receipt-inspection')<th>{{ __('Rejected') }}</th>@endif
                 @if($type === 'goods-receipt-inspection')<th>{{ __('Received') }}</th><th>{{ __('Remaining') }}</th>@endif
-                @if($showPrices && $isItemDocument && ! $isRequest && ! $isReceipt)<th>{{ __('Unit price') }}</th><th>{{ __('Total') }}</th>@endif
+                @if($showPrices && $isItemDocument && ! $isRequest && ! $isReceipt)@if(in_array($type, ['supplier-quotation', 'supplier-selection', 'quotation-comparison'], true))<th>{{ __('Discount') }}</th><th>{{ __('procurement.fields.commercial_header_discount') }}</th>@endif<th>{{ __('Unit price') }}</th><th>{{ __('Total') }}</th>@endif
                 <th>{{ __('Notes') }}</th>
             </tr></thead>
             <tbody>
@@ -155,7 +155,7 @@
                         @if($isReceipt || $type === 'goods-receipt-inspection')<td dir="ltr">{{ $numbers->format($line->accepted_quantity) }}</td>@endif
                         @if($showRejected || $type === 'goods-receipt-inspection')<td dir="ltr">{{ $numbers->format($line->rejected_quantity) }}</td>@endif
                         @if($type === 'goods-receipt-inspection')<td dir="ltr">{{ $numbers->format($line->receivedQuantity()) }}</td><td dir="ltr">{{ $numbers->format($line->remainingReceiptQuantity()) }}</td>@endif
-                        @if($showPrices && $isItemDocument && ! $isRequest && ! $isReceipt)<td dir="ltr">{{ isset($line->unit_price) ? $numbers->format($line->unit_price) : '—' }}</td><td dir="ltr">{{ $numbers->format($line->line_total ?? $line->amount ?? 0) }}</td>@endif
+                        @if($showPrices && $isItemDocument && ! $isRequest && ! $isReceipt)@if(in_array($type, ['supplier-quotation', 'supplier-selection', 'quotation-comparison'], true))<td>@include('modules.purchases.procurement.partials.discount-details', ['discountType' => $line->discount_type ?: 'fixed', 'discountValue' => $line->discount_value ?? $line->discount_amount, 'discountAmount' => $line->discount_amount])</td><td>@include('modules.purchases.procurement.partials.discount-details', ['discountType' => $type === 'supplier-selection' ? $line->header_discount_type : ($type === 'supplier-quotation' ? $record->header_discount_type : $line->quotation->header_discount_type), 'discountValue' => $type === 'supplier-selection' ? $line->header_discount_value : ($type === 'supplier-quotation' ? $record->header_discount_value : $line->quotation->header_discount_value), 'discountAmount' => $line->header_discount_amount])</td>@endif<td dir="ltr">{{ isset($line->unit_price) ? $numbers->format($line->unit_price) : '—' }}</td><td dir="ltr">{{ $numbers->format($line->line_total ?? $line->amount ?? 0) }}</td>@endif
                         <td>{{ $line->notes ?? $line->reason ?? (filled($line->disposition) ? __('procurement.statuses.'.$line->disposition) : (filled($line->result) ? __('procurement.statuses.'.$line->result) : null)) }}</td>
                     </tr>
                 @endforeach

@@ -19,9 +19,13 @@
         $lineRows = [[]];
     }
     $purchaseOrderLines = $record?->lines ?? collect();
-    $purchaseOrderDiscountTotal = $purchaseOrderLines->sum('discount_amount');
-    $purchaseOrderTaxableTotal = $purchaseOrderLines->sum('total_before_tax');
-    $purchaseOrderTaxTotal = $purchaseOrderLines->sum('tax_amount');
+    $sumLineAmount = fn (string $field): string => $purchaseOrderLines->reduce(
+        fn (string $total, \Modules\Purchases\Models\PurchaseOrderLine $line): string => bcadd($total, (string) ($line->{$field} ?? 0), 4),
+        '0.0000',
+    );
+    $purchaseOrderDiscountTotal = $sumLineAmount('discount_amount');
+    $purchaseOrderTaxableTotal = bcsub($sumLineAmount('total_before_tax'), (string) ($record?->header_discount_amount ?? 0), 4);
+    $purchaseOrderTaxTotal = $sumLineAmount('tax_amount');
 @endphp
 
 @section('title', $title)
@@ -311,7 +315,18 @@
                 @endunless
             </div>
             <div class="card-body p-0">
-                <div class="table-responsive">
+                                    <div class="row g-3 mb-3">
+                        <div class="col-md-4"><label class="form-label" for="header_discount_type">{{ __('purchase_orders.header_discount') }}</label>
+                        @if($isReadonly)<x-forms.view-field :value="$record?->header_discount_type ? __('purchase_orders.discount_types.'.$record->header_discount_type) : __('None')" />
+                        @else<x-forms.select id="header_discount_type" name="header_discount_type"><option value="">{{ __('None') }}</option>@foreach(['fixed', 'percentage'] as $type)<option value="{{ $type }}" @selected(old('header_discount_type', $record?->header_discount_type) === $type)>{{ __('purchase_orders.discount_types.'.$type) }}</option>@endforeach</x-forms.select>@endif
+                        <div class="invalid-feedback d-block" data-error-for="header_discount_type"></div></div>
+                        <div class="col-md-4"><label class="form-label" for="header_discount_value">{{ __('purchase_orders.header_discount_value') }}</label>
+                        @if($isReadonly)<x-forms.view-field :value="$numbers->format($record?->header_discount_value ?? 0)" dir="ltr" />
+                        @else<x-forms.numeric-input id="header_discount_value" name="header_discount_value" :value="old('header_discount_value', $record?->header_discount_value ?? 0)" :scale="4" min="0" step="0.0001" />@endif
+                        <div class="invalid-feedback d-block" data-error-for="header_discount_value"></div></div>
+                        <div class="col-md-4"><div class="form-text">{{ __('purchase_orders.header_discount_help') }}</div></div>
+                    </div>
+<div class="table-responsive">
                     <table class="table table-sm mb-0 align-middle purchase-order-lines-table">
                         <thead class="bg-100 text-900">
                             <tr>
@@ -396,7 +411,7 @@
                                     </td>
                                     <td>
                                         @if($isReadonly)
-                                            <span>{{ __(str($line['discount_type'] ?? 'fixed')->replace('_', ' ')->title()->toString()) }}</span>
+                                            <span>{{ __('purchase_orders.discount_types.'.($line['discount_type'] ?? 'fixed')) }}</span>
                                         @else
                                             <x-forms.select class="form-select js-line-discount-type" name="lines[{{ $index }}][discount_type]">
                                                 <option value="fixed" @selected(($line['discount_type'] ?? 'fixed') === 'fixed')>{{ __('purchase_orders.discount_types.fixed') }}</option>
@@ -406,7 +421,7 @@
                                     </td>
                                     <td>
                                         @if($isReadonly)
-                                            <div class="text-end" dir="ltr">{{ $numbers->format($line['discount_amount'] ?? 0) }}</div>
+                                            <div class="text-end" dir="ltr">{{ $numbers->format($line['discount_value'] ?? 0) }}</div>
                                         @else
                                             <x-forms.numeric-input class="text-end js-line-discount-value" :name="'lines['.$index.'][discount_value]'" :value="$line['discount_value'] ?? 0" :scale="4" min="0" step="0.0001" />
                                             <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.discount_value"></div>
@@ -524,6 +539,7 @@
                                         <th>{{ __('purchase_orders.totals.line_discounts') }}</th>
                                         <td class="text-end js-total-discount" dir="ltr">{{ $numbers->format($purchaseOrderDiscountTotal) }}</td>
                                     </tr>
+                                    <tr><th>{{ __('purchase_orders.header_discount') }}</th><td class="text-end js-total-header-discount" dir="ltr">{{ $numbers->format($record?->header_discount_amount ?? 0) }}</td></tr>
                                     <tr>
                                         <th>{{ __('purchase_orders.totals.taxable') }}</th>
                                         <td class="text-end js-total-taxable" dir="ltr">{{ $numbers->format($purchaseOrderTaxableTotal) }}</td>

@@ -94,8 +94,8 @@
                                                     <td class="text-end" dir="ltr">{{ $numbers->format($orderLine->effectiveQuantity()) }}</td>
                                                     <td class="text-end fw-semibold" dir="ltr">
                                                         {{ $numbers->format($orderLine->remainingDeliveryQuantity()) }}
-                                                        <input type="hidden" name="lines[{{ $remainderIndex }}][sales_order_line_public_id]" value="{{ $orderLine->public_id }}">
-                                                        <input type="hidden" name="lines[{{ $remainderIndex }}][expected_remaining_quantity]" value="{{ $orderLine->remainingDeliveryQuantity() }}">
+                                                        <x-forms.input type="hidden" name="lines[{{ $remainderIndex }}][sales_order_line_public_id]" value="{{ $orderLine->public_id }}" />
+                                                        <x-forms.input type="hidden" name="lines[{{ $remainderIndex }}][expected_remaining_quantity]" value="{{ $orderLine->remainingDeliveryQuantity() }}" />
                                                     </td>
                                                 </tr>
                                             @endforeach
@@ -219,7 +219,7 @@
         <div class="card-body py-3">
             <div class="d-flex flex-wrap gap-2">
                 @if($record->isEditable()) @can('customer_invoices.edit')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.sales.sales-invoices.edit', $record) }}">{{ __('Edit Correction') }}</a>@endcan @endif
-                @if($record->posting_status !== 'posted') @can('customer_invoices.post')<form data-sales-ui class="js-sales-cycle-action" action="{{ route('admin.sales.sales-invoices.post', $record) }}" method="POST">@csrf<x-forms.line-item-cards :line-label="__('sales_ui.line')" /><button class="btn btn-success btn-sm" type="submit">{{ __('Post Invoice') }}</button></form>@endcan @endif
+                @if($record->isEditable()) @can('customer_invoices.post')<form data-sales-ui class="js-sales-cycle-action" action="{{ route('admin.sales.sales-invoices.post', $record) }}" method="POST">@csrf<x-forms.line-item-cards :line-label="__('sales_ui.line')" /><button class="btn btn-success btn-sm" type="submit">{{ __('Post Invoice') }}</button></form>@endcan @endif
                 <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.sales.sales-invoices.payment-schedule.print', $record) }}">{{ __('Print Payment Schedule') }}</a>
                 @if($record->posting_status === 'posted' && bccomp((string) $record->remaining_amount, '0', 4) > 0) @can('customer_receipts.create')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.sales.customer-receipts.create', ['invoice' => $record->doc_num]) }}">{{ __('Record Collection') }}</a>@endcan @endif
             </div>
@@ -237,6 +237,21 @@
         @endif
         @can('customer_invoices.reopen')
             <div class="card mb-3" data-invoice-action-panel><div class="card-body py-3"><a class="btn btn-falcon-warning btn-sm" href="{{ route('admin.tools.open-documents.index', ['document_type' => 'customer_invoices', 'from_number' => $record->doc_number, 'to_number' => $record->doc_number]) }}">{{ __('open_documents.actions.review_edit_reopen') }}</a></div></div>
+        @endcan
+        @can('customer_invoices.cancel')
+            @if($record->canCancelDirectService())
+                <details class="card mb-3" data-invoice-action-panel>
+                    <summary class="card-header py-2 fw-semibold">{{ __('sales_ui.cancel_direct_service_invoice') }}</summary>
+                    <form data-sales-ui class="js-sales-cycle-action card-body py-3 border-top" action="{{ route('admin.sales.sales-invoices.cancel-direct-service', $record) }}" method="POST">
+                        @csrf
+                        <x-forms.input type="hidden" name="requires_reason" value="1" />
+                        <p class="small text-600">{{ __('sales_ui.direct_service_cancel_help') }}</p>
+                        <x-forms.label for="direct-service-cancel-reason" :label="__('Cancellation reason')" required />
+                        <x-forms.textarea id="direct-service-cancel-reason" class="form-control mb-2" name="reason" required maxlength="2000"></x-forms.textarea>
+                        <button class="btn btn-warning btn-sm" type="submit">{{ __('sales_ui.cancel_direct_service_invoice') }}</button>
+                    </form>
+                </details>
+            @endif
         @endcan
         @can('sales_returns.create')
             <details class="card mb-3" data-invoice-action-panel>
@@ -355,4 +370,12 @@
             <button class="btn btn-outline-warning btn-sm" type="submit">{{ __('sales_return_correction.closed_action') }}</button>
         </form>
     @endcan
+@endif
+
+@if($kind === 'invoice' && $record->document_type === 'invoice' && $record->posting_status === 'posted')
+<div class="card mb-3"><div class="card-body"><p class="small">{{ __('sales_ui.wht.help') }}</p>
+@can('customer_withholding_settlements.view')<a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.sales.sales-invoices.withholding.index', $record) }}">{{ __('sales_ui.wht.title') }}</a>@endcan
+@can('customer_invoices.correct_prepare')<a class="btn btn-falcon-warning btn-sm" href="{{ route('admin.sales.sales-invoices.corrections.index', $record) }}">{{ __('invoice_correction.title') }}</a>@endcan
+@can('sales_returns.create')<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.sales.sales-returns.create', ['invoice_doc_num' => $record->doc_num]) }}">{{ __('Sales Return') }}</a>@endcan
+</div></div>
 @endif

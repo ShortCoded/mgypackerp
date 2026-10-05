@@ -9,6 +9,7 @@ use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
+use Modules\Core\Models\PostedInvoiceLineCorrection;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\OperatingCompanyContextService;
@@ -23,6 +24,7 @@ use Modules\Sales\Models\CustomerCreditAllocation;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerInvoiceCorrection;
 use Modules\Sales\Models\CustomerInvoiceLine;
+use Modules\Sales\Models\CustomerWithholdingSettlement;
 use Modules\Sales\Models\SalesIssueOrder;
 use Modules\Sales\Models\SalesOrderLine;
 use Modules\Sales\Models\SalesRequest;
@@ -97,12 +99,13 @@ final class CustomerInvoiceCorrectionService
         }, 3);
     }
 
-    public function approve(CustomerInvoice $invoice, int $id, string $reason): CustomerInvoiceCorrection
+    public function approve(CustomerInvoice $invoice, int $id, string $reason, ?int $lineCorrectionId = null): CustomerInvoiceCorrection
     {
         Gate::authorize('customer_invoices.correct_approve');
 
-        return DB::transaction(function () use ($invoice, $id, $reason): CustomerInvoiceCorrection {
+        return DB::transaction(function () use ($invoice, $id, $reason, $lineCorrectionId): CustomerInvoiceCorrection {
             $invoice = $this->scoped($invoice);
+            $this->assertLineCorrectionOwner($invoice, $id, $lineCorrectionId);
             $proposal = CustomerInvoiceCorrection::query()->where('company_id', $invoice->company_id)->where('customer_invoice_id', $invoice->id)
                 ->lockForUpdate()->findOrFail($id);
             if ((int) $proposal->prepared_by === (int) auth()->id() || trim($reason) === '' || mb_strlen($reason) > 3000) {
@@ -148,11 +151,12 @@ final class CustomerInvoiceCorrectionService
         }, 3);
     }
 
-    public function reject(CustomerInvoice $invoice, int $id): void
+    public function reject(CustomerInvoice $invoice, int $id, ?int $lineCorrectionId = null): void
     {
         Gate::authorize('customer_invoices.correct_approve');
-        DB::transaction(function () use ($invoice, $id): void {
+        DB::transaction(function () use ($invoice, $id, $lineCorrectionId): void {
             $invoice = $this->scoped($invoice);
+            $this->assertLineCorrectionOwner($invoice, $id, $lineCorrectionId);
             $proposal = CustomerInvoiceCorrection::query()->where('company_id', $invoice->company_id)
                 ->where('customer_invoice_id', $invoice->id)->lockForUpdate()->findOrFail($id);
             $this->assertSeal($proposal);
@@ -181,6 +185,25 @@ final class CustomerInvoiceCorrectionService
         $this->target($proposal->source_snapshot, $proposal->posting_date->toDateString(), (int) $proposal->posting_financial_period_id);
 
         return $proposal;
+    }
+
+    private function assertLineCorrectionOwner(CustomerInvoice $invoice, int $id, ?int $lineCorrectionId): void
+    {
+        $owner = PostedInvoiceLineCorrection::query()->where('company_id', $invoice->company_id)->where('kind', 'sales')
+            ->where('invoice_id', $invoice->id)->where('sales_correction_id', $id)->where('status', 'prepared')->value('id');
+        if ($owner !== null && (int) $owner !== $lineCorrectionId) {
+            throw new DomainException(__('posted_invoice_correction.pending'));
+        }
+    }
+
+    /** @param array<string, mixed> $row @return array<string, mixed> */
+    private function withoutEmptyWithholding(array $row): array
+    {
+        if (isset($row['actual_withholding_amount']) && bccomp((string) $row['actual_withholding_amount'], '0', 4) === 0) {
+            unset($row['actual_withholding_amount']);
+        }
+
+        return $row;
     }
 
     public function assertApproved(CustomerInvoiceCorrection $proposal): void
@@ -308,6 +331,13 @@ final class CustomerInvoiceCorrectionService
             ->whereIn('source_document_id', $returnIds)->orderBy('id')->lockForUpdate()->get()->map->getAttributes()->all();
         $snapshot['recovered_return_transactions'] = InventoryTransaction::query()->where('source_type', InventoryDocument::class)
             ->whereIn('source_id', array_column($snapshot['recovered_return_documents'], 'id'))->orderBy('id')->lockForUpdate()->get()->map->getAttributes()->all();
+        $withholding = $rows('customer_withholding_settlements', 'customer_invoice_id', $invoiceIds);
+        if ($withholding !== []) {
+            $snapshot['withholding_settlements'] = $withholding;
+        }
+        foreach (['invoices', 'credits', 'schedules'] as $key) {
+            $snapshot[$key] = array_map($this->withoutEmptyWithholding(...), $snapshot[$key]);
+        }
         $this->authorizePeriods($snapshot);
 
         return $snapshot;
@@ -362,7 +392,7 @@ final class CustomerInvoiceCorrectionService
                 || (int) $journal->company_id !== (int) $invoice->company_id || (int) $journal->branch_id !== (int) $invoice->branch_id
                 || (int) $journal->financial_period_id !== (int) $invoice->financial_period_id || (int) $journal->currency_id !== (int) $invoice->currency_id
                 || (int) $journal->source_id !== (int) $invoice->id || $journal->source_type !== ((int) $invoice->posting_revision === 0 ? 'customer_invoice' : 'customer_invoice_post_'.$invoice->posting_revision)
-                || bccomp($invoice->paid_amount, '0', 4) !== 0 || bccomp($invoice->credited_amount, '0', 4) !== 0
+                || bccomp($invoice->actual_withholding_amount, '0', 4) !== 0 || bccomp($invoice->paid_amount, '0', 4) !== 0 || bccomp($invoice->credited_amount, '0', 4) !== 0
                 || bccomp($invoice->applied_advance_amount, '0', 4) !== 0 || bccomp($invoice->remaining_amount, $invoice->total_amount, 4) !== 0
                 || bccomp((string) $invoice->paymentSchedules()->sum('amount'), $invoice->total_amount, 4) !== 0) {
                 throw new DomainException(__('invoice_correction.source_invalid'));
@@ -388,6 +418,16 @@ final class CustomerInvoiceCorrectionService
     private function dependencies(array $snapshot): array
     {
         $steps = [];
+        foreach ($snapshot['withholding_settlements'] ?? [] as $row) {
+            $record = CustomerWithholdingSettlement::query()->findOrFail($row['id']);
+            if ($record->status !== 'prepared') {
+                app(CustomerWithholdingSettlementService::class)->assertApproved($record);
+            }
+            if ($record->status === 'approved') {
+                $steps[] = ['document' => $record->certificate_reference, 'action' => __('sales_ui.wht.reverse'),
+                    'url' => route('admin.sales.sales-invoices.withholding.index', $record->invoice), 'permission' => 'customer_withholding_settlements.reverse'];
+            }
+        }
         foreach ($snapshot['receipts'] as $receipt) {
             if ($receipt['status'] !== 'cancelled') {
                 $steps[] = ['document' => $receipt['doc_num'], 'action' => __('invoice_correction.recover_collection'),
@@ -458,7 +498,7 @@ final class CustomerInvoiceCorrectionService
                 'source_type' => 'customer_invoice_correction_credit', 'source_id' => $credit->id, 'source_doc_num' => $credit->doc_num]);
         $scheduleCredits = [];
         foreach ($invoice->paymentSchedules()->orderBy('id')->lockForUpdate()->get() as $schedule) {
-            if (bccomp($schedule->collected_amount, '0', 4) !== 0 || bccomp($schedule->credited_amount, '0', 4) !== 0) {
+            if (bccomp($schedule->actual_withholding_amount, '0', 4) !== 0 || bccomp($schedule->collected_amount, '0', 4) !== 0 || bccomp($schedule->credited_amount, '0', 4) !== 0) {
                 throw new DomainException(__('invoice_correction.stale'));
             }
             $scheduleCredits[] = ['schedule_id' => (int) $schedule->id, 'amount' => (string) $schedule->amount];
@@ -558,7 +598,7 @@ final class CustomerInvoiceCorrectionService
     private function executionSnapshot(CustomerInvoiceCorrection $proposal, array $creditIds): array
     {
         $rows = fn (string $table, string $field, array $ids): array => DB::table($table)->whereIn($field, $ids)->orderBy('id')->get()->map(fn ($row): array => (array) $row)->all();
-        $credits = $rows('customer_invoices', 'id', $creditIds);
+        $credits = array_map($this->withoutEmptyWithholding(...), $rows('customer_invoices', 'id', $creditIds));
         $documentIds = array_column($proposal->source_snapshot['documents'], 'id');
         $documents = InventoryDocument::query()->whereIn('id', $documentIds)->orderBy('id')->get();
         $journalIds = collect(array_column($credits, 'journal_entry_id'))->concat($documents->pluck('reversal_journal_entry_id'))
@@ -572,7 +612,7 @@ final class CustomerInvoiceCorrectionService
             'source_invoice_settlements' => CustomerInvoice::query()->whereIn('id', array_column($proposal->source_snapshot['invoices'], 'id'))->orderBy('id')->get()
                 ->map(fn ($source): array => $source->only(['id', 'company_id', 'branch_id', 'financial_period_id', 'invoice_date', 'total_amount', 'journal_entry_id',
                     'delivery_document_id', 'paid_amount', 'credited_amount', 'remaining_amount', 'status', 'posting_status', 'is_closed']))->all(),
-            'source_schedules' => $rows('customer_invoice_payment_schedules', 'customer_invoice_id', array_column($proposal->source_snapshot['invoices'], 'id')),
+            'source_schedules' => array_map($this->withoutEmptyWithholding(...), $rows('customer_invoice_payment_schedules', 'customer_invoice_id', array_column($proposal->source_snapshot['invoices'], 'id'))),
             'issue_orders' => $rows('sales_issue_orders', 'customer_invoice_id', array_column($proposal->source_snapshot['invoices'], 'id')),
             'restored_layers' => array_map(fn ($row): array => array_diff_key($row, array_flip(['remaining_quantity', 'updated_at'])), $rows('inventory_receipt_layers', 'receipt_transaction_id', $reversals)),
             'source_lines' => $rows('customer_invoice_lines', 'customer_invoice_id', array_column($proposal->source_snapshot['invoices'], 'id')),

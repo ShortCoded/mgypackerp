@@ -19,6 +19,7 @@ use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\PurchaseOrderLine;
 use Modules\Purchases\Models\Supplier;
+use Modules\Purchases\Services\PurchaseDiscountSourceService;
 use Modules\Purchases\Services\PurchaseInvoiceCalculationService;
 
 class StorePurchaseInvoiceRequest extends FormRequest
@@ -141,6 +142,8 @@ class StorePurchaseInvoiceRequest extends FormRequest
                 Rule::exists('bank_accounts', 'doc_num')
                     ->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at')),
             ],
+            'inherit_header_discount' => ['nullable', 'boolean'],
+            'lines.*.inherit_source_discount' => ['nullable', 'boolean'],
             'header_discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
             'header_discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'freight_amount' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
@@ -367,15 +370,10 @@ class StorePurchaseInvoiceRequest extends FormRequest
                 continue;
             }
 
-            $subtotal = bcmul($quantity, $unitPrice, 16);
             $discountType = $line['discount_type'] ?? null;
 
             if ($discountType === 'percentage' && bccomp($discountValue, '100', 4) > 0) {
                 $validator->errors()->add("lines.{$index}.discount_value", __('purchase_invoices.messages.discount_percentage_invalid'));
-            }
-
-            if ($discountType === 'fixed' && bccomp($discountValue, $subtotal, 16) > 0) {
-                $validator->errors()->add("lines.{$index}.discount_value", __('purchase_invoices.messages.line_discount_exceeds_subtotal'));
             }
 
             $publicId = trim((string) ($line['public_id'] ?? ''));
@@ -513,15 +511,22 @@ class StorePurchaseInvoiceRequest extends FormRequest
         }
 
         $calculator = app(PurchaseInvoiceCalculationService::class);
-        $calculation = $calculator->calculate(
-            $this->input('lines', []),
-            $this->input('header_discount_type'),
-            $this->input('header_discount_value'),
-            $this->input('freight_amount'),
-            $this->input('freight_tax_rate'),
-        );
-        $headerDiscountType = $this->input('header_discount_type');
-        $headerDiscountValue = $calculator->number($this->input('header_discount_value'));
+        try {
+            $sourceCalculation = app(PurchaseDiscountSourceService::class)->calculate($this->all(), $this->currentRecord());
+            $calculation = $sourceCalculation['calculation'];
+        } catch (\DomainException $exception) {
+            $validator->errors()->add('header_discount_value', $exception->getMessage());
+
+            return;
+        }
+        foreach ($calculation['lines'] as $index => $line) {
+            $subtotal = $sourceCalculation['inherited'] ? $line['subtotal_amount'] : bcmul($line['quantity'], $line['unit_price'], 16);
+            if (($line['discount_type'] ?? null) === 'fixed' && bccomp($line['discount_value'], $subtotal, 16) > 0) {
+                $validator->errors()->add("lines.{$index}.discount_value", __('purchase_invoices.messages.line_discount_exceeds_subtotal'));
+            }
+        }
+        $headerDiscountType = $calculation['invoice']['header_discount_type'];
+        $headerDiscountValue = $calculator->number($calculation['invoice']['header_discount_value']);
         $headerBase = bcsub(
             $calculator->number($calculation['invoice']['subtotal_amount']),
             $calculator->number($calculation['invoice']['line_discount_amount']),
@@ -670,6 +675,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
                 'unit_price' => $this->decimalValue($line['unit_price'] ?? null),
                 'discount_type' => trim((string) ($line['discount_type'] ?? '')) ?: null,
                 'discount_value' => $this->decimalValue($line['discount_value'] ?? 0),
+                ...(array_key_exists('inherit_source_discount', $line) ? ['inherit_source_discount' => $line['inherit_source_discount']] : []),
                 'tax_rate' => $this->decimalValue($line['tax_rate'] ?? 0),
                 'notes' => trim((string) ($line['notes'] ?? '')) ?: null,
                 'attachment_file_doc_nums' => collect($line['attachment_file_doc_nums'] ?? [])->map(fn (mixed $value): string => trim((string) $value))->filter()->unique()->values()->all(),

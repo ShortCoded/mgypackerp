@@ -810,6 +810,13 @@
       return;
     }
 
+    if (form.dataset.productionSourceLocked === '1') {
+      wrapper.hidden = sourceType.value === 'make_to_stock';
+      sourceType.disabled = true;
+      sourceDocument.disabled = true;
+      return;
+    }
+
     const isStandalone = sourceType.value === 'make_to_stock';
     wrapper.hidden = isStandalone;
     sourceDocument.required = !isStandalone;
@@ -983,7 +990,7 @@
         field.value = values[name];
       }
     });
-    if (values?.required_quantity) {
+    if (values?.required_quantity && form.dataset.allowSourceAmendment !== '1') {
       const quantity = row.querySelector('[name$="[quantity]"]');
       if (quantity) {
         quantity.min = values.required_quantity;
@@ -1197,11 +1204,13 @@
   }
 
   $(document).on('change', '#production-source-type', function () {
+    if (this.closest('[data-production-order-form]')?.dataset.productionSourceLocked === '1') return;
     productionOrderSourceVisibility();
     clearProductionSourceLines();
   });
 
   $(document).on('change', '#production-source-document', function () {
+    if (this.closest('[data-production-order-form]')?.dataset.productionSourceLocked === '1') return;
     clearProductionSourceLines();
     loadAllProductionSourceLines();
   });
@@ -1727,5 +1736,22 @@
     updateMaintenanceExpenseFields();
     initializeProductionOrderDocumentNumberSettings();
     initializeProductionRunBatchLines();
+  });
+  $(document).on('click', '[data-add-shift-worker]', function () {
+    const editor = this.closest('[data-shift-crew-editor]');
+    const index = Number(editor.dataset.nextIndex || 0);
+    editor.dataset.nextIndex = String(index + 1);
+    const holder = document.createElement('div');
+    holder.innerHTML = editor.querySelector('[data-shift-crew-template]').innerHTML.replaceAll('__INDEX__', String(index));
+    const row = holder.firstElementChild;
+    editor.querySelector('[data-shift-crew-rows]').appendChild(row);
+    initializeWorkflowSelects(row);
+  });
+  $(document).on('click', '[data-remove-shift-worker]', function () {
+    const row = this.closest('[data-shift-crew-row]');
+    row.querySelectorAll('select').forEach(function (select) {
+      if ($(select).data('select2')) { $(select).select2('destroy'); }
+    });
+    row.remove();
   });
 })(window.jQuery, window, document);

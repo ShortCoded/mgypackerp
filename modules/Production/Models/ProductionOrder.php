@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Concerns\SnapshotsCompanyPrintIdentity;
@@ -93,5 +94,34 @@ class ProductionOrder extends Model
         return $this->hasMany(ProductionOrderStageSnapshot::class)
             ->whereNull('production_order_line_id')
             ->orderBy('sequence');
+    }
+
+    public function canAmendBeforeExecution(): bool
+    {
+        if ($this->trashed() || ! in_array($this->status, [self::StatusDraft, self::StatusPlanned, self::StatusReleased], true)
+            || $this->lines()->where('received_base_quantity', '>', 0)->exists()) {
+            return false;
+        }
+
+        foreach (['production_runs', 'production_run_batches', 'production_material_requirements', 'production_material_requests',
+            'production_expense_requests', 'inventory_reservations', 'inventory_documents', 'inventory_document_lines',
+            'inventory_transactions', 'quality_inspections'] as $table) {
+            if (DB::table($table)->where('production_order_id', $this->getKey())->exists()) {
+                return false;
+            }
+        }
+
+        return ! $this->stageSnapshots()->where(function ($query): void {
+            $query->where('status', '!=', ProductionOrderStageSnapshot::StatusPending)->orWhereHas('events');
+        })->exists();
+    }
+
+    public function amendmentToken(): string
+    {
+        return hash_hmac('sha256', json_encode([
+            'order' => self::query()->findOrFail($this->getKey())->getAttributes(),
+            'lines' => $this->lines()->get()->map->getAttributes()->all(),
+            'stages' => $this->stageSnapshots()->orderBy('id')->get()->map->getAttributes()->all(),
+        ], JSON_THROW_ON_ERROR), (string) config('app.key'));
     }
 }

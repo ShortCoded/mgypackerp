@@ -582,4 +582,10 @@ return [
     'customer_invoices.correct_approve' => 'Approve invoice and delivery correction',
     'customer_invoices.correct_later_period' => 'Correct invoice and delivery in a later period',
     'customer_invoices.correct_company_warehouse' => 'Correct invoice delivery from another company branch warehouse',
+    'customer_withholding_settlements.view' => 'View customer withholding certificates',
+    'customer_withholding_settlements.prepare' => 'Prepare a customer withholding certificate',
+    'customer_withholding_settlements.approve' => 'Independently approve a customer withholding certificate',
+    'customer_withholding_settlements.reverse' => 'Reverse customer withholding after documented recovery',
+    'customer_withholding_settlements.print' => 'Print a customer withholding certificate',
+
 ];

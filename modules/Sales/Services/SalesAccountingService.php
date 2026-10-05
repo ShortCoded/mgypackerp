@@ -30,6 +30,19 @@ class SalesAccountingService
 
     public function postInvoice(CustomerInvoice $invoice): JournalEntry
     {
+        if (bccomp((string) ($invoice->withholding_rate ?? 0), '0', 4) > 0 || bccomp((string) ($invoice->withholding_amount ?? 0), '0', 4) > 0) {
+            if ($invoice->withholding_basis !== SalesWithholdingService::EtaNetExcludingTax) {
+                throw new DomainException(__('sales_ui.withholding_posting_pending'));
+            }
+            $expected = app(SalesWithholdingService::class)->calculate($invoice->total_amount, $invoice->withholding_rate,
+                SalesWithholdingService::EtaNetExcludingTax, $this->amounts->subtract($invoice->subtotal_amount, $invoice->discount_amount));
+            foreach (['withholding_basis_amount', 'withholding_amount', 'net_payable_amount'] as $field) {
+                if (bccomp((string) $invoice->{$field}, $expected[$field], 4) !== 0) {
+                    throw new DomainException(__('sales_ui.wht.source_invalid'));
+                }
+            }
+            $this->accounts->resolve((int) $invoice->company_id, 'withholding_tax_receivable', __('sales_ui.wht.title'));
+        }
         $lines = $this->invoicePostingLines($invoice);
 
         $sourceType = (int) $invoice->posting_revision === 0

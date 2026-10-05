@@ -19,6 +19,18 @@ return [
     'User Code' => 'User Code',
     'Customize' => 'Customize',
     'bulk_action' => 'Bulk action',
+    'select2' => [
+        'errorLoading' => 'The results could not be loaded.',
+        'inputTooShort' => 'Please enter :count more character(s).',
+        'inputTooLong' => 'Please delete :count character(s).',
+        'loadingMore' => 'Loading more results...',
+        'maximumSelected' => 'You can only select :count item(s).',
+        'noResults' => 'No results found',
+        'removeAllItems' => 'Remove all selections',
+        'removeItem' => 'Remove item',
+        'search' => 'Search',
+        'searching' => 'Searching...',
+    ],
     'trash' => [
         'active' => 'Actual records',
         'all' => 'All records',

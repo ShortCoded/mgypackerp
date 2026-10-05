@@ -69,6 +69,9 @@ class ProcurementSettlementService
             }
 
             $requested = $this->normalizeChangeValues($order, $data['requested_values']);
+            if (($requested['replace_lines'] ?? false) && ! $order->canReplaceUnexecutedLines()) {
+                throw new DomainException(__('procurement.messages.line_correction_execution_blocked'));
+            }
 
             $changeRequest = PurchaseOrderChangeRequest::query()->create([
                 ...$this->number('purchase_order_change_requests', PurchaseOrderChangeRequest::class, $context),
@@ -104,6 +107,23 @@ class ProcurementSettlementService
             }
 
             $values = $request->requested_values;
+            if ($values['replace_lines'] ?? false) {
+                if (! $order->canReplaceUnexecutedLines()) {
+                    throw new DomainException(__('procurement.messages.line_correction_execution_blocked'));
+                }
+                if ($this->currentChangeValues($order) !== $request->original_values) {
+                    throw new DomainException(__('procurement.messages.line_correction_stale'));
+                }
+                app(PurchaseOrderService::class)->applyUnexecutedLineChange($order, $values);
+                $request->forceFill(['status' => 'approved', 'approved_by' => auth()->id(), 'approved_at' => now()])->save();
+                $this->audit->record($request, 'purchase_order.change_approved', [
+                    'purchase_order_doc_num' => $order->doc_num,
+                    'original_values' => $request->original_values,
+                    'requested_values' => $values,
+                ]);
+
+                return $request->refresh()->load('purchaseOrder.lines');
+            }
             $order->forceFill([
                 'expected_delivery_date' => $values['expected_delivery_date'] ?? $order->expected_delivery_date,
                 'payment_terms' => $values['payment_terms'] ?? $order->payment_terms,
@@ -1107,6 +1127,48 @@ class ProcurementSettlementService
 
     private function normalizeChangeValues(PurchaseOrder $order, array $values): array
     {
+        if ($values['replace_lines'] ?? false) {
+            if (empty($values['lines'])) {
+                throw new DomainException(__('procurement.messages.line_correction_requires_lines'));
+            }
+            $existing = $order->lines->keyBy('public_id');
+            $seen = [];
+            $lines = [];
+            foreach ($values['lines'] as $input) {
+                $publicId = $input['public_id'] ?? null;
+                $source = $publicId ? $existing->get($publicId) : null;
+                if ($publicId && (! $source instanceof PurchaseOrderLine || isset($seen[$publicId]))) {
+                    throw new DomainException(__('procurement.messages.line_correction_identity_invalid'));
+                }
+                if ($publicId) {
+                    $seen[$publicId] = true;
+                }
+                $quantity = $this->quantity($input['ordered_quantity'] ?? $source?->ordered_quantity ?? 0);
+                if (bccomp($quantity, '0', 8) <= 0 || empty($input['product_doc_num'] ?? $source?->product?->doc_num)
+                    || empty($input['unit_doc_num'] ?? $source?->unit?->doc_num)) {
+                    throw new DomainException(__('Requested purchase order line values are invalid.'));
+                }
+                $lines[] = [
+                    'public_id' => $publicId,
+                    'product_doc_num' => $input['product_doc_num'] ?? $source?->product?->doc_num,
+                    'unit_doc_num' => $input['unit_doc_num'] ?? $source?->unit?->doc_num,
+                    'ordered_quantity' => $quantity,
+                    'unit_price' => $input['unit_price'] ?? $source?->unit_price,
+                    'required_delivery_date' => $input['required_delivery_date'] ?? $source?->required_delivery_date?->toDateString(),
+                    'description' => $source?->description,
+                    'discount_type' => $source?->discount_type,
+                    'discount_value' => $source?->discount_value ?? 0,
+                    'tax_rate' => $source?->tax_rate ?? 0,
+                    'specification' => $source?->specification,
+                    'notes' => $source?->notes,
+                ];
+            }
+
+            return ['replace_lines' => true, 'lines' => $lines,
+                'expected_delivery_date' => $values['expected_delivery_date'] ?? $order->expected_delivery_date?->toDateString(),
+                'payment_terms' => $values['payment_terms'] ?? $order->payment_terms,
+                'notes' => $values['notes'] ?? $order->notes];
+        }
         $allowed = [
             'expected_delivery_date' => $values['expected_delivery_date'] ?? $order->expected_delivery_date?->toDateString(),
             'payment_terms' => $values['payment_terms'] ?? $order->payment_terms,
@@ -1131,6 +1193,14 @@ class ProcurementSettlementService
             'notes' => $order->notes,
             'lines' => $order->lines->map(fn (PurchaseOrderLine $line): array => [
                 'public_id' => $line->public_id,
+                'product_id' => $line->product_id,
+                'unit_id' => $line->unit_id,
+                'product_doc_num' => $line->product?->doc_num,
+                'unit_doc_num' => $line->unit?->doc_num,
+                'discount_type' => $line->discount_type,
+                'discount_value' => $line->discount_value,
+                'tax_rate' => $line->tax_rate,
+                'purchase_requisition_line_id' => $line->purchase_requisition_line_id,
                 'ordered_quantity' => $line->ordered_quantity,
                 'unit_price' => $line->unit_price,
                 'required_delivery_date' => $line->required_delivery_date?->toDateString(),

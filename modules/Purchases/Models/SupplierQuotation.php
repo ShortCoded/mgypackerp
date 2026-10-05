@@ -29,12 +29,13 @@ class SupplierQuotation extends Model
         'purchase_requisition_id', 'purchase_order_id', 'source_type', 'source_id', 'source_doc_num',
         'supplier_id', 'currency_id', 'exchange_rate', 'supplier_reference', 'quotation_date', 'valid_until', 'lead_time_days',
         'payment_terms', 'freight_amount', 'subtotal_amount', 'discount_amount', 'tax_amount', 'total_amount',
-        'status', 'commercial_notes', 'submitted_by', 'submitted_at', 'created_by', 'updated_by',
+        'header_discount_type', 'header_discount_value', 'header_discount_amount', 'status', 'commercial_notes', 'submitted_by', 'submitted_at', 'created_by', 'updated_by',
     ];
 
     protected function casts(): array
     {
         return [
+            'header_discount_value' => 'decimal:4', 'header_discount_amount' => 'decimal:4',
             'quotation_date' => 'date', 'valid_until' => 'date', 'submitted_at' => 'datetime',
             'exchange_rate' => 'decimal:6',
             'freight_amount' => 'decimal:4', 'subtotal_amount' => 'decimal:4', 'discount_amount' => 'decimal:4',

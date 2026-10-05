@@ -10,7 +10,7 @@
         'source_line_reference' => $sourceLineReferences->get($line->getKey()),
         'product_text' => trim(($line->product?->doc_num ?? '').' — '.($line->product?->name ?? '')),
         'quantity' => $line->quantity,
-        'required_quantity' => $record?->source_type === 'make_to_stock' ? null : $line->quantity,
+        'required_quantity' => $isEdit || $record?->source_type === 'make_to_stock' ? null : $line->quantity,
         'description' => $line->description,
         'production_notes' => $line->production_notes,
         'stages' => $line->stageSnapshots->map(fn ($stage) => [
@@ -30,10 +30,14 @@
 
 @section('content')
     <div class="production-mobile-workflow">
-    <form data-production-order-form data-line-details-url="{{ route('admin.production.work-orders.select2.line-details') }}" method="POST" action="{{ $isEdit ? route('admin.production.work-orders.update', $record) : route('admin.production.work-orders.store') }}" novalidate>
+    <form data-production-order-form @if($isEdit) data-allow-source-amendment="1" data-production-source-locked="1" @endif data-line-details-url="{{ route('admin.production.work-orders.select2.line-details') }}" method="POST" action="{{ $isEdit ? route('admin.production.work-orders.update', $record) : route('admin.production.work-orders.store') }}" novalidate>
         @csrf
         @if($isEdit)
             @method('PUT')
+            <x-forms.input type="hidden" name="amendment_token" value="{{ $record->amendmentToken() }}" />
+            <x-forms.input type="hidden" name="source_type" value="{{ $record->source_type }}" />
+            <x-forms.input type="hidden" name="source_doc_num" value="{{ $sourceDocumentNumber }}" />
+            <x-forms.input type="hidden" id="production-correction-order-doc" value="{{ $record->doc_num }}" />
         @endif
         <x-forms.line-item-cards :line-label="__('production_execution.orders.line')" />
         <x-forms.input type="hidden" name="submit_action" value="save" />
@@ -59,6 +63,13 @@
             </div>
 
             <div class="card-body">
+                @if($isEdit)
+                    <div class="alert alert-info">{{ __('production_execution.amendment.help') }}</div>
+                    <div class="mb-3">
+                        <x-forms.label for="production-amendment-reason" :label="__('production_execution.amendment.reason')" required />
+                        <x-forms.textarea id="production-amendment-reason" name="amendment_reason" maxlength="2000" required>{{ old('amendment_reason') }}</x-forms.textarea>
+                    </div>
+                @endif
                 @if ($errors->any())
                     <div class="alert alert-danger" role="alert">
                         <ul class="mb-0">
@@ -186,7 +197,7 @@
         <tr data-production-order-line>
             <td class="text-center erp-entry-line-number" data-row-number></td>
             <td class="erp-entry-line-item">
-                <x-forms.select variant="ajax" name="lines[__INDEX__][source_line_reference]" :url="route('admin.production.work-orders.select2.products')" :placeholder="__('production_execution.orders.select_product')" :data-extra-params="json_encode(['source_type' => '#production-source-type', 'source_doc_num' => '#production-source-document'])" required />
+                <x-forms.select variant="ajax" name="lines[__INDEX__][source_line_reference]" :url="route('admin.production.work-orders.select2.products')" :placeholder="__('production_execution.orders.select_product')" :data-extra-params="json_encode(['source_type' => '#production-source-type', 'source_doc_num' => '#production-source-document', ...($isEdit ? ['production_order_doc_num' => '#production-correction-order-doc'] : [])])" required />
             </td>
             <td class="erp-entry-line-quantity">
                 <x-forms.numeric-input name="lines[__INDEX__][quantity]" :scale="8" min="0.00000001" step="0.00000001" arrow-step="1" required />

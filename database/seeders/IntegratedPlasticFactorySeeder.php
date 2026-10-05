@@ -35,6 +35,7 @@ use Modules\Finance\Services\ChequeService;
 use Modules\Finance\Services\FundTransferService;
 use Modules\Finance\Services\OpeningBalanceApprovalService;
 use Modules\Finance\Services\OpeningBalanceService;
+use Modules\Finance\Services\OpeningInventoryValuationService;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\FixedAssets\Models\FixedAssetCategoryMapping;
 use Modules\FixedAssets\Models\FixedAssetDepreciation;
@@ -2379,6 +2380,26 @@ class IntegratedPlasticFactorySeeder extends Seeder
             [$accumulatedDepreciation, 'credit', '600000', 'Accumulated depreciation through 2025'],
             [$this->postingAccount($company, '31'), 'credit', '4250000', 'Opening owner equity'],
         ];
+        $inventoryValuation = app(OpeningInventoryValuationService::class);
+        $equityAccount = $this->postingAccount($company, '31');
+        foreach (array_slice($lines, 0, 3) as $line) {
+            $preview = $inventoryValuation->preview($company->id, $period->id, $resources['branch']->id, $line[0]->doc_num);
+            $inventoryOpening = app(OpeningBalanceService::class)->create([
+                'currency_doc_num' => $resources['egp']->doc_num, 'document_date' => $period->from_date->toDateString(),
+                'exchange_rate' => 1, 'description' => $line[3],
+                'inventory_source_fingerprint' => $preview['snapshot']['fingerprint'],
+                'notes' => $this->note('Inventory opening value derived from approved and priced source documents.'),
+                'lines' => [
+                    ['account_doc_num' => $line[0]->doc_num, 'transaction_type' => 'debit', 'amount' => $preview['amount'],
+                        'description' => $line[3], 'branch_id' => $resources['branch']->id],
+                    ['account_doc_num' => $equityAccount->doc_num, 'transaction_type' => 'credit', 'amount' => $preview['amount'],
+                        'description' => 'Opening equity supporting priced inventory', 'branch_id' => $resources['branch']->id],
+                ],
+            ])['record'];
+            app(OpeningBalanceApprovalService::class)->approve($inventoryOpening);
+        }
+        $lines = array_slice($lines, 3);
+        $lines[array_key_last($lines)][2] = '3800000';
         $opening = app(OpeningBalanceService::class)->create([
             'currency_doc_num' => $resources['egp']->doc_num,
             'document_date' => $period->from_date->toDateString(),

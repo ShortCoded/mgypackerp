@@ -275,9 +275,9 @@
                             @if($product && auth()->user()?->can($productViewPermission))
                                 <a class="btn btn-link btn-sm p-1" href="{{ route($productShowRoute, $product) }}" title="{{ __('stock_balance_inquiry.open_item') }}" aria-label="{{ __('stock_balance_inquiry.open_item') }}"><span class="fas fa-box-open"></span></a>
                             @endif
-                            @if ((int) $context['branch_id'] === (int) $row->branch_id)
-                                <a class="btn btn-link btn-sm p-1" href="{{ route('admin.inventory.reports.index', ['product_id' => $row->product_id, 'branch_store_id' => $row->branch_store_id]) }}" title="{{ __('stock_balance_inquiry.open_stock_card') }}" aria-label="{{ __('stock_balance_inquiry.open_stock_card') }}"><span class="fas fa-list-alt"></span></a>
-                            @endif
+                            @can('inventory.reports.operations.view')
+                                <a class="btn btn-link btn-sm p-1" href="{{ route('admin.inventory.reports.stock-card', ['product_doc_num' => $product?->doc_num, 'branch_store_uuid' => $row->branchStore?->public_uuid, 'as_of' => $filters['as_of'], 'stock_status' => $filters['stock_status'] ?? null, 'branch_hall_uuid' => $filters['branch_hall_uuid'] ?? null]) }}" title="{{ __('stock_balance_inquiry.open_stock_card') }}" aria-label="{{ __('stock_balance_inquiry.open_stock_card') }}"><span class="fas fa-list-alt"></span></a>
+                            @endcan
                         </td>
                     </tr>
                 @empty

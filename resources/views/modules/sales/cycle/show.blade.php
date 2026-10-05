@@ -65,12 +65,16 @@
 @section('title', $title.' '.$record->doc_num)
 
 @section('content')
+@if($kind === 'invoice' && $record->posting_status === 'posted') @canany(['customer_invoices.correct_prepare', 'customer_invoices.correct_approve'])<div class="alert alert-info"><a href="{{ route('admin.sales.sales-invoices.line-corrections.index', $record->doc_num) }}">{{ __('posted_invoice_correction.title') }}</a></div>@endcanany @endif
 @if($kind === 'invoice' && $record->posting_status === 'posted')
 @canany(['customer_invoices.correct_prepare', 'customer_invoices.correct_approve'])
 <div class="alert alert-info"><a href="{{ route('admin.sales.sales-invoices.corrections.index', $record) }}">{{ __('invoice_correction.title') }} — {{ $record->doc_num }}</a></div>
 @endcanany
 @endif
 @if($kind === 'sales_order' && $record->salesRequest) @can('sales_requests.view')<div class="alert alert-info"><a href="{{ route('admin.sales.customer-requests.show', $record->salesRequest) }}">{{ __('Source Sales Request') }}: {{ $record->salesRequest->doc_num }}</a></div>@endcan @endif
+    @if($kind === 'invoice' && $record->status === 'cancelled')
+        <div class="alert alert-warning"><strong>{{ __('Cancellation reason') }}:</strong> {{ $record->cancel_reason }}<br>{{ $dates->formatDateTime($record->cancelled_at, '') }}</div>
+    @endif
     <div class="alert alert-danger d-none js-sales-form-alert"></div>
     <div class="card mb-3">
         <div class="card-header py-2 d-flex flex-wrap justify-content-between align-items-center gap-2">
@@ -187,7 +191,7 @@
                                     @endif
                                 </td>
                                 @unless($isCommercialLineView)<td class="text-end" dir="ltr">{{ isset($line->delivered_quantity) ? $numbers->format($line->delivered_quantity) : '—' }}</td><td class="text-end" dir="ltr">{{ isset($line->invoiced_quantity) ? $numbers->format($line->invoiced_quantity) : '—' }}</td>@endunless
-                                @if($showLinePrices)<td class="text-end" dir="ltr">{{ $numbers->format($line->unit_price ?? 0) }}</td><td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->discount_amount ?? 0, 2) }}</td><td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->tax_amount ?? 0, 2) }}</td><td class="text-end fw-semibold" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->line_total ?? 0, 2) }}</td>@endif
+                                @if($showLinePrices)<td class="text-end" dir="ltr">{{ $numbers->format($line->unit_price ?? 0) }}</td><td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->discount_amount ?? 0, 2) }}@if(in_array($kind, ['sales_order', 'invoice'], true) && $line->discount_type)<br><small>{{ __('quotations.discount_types.'.$line->discount_type) }}: {{ $numbers->format($line->discount_value) }}{{ $line->discount_type === 'percentage' ? '%' : '' }}</small>@endif</td><td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->tax_amount ?? 0, 2) }}</td><td class="text-end fw-semibold" dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->line_total ?? 0, 2) }}</td>@endif
                                 @unless($isCommercialLineView)<td>{{ $line->quality_disposition ? $qualityDispositionLabel($line->quality_disposition) : '—' }}</td>@endunless
                             </tr>
                         @endforeach
@@ -199,7 +203,15 @@
                     @if(isset($record->subtotal_amount))<span>{{ __('Subtotal') }}: <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->subtotal_amount, 2) }}</strong></span>@endif
                     @if(isset($record->discount_amount))<span>{{ __('Discount') }}: <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->discount_amount, 2) }}</strong></span>@endif
                     @if(isset($record->tax_amount))<span>{{ __('Tax') }}: <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->tax_amount, 2) }}</strong></span>@endif
+                    @if(in_array($kind, ['sales_order', 'invoice'], true) && $record->discount_type)<span>{{ __($kind === 'invoice' ? 'sales_ui.invoice_discount' : 'sales_ui.header_discount') }} ({{ __('quotations.discount_types.'.$record->discount_type) }}: {{ $numbers->format($record->discount_value) }}{{ $record->discount_type === 'percentage' ? '%' : '' }}): <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->header_discount_amount, 2) }}</strong></span>@endif
                     <span>{{ __('Grand total') }}: <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->total_amount, 2) }}</strong></span>
+                    @if(in_array($kind, ['sales_order', 'invoice'], true) && bccomp((string) ($record->withholding_rate ?? 0), '0', 4) > 0)
+                    <span>{{ __('sales_ui.withholding') }} / {{ __($record->withholding_basis === 'eta_t4_net_excluding_tax' ? 'sales_ui.wht.eta' : 'sales_ui.wht.legacy') }} ({{ $numbers->format($record->withholding_rate) }}%): <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->withholding_amount, 2) }}</strong></span>
+                    <span>{{ __('sales_ui.net_payable') }}: <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->net_payable_amount, 2) }}</strong></span>
+                    @endif
+                    @if($kind === 'invoice' && bccomp((string) ($record->actual_withholding_amount ?? '0'), '0', 4) > 0)
+                    <span>{{ __('sales_ui.wht.actual') }}: <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->actual_withholding_amount, 2) }}</strong></span>
+                    @endif
                 </div>
             @endif
         </div>
@@ -260,7 +272,7 @@
     @endif
 
     @if($showPrices && $record->relationLoaded('paymentSchedules') && $record->paymentSchedules->isNotEmpty())
-        <div class="card mb-3"><div class="card-header py-2"><h6 class="mb-0">{{ __('Payment Schedule') }}</h6></div><div class="table-responsive"><table class="table table-sm table-bordered mb-0"><thead><tr><th>#</th><th>{{ __('Due date') }}</th><th class="text-end">{{ __('Amount') }}</th><th class="text-end">{{ __('Collected') }}</th><th class="text-end">{{ __('Outstanding') }}</th><th>{{ __('Status') }}</th></tr></thead><tbody>@foreach($record->paymentSchedules as $schedule)<tr><td>{{ $schedule->sequence ?? $schedule->line_number }}</td><td>{{ $dates->formatDate($schedule->due_date, '') }}</td><td class="text-end">{{ $numbers->formatWithMinimumDecimals($schedule->amount, 2) }}</td><td class="text-end">{{ $numbers->formatWithMinimumDecimals($schedule->collected_amount, 2) }}</td><td class="text-end">{{ $numbers->formatWithMinimumDecimals($schedule->outstanding_amount ?? $schedule->remaining_amount, 2) }}</td><td>{{ __(str($schedule->payment_status ?? $schedule->status)->replace('_', ' ')->title()->toString()) }}</td></tr>@endforeach</tbody></table></div></div>
+        <div class="card mb-3"><div class="card-header py-2"><h6 class="mb-0">{{ __('Payment Schedule') }}</h6></div><div class="table-responsive"><table class="table table-sm table-bordered mb-0"><thead><tr><th>#</th><th>{{ __('Due date') }}</th><th class="text-end">{{ __('Amount') }}</th><th class="text-end">{{ __('Collected') }}</th><th class="text-end">{{ __('Outstanding') }}</th><th>{{ __('Status') }}</th></tr></thead><tbody>@foreach($record->paymentSchedules as $schedule)<tr><td>{{ $schedule->sequence ?? $schedule->line_number }}</td><td>{{ $dates->formatDate($schedule->due_date, '') }}</td><td class="text-end">{{ $numbers->formatWithMinimumDecimals($schedule->amount, 2) }}</td><td class="text-end">{{ $numbers->formatWithMinimumDecimals($schedule->collected_amount, 2) }}</td><td class="text-end">{{ $numbers->formatWithMinimumDecimals($kind === 'invoice' && $record->status === 'cancelled' ? '0' : ($schedule->outstanding_amount ?? $schedule->remaining_amount), 2) }}</td><td>{{ __($kind === 'invoice' && $record->status === 'cancelled' ? 'Cancelled' : str($schedule->payment_status ?? $schedule->status)->replace('_', ' ')->title()->toString()) }}</td></tr>@endforeach</tbody></table></div></div>
     @endif
 
     @if($kind === 'sales_order')

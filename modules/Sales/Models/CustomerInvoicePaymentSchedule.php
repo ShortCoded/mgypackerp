@@ -19,13 +19,13 @@ class CustomerInvoicePaymentSchedule extends Model
 
     protected function casts(): array
     {
-        return ['due_date' => 'date', 'amount' => 'decimal:4', 'collected_amount' => 'decimal:4', 'credited_amount' => 'decimal:4'];
+        return ['due_date' => 'date', 'amount' => 'decimal:4', 'collected_amount' => 'decimal:4', 'credited_amount' => 'decimal:4', 'actual_withholding_amount' => 'decimal:4'];
     }
 
     protected function outstandingAmount(): Attribute
     {
         return Attribute::get(function (): string {
-            $outstanding = bcsub(bcsub((string) $this->amount, (string) $this->collected_amount, 4), (string) $this->credited_amount, 4);
+            $outstanding = bcsub(bcsub(bcsub((string) $this->amount, (string) $this->collected_amount, 4), (string) $this->credited_amount, 4), (string) ($this->actual_withholding_amount ?? '0'), 4);
 
             return bccomp($outstanding, '0', 4) < 0 ? '0.0000' : $outstanding;
         });
@@ -37,7 +37,7 @@ class CustomerInvoicePaymentSchedule extends Model
             if (bccomp($this->outstanding_amount, '0', 4) <= 0) {
                 return 'collected';
             }
-            if (bccomp(bcadd((string) $this->collected_amount, (string) $this->credited_amount, 4), '0', 4) > 0) {
+            if (bccomp(bcadd(bcadd((string) $this->collected_amount, (string) $this->credited_amount, 4), (string) ($this->actual_withholding_amount ?? '0'), 4), '0', 4) > 0) {
                 return 'partially_collected';
             }
 

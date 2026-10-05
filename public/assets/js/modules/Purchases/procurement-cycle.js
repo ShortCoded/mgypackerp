@@ -3,6 +3,22 @@ document.addEventListener('DOMContentLoaded', () => {
         event.preventDefault();
         location.href = form.dataset.destination.replace('__DOCUMENT__', encodeURIComponent(form.querySelector('select').value));
     }));
+    document.querySelectorAll('[data-selection-discount-input]').forEach(input => {
+        ['input', 'change'].forEach(eventName => input.addEventListener(eventName, () => {
+            const intent = input.closest('[data-selection-discount-line]')?.querySelector('[name$="[inherit_source_discount]"]');
+            if (intent) intent.value = '0';
+        }));
+    });
+    document.querySelectorAll('[data-supplier-quote-discount-form]').forEach(form => {
+        const type = form.querySelector('[name="header_discount_type"]');
+        type?.addEventListener('change', () => {
+            if (!type.value) {
+                const value = form.querySelector('[name="header_discount_value"]');
+                value.value = '0';
+                window.AppNumbers?.formatInput(value);
+            }
+        });
+    });
     const initialize = (row) => {
         window.AppSelect2Ajax?.init(row);
         window.AppDatePicker?.init(row);

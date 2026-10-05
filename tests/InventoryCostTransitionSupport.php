@@ -34,7 +34,7 @@ function costTransitionFixture(string $suffix = '', bool $isolatedCompany = fals
     if ($isolatedCompany) {
         $sourcePeriod = FinancialPeriod::query()->where('company_id', $company->id)->where('is_closed', false)->firstOrFail();
         $companyNumber = (int) Company::withTrashed()->max('doc_number') + 1;
-        $company = Company::factory()->create(['doc_number' => $companyNumber, 'doc_num' => 'SYNTHETIC-COST-COMPANY-'.$companyNumber, 'name' => 'SYNTHETIC isolated cost transition'.$suffix]);
+        $company = Company::factory()->create(['doc_number' => $companyNumber, 'doc_num' => 'SYNTHETIC-COST-COMPANY-'.$companyNumber, 'name' => 'SYNTHETIC isolated cost transition'.$suffix, 'email' => 'synthetic-cost-'.Str::uuid().'@example.test']);
         FinancialPeriod::query()->create(['company_id' => $company->id, 'doc_number' => (int) FinancialPeriod::withTrashed()->max('doc_number') + 1,
             'doc_num' => 'SYNTHETIC-COST-PERIOD'.$suffix, 'name' => 'SYNTHETIC isolated cost period',
             'from_date' => $sourcePeriod->from_date, 'to_date' => $sourcePeriod->to_date, 'is_closed' => false]);

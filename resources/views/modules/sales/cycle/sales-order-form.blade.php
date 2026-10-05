@@ -2,8 +2,10 @@
 
 @php
     $isEdit = $mode === 'edit';
-    $appendOnlyProductionAmendment = $isEdit && $record->canAppendProductionAmendment();
-    $lockedQuotationOrder = $isEdit && (bool) $record->quotation_id && ! $appendOnlyProductionAmendment;
+    $replaceUnexecutedLines = $isEdit && $record->canReplaceUnexecutedLines();
+    $appendOnlyProductionAmendment = $isEdit && $record->canAppendProductionAmendment() && ! $replaceUnexecutedLines;
+    $lockedQuotationOrder = $isEdit && (bool) $record->quotation_id && ! $appendOnlyProductionAmendment && ! $replaceUnexecutedLines;
+    $discountInputsEnabled = ! $appendOnlyProductionAmendment && ! $lockedQuotationOrder;
     $sourceLineRows = $sourceRequest?->lines
         ->filter(fn ($line) => bccomp($line->remainingQuantity(), '0', 8) > 0)
         ->map(fn ($line) => [
@@ -26,14 +28,17 @@
         'quantity' => $line->quantity,
         'unit_price' => $line->unit_price,
         'discount_amount' => $line->discount_amount,
+        'discount_type' => $line->discount_type ?? 'fixed',
+        'discount_value' => $line->discount_value ?? bcsub((string) $line->discount_amount, (string) $line->header_discount_amount, 4),
         'tax_amount' => $line->tax_amount,
         'requested_date' => $line->requested_date?->toDateString(),
         'specifications' => $line->specifications,
         'warehouse_notes' => $line->warehouse_notes,
         'production_notes' => $line->production_notes,
         'price_locked' => true,
-        'locked_source_line' => (bool) $record->quotation_id && ! $appendOnlyProductionAmendment,
+        'locked_source_line' => $lockedQuotationOrder,
         'linked_existing_line' => $appendOnlyProductionAmendment,
+        'identity_editable' => $replaceUnexecutedLines,
     ])->all() : ($sourceLineRows ?: [[]]));
     $scheduleRows = old('payment_schedules', $isEdit ? $record->paymentSchedules->map(fn ($schedule) => [
         'title' => $schedule->title,
@@ -49,7 +54,8 @@
 @section('content')
 @if($record?->sales_employee_id && !$record?->business_employee_id)<div class="alert alert-subtle-warning">{{ __('sales_ui.employee_unresolved') }}</div>@endif
 @if($appendOnlyProductionAmendment)<div class="alert alert-subtle-info">{{ __('sales_ui.production_amendment_help') }}</div>@endif
-<form class="js-sales-cycle-form" data-sales-ui data-sales-document-summary data-index-url="{{ route('admin.sales.sales-orders.index') }}" data-create-url="{{ route('admin.sales.sales-orders.create') }}" data-edit-url="{{ route('admin.sales.sales-orders.edit', '__DOCUMENT__') }}" action="{{ $action }}" method="POST" novalidate>
+@if($replaceUnexecutedLines)<div class="alert alert-subtle-info">{{ __('sales_ui.unexecuted_line_correction_help') }}</div>@endif
+<form class="js-sales-cycle-form" data-sales-ui data-sales-document-summary @if($discountInputsEnabled) data-sales-discount-inputs @endif data-index-url="{{ route('admin.sales.sales-orders.index') }}" data-create-url="{{ route('admin.sales.sales-orders.create') }}" data-edit-url="{{ route('admin.sales.sales-orders.edit', '__DOCUMENT__') }}" action="{{ $action }}" method="POST" novalidate>
     @csrf
     @if($isEdit)<x-forms.input type="hidden" name="amendment_token" value="{{ $record->amendmentToken() }}" />@endif
         <x-forms.line-item-cards :line-label="__('sales_ui.line')" />
@@ -137,6 +143,14 @@
                 </tbody>
             </table>
         </div>
+        @if($discountInputsEnabled)
+        <div class="card-body border-top"><div class="row g-2 align-items-end">
+            <div class="col-md-3"><x-forms.label for="order-discount-type" :label="__('sales_ui.header_discount')" /><x-forms.select id="order-discount-type" name="discount_type" class="form-select js-sales-header-discount-type"><option value="">{{ __('None') }}</option>@foreach(['fixed', 'percentage'] as $type)<option value="{{ $type }}" @selected(old('discount_type', $record?->discount_type) === $type)>{{ __('quotations.discount_types.'.$type) }}</option>@endforeach</x-forms.select></div>
+            <div class="col-md-3"><x-forms.label for="order-discount-value" :label="__('quotations.attributes.discount_value')" /><x-forms.input id="order-discount-value" name="discount_value" class="form-control text-end js-sales-header-discount-value" value="{{ old('discount_value', $record?->discount_value ?? 0) }}" inputmode="decimal" /></div>
+            <div class="col-md-6"><small class="text-muted">{{ __('sales_ui.header_discount_help') }}</small><div>{{ __('sales_ui.header_discount') }}: <strong data-sales-header-discount-amount dir="ltr">0.00</strong></div></div>
+        </div></div>
+        @endif
+        @if($discountInputsEnabled) @include('modules.sales.cycle.partials.withholding-inputs') @endif
         <x-forms.document-summary />
     </div>
 

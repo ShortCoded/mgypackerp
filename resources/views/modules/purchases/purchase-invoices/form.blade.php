@@ -91,7 +91,7 @@
                 'discount_amount' => $numbers->format($line->discount_amount),
                 'tax_amount' => $numbers->format($line->tax_amount),
                 'total_after_tax' => $numbers->format($line->total_after_tax),
-                'notes' => $line->notes,
+                'notes' => $line->notes, 'source_discount_snapshot' => $line->source_discount_snapshot,
             ];
         })->values()->all() ?? [];
     }
@@ -219,6 +219,9 @@
     action="{{ $action }}"
     method="POST"
     data-mode="{{ $mode }}"
+    data-discount-preview-url="{{ route('admin.purchases.purchase-invoices.discount-preview') }}"
+    data-invoice-doc-num="{{ $mode === 'edit' ? $record?->doc_num : '' }}"
+    data-inherit-header-discount="{{ $record?->lines?->isNotEmpty() && $record->lines->every(fn ($line) => (bool) ($line->source_discount_snapshot['inherited'] ?? false)) ? '1' : '0' }}"
     data-readonly="{{ $isReadonly ? '1' : '0' }}"
     data-product-url="{{ route('admin.purchases.select2.products') }}"
     data-cashbox-url="{{ route('admin.purchases.select2.cashboxes') }}"
@@ -227,6 +230,7 @@
     data-primary-focus="invoice_date"
     novalidate>
     @csrf
+    <x-forms.input type="hidden" name="inherit_header_discount" value="{{ $record?->lines?->isNotEmpty() && $record->lines->every(fn ($line) => (bool) ($line->source_discount_snapshot['inherited'] ?? false)) ? '1' : '0' }}" />
         <x-forms.line-item-cards />
     @if($method !== 'POST')
         @method($method)
@@ -595,7 +599,7 @@
                             </thead>
                             <tbody>
                                 @forelse($lineRows as $index => $line)
-                                    <tr class="js-purchase-invoice-line" data-index="{{ $index }}">
+                                    <tr class="js-purchase-invoice-line" data-index="{{ $index }}" data-inherit-source-discount="{{ ($line['source_discount_snapshot']['inherited'] ?? false) ? '1' : '0' }}">
                                         @php
                                             $sourceOrderLine = $procurementPurchaseOrders->flatMap->lines->firstWhere('public_id', $line['purchase_order_line_public_id'] ?? '');
                                             $sourceReceiptLine = $eligibleReceiptLines->firstWhere('public_id', $line['receipt_line_public_id'] ?? '');
@@ -603,6 +607,7 @@
                                         @endphp
                                         <td @if(!$sourceOrderLine) hidden @endif class="line-card-info js-purchase-invoice-source-reference">
                                             @if($sourceOrderLine)<a href="{{ route('admin.purchases.purchase-orders.show', $sourceOrderLine->purchaseOrder->doc_num) }}">{{ $sourceOrderLine->purchaseOrder->doc_num }}</a>@endif
+                                        <x-forms.input type="hidden" name="lines[{{ $index }}][inherit_source_discount]" value="{{ ($line['source_discount_snapshot']['inherited'] ?? false) ? '1' : '0' }}" />
                                             <x-forms.input type="hidden" name="lines[{{ $index }}][purchase_order_line_public_id]" value="{{ $line['purchase_order_line_public_id'] ?? '' }}" />
                                         </td>
                                         <td @if(!$sourceReceiptLine) hidden @endif class="line-card-info js-purchase-invoice-source-reference">

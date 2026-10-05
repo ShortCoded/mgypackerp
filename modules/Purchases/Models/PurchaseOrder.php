@@ -67,6 +67,7 @@ class PurchaseOrder extends Model
         'purchase_type',
         'payment_terms',
         'freight_amount',
+        'header_discount_type', 'header_discount_value', 'header_discount_amount',
         'internal_reference',
         'direct_procurement_override',
         'direct_procurement_reason',
@@ -105,6 +106,7 @@ class PurchaseOrder extends Model
             'expected_delivery_date' => 'date',
             'exchange_rate' => 'decimal:6',
             'freight_amount' => 'decimal:4',
+            'header_discount_value' => 'decimal:4', 'header_discount_amount' => 'decimal:4',
             'total_ordered_quantity' => 'decimal:8',
             'total_received_quantity' => 'decimal:8',
             'total_remaining_quantity' => 'decimal:8',
@@ -184,7 +186,7 @@ class PurchaseOrder extends Model
 
     public function isLockedForEditing(): bool
     {
-        return ! $this->isDraft() || $this->hasReceipts();
+        return ! $this->isDraft() || ! $this->canReplaceUnexecutedLines();
     }
 
     public function canReopenSafely(): bool
@@ -196,17 +198,25 @@ class PurchaseOrder extends Model
         return ! $this->hasDownstreamDocuments();
     }
 
-    public function hasDownstreamDocuments(): bool
+    public function canReplaceUnexecutedLines(): bool
+    {
+        return ! $this->hasDownstreamDocuments(includeChangeRequests: false)
+            && ! $this->hasReceipts();
+    }
+
+    public function hasDownstreamDocuments(bool $includeChangeRequests = true): bool
     {
         return DB::table('purchase_orders')
             ->where('purchase_orders.id', $this->getKey())
-            ->where(function ($query): void {
+            ->where(function ($query) use ($includeChangeRequests): void {
                 foreach (['goods_receipt_inspections', 'unpriced_inventory_receipts', 'purchase_invoices', 'supply_orders', 'purchase_returns', 'supplier_payment_contexts', 'purchase_order_delivery_schedules'] as $table) {
                     $query->orWhereExists(fn ($subquery) => $subquery->selectRaw('1')->from($table)->whereColumn($table.'.purchase_order_id', 'purchase_orders.id'));
                 }
-                $query->orWhereExists(fn ($subquery) => $subquery->selectRaw('1')->from('purchase_order_change_requests')
-                    ->whereColumn('purchase_order_change_requests.purchase_order_id', 'purchase_orders.id')
-                    ->where('purchase_order_change_requests.status', 'pending'));
+                if ($includeChangeRequests) {
+                    $query->orWhereExists(fn ($subquery) => $subquery->selectRaw('1')->from('purchase_order_change_requests')
+                        ->whereColumn('purchase_order_change_requests.purchase_order_id', 'purchase_orders.id')
+                        ->where('purchase_order_change_requests.status', 'pending'));
+                }
             })
             ->exists();
     }

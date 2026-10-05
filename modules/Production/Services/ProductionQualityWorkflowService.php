@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\OperatingContextService;
@@ -34,6 +35,7 @@ class ProductionQualityWorkflowService
     {
         return DB::transaction(function () use ($run, $data, $parent): ProductionQualityInspection {
             $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $subjectType = (string) ($data['subject_type'] ?? $parent?->subject_type ?? ProductionQualityInspection::SubjectProductionRun);
             $lockedRun = $run instanceof ProductionRun
                 ? ProductionRun::query()->with('order')->lockForUpdate()->findOrFail($run->getKey())
@@ -137,6 +139,7 @@ class ProductionQualityWorkflowService
                 'status' => ProductionQualityInspection::StatusDraft,
                 'result' => 'pending',
                 'affected_base_quantity' => $data['affected_base_quantity'] ?? $lockedParent?->affected_base_quantity,
+                'production_quality_output_batch_id' => $lockedRun ? app(ProductionQualityQuantityService::class)->reserve($lockedRun, $inspectionTypeId, $data['affected_base_quantity'] ?? null, $lockedParent) : null,
                 'notes' => $data['notes'] ?? null,
                 'requested_by' => auth()->id(),
                 'requested_at' => now(),
@@ -156,6 +159,7 @@ class ProductionQualityWorkflowService
     {
         return DB::transaction(function () use ($inspection, $run, $data): ProductionQualityInspection {
             $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionQualityInspection::query()->with(['stockHold', 'reports', 'results'])->lockForUpdate()->findOrFail($inspection->getKey());
             $this->assertContext($locked, $context);
             if ($locked->status !== ProductionQualityInspection::StatusDraft || $locked->reports->isNotEmpty() || $locked->results->isNotEmpty()) {
@@ -163,6 +167,10 @@ class ProductionQualityWorkflowService
             }
 
             $subjectType = (string) $data['subject_type'];
+            app(ProductionQualityQuantityService::class)->assertInspectionQuantity($locked, $data['affected_base_quantity'] ?? null);
+            if ($locked->production_quality_output_batch_id !== null && ($subjectType !== $locked->subject_type || (int) ($data['quality_inspection_type_id'] ?? 0) !== (int) $locked->quality_inspection_type_id)) {
+                throw new DomainException(__('production_execution.evidence.quality_batch_invalid'));
+            }
             $lockedRun = $run instanceof ProductionRun
                 ? ProductionRun::query()->with('order')->lockForUpdate()->findOrFail($run->getKey())
                 : null;
@@ -249,6 +257,7 @@ class ProductionQualityWorkflowService
     {
         DB::transaction(function () use ($inspection): void {
             $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionQualityInspection::query()->with(['stockHold', 'reports', 'results'])->lockForUpdate()->findOrFail($inspection->getKey());
             $this->assertContext($locked, $context);
             if ($locked->status !== ProductionQualityInspection::StatusDraft || $locked->reports->isNotEmpty() || $locked->results->isNotEmpty()) {
@@ -260,6 +269,7 @@ class ProductionQualityWorkflowService
             }
             $locked->update(['deleted_by' => auth()->id(), 'updated_by' => auth()->id()]);
             $locked->delete();
+            app(ProductionQualityQuantityService::class)->withdrawDeletedDraft($locked);
         });
     }
 
@@ -267,12 +277,14 @@ class ProductionQualityWorkflowService
     {
         return DB::transaction(function () use ($inspection): ProductionQualityInspection {
             $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionQualityInspection::onlyTrashed()->with('stockHold')->lockForUpdate()->findOrFail($inspection->getKey());
             $this->assertContext($locked, $context);
             if ($locked->status !== ProductionQualityInspection::StatusDraft) {
                 throw new DomainException(__('production_execution.messages.quality_not_restorable'));
             }
 
+            app(ProductionQualityQuantityService::class)->reactivateRestoredDraft($locked);
             $locked->restore();
             $locked->update(['restored_by' => auth()->id(), 'restored_at' => now(), 'updated_by' => auth()->id()]);
             if ($locked->subject_type === ProductionQualityInspection::SubjectInventoryStock) {
@@ -334,6 +346,7 @@ class ProductionQualityWorkflowService
     {
         return DB::transaction(function () use ($inspection, $data): ProductionQualityInspectionReport {
             $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionQualityInspection::query()->with('run')->lockForUpdate()->findOrFail($inspection->getKey());
             $this->assertContext($locked, $context);
             if ($locked->status !== ProductionQualityInspection::StatusInProgress) {
@@ -387,12 +400,15 @@ class ProductionQualityWorkflowService
     {
         return DB::transaction(function () use ($inspection, $data): ProductionQualityInspection {
             $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionQualityInspection::query()->with('run')->lockForUpdate()->findOrFail($inspection->getKey());
             $this->assertContext($locked, $context);
             if ($locked->status !== ProductionQualityInspection::StatusInProgress) {
                 throw new DomainException(__('production_execution.messages.quality_submit_in_progress_only'));
             }
 
+            app(ProductionQualityQuantityService::class)->assertInspectionQuantity($locked, $data['affected_base_quantity'] ?? null, $data['accepted_base_quantity'] ?? null);
+            app(ProductionQualityQuantityService::class)->assertFailedDispositionAllowed($locked, $data['result'], $data['disposition']);
             $this->validateResults($locked, $data);
             $locked->results()->delete();
             foreach (array_values($data['results'] ?? []) as $index => $result) {
@@ -414,6 +430,7 @@ class ProductionQualityWorkflowService
                 'sampled_at' => now(),
                 'defect_code' => $data['defect_code'] ?? null,
                 'affected_base_quantity' => $data['affected_base_quantity'] ?? $locked->affected_base_quantity,
+                'accepted_base_quantity' => $data['accepted_base_quantity'] ?? $locked->accepted_base_quantity,
                 'corrective_action' => $data['corrective_action'] ?? null,
                 'rework_notes' => $data['rework_notes'] ?? null,
                 'notes' => $data['notes'] ?? $locked->notes,
@@ -458,6 +475,7 @@ class ProductionQualityWorkflowService
     {
         return DB::transaction(function () use ($inspection, $approved, $reason): ProductionQualityInspection {
             $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionQualityInspection::query()->with('run')->lockForUpdate()->findOrFail($inspection->getKey());
             $this->assertContext($locked, $context);
             if ($locked->status !== ProductionQualityInspection::StatusSubmitted) {
@@ -467,6 +485,8 @@ class ProductionQualityWorkflowService
                 throw new DomainException(__('production_execution.messages.quality_rejection_reason_required'));
             }
 
+            app(ProductionQualityQuantityService::class)->assertInspectionQuantity($locked, $locked->affected_base_quantity, $locked->accepted_base_quantity);
+            app(ProductionQualityQuantityService::class)->assertFailedDispositionAllowed($locked, $approved ? $locked->result : 'failed', $locked->disposition ?? 'hold');
             $released = $approved && $locked->result === 'passed' && $locked->disposition === 'release';
             $locked->update($approved ? [
                 'status' => ProductionQualityInspection::StatusApproved,
@@ -540,6 +560,7 @@ class ProductionQualityWorkflowService
     {
         return DB::transaction(function () use ($inspection, $from, $to, $extra): ProductionQualityInspection {
             $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionQualityInspection::query()->lockForUpdate()->findOrFail($inspection->getKey());
             $this->assertContext($locked, $context);
             if (! in_array($locked->status, $from, true)) {

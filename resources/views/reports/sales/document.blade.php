@@ -134,7 +134,7 @@
                                 <span dir="ltr">{{ __('sales_ui.remainder.remaining_delivery') }}: {{ $numbers->format($line->remainingDeliveryQuantity()) }}</span>
                             </td>
                         @endif
-                        @if($showPrices)<td dir="ltr">{{ $numbers->format($line->unit_price ?? 0) }}</td><td dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->discount_amount ?? 0, 2) }}</td><td dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->tax_amount ?? 0, 2) }}</td><td dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->line_total ?? 0, 2) }}</td>@endif
+                        @if($showPrices)<td dir="ltr">{{ $numbers->format($line->unit_price ?? 0) }}</td><td dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->discount_amount ?? 0, 2) }}@if(in_array($kind, ['sales_order', 'invoice'], true) && $line->discount_type)<br><small>{{ __('quotations.discount_types.'.$line->discount_type) }}: {{ $numbers->format($line->discount_value) }}{{ $line->discount_type === 'percentage' ? '%' : '' }}</small>@endif</td><td dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->tax_amount ?? 0, 2) }}</td><td dir="ltr">{{ $numbers->formatWithMinimumDecimals($line->line_total ?? 0, 2) }}</td>@endif
                         @if(in_array($kind, ['sales_return', 'quality_disposition'], true))<td>{{ $line->quality_disposition ? $qualityDispositionLabel($line->quality_disposition) : __('Pending inspection') }}<br>{{ __('Saleable') }}: {{ $numbers->format($line->saleable_quantity) }} · {{ __('Quarantine') }}: {{ $numbers->format($line->quarantine_quantity) }} · {{ __('Rework') }}: {{ $numbers->format($line->rework_quantity) }} · {{ __('Scrap') }}: {{ $numbers->format($line->scrap_quantity) }}</td>@endif
                     </tr>
                 @endforeach
@@ -157,7 +157,15 @@
             @if(isset($record->subtotal_amount))<tr><th>{{ __('Subtotal') }}</th><td>{{ $numbers->formatWithMinimumDecimals($record->subtotal_amount, 2) }}</td></tr>@endif
             @if(isset($record->discount_amount))<tr><th>{{ __('Discount') }}</th><td>{{ $numbers->formatWithMinimumDecimals($record->discount_amount, 2) }}</td></tr>@endif
             @if(isset($record->tax_amount))<tr><th>{{ __('Tax') }}</th><td>{{ $numbers->formatWithMinimumDecimals($record->tax_amount, 2) }}</td></tr>@endif
+            @if(in_array($kind, ['sales_order', 'invoice'], true) && $record->discount_type)<tr><th>{{ __($kind === 'invoice' ? 'sales_ui.invoice_discount' : 'sales_ui.header_discount') }} ({{ __('quotations.discount_types.'.$record->discount_type) }}: {{ $numbers->format($record->discount_value) }}{{ $record->discount_type === 'percentage' ? '%' : '' }})</th><td>{{ $numbers->formatWithMinimumDecimals($record->header_discount_amount, 2) }}</td></tr>@endif
             <tr><th>{{ __('Grand total') }}</th><td><strong>{{ $numbers->formatWithMinimumDecimals($record->total_amount, 2) }}</strong></td></tr>
+            @if(in_array($kind, ['sales_order', 'invoice'], true) && bccomp((string) ($record->withholding_rate ?? 0), '0', 4) > 0)
+            <tr><th>{{ __('sales_ui.withholding') }} / {{ __($record->withholding_basis === 'eta_t4_net_excluding_tax' ? 'sales_ui.wht.eta' : 'sales_ui.wht.legacy') }} ({{ $numbers->format($record->withholding_rate) }}%)</th><td>{{ $numbers->formatWithMinimumDecimals($record->withholding_amount, 2) }}</td></tr>
+            <tr><th>{{ __('sales_ui.net_payable') }}</th><td><strong>{{ $numbers->formatWithMinimumDecimals($record->net_payable_amount, 2) }}</strong></td></tr>
+            @endif
+            @if($kind === 'invoice' && bccomp((string) ($record->actual_withholding_amount ?? '0'), '0', 4) > 0)
+            <tr><th>{{ __('sales_ui.wht.actual') }}</th><td>{{ $numbers->formatWithMinimumDecimals($record->actual_withholding_amount, 2) }}</td></tr>
+            @endif
         </tbody></table>
     @endif
 

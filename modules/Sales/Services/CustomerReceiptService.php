@@ -4,6 +4,7 @@ namespace Modules\Sales\Services;
 
 use DomainException;
 use Illuminate\Support\Facades\DB;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
@@ -33,6 +34,7 @@ class CustomerReceiptService
     public function createAndApprove(array $data, array $allocations = []): CustomerReceipt
     {
         return DB::transaction(function () use ($data, $allocations): CustomerReceipt {
+            Company::query()->whereKey($data['company_id'])->lockForUpdate()->firstOrFail();
             $this->amounts->assertPositive($data['amount'], __('Receipt amount must be greater than zero.'), 4);
             if (empty($data['cashbox_id']) === empty($data['bank_account_id'])) {
                 throw new DomainException(__('Select either one cashbox or one bank account.'));
@@ -159,9 +161,7 @@ class CustomerReceiptService
 
     private function refreshInvoice(CustomerInvoice $invoice): void
     {
-        $paid = (string) DB::table('customer_invoice_payment_schedules')->where('customer_invoice_id', $invoice->getKey())->sum('collected_amount');
-        $remaining = $this->amounts->subtract($this->amounts->subtract($invoice->total_amount, $paid), $invoice->credited_amount);
-        $invoice->update(['paid_amount' => $paid, 'remaining_amount' => $remaining]);
+        app(CustomerInvoiceBalanceService::class)->refresh($invoice);
     }
 
     /** @param array<string, mixed> $data */

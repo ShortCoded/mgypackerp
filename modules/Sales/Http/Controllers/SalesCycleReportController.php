@@ -213,8 +213,8 @@ class SalesCycleReportController extends Controller
         $needsCollectionSummary = $reportType === 'collections';
         $needsUpcoming = $reportType === 'collections';
         $needsReturnsSummaries = $reportType === 'returns';
-        $financialSummary = ['invoice_count' => 0, 'gross_sales' => '0.0000', 'credit_notes' => '0.0000', 'net_sales' => '0.0000', 'collections' => '0.0000', 'outstanding' => '0.0000', 'overdue_outstanding' => '0.0000', 'collection_rate' => '0.00', 'return_rate' => '0.00'];
-        $ledgerSummary = ['invoice_count' => 0, 'gross_sales' => '0.0000', 'returns_amount' => '0.0000', 'net_sales' => '0.0000', 'collected' => '0.0000', 'outstanding' => '0.0000'];
+        $financialSummary = ['invoice_count' => 0, 'gross_sales' => '0.0000', 'credit_notes' => '0.0000', 'net_sales' => '0.0000', 'collections' => '0.0000', 'actual_withholding' => '0.0000', 'outstanding' => '0.0000', 'overdue_outstanding' => '0.0000', 'collection_rate' => '0.00', 'return_rate' => '0.00'];
+        $ledgerSummary = ['invoice_count' => 0, 'gross_sales' => '0.0000', 'returns_amount' => '0.0000', 'net_sales' => '0.0000', 'collected' => '0.0000', 'actual_withholding' => '0.0000', 'outstanding' => '0.0000'];
         $customerSummary = ['customer_count' => 0, 'invoice_count' => 0, 'sales_value' => '0.0000', 'outstanding' => '0.0000'];
         $productSummary = ['product_count' => 0, 'sold_quantity' => '0.00000000', 'sales_value' => '0.0000'];
         $customerProductSummary = ['line_count' => 0, 'sold_quantity' => '0.00000000', 'sales_value' => '0.0000'];
@@ -264,7 +264,7 @@ class SalesCycleReportController extends Controller
         }
         if ($needsFinancialSummary) {
             $invoiceTotals = (clone $financialInvoiceQuery)->reorder()->selectRaw(
-                'count(*) as invoice_count, coalesce(sum(total_amount), 0) as gross_sales, coalesce(sum(paid_amount), 0) as collections, coalesce(sum(remaining_amount), 0) as outstanding'
+                'count(*) as invoice_count, coalesce(sum(total_amount), 0) as gross_sales, coalesce(sum(paid_amount), 0) as collections, coalesce(sum(actual_withholding_amount), 0) as actual_withholding, coalesce(sum(remaining_amount), 0) as outstanding'
             )->first();
             $creditNotesRow = (clone $financialCreditQuery)->reorder()->selectRaw('coalesce(sum(total_amount), 0) as credit_notes_total')->first();
             $returnCreditNotesRow = (clone $financialCreditQuery)->reorder()->whereNotNull('customer_invoices.sales_return_id')
@@ -285,6 +285,7 @@ class SalesCycleReportController extends Controller
                 'credit_notes' => $creditNotesTotal,
                 'net_sales' => $netSales,
                 'collections' => $collections,
+                'actual_withholding' => $money($invoiceTotals?->actual_withholding),
                 'outstanding' => $money($invoiceTotals?->outstanding),
                 'overdue_outstanding' => $money($overdueRow?->overdue_outstanding),
                 'collection_rate' => $rate($collections, $netSales),
@@ -402,8 +403,8 @@ class SalesCycleReportController extends Controller
         $installments = $needsInstallmentRows
             ? $applyInvoiceFilters($balances->schedulesAt($companyId, $returnCutoff)->joinSub($invoiceQuery()->toBase(), 'customer_invoices', 'customer_invoices.id', '=', 'customer_invoice_payment_schedules.customer_invoice_id')->join('customers', 'customers.id', '=', 'customer_invoices.customer_id'))
                 ->where('customer_invoices.company_id', $companyId)->where('customer_invoices.financial_period_id', $periodId)->where('customer_invoices.posting_status', 'posted')
-                ->whereRaw('customer_invoice_payment_schedules.amount > customer_invoice_payment_schedules.collected_amount + customer_invoice_payment_schedules.credited_amount')
-                ->selectRaw('customer_invoices.doc_num, customers.name, customer_invoice_payment_schedules.due_date, customer_invoice_payment_schedules.amount - customer_invoice_payment_schedules.collected_amount - customer_invoice_payment_schedules.credited_amount as outstanding')
+                ->whereRaw('customer_invoice_payment_schedules.amount > customer_invoice_payment_schedules.collected_amount + customer_invoice_payment_schedules.credited_amount + customer_invoice_payment_schedules.actual_withholding_amount')
+                ->selectRaw('customer_invoices.doc_num, customers.name, customer_invoice_payment_schedules.due_date, customer_invoice_payment_schedules.amount - customer_invoice_payment_schedules.collected_amount - customer_invoice_payment_schedules.credited_amount - customer_invoice_payment_schedules.actual_withholding_amount as outstanding')
                 ->orderBy('customer_invoice_payment_schedules.due_date')->get()
             : collect();
         $invoiceOutstanding = $applyInvoiceFilters($invoiceQuery()->with('customer'))->where('company_id', $companyId)->where('financial_period_id', $periodId)
@@ -558,8 +559,8 @@ class SalesCycleReportController extends Controller
 
         $installmentSummaryRow = $needsInstallmentSummary ? $applyInvoiceFilters($balances->schedulesAt($companyId, $returnCutoff)->joinSub($invoiceQuery()->toBase(), 'customer_invoices', 'customer_invoices.id', '=', 'customer_invoice_payment_schedules.customer_invoice_id')->join('customers', 'customers.id', '=', 'customer_invoices.customer_id'))
             ->where('customer_invoices.company_id', $companyId)->where('customer_invoices.financial_period_id', $periodId)->where('customer_invoices.posting_status', 'posted')
-            ->whereRaw('customer_invoice_payment_schedules.amount > customer_invoice_payment_schedules.collected_amount + customer_invoice_payment_schedules.credited_amount')
-            ->reorder()->selectRaw('count(*) as schedule_count, coalesce(sum(customer_invoice_payment_schedules.amount - customer_invoice_payment_schedules.collected_amount - customer_invoice_payment_schedules.credited_amount), 0) as outstanding')->first()
+            ->whereRaw('customer_invoice_payment_schedules.amount > customer_invoice_payment_schedules.collected_amount + customer_invoice_payment_schedules.credited_amount + customer_invoice_payment_schedules.actual_withholding_amount')
+            ->reorder()->selectRaw('count(*) as schedule_count, coalesce(sum(customer_invoice_payment_schedules.amount - customer_invoice_payment_schedules.collected_amount - customer_invoice_payment_schedules.credited_amount - customer_invoice_payment_schedules.actual_withholding_amount), 0) as outstanding')->first()
             : null;
         $installmentSummary = [
             'schedule_count' => (int) ($installmentSummaryRow?->schedule_count ?? 0),
@@ -663,7 +664,7 @@ class SalesCycleReportController extends Controller
             'overdue_state' => $overdueState, 'payment_state' => $paymentState, 'from' => $from, 'to' => $to, 'cutoff' => $returnCutoff];
         $ledgerBaseQuery = $readService->ledger($companyId, $branchId, $readFilters);
         $ledgerTotals = $needsLedgerSummary ? (clone $ledgerBaseQuery)->reorder()->selectRaw(
-            'count(*) as invoice_count, coalesce(sum(total_amount), 0) as gross_sales, coalesce(sum(paid_amount), 0) as collected, coalesce(sum(remaining_amount), 0) as outstanding'
+            'count(*) as invoice_count, coalesce(sum(total_amount), 0) as gross_sales, coalesce(sum(paid_amount), 0) as collected, coalesce(sum(actual_withholding_amount), 0) as actual_withholding, coalesce(sum(remaining_amount), 0) as outstanding'
         )->first() : null;
         /** Posting-period semantics: a credit note contributes in its own financial period
             and invoice date (consistent with $financialCreditQuery), matching only credit notes
@@ -698,6 +699,7 @@ class SalesCycleReportController extends Controller
                 'returns_amount' => $ledgerReturnsTotal,
                 'net_sales' => bcsub($ledgerGross, $ledgerReturnsTotal, 4),
                 'collected' => $money($ledgerTotals?->collected),
+                'actual_withholding' => $money($ledgerTotals?->actual_withholding),
                 'outstanding' => $money($ledgerTotals?->outstanding),
             ];
         }
