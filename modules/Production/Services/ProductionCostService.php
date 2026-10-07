@@ -127,6 +127,10 @@ class ProductionCostService
             $allocatedOverhead = $laborAllocations->where('basis_used', '!=', 'direct_payroll_hours')
                 ->reduce(fn (string $sum, object $line): string => bcadd($sum, (string) $line->amount, 8), '0.00000000');
             $capitalizable = bcadd(bcadd(bcadd($directMaterialCost, $otherDirectCost, 8), $directLaborCost, 8), $allocatedOverhead, 8);
+            $stage = app(ProductionStageTransferService::class)->position($run);
+            $capitalizable = bcsub(bcadd($capitalizable, $stage['incoming'], 8), $stage['outgoing'], 8);
+            $outputCosts = app(ProductionStageOutputCostService::class)->position($run);
+            $capitalizable = bcsub($capitalizable, $outputCosts['expensed_cost'], 8);
 
             return [$run->getKey() => [
                 'issued' => $issued,
@@ -140,6 +144,11 @@ class ProductionCostService
                 'direct_labor_cost' => $directLaborCost,
                 'allocated_overhead' => $allocatedOverhead,
                 'capitalizable' => $capitalizable,
+                'stage_incoming_cost' => $stage['incoming'],
+                'stage_outgoing_cost' => $stage['outgoing'],
+                'stage_input_used_cost' => $stage['used_cost'],
+                'stage_loss_cost' => $outputCosts['expensed_cost'],
+                'stage_held_output_cost' => app(ProductionStageCostComponentService::class)->sum(app(ProductionStageCostComponentService::class)->add($outputCosts['held_components']['rejected'], $outputCosts['held_components']['rework'])),
                 'finished_goods' => $finishedGoods,
                 'standard_variance' => $standardVariance,
                 'wip' => bcsub(bcsub($capitalizable, $finishedGoods, 8), $standardVariance, 8),
@@ -165,8 +174,13 @@ class ProductionCostService
             throw new DomainException(__('production_execution.messages.unvalued_labor_cost'));
         }
         $remainingGood = bcsub((string) $run->good_base_quantity, (string) $run->received_base_quantity, 8);
+        $stage = app(ProductionStageTransferService::class)->position($run);
+        $remainingGood = bcsub($remainingGood, $stage['outgoing_quantity'], 8);
+        if (bccomp($receiptBaseQuantity, '0', 8) <= 0 || bccomp($remainingGood, '0', 8) <= 0 || bccomp($receiptBaseQuantity, $remainingGood, 8) > 0) {
+            throw new DomainException(__('production_execution.messages.invalid_receipt_cost'));
+        }
 
-        if ($run->material_accounting_mode === ProductionOutputEvidenceService::Mode) {
+        if ($run->material_accounting_mode === ProductionOutputEvidenceService::Mode || app(ProductionShiftEvidenceService::class)->hasDailyReports($run)) {
             $consumption = DB::table('inventory_document_lines as line')->join('inventory_documents as document', 'document.id', '=', 'line.inventory_document_id')
                 ->where('document.company_id', $run->company_id)->where('document.branch_id', $run->branch_id)->where('document.production_run_id', $run->id)
                 ->where('document.status', InventoryDocument::StatusPosted)->where('document.document_type', InventoryDocument::TypeMaterialConsumption)
@@ -176,7 +190,13 @@ class ProductionCostService
             }
             $consumedCost = (string) BigDecimal::of((string) $consumption->sum('line.total_cost'))->toScale(8, RoundingMode::HalfUp);
             $eligible = bcadd(bcadd(bcadd($consumedCost, $position['other_direct_cost'], 8), $position['direct_labor_cost'], 8), $position['allocated_overhead'], 8);
-            $unreceivedCost = bcsub(bcsub($eligible, $position['finished_goods'], 8), $position['standard_variance'], 8);
+            $eligible = bcadd($eligible, $stage['used_cost'], 8);
+            if (app(ProductionStageTransferService::class)->isManaged($run)) {
+                app(ProductionStageOutputCostService::class)->assertReadyForOutput($run);
+                $excluded = app(ProductionStageOutputCostService::class)->position($run)['excluded_components'];
+                $eligible = bcsub($eligible, app(ProductionStageCostComponentService::class)->sum($excluded), 8);
+            }
+            $unreceivedCost = bcsub(bcsub(bcsub($eligible, $position['finished_goods'], 8), $position['standard_variance'], 8), $stage['outgoing'], 8);
             $receiptCost = bccomp($receiptBaseQuantity, $remainingGood, 8) === 0 ? $unreceivedCost
                 : bcdiv(bcmul($unreceivedCost, $receiptBaseQuantity, 16), $remainingGood, 8);
         } elseif (bccomp($receiptBaseQuantity, $remainingGood, 8) === 0) {

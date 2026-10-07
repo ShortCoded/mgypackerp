@@ -21,7 +21,7 @@ class CustomerInvoiceLine extends Model
 
     protected function casts(): array
     {
-        return ['quantity' => 'decimal:8', 'conversion_factor' => 'decimal:8', 'base_quantity' => 'decimal:8', 'unit_price' => 'decimal:8', 'discount_amount' => 'decimal:4', 'discount_value' => 'decimal:4', 'header_discount_amount' => 'decimal:4', 'tax_amount' => 'decimal:4', 'line_total' => 'decimal:4', 'unit_cost' => 'decimal:8', 'is_service' => 'boolean', 'source_snapshot' => 'array', 'allowed_discount_value' => 'decimal:4'];
+        return ['quantity' => 'decimal:8', 'conversion_factor' => 'decimal:8', 'base_quantity' => 'decimal:8', 'unit_price' => 'decimal:8', 'discount_amount' => 'decimal:4', 'discount_value' => 'decimal:4', 'header_discount_amount' => 'decimal:4', 'tax_rate' => 'decimal:4', 'tax_amount' => 'decimal:4', 'line_total' => 'decimal:4', 'unit_cost' => 'decimal:8', 'is_service' => 'boolean', 'source_snapshot' => 'array', 'allowed_discount_value' => 'decimal:4'];
     }
 
     public function invoice(): BelongsTo

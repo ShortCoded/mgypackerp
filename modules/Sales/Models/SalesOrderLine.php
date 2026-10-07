@@ -27,7 +27,7 @@ class SalesOrderLine extends Model
         return [
             'quantity' => 'decimal:8', 'unit_price' => 'decimal:8', 'discount_amount' => 'decimal:4', 'discount_value' => 'decimal:4', 'header_discount_amount' => 'decimal:4',
             'conversion_factor' => 'decimal:8', 'base_quantity' => 'decimal:8',
-            'tax_amount' => 'decimal:4', 'line_total' => 'decimal:4', 'reserved_quantity' => 'decimal:8',
+            'tax_rate' => 'decimal:4', 'tax_amount' => 'decimal:4', 'line_total' => 'decimal:4', 'reserved_quantity' => 'decimal:8',
             'reserved_base_quantity' => 'decimal:8',
             'production_requested_quantity' => 'decimal:8', 'produced_quantity' => 'decimal:8',
             'production_requested_base_quantity' => 'decimal:8', 'produced_base_quantity' => 'decimal:8',

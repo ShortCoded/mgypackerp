@@ -2,6 +2,7 @@
 
 namespace Modules\Production\Services;
 
+use App\Services\DocumentOwnerEffectProofService;
 use DomainException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
@@ -32,6 +33,7 @@ class ProductionMaterialRequestService
         private readonly ProductionCycleService $cycle,
         private readonly ProcurementSourcingService $procurement,
         private readonly ActivityLogger $activityLogger,
+        private readonly ProductionMaterialDemandService $demand,
     ) {}
 
     /** @param array<int, string|int|float> $quantitiesByRequirementId */
@@ -42,11 +44,14 @@ class ProductionMaterialRequestService
         bool $additional = false,
         ?string $reason = null,
         ?string $requiredByDate = null,
+        array $quantitiesByComponentId = [],
     ): ProductionMaterialRequest {
-        return DB::transaction(function () use ($run, $branchStoreId, $quantitiesByRequirementId, $additional, $reason, $requiredByDate): ProductionMaterialRequest {
+        return DB::transaction(function () use ($run, $branchStoreId, $quantitiesByRequirementId, $additional, $reason, $requiredByDate, $quantitiesByComponentId): ProductionMaterialRequest {
             $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionRun::query()->with(['requirements.product', 'requirements.unit', 'orderLine'])->lockForUpdate()->findOrFail($run->getKey());
             $this->assertContext($locked, $context);
+            app(ProductionReceiptCancellationService::class)->assertManufacturingAllowed($locked);
             if (in_array($locked->status, [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled], true)) {
                 throw new DomainException(__('production_execution.messages.material_request_run_closed'));
             }
@@ -54,6 +59,16 @@ class ProductionMaterialRequestService
 
             if ($additional && blank($reason)) {
                 throw new DomainException(__('production_execution.messages.additional_material_reason_required'));
+            }
+            $explicitQuantities = $quantitiesByRequirementId !== [] || $quantitiesByComponentId !== [];
+            $resolved = $this->demand->materializeSelections($locked, $quantitiesByComponentId);
+            if (array_intersect_key($quantitiesByRequirementId, $resolved) !== []) {
+                throw new DomainException(__('production_execution.messages.material_request_issue_line_invalid'));
+            }
+            $quantitiesByRequirementId += $resolved;
+            $locked->load(['requirements.product', 'requirements.unit']);
+            if (array_diff(array_map('intval', array_keys($quantitiesByRequirementId)), $locked->requirements->modelKeys()) !== []) {
+                throw new DomainException(__('production_execution.messages.material_request_issue_line_invalid'));
             }
 
             $numbers = $this->documents->nextForCompany(
@@ -82,7 +97,7 @@ class ProductionMaterialRequestService
                 $defaultQuantity = $additional
                     ? '0'
                     : $this->remainingRequestableFor($requirement);
-                $quantity = bcadd((string) ($quantitiesByRequirementId[$requirement->getKey()] ?? $defaultQuantity), '0', 8);
+                $quantity = bcadd((string) ($quantitiesByRequirementId[$requirement->getKey()] ?? ($explicitQuantities ? '0' : $defaultQuantity)), '0', 8);
 
                 if (bccomp($quantity, '0', 8) <= 0) {
                     continue;
@@ -117,9 +132,11 @@ class ProductionMaterialRequestService
         bool $additional = false,
         ?string $reason = null,
         ?string $requiredByDate = null,
+        array $quantitiesByComponentId = [],
     ): ProductionMaterialRequest {
-        return DB::transaction(function () use ($request, $branchStoreId, $quantitiesByRequirementId, $additional, $reason, $requiredByDate): ProductionMaterialRequest {
+        return DB::transaction(function () use ($request, $branchStoreId, $quantitiesByRequirementId, $additional, $reason, $requiredByDate, $quantitiesByComponentId): ProductionMaterialRequest {
             $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionMaterialRequest::query()
                 ->with(['run.requirements.product', 'run.requirements.unit'])
                 ->lockForUpdate()
@@ -134,6 +151,15 @@ class ProductionMaterialRequestService
             }
             if ($additional && blank($reason)) {
                 throw new DomainException(__('production_execution.messages.additional_material_reason_required'));
+            }
+            $resolved = $this->demand->materializeSelections($locked->run, $quantitiesByComponentId);
+            if (array_intersect_key($quantitiesByRequirementId, $resolved) !== []) {
+                throw new DomainException(__('production_execution.messages.material_request_issue_line_invalid'));
+            }
+            $quantitiesByRequirementId += $resolved;
+            $locked->run->load(['requirements.product', 'requirements.unit']);
+            if (array_diff(array_map('intval', array_keys($quantitiesByRequirementId)), $locked->run->requirements->modelKeys()) !== []) {
+                throw new DomainException(__('production_execution.messages.material_request_issue_line_invalid'));
             }
 
             $store = BranchStore::query()
@@ -198,10 +224,52 @@ class ProductionMaterialRequestService
         });
     }
 
+    public function cancelUnissued(ProductionMaterialRequest $request, string $reason): ProductionMaterialRequest
+    {
+        Gate::authorize('production.material_requests.cancel');
+
+        return DB::transaction(function () use ($request, $reason): ProductionMaterialRequest {
+            $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
+            $locked = ProductionMaterialRequest::query()->with('lines')->lockForUpdate()->findOrFail($request->getKey());
+            $this->assertContext($locked, $context);
+            if (blank($reason)) {
+                throw new DomainException(__('open_documents.validation.reason_required'));
+            }
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate(
+                $context['company_id'], $locked->request_date, $context['financial_period_id'], lockForUpdate: true,
+            );
+            if ($locked->status === ProductionMaterialRequest::StatusCancelled) {
+                return $locked;
+            }
+            ProductionRun::query()->lockForUpdate()->findOrFail($locked->production_run_id);
+            if (! $locked->canCancelUnissued()) {
+                throw new DomainException(__('cancellation_review.unissued_only'));
+            }
+            $before = ['header' => $locked->getAttributes(), 'lines' => $locked->lines->toArray()];
+            foreach ($locked->lines as $line) {
+                $this->reservations->releaseForMaterialRequestLine($line, trim($reason));
+                $line->forceFill(['reserved_quantity' => 0])->save();
+            }
+            $locked->forceFill([
+                'status' => ProductionMaterialRequest::StatusCancelled,
+                'notes' => trim(implode("\n", array_filter([$locked->notes, __('cancellation_review.reason').': '.trim($reason)]))),
+                'updated_by' => auth()->id(),
+            ])->save();
+            $this->activityLogger->log(request(), 'production', 'production_material_request.cancelled', 'success', [
+                'subject' => $locked, 'company_id' => $locked->company_id, 'properties_only' => true,
+                'properties' => ['reason' => trim($reason), 'before' => $before],
+            ]);
+
+            return $locked->refresh()->load('lines');
+        }, 3);
+    }
+
     public function restore(ProductionMaterialRequest $request): ProductionMaterialRequest
     {
         return DB::transaction(function () use ($request): ProductionMaterialRequest {
             $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionMaterialRequest::withTrashed()->lockForUpdate()->findOrFail($request->getKey());
             $this->assertContext($locked, $context);
 
@@ -213,6 +281,13 @@ class ProductionMaterialRequestService
                 ->lockForUpdate()
                 ->findOrFail($locked->production_run_id);
             $this->assertContext($run, $context);
+            if ($locked->request_type === 'planned') {
+                foreach ($locked->lines()->with('requirement.run.orderLine')->get() as $line) {
+                    if (bccomp((string) $line->requested_quantity, $this->remainingRequestableFor($line->requirement), 8) > 0) {
+                        throw new DomainException(__('production_execution.messages.material_request_exceeds_bom'));
+                    }
+                }
+            }
             $locked->restore();
             $locked->update(['restored_by' => auth()->id(), 'restored_at' => now(), 'updated_by' => auth()->id()]);
 
@@ -342,6 +417,7 @@ class ProductionMaterialRequestService
             Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionMaterialRequest::query()->with(['lines', 'run.requirements'])->lockForUpdate()->findOrFail($request->getKey());
             $this->assertContext($locked, $context);
+            app(ProductionReceiptCancellationService::class)->assertManufacturingAllowed($locked->run);
 
             if (! in_array($locked->status, [ProductionMaterialRequest::StatusApproved, ProductionMaterialRequest::StatusShortage, ProductionMaterialRequest::StatusPartiallyIssued], true)) {
                 throw new DomainException(__('production_execution.messages.material_request_not_issuable'));
@@ -546,8 +622,20 @@ class ProductionMaterialRequestService
             Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionMaterialRequest::query()->with(['lines.product', 'lines.unit', 'run.order', 'run.orderLine', 'store'])->lockForUpdate()->findOrFail($request->getKey());
             $this->assertContext($locked, $context);
+            $previous = null;
             if ($locked->purchase_requisition_id !== null) {
-                return PurchaseRequisition::withTrashed()->where('company_id', $context['company_id'])->findOrFail($locked->purchase_requisition_id);
+                $previous = PurchaseRequisition::withTrashed()->where('company_id', $context['company_id'])
+                    ->lockForUpdate()->findOrFail($locked->purchase_requisition_id);
+                $this->assertContext($previous, $context);
+                if ($previous->trashed()) {
+                    throw new DomainException(__('production_execution.manual_purchase_replacement_blocked'));
+                }
+                if ($previous->status !== PurchaseRequisition::StatusCancelled) {
+                    return $previous;
+                }
+                if (! app(DocumentOwnerEffectProofService::class)->cancelledRequisitionIsSettled($previous)) {
+                    throw new DomainException(__('production_execution.manual_purchase_replacement_blocked'));
+                }
             }
             if (! in_array($locked->status, [ProductionMaterialRequest::StatusShortage, ProductionMaterialRequest::StatusPartiallyIssued], true)
                 || ! $locked->lines->contains(fn ($line): bool => bccomp((string) $line->shortage_quantity, '0', 8) > 0)
@@ -562,6 +650,21 @@ class ProductionMaterialRequestService
                 'financial_period_id' => $locked->financial_period_id,
                 'properties' => ['purchase_requisition' => $requisition->doc_num],
             ]);
+            if ($previous !== null) {
+                $this->activityLogger->log(request(), 'production', 'production_material_request.purchase_requisition_replaced', 'success', [
+                    'subject' => $locked, 'company_id' => $locked->company_id, 'branch_id' => $locked->branch_id,
+                    'financial_period_id' => $locked->financial_period_id,
+                    'properties' => [
+                        'previous_id' => $previous->getKey(), 'previous_doc_num' => $previous->doc_num,
+                        'replacement_id' => $requisition->getKey(), 'replacement_doc_num' => $requisition->doc_num,
+                        'previous_owner_effects_settled' => true,
+                        'shortage_lines' => $locked->lines->where('shortage_quantity', '>', 0)->map(fn ($line): array => [
+                            'material_request_line_id' => $line->getKey(), 'product_id' => $line->product_id,
+                            'unit_id' => $line->unit_id, 'shortage_quantity' => (string) $line->shortage_quantity,
+                        ])->values()->all(),
+                    ],
+                ]);
+            }
 
             return $requisition;
         }, 3);
@@ -596,16 +699,7 @@ class ProductionMaterialRequestService
 
     public function remainingRequestableFor(ProductionMaterialRequirement $requirement, ?int $excludeRequestId = null): string
     {
-        $alreadyRequested = (string) ProductionMaterialRequestLine::query()
-            ->where('production_material_requirement_id', $requirement->getKey())
-            ->whereHas('request', fn ($query) => $query
-                ->where('request_type', 'planned')
-                ->whereNotIn('status', [ProductionMaterialRequest::StatusRejected, ProductionMaterialRequest::StatusCancelled])
-                ->when($excludeRequestId !== null, fn ($requests) => $requests->whereKeyNot($excludeRequestId)))
-            ->sum('requested_quantity');
-        $remaining = bcsub((string) $requirement->planned_quantity, $alreadyRequested, 8);
-
-        return bccomp($remaining, '0', 8) > 0 ? $remaining : '0.00000000';
+        return $this->demand->remaining($requirement, $excludeRequestId);
     }
 
     /** @return array{company_id: int, financial_period_id: int, branch_id: int} */

@@ -23,7 +23,7 @@ function procurementCorrectionFixture(): array
     $fixture['company']->update(['name' => 'SYNTHETIC purchase correction '.$fixture['company']->id]);
     $fixture['admin'] = procurementAdministrativeBranch($fixture);
     foreach (['purchases.prices.view', 'purchase_invoices.view', 'purchase_invoices.reverse', 'supplier_payments.view',
-        'supplier_payments.cancel', 'supplier_payments.approve', 'purchases.purchase_returns.view', 'purchases.purchase_returns.delete',
+        'supplier_payments.cancel', 'supplier_payments.approve', 'purchases.purchase_returns.view', 'purchases.purchase_returns.delete', 'purchases.purchase_returns.cancel',
         'purchases.purchase_returns.reverse', 'purchases.goods_receipt_notes.view', 'purchases.goods_receipt_notes.reverse',
         'tools.open_documents.view', 'tools.open_documents.open'] as $permission) {
         Permission::findOrCreate($permission, 'web');

@@ -347,6 +347,7 @@
 @if(in_array($kind, ['sales_order', 'sales_delivery', 'invoice', 'credit_note', 'customer_receipt', 'sales_return', 'sales_request']))
 @include('modules.sales.cycle.partials.attachments', ['attachmentRecord' => $record, 'attachmentKind' => $kind, 'attachmentsReadonly' => !auth()->user()?->can(match($kind) { 'sales_request' => 'sales_requests.edit', 'sales_order' => 'sales_orders.edit', 'sales_delivery' => 'sales_deliveries.create', 'customer_receipt' => 'customer_receipts.create', 'sales_return' => 'sales_returns.create', default => 'customer_invoices.edit' })])
 @endif
+    <x-document-cancellation-review :record="$record" />
 @endsection
 
 @push('scripts')

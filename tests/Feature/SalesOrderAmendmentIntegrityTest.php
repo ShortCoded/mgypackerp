@@ -67,5 +67,11 @@ test('unchanged manual closure survives reapproval while an approved quantity am
     $payload['payment_schedules'][0]['amount'] = '1110';
     $order = $orders->approve($orders->submit($orders->update($order, $payload)));
     expect($order->status)->toBe(SalesOrder::StatusApproved)->and($order->reopen_snapshot)->toBeNull()
-        ->and($order->canCancelSafely())->toBeFalse()->and($order->isEditable())->toBeFalse();
+        ->and($order->canCancelSafely())->toBeTrue()->and($order->isEditable())->toBeFalse();
+    $history = $order->statusHistory()->count();
+    $order = $orders->cancel($order, 'Synthetic unused amendment withdrawn.');
+    expect($order->status)->toBe(SalesOrder::StatusCancelled)
+        ->and($order->statusHistory()->count())->toBe($history + 1)
+        ->and($order->lines()->where('product_id', $this->fixture['finished']->id)->sole()->quantity)->toBe('101.00000000')
+        ->and($order->lines()->where('product_id', $this->fixture['service']->id)->sole()->quantity)->toBe('1.00000000');
 });

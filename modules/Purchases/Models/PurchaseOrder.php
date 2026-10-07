@@ -3,6 +3,7 @@
 namespace Modules\Purchases\Models;
 
 use App\Models\User;
+use App\Services\DocumentOwnerEffectProofService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -204,6 +205,13 @@ class PurchaseOrder extends Model
             && ! $this->hasReceipts();
     }
 
+    public function canCancelSafely(): bool
+    {
+        return ! $this->trashed() && in_array($this->status, [self::StatusDraft, self::StatusSubmitted, self::StatusRejected,
+            self::StatusApproved, self::StatusClosed], true)
+            && ! app(DocumentOwnerEffectProofService::class)->purchaseOrderHasUnsettledEffects($this);
+    }
+
     public function hasDownstreamDocuments(bool $includeChangeRequests = true): bool
     {
         return DB::table('purchase_orders')
@@ -224,9 +232,16 @@ class PurchaseOrder extends Model
     public function isDeletable(): bool
     {
         return $this->isDraft()
-            && $this->approved_at === null
-            && $this->closed_at === null
+            && (($this->approved_at === null && $this->closed_at === null) || $this->hasReopenEvidence())
             && ! $this->hasDownstreamDocuments();
+    }
+
+    public function hasReopenEvidence(): bool
+    {
+        return $this->isDraft() && DB::table('activity_log')->where('company_id', $this->company_id)
+            ->where('subject_type', self::class)->where('subject_id', $this->id)->where('event', 'purchase_order.reopened')
+            ->when($this->approved_at, fn ($query) => $query->where('created_at', '>=', $this->approved_at))
+            ->when($this->closed_at, fn ($query) => $query->where('created_at', '>=', $this->closed_at))->exists();
     }
 
     public function company(): BelongsTo

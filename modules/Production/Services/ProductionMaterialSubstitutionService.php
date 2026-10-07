@@ -232,6 +232,10 @@ final class ProductionMaterialSubstitutionService
         abort_unless((int) request()->session()->get(OperatingContextService::FinancialPeriodIdKey) === (int) $run->financial_period_id, 404);
         abort_unless($this->scope->allowedFinancialPeriodQuery(auth()->user(), [$company->doc_num])->where('financial_periods.id', $run->financial_period_id)->exists(), 404);
 
+        if ($lock) {
+            app(ProductionReceiptCancellationService::class)->assertManufacturingAllowed($run);
+        }
+
         return $run;
     }
 

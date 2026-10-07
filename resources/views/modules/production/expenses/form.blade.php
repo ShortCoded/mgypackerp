@@ -13,6 +13,9 @@
 @section('title', $title)
 
 @section('content')
+@if($mode === 'view' && $record)
+    <x-document-cancellation-review :record="$record" />
+@endif
     <div class="production-mobile-workflow">
         <form method="POST" action="{{ $isEdit ? route('admin.production.expenses.update', $record) : route('admin.production.expenses.store') }}" data-production-expense-form>
             @csrf

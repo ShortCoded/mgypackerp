@@ -45,4 +45,9 @@ class SupplierSelection extends Model
     {
         return $this->hasMany(SupplierSelectionLine::class);
     }
+
+    public function purchaseOrders(): HasMany
+    {
+        return $this->hasMany(PurchaseOrder::class, 'supplier_selection_id');
+    }
 }

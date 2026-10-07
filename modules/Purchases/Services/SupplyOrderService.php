@@ -5,6 +5,7 @@ namespace Modules\Purchases\Services;
 use DomainException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
@@ -61,6 +62,7 @@ class SupplyOrderService
     public function cancel(SupplyOrder $supplyOrder, string $reason): SupplyOrder
     {
         return DB::transaction(function () use ($supplyOrder, $reason): SupplyOrder {
+            Company::query()->whereKey($this->context()['company_id'])->lockForUpdate()->firstOrFail();
             $record = $this->locked($supplyOrder, true);
             if ($record->status === SupplyOrder::StatusCancelled) {
                 return $record;
@@ -68,11 +70,8 @@ class SupplyOrderService
             if (blank($reason)) {
                 throw new DomainException(__('Cancellation reason is required.'));
             }
-            if ($record->receipts()->withTrashed()->exists()) {
+            if (! $record->canCancelSafely()) {
                 throw new DomainException(__('Reverse or cancel dependent receipts before cancelling this supply order.'));
-            }
-            if (! in_array($record->status, [SupplyOrder::StatusDraft, SupplyOrder::StatusIssued], true)) {
-                throw new DomainException(__('This supply order cannot be cancelled in its current status.'));
             }
             $record->forceFill([
                 'status' => SupplyOrder::StatusCancelled,

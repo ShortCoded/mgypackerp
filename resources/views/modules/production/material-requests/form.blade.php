@@ -26,6 +26,9 @@
                 <div class="card-header py-2"><div class="row flex-between-center g-2">
                     <div class="col"><h5 class="mb-0">{{ $title }}</h5>@if($record && ! $isClone)<span class="badge badge-subtle-secondary mt-1">{{ __('production_execution.statuses.'.$record->status) }}</span>@endif</div>
                     <div class="col-auto d-flex flex-wrap gap-2">
+                        @if($isView && $record?->status === \Modules\Production\Models\ProductionMaterialRequest::StatusSubmitted)
+                            @can('production.material_requests.approve')<button class="btn btn-success btn-sm" type="button" data-action="post" data-url="{{ route('admin.production.material-requests.approve', $record) }}">{{ __('production_execution.actions.approve') }}</button>@endcan
+                        @endif
                         @if($record && ! $isClone) @can('production.material_requests.print')<a class="btn btn-falcon-default btn-sm" target="_blank" rel="noopener" href="{{ route('admin.production.material-requests.print', $record) }}"><span class="fas fa-print me-1"></span>{{ __('common.actions.print') }}</a>@endcan @endif
                         @include('modules.finance.partials.form-actions', ['mode' => $isClone ? 'clone' : $mode, 'record' => $record, 'resource' => 'production.material_requests', 'routePrefix' => 'admin.production.material-requests', 'canEditRecord' => $record?->status === \Modules\Production\Models\ProductionMaterialRequest::StatusSubmitted, 'canDeleteRecord' => $record?->status === \Modules\Production\Models\ProductionMaterialRequest::StatusSubmitted])
                     </div>
@@ -58,16 +61,26 @@
                             @if($selectedRun)
                                 <div class="table-responsive" role="region" aria-label="{{ __('production_execution.material_requests.requirements') }}" tabindex="0">
                                     <table class="table table-sm table-hover align-middle mb-0 erp-entry-lines-table"><thead class="bg-100 text-900"><tr><th class="text-center erp-entry-line-number">#</th><th>{{ __('production_execution.fields.product') }}</th><th>{{ __('production_execution.material_requests.planned_issued') }}</th><th>{{ __('production_execution.fields.quantity') }} <span class="text-danger">*</span></th></tr></thead><tbody>
-                                        @foreach($selectedRun->requirements as $index => $requirement)
+                                        @forelse($materialOptions as $index => $requirement)
                                             @php
                                                 $sourceLine = $requestLines->get($requirement->id);
-                                                $remaining = (string) ($remainingRequestableByRequirement->get($requirement->id) ?? '0');
-                                                $defaultQuantity = $sourceLine?->requested_quantity ?? (! $additional && bccomp($remaining, '0', 8) > 0 ? $remaining : null);
+                                                $remaining = (string) ($remainingRequestableByRequirement->get($index) ?? '0');
+                                                $defaultQuantity = $sourceLine?->requested_quantity;
                                             @endphp
-                                            <tr><td class="text-center erp-entry-line-number" data-row-number>{{ $index + 1 }}</td><td><x-forms.input type="hidden" name="lines[{{ $index }}][requirement_id]" value="{{ $requirement->id }}" />{{ $requirement->product?->doc_num }} — {{ $requirement->product?->name }}</td><td dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($requirement->planned_quantity) }} / {{ app(\Modules\Core\Services\NumericFormatService::class)->format($requirement->issued_quantity) }}</td><td><x-forms.numeric-input name="lines[{{ $index }}][quantity]" :value="old('lines.'.$index.'.quantity', $defaultQuantity)" :scale="8" min="0.00000001" step="0.00000001" arrow-step="1" data-planned-remaining="{{ bccomp($remaining, '0', 8) > 0 ? $remaining : '' }}" /></td></tr>
-                                        @endforeach
+                                            <tr><td class="text-center erp-entry-line-number" data-row-number>{{ $index + 1 }}</td><td>
+                                                @if($requirement->exists)<x-forms.input type="hidden" name="lines[{{ $index }}][requirement_id]" :value="$requirement->id" />
+                                                @else<x-forms.input type="hidden" name="lines[{{ $index }}][product_component_id]" :value="$requirement->product_component_id" />@endif
+                                                {{ $requirement->product?->doc_num }} — {{ $requirement->product?->name }}
+                                                <div class="small text-700">{{ $requirement->unit?->name }}</div>
+                                            </td><td dir="ltr">{{ app(\Modules\Core\Services\NumericFormatService::class)->format($requirement->planned_quantity) }} / {{ app(\Modules\Core\Services\NumericFormatService::class)->format($requirement->issued_quantity) }}
+                                                <div class="small text-700" dir="auto">{{ __('production_execution.material_requests.cumulative_remaining') }}: {{ app(\Modules\Core\Services\NumericFormatService::class)->format($remaining) }} {{ $requirement->unit?->name }}</div>
+                                            </td><td><x-forms.numeric-input name="lines[{{ $index }}][quantity]" :value="old('lines.'.$index.'.quantity', $defaultQuantity)" :scale="8" min="0.00000001" step="0.00000001" arrow-step="1" data-planned-remaining="{{ $remaining }}" /></td></tr>
+                                        @empty
+                                            <tr><td colspan="4"><div class="alert alert-info mb-0">{{ __('production_execution.material_requests.no_bom_components') }}</div></td></tr>
+                                        @endforelse
                                     </tbody></table>
                                 </div>
+                                @if(! $isView)<div class="small text-700 mt-2">{{ __('production_execution.material_requests.incremental_help') }}</div>@endif
                             @else
                                 <div class="alert alert-info mb-0">{{ __('production_execution.material_requests.select_run_first') }}</div>
                             @endif
@@ -113,12 +126,14 @@
                 @if($record->purchase_requisition_id)
                     <div>{{ __('production_execution.manual_purchase_linked') }}: <strong>{{ $record->purchaseRequisition?->doc_num }}</strong></div>
                     @can('purchases.purchase_requisitions.view') @if($record->purchaseRequisition && ! $record->purchaseRequisition->trashed())<a href="{{ route('admin.purchases.purchase-requisitions.show', $record->purchaseRequisition) }}">{{ __('common.actions.view') }}</a>@endif @endcan
-                @else
+                @endif
+                @php($canReplacePurchase = $record->purchaseRequisition && app(\App\Services\DocumentOwnerEffectProofService::class)->cancelledRequisitionIsSettled($record->purchaseRequisition) && in_array($record->status, [\Modules\Production\Models\ProductionMaterialRequest::StatusShortage, \Modules\Production\Models\ProductionMaterialRequest::StatusPartiallyIssued], true) && ! in_array($record->run?->status, [\Modules\Production\Models\ProductionRun::StatusCompleted, \Modules\Production\Models\ProductionRun::StatusCancelled], true) && $record->lines->contains(fn ($line) => bccomp((string) $line->shortage_quantity, '0', 8) > 0))
+                @if(! $record->purchase_requisition_id || $canReplacePurchase)
                     <p class="text-700">{{ __('production_execution.manual_purchase_help') }}</p>
                     @can('purchases.purchase_requisitions.create')
                     <form method="POST" action="{{ route('admin.production.material-requests.purchase-requisition', $record) }}">
                         @csrf <x-forms.input type="hidden" name="_submission_token" value="{{ (string) \Illuminate\Support\Str::uuid() }}" />
-                        <button class="btn btn-primary btn-sm" type="submit">{{ __('production_execution.manual_purchase_action') }}</button>
+                        <button class="btn btn-primary btn-sm" type="submit">{{ __($canReplacePurchase ? 'production_execution.manual_purchase_replace_action' : 'production_execution.manual_purchase_action') }}</button>
                     </form>
                     @endcan
                 @endif
@@ -159,6 +174,9 @@
             @endcanany
         @endif
     </div>
+    @if($mode === 'view' && $record)
+    <x-document-cancellation-review :record="$record" />
+    @endif
 @endsection
 
 @push('styles')<link rel="stylesheet" href="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/css/modules/Production/execution.css') }}">@endpush

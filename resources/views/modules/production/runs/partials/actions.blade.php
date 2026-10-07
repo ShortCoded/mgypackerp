@@ -13,6 +13,7 @@
             <span class="fas fa-ellipsis-h fs-10"></span>
         </button>
         <div class="py-2 border dropdown-menu dropdown-menu-end">
+            <x-document-owner-actions :record="$record" />
             @if ($canView)
                 <a class="dropdown-item" href="{{ route('admin.production.runs.show', $record) }}">{{ __('common.actions.view') }}</a>
             @endif

@@ -16,7 +16,7 @@
             'quantity' => $line->remainingQuantity(),
             'unit_price' => $line->unit_price,
             'discount_amount' => 0,
-            'tax_amount' => 0,
+            'tax_amount' => 0, 'tax_rate' => 0, 'tax_calculation_basis' => 'rate',
             'requested_date' => $sourceRequest->required_delivery_date?->toDateString(),
             'specifications' => $line->specifications,
         ])->values()->all() ?? [];
@@ -30,7 +30,8 @@
         'discount_amount' => $line->discount_amount,
         'discount_type' => $line->discount_type ?? 'fixed',
         'discount_value' => $line->discount_value ?? bcsub((string) $line->discount_amount, (string) $line->header_discount_amount, 4),
-        'tax_amount' => $line->tax_amount,
+        'tax_amount' => $line->tax_amount, 'tax_rate' => $line->tax_rate, 'tax_calculation_basis' => $line->tax_calculation_basis,
+        'line_total' => $line->line_total, 'header_discount_amount' => $line->header_discount_amount,
         'requested_date' => $line->requested_date?->toDateString(),
         'specifications' => $line->specifications,
         'warehouse_notes' => $line->warehouse_notes,
@@ -135,7 +136,7 @@
         </div>
         <div class="table-responsive">
             <table class="table table-sm table-bordered align-middle sales-order-grid mb-0">
-                <thead class="bg-100"><tr><th>#</th><th class="product-column">{{ __('Product') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th><th>{{ __('Unit price') }}</th><th>{{ __('Discount') }}</th><th>{{ __('Tax') }}</th><th>{{ __('Line total') }}</th><th></th></tr></thead>
+                <thead class="bg-100"><tr><th>#</th><th class="product-column">{{ __('Product') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th><th>{{ __('Unit price') }}</th><th>{{ __('Discount') }}</th><th>{{ __('sales_ui.tax_rate') }}</th><th>{{ __('Line total') }}</th><th></th></tr></thead>
                 <tbody data-sales-lines>
                     @foreach($lineRows as $index => $line)
                         @include('modules.sales.cycle.partials.sales-order-line', ['index' => $index, 'line' => $line, 'products' => $products, 'productUnits' => $productUnits, 'showRequestedDate' => false])

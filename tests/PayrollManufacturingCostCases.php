@@ -36,6 +36,7 @@ use Spatie\Permission\Models\Permission;
 use Symfony\Component\Process\Process;
 
 require_once __DIR__.'/PayrollFinancialSupport.php';
+require_once __DIR__.'/ProductionHandoverSupport.php';
 require_once __DIR__.'/InventoryStandardCostSupport.php';
 
 test('posted direct payroll follows each employee actual run hours into WIP finished goods and sales COGS through authorized routes', function (bool $laterPeriod, bool $boundaryRun, bool $standardCost): void {
@@ -44,10 +45,11 @@ test('posted direct payroll follows each employee actual run hours into WIP fini
     Carbon::setTestNow('2026-09-30 18:00:00');
     $permissions = ['hr.payroll_approval.correct', 'hr.payroll_approval.correct_approve', 'hr.payroll_approval.correct_later_period', 'costing.overhead_allocation_rules.view',
         'costing.overhead_allocation_rules.create', 'costing.overhead_allocation_run.view', 'costing.overhead_allocation_run.create',
-        'costing.overhead_allocation_run.approve', 'costing.overhead_allocation_run.reverse', 'production.runs.view', 'production.runs.labor', 'production.runs.receive',
+        'costing.overhead_allocation_run.approve', 'costing.overhead_allocation_run.reverse', 'production.runs.view', 'production.runs.labor', 'production.runs.receive', 'production.handovers.create', 'production.handovers.approve',
         'inventory.documents.create', 'inventory.documents.issue', 'inventory.documents.view', 'reports.costing.product_cost.view',
         'reports.costing.product_cost.export', 'reports.costing.product_cost.print'];
     $actor = payrollFinancialActor($permissions);
+    $warehouseActor = payrollFinancialActor(['inventory.production_receipts.create', 'inventory.production_receipts.approve', 'inventory.production_receipts.cancel']);
     $this->actingAs($actor)->withSession(payrollFinancialContext($fixture));
     request()->setUserResolver(fn (): User => $actor);
     request()->setLaravelSession(app('session.store'));
@@ -109,7 +111,7 @@ test('posted direct payroll follows each employee actual run hours into WIP fini
     if ($boundaryRun) {
         $runB->update(['actual_start_at' => '2026-09-30 08:00:00', 'actual_end_at' => '2026-10-01 18:00:00']);
         $runB->progressEntries()->update(['recorded_at' => '2026-10-01 18:00:00']);
-        $this->get(route('admin.production.runs.show', $runB))->assertOk()->assertSee(__('production_execution.fields.daily_work_hours'));
+        $this->get(route('admin.production.runs.operation', [$runB, 'labor']))->assertOk()->assertSee(__('production_execution.fields.daily_work_hours'));
         $runB->update(['actual_start_at' => '2026-09-30 23:00:00', 'actual_end_at' => '2026-10-01 01:00:00']);
         $this->postJson(route('admin.production.runs.labor', $runB), [
             '_submission_token' => (string) Str::uuid(), 'actual_labor_count' => 1,
@@ -220,9 +222,10 @@ test('posted direct payroll follows each employee actual run hours into WIP fini
         ->and($costs->runPosition($runB)['wip'])->toBe('21120.00000000');
     if ($boundaryRun) {
         expect($costs->runPosition($runB)['labor_valuation_complete'])->toBeFalse();
-        $this->withSession(payrollFinancialContext($fixture))->postJson(route('admin.production.runs.receive', $runB), [
+        $this->withSession($postingContext);
+        $response = productionHandoverHttpReceipt($runB, [
             '_submission_token' => (string) Str::uuid(), 'branch_store_id' => $store->id, 'base_quantity' => '100',
-        ])->assertUnprocessable()->assertJsonPath('errors.production.0', __('production_execution.messages.unvalued_labor_cost'));
+        ], $warehouseActor)->assertUnprocessable()->assertJsonPath('errors.document.0', __('production_execution.messages.unvalued_labor_cost'));
         expect($runB->fresh()->received_base_quantity)->toBe('0.00000000');
     }
     $changed = $originalLabor[$runA->id];
@@ -267,11 +270,13 @@ test('posted direct payroll follows each employee actual run hours into WIP fini
             'expense_account_id' => $standardFixture['overhead_account']->id, 'reason' => 'SYNTHETIC actual production expense']));
         $expenses->pay($expense);
     }
-    $receiptResponse = $this->postJson(route('admin.production.runs.receive', $runA), [
+    $this->withSession($postingContext);
+    request()->session()->put($postingContext);
+    $receiptResponse = productionHandoverHttpReceipt($runA, [
         '_submission_token' => (string) Str::uuid(), 'branch_store_id' => $store->id, 'base_quantity' => '100',
-    ])->assertOk();
+    ], $warehouseActor)->assertOk();
     $receipt = InventoryDocument::query()->where('company_id', $fixture['company']->id)
-        ->where('doc_num', $receiptResponse->json('data.doc_num'))->sole();
+        ->where('doc_num', $receiptResponse->json('doc_num'))->sole();
     expect($receipt->financial_period_id)->toBe($postingPeriod->id);
     $this->withSession($postingContext);
     request()->session()->put($postingContext);
@@ -428,10 +433,22 @@ test('posted direct payroll follows each employee actual run hours into WIP fini
             ->and($octoberCost->allocated_cost)->toBe('30000.0000');
         $this->post(route('admin.costing.overhead-allocation-run.approve', $octoberCost->public_id))->assertRedirect()->assertSessionHasNoErrors();
         expect($costs->runPosition($runB->fresh())['labor_valuation_complete'])->toBeTrue();
-        $response = $this->withSession(payrollFinancialContext($fixture))->postJson(route('admin.production.runs.receive', $runB), [
-            '_submission_token' => (string) Str::uuid(), 'branch_store_id' => $store->id, 'base_quantity' => '100',
+        $this->withSession($postingContext);
+        request()->session()->put($postingContext);
+        $handover = InventoryDocument::query()->where('company_id', $runB->company_id)->where('document_type', InventoryDocument::TypeProductionHandover)
+            ->whereHas('lines', fn ($query) => $query->where('production_run_id', $runB->id))->sole();
+        $unvaluedDraft = InventoryDocument::query()->where('company_id', $runB->company_id)->where('document_type', InventoryDocument::TypeProductionReceipt)
+            ->where('source_document_type', InventoryDocument::class)->where('source_document_id', $handover->id)->sole();
+        $this->actingAs($warehouseActor)->withSession($postingContext)->postJson(route('admin.inventory.production-receipts.cancel', $unvaluedDraft), [
+            '_submission_token' => (string) Str::uuid(), 'reason' => 'SYNTHETIC receipt waits for actual valued labor',
         ])->assertOk();
-        $finalReceipt = InventoryDocument::query()->where('company_id', $fixture['company']->id)->where('doc_num', $response->json('data.doc_num'))->sole();
+        $created = $this->postJson(route('admin.inventory.production-receipts.store', $handover), [
+            '_submission_token' => (string) Str::uuid(), 'document_date' => now()->toDateString(),
+            'lines' => [['line_public_id' => $handover->lines->sole()->public_id, 'quantity' => '100']],
+        ])->assertOk();
+        $receipt = InventoryDocument::query()->where('company_id', $runB->company_id)->where('doc_num', $created->json('doc_num'))->sole();
+        $response = $this->postJson(route('admin.inventory.production-receipts.approve', $receipt), ['_submission_token' => (string) Str::uuid()])->assertOk();
+        $finalReceipt = InventoryDocument::query()->where('company_id', $fixture['company']->id)->where('doc_num', $response->json('doc_num'))->sole();
         expect($finalReceipt->transactions->sole()->total_cost)->toBe('51120.00000000')
             ->and($costs->runPosition($runB->fresh())['wip'])->toBe('0.00000000');
     }

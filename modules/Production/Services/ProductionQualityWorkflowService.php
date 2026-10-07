@@ -55,6 +55,7 @@ class ProductionQualityWorkflowService
                 ? ProductionQualityInspection::query()->lockForUpdate()->findOrFail($parent->getKey())
                 : null;
             if ($lockedParent instanceof ProductionQualityInspection) {
+                app(ProductionStageOutputCostService::class)->assertQualityMutationAllowed($lockedParent);
                 $this->assertReinspectionAllowed($lockedParent, $context);
             }
 
@@ -407,6 +408,7 @@ class ProductionQualityWorkflowService
                 throw new DomainException(__('production_execution.messages.quality_submit_in_progress_only'));
             }
 
+            app(ProductionStageOutputCostService::class)->assertQualityMutationAllowed($locked);
             app(ProductionQualityQuantityService::class)->assertInspectionQuantity($locked, $data['affected_base_quantity'] ?? null, $data['accepted_base_quantity'] ?? null);
             app(ProductionQualityQuantityService::class)->assertFailedDispositionAllowed($locked, $data['result'], $data['disposition']);
             $this->validateResults($locked, $data);
@@ -485,6 +487,7 @@ class ProductionQualityWorkflowService
                 throw new DomainException(__('production_execution.messages.quality_rejection_reason_required'));
             }
 
+            app(ProductionStageOutputCostService::class)->assertQualityMutationAllowed($locked);
             app(ProductionQualityQuantityService::class)->assertInspectionQuantity($locked, $locked->affected_base_quantity, $locked->accepted_base_quantity);
             app(ProductionQualityQuantityService::class)->assertFailedDispositionAllowed($locked, $approved ? $locked->result : 'failed', $locked->disposition ?? 'hold');
             $released = $approved && $locked->result === 'passed' && $locked->disposition === 'release';
@@ -673,6 +676,10 @@ class ProductionQualityWorkflowService
     /** @param array{company_id: int, financial_period_id: int, branch_id: int} $context */
     private function assertContext(Model $record, array $context): void
     {
+        $run = $record instanceof ProductionRun ? $record : ($record instanceof ProductionQualityInspection ? $record->run : null);
+        if ($run !== null) {
+            app(ProductionReceiptCancellationService::class)->assertManufacturingAllowed($run);
+        }
         $periodId = $record instanceof ProductionRun ? app(ProductionCorrectionContextService::class)->executionPeriodId($record)
             : (int) $record->getAttribute('financial_period_id');
         if ((int) $record->getAttribute('company_id') !== $context['company_id']

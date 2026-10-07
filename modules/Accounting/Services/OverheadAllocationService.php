@@ -22,6 +22,7 @@ use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Services\ProductionCostService;
+use Modules\Production\Services\ProductionStageTransferService;
 
 final class OverheadAllocationService
 {
@@ -791,6 +792,9 @@ final class OverheadAllocationService
         }
 
         $targets = $query->get();
+        foreach ($targets as $target) {
+            app(ProductionStageTransferService::class)->assertCostMutationAllowed($target);
+        }
         $received = $targets->contains(fn (ProductionRun $target): bool => bccomp((string) $target->received_base_quantity, '0', 8) > 0)
             || InventoryDocument::query()
                 ->whereIn('production_run_id', $runIds->all())

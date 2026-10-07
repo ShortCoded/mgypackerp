@@ -2,6 +2,7 @@
 
 namespace Modules\Sales\Models;
 
+use App\Services\DocumentOwnerEffectProofService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -34,7 +35,12 @@ class CustomerInvoice extends Model
 
     protected $guarded = ['id'];
 
-    protected $attributes = ['document_type' => self::TypeInvoice, 'status' => self::StatusDraft, 'posting_status' => 'unposted'];
+    protected $attributes = [
+        'document_type' => self::TypeInvoice,
+        'status' => self::StatusDraft,
+        'posting_status' => 'unposted',
+        'electronic_invoice_status' => 'not_configured',
+    ];
 
     protected function casts(): array
     {
@@ -104,6 +110,31 @@ class CustomerInvoice extends Model
         return $this->document_type === self::TypeInvoice
             && $this->source_type !== 'fixed_asset_disposal'
             && $this->isEditable();
+    }
+
+    public function canCancelDraft(): bool
+    {
+        return $this->document_type === self::TypeInvoice
+            && $this->source_type !== 'fixed_asset_disposal'
+            && in_array($this->status, [self::StatusDraft, self::StatusReopened], true)
+            && $this->isEditable()
+            && ($this->status !== self::StatusReopened || app(DocumentOwnerEffectProofService::class)->reopenedInvoicePostingIsReversed($this))
+            && ! $this->trashed()
+            && bccomp((string) $this->paid_amount, '0', 4) === 0
+            && bccomp((string) $this->credited_amount, '0', 4) === 0
+            && bccomp((string) $this->applied_advance_amount, '0', 4) === 0
+            && $this->electronic_invoice_uuid === null
+            && $this->electronic_invoice_submitted_at === null
+            && in_array($this->electronic_invoice_status, ['not_configured', 'draft', 'rejected'], true)
+            && ! $this->issueOrder()->exists()
+            && ! $this->deliveries()->withTrashed()->exists()
+            && ! $this->deliveryReceipts()->exists()
+            && ! $this->returns()->withTrashed()->exists()
+            && ! $this->creditNotes()->withTrashed()->exists()
+            && ! $this->allocations()->exists()
+            && ! $this->appliedCredits()->exists()
+            && ! $this->withholdingSettlements()->exists()
+            && ! $this->electronicInvoiceSubmissions()->exists();
     }
 
     public function canCancelDirectService(): bool
@@ -184,10 +215,7 @@ class CustomerInvoice extends Model
     public function canDeleteDraft(): bool
     {
         return self::allowsFullCrud()
-            && $this->document_type === self::TypeInvoice
-            && $this->source_type !== 'fixed_asset_disposal'
-            && $this->status === self::StatusDraft
-            && $this->isEditable();
+            && $this->canCancelDraft();
     }
 
     public function canReopenSafely(): bool

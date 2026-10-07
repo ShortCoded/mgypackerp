@@ -9,8 +9,15 @@
     $preserveSourceLine = $sourceRequestLine || $lockedSourceLine || $linkedExistingLine;
     $discountInputsEnabled = $discountInputsEnabled ?? false;
     $showRequestedDate = $showRequestedDate ?? true;
+    $storedLine = ($record ?? null)?->lines?->firstWhere('public_id', $line['public_id'] ?? $line['invoice_line_public_id'] ?? '');
+    $bookedGross = $storedLine ? bcsub(bcadd((string) $storedLine->line_total, (string) $storedLine->discount_amount, 4), (string) $storedLine->tax_amount, 4) : null;
+    $taxTerms = ['quantity' => $storedLine?->quantity ?? $line['quantity'] ?? 0, 'unit_price' => $storedLine?->unit_price ?? $line['unit_price'] ?? 0,
+        'product' => $storedLine?->product?->doc_num ?? $selectedProduct, 'unit' => $storedLine?->unit?->doc_num ?? $selectedUnit,
+        'discount_type' => $storedLine ? ($storedLine->discount_type ?? 'fixed') : ($line['discount_type'] ?? 'fixed'),
+        'discount_value' => $storedLine?->discount_value ?? ($storedLine ? bcsub((string) $storedLine->discount_amount, (string) $storedLine->header_discount_amount, 4) : ($line['discount_value'] ?? $line['discount_amount'] ?? 0)),
+        'header_type' => ($record ?? null)?->discount_type, 'header_value' => ($record ?? null)?->discount_value ?? 0, 'rate' => $storedLine ? $storedLine->tax_rate : ($line['tax_rate'] ?? null)];
 @endphp
-<tr data-sales-line @if(isset($line['invoice_booked_quantity'])) data-invoice-booked-quantity="{{ $line['invoice_booked_quantity'] }}" data-invoice-booked-tax="{{ $line['tax_amount'] ?? 0 }}" @endif @if($lockedPrice) data-price-locked="1" @endif @if($line['identity_editable'] ?? false) data-identity-editable data-original-product="{{ $selectedProduct }}" data-original-unit="{{ $selectedUnit }}" data-original-price="{{ $line['unit_price'] ?? '' }}" @endif>
+<tr data-sales-line data-tax-terms="{{ json_encode($taxTerms) }}" data-tax-basis="{{ $line['tax_calculation_basis'] ?? 'rate' }}" data-booked-tax="{{ $line['tax_amount'] ?? 0 }}" @if($storedLine && ($record ?? null)?->quotation_id) data-booked-gross="{{ $bookedGross }}" data-booked-header-discount="{{ $storedLine->header_discount_amount }}" data-booked-own-discount="{{ bcsub((string) $storedLine->discount_amount, (string) $storedLine->header_discount_amount, 4) }}" @endif @if(isset($line['invoice_booked_quantity'])) data-invoice-booked-quantity="{{ $line['invoice_booked_quantity'] }}" data-invoice-booked-tax="{{ $line['tax_amount'] ?? 0 }}" @endif @if($lockedPrice) data-price-locked="1" @endif @if($line['identity_editable'] ?? false) data-identity-editable data-original-product="{{ $selectedProduct }}" data-original-unit="{{ $selectedUnit }}" data-original-price="{{ $line['unit_price'] ?? '' }}" @endif>
     <td data-row-number>
         {{ is_numeric($index) ? $index + 1 : '' }}
         @if(! $showRequestedDate && filled($line['requested_date'] ?? null))<x-forms.input type="hidden" name="lines[{{ $index }}][requested_date]" value="{{ $line['requested_date'] }}" />@endif
@@ -41,7 +48,12 @@
         <x-forms.input class="form-control form-control-sm text-end js-sales-discount" name="lines[{{ $index }}][discount_amount]" value="{{ $line['discount_amount'] ?? 0 }}" inputmode="decimal" :readonly='$lockedSourceLine || $linkedExistingLine' />
         @endif
     </td>
-    <td><x-forms.input class="form-control form-control-sm text-end js-sales-tax" name="lines[{{ $index }}][tax_amount]" value="{{ $line['tax_amount'] ?? 0 }}" inputmode="decimal" :readonly='$lockedSourceLine || $linkedExistingLine' /></td>
+    <td><x-forms.numeric-input class="form-control-sm text-end js-sales-tax-rate" name="lines[{{ $index }}][tax_rate]" :value="array_key_exists('tax_rate', $line) ? $line['tax_rate'] : 0" :scale="4" min="0" max="100" step="0.0001" aria-label="{{ __('sales_ui.tax_rate') }}" :readonly="$lockedSourceLine || ($linkedExistingLine && ! $discountInputsEnabled)" />
+        <small data-sales-line-tax-amount dir="ltr">{{ $line['tax_amount'] ?? 0 }}</small>
+        @if(($line['tax_calculation_basis'] ?? '') === 'legacy_amount')<small class="d-block text-muted">{{ __('sales_ui.legacy_tax_help') }}</small>
+        @elseif(($line['tax_calculation_basis'] ?? '') === 'source_allocation')<small class="d-block text-muted">{{ __('sales_ui.source_tax_help') }}</small>@endif
+        <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.tax_rate"></div>
+    </td>
     <td class="text-end fw-semibold" dir="ltr" data-sales-line-total data-line-card-total>0.00</td>
     @if($showRequestedDate)<td><x-forms.date-input class="form-control form-control-sm js-date-picker" name="lines[{{ $index }}][requested_date]" value="{{ app(\Modules\Core\Services\DateFormatService::class)->formatDate($line['requested_date'] ?? null, '') }}" /></td>@endif
     <td>@unless($preserveSourceLine)<button type="button" class="btn btn-link text-600 p-1" data-sales-duplicate-row aria-label="{{ __('Duplicate line') }}" title="{{ __('Duplicate line') }}"><span class="fas fa-copy"></span></button><button class="btn btn-link text-danger p-1" type="button" data-sales-remove-row aria-label="{{ __('Remove') }}" title="{{ __('Remove') }}"><span class="fas fa-trash-alt"></span></button>@endunless</td>

@@ -6,9 +6,11 @@ use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Production\Models\ProductionQualityInspection;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Services\ProductionCostService;
+use Modules\Production\Services\ProductionHandoverService;
 use Modules\Production\Services\ProductionOutputEvidenceService;
 use Modules\Production\Services\ProductionQualityQuantityService;
 use Modules\Production\Services\ProductionQualityWorkflowService;
+use Spatie\Permission\Models\Permission;
 
 require_once __DIR__.'/ProductionPartialOutputEvidenceSupport.php';
 
@@ -52,10 +54,31 @@ test('progress and receipt retries are idempotent and old manual consumption can
     expect($f['run']->fresh()->good_base_quantity)->toBe('1.00000000')->and($f['requirement']->fresh()->consumed_quantity)->toBe('2.00000000');
     expect(fn () => $f['cycle']->accountMaterials($f['run']->fresh(), $f['store']->id, [$f['requirement']->id => ['consumed_quantity' => '18', 'waste_quantity' => '0']]))->toThrow(DomainException::class);
     partialOutputApprove($f, '1');
-    $payload = ['_submission_token' => (string) Str::uuid(), 'base_quantity' => '1', 'branch_store_id' => $f['store']->id];
-    $url = route('admin.production.runs.receive', $f['run']);
+    $this->postJson(route('admin.production.runs.receive', $f['run']), ['_submission_token' => (string) Str::uuid(),
+        'base_quantity' => '1', 'branch_store_id' => $f['store']->id])->assertUnprocessable();
+    foreach (['production.handovers.create', 'production.handovers.approve'] as $permission) {
+        $f['user']->givePermissionTo(Permission::findOrCreate($permission, 'web'));
+    }
+    $service = app(ProductionHandoverService::class);
+    $handover = $service->approveHandover($service->createHandover($f['run']->fresh(), $f['store']->id, now()->toDateString(),
+        [['run_public_id' => $f['run']->public_id, 'quantity' => '1']]));
+    $warehouse = closureSyntheticUser();
+    foreach (['inventory.production_receipts.create', 'inventory.production_receipts.approve'] as $permission) {
+        $warehouse->givePermissionTo(Permission::findOrCreate($permission, 'web'));
+    }
+    $this->actingAs($warehouse);
+    request()->attributes->replace([]);
+    request()->setUserResolver(fn () => $warehouse);
+    $payload = ['_submission_token' => (string) Str::uuid(), 'document_date' => now()->toDateString(),
+        'lines' => [['line_public_id' => $handover->lines->sole()->public_id, 'quantity' => '1']]];
+    $url = route('admin.inventory.production-receipts.store', $handover);
     $first = $this->postJson($url, $payload)->assertOk();
-    $this->postJson($url, $payload)->assertOk()->assertJsonPath('data.doc_num', $first->json('data.doc_num'));
+    $this->postJson($url, $payload)->assertOk()->assertJsonPath('doc_num', $first->json('doc_num'));
+    $receipt = InventoryDocument::query()->where('company_id', $f['company']->id)->where('doc_num', $first->json('doc_num'))->sole();
+    $payload = ['_submission_token' => (string) Str::uuid()];
+    $url = route('admin.inventory.production-receipts.approve', $receipt);
+    $first = $this->postJson($url, $payload)->assertOk();
+    $this->postJson($url, $payload)->assertOk()->assertJsonPath('doc_num', $first->json('doc_num'));
     expect($f['run']->fresh()->received_base_quantity)->toBe('1.00000000')->and(app(ProductionCostService::class)->runPosition($f['run']->fresh())['wip'])->toBe('180.00000000');
 });
 

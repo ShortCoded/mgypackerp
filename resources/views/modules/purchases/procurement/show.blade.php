@@ -163,7 +163,7 @@
                         <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.reject', $record->doc_num) }}" class="d-flex gap-2">@csrf<x-forms.input class="form-control form-control-sm" name="rejection_reason" placeholder="{{ __('Rejection reason') }}" required /><button class="btn btn-danger btn-sm">{{ __('Reject') }}</button></form>
                         @endcan
                     @endif
-                    @if(($isOwnBranch || ($isAdministrativeBranch ?? false)) && !in_array($record->status, ['cancelled', 'closed', 'partially_converted', 'fully_converted'], true) && $record->closed_at === null && ! ($record->approved_at !== null && $record->status !== \Modules\Purchases\Models\PurchaseRequisition::StatusApproved) && ! $record->hasDownstreamDocuments())
+                    @if(($isOwnBranch || ($isAdministrativeBranch ?? false)) && $record->canCancelSafely())
                         @can('purchases.purchase_requisitions.cancel')
                         <form method="POST" action="{{ route('admin.purchases.purchase-requisitions.cancel', $record->doc_num) }}" class="d-flex gap-2">@csrf<x-forms.input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" required /><button class="btn btn-falcon-danger btn-sm">{{ __('Cancel') }}</button></form>
                         @endcan
@@ -288,6 +288,7 @@
                     @can('purchases.purchase_returns.reverse')
                     <form method="POST" action="{{ route('admin.purchases.purchase-returns.reverse', $record->doc_num) }}" class="d-flex gap-2">
                         @csrf
+                        <x-forms.input type="hidden" name="_submission_token" :value="(string) \Illuminate\Support\Str::uuid()" />
                         <x-forms.input class="form-control form-control-sm" name="reversal_reason" placeholder="{{ __('Reversal reason') }}" required />
                         <button class="btn btn-danger btn-sm">{{ __('Reverse return') }}</button>
                     </form>
@@ -302,6 +303,7 @@
                     @can('supplier_payments.cancel')
                     <form method="POST" action="{{ route('admin.purchases.supplier-payments.cancel', $record->doc_num) }}" class="d-flex gap-2">
                         @csrf
+                        <x-forms.input type="hidden" name="_submission_token" :value="(string) \Illuminate\Support\Str::uuid()" />
                         <x-forms.input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Cancellation reason') }}" />
                         <button class="btn btn-danger btn-sm">{{ __('Cancel') }}</button>
                     </form>
@@ -311,6 +313,7 @@
                     @can('supplier_payments.cancel')
                     <form method="POST" action="{{ route('admin.purchases.supplier-payments.cancel', $record->doc_num) }}" class="d-flex gap-2">
                         @csrf
+                        <x-forms.input type="hidden" name="_submission_token" :value="(string) \Illuminate\Support\Str::uuid()" />
                         <x-forms.input class="form-control form-control-sm" name="cancel_reason" placeholder="{{ __('Reversal reason') }}" required />
                         <button class="btn btn-danger btn-sm">{{ __('Reverse payment') }}</button>
                     </form>
@@ -493,4 +496,5 @@
     @endif
 
     @include('modules.purchases.procurement.attachments', ['attachmentRecord' => $record, 'attachmentsReadonly' => true, 'attachmentCollection' => $documentAttachmentCollection])
+    <x-document-cancellation-review :record="$record" />
 @endsection

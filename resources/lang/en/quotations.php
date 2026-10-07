@@ -100,7 +100,7 @@ return [
         'discount_value' => 'Discount Value',
         'discount_amount' => 'Discount Amount',
         'revision_discount' => 'Document Discount',
-        'tax_rate' => 'Tax %',
+        'tax_rate' => 'Tax (%)',
         'tax_amount' => 'Tax Amount',
         'subtotal' => 'Subtotal',
         'total' => 'Total',

@@ -6,6 +6,7 @@ use App\Models\User;
 use DomainException;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Routing\Controller;
@@ -25,6 +26,7 @@ use Modules\Finance\Http\Requests\Cheques\UpdateChequeDocumentNumberSettingsRequ
 use Modules\Finance\Http\Requests\Cheques\UpdateChequeRequest;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cheque;
+use Modules\Finance\Services\ChequeCollectionCorrectionService;
 use Modules\Finance\Services\ChequeService;
 use Modules\Finance\Services\FinanceDocumentNumberSettingsService;
 use Modules\Purchases\Models\Supplier;
@@ -77,6 +79,38 @@ class ChequeController extends Controller
         abort_if($cheque->isLockedForEditing(), 403, __('cheques.messages.document_locked'));
 
         return $this->form('edit', $cheque);
+    }
+
+    public function collectionCorrection(Request $request, string $cheque): View
+    {
+        return view('modules.finance.cheques.collection-correction', app(ChequeCollectionCorrectionService::class)->preview($this->findInCurrentCompany($request, $cheque)));
+    }
+
+    public function prepareCollectionCorrection(Request $request, string $cheque): RedirectResponse
+    {
+        $data = $request->validate(['treatment' => ['required', 'in:bank_reversal,collection_entry_error'], 'confirmed' => ['required', 'accepted'],
+            'bank_reference' => ['required', 'string', 'max:255'], 'reason' => ['required', 'string', 'min:5', 'max:2000'],
+            'evidence' => ['required', 'string', 'min:5', 'max:2000'], 'fingerprint' => ['required', 'string', 'size:64']]);
+        $record = $this->findInCurrentCompany($request, $cheque);
+        $this->guardDomain(fn (): object => app(ChequeCollectionCorrectionService::class)->prepare($record, $data));
+
+        return redirect()->route('admin.finance.cheques.collection-correction', $record->doc_num);
+    }
+
+    public function approveCollectionCorrection(Request $request, string $cheque, int $correction): RedirectResponse
+    {
+        $record = $this->findInCurrentCompany($request, $cheque);
+        $this->guardDomain(fn (): object => app(ChequeCollectionCorrectionService::class)->approve($record, $correction));
+
+        return redirect()->route('admin.finance.cheques.collection-correction', $record->doc_num);
+    }
+
+    public function rejectCollectionCorrection(Request $request, string $cheque, int $correction): RedirectResponse
+    {
+        $record = $this->findInCurrentCompany($request, $cheque);
+        $this->guardDomain(fn () => app(ChequeCollectionCorrectionService::class)->reject($record, $correction));
+
+        return redirect()->route('admin.finance.cheques.collection-correction', $record->doc_num);
     }
 
     public function clone(Request $request, string $cheque): View

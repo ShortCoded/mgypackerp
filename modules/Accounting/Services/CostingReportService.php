@@ -150,6 +150,8 @@ final class CostingReportService
                 'issued_cost' => (string) ($cost?->issued ?? '0'),
                 'returned_cost' => (string) ($cost?->returned ?? '0'),
                 'waste_cost' => (string) ($cost?->waste ?? '0'),
+                'stage_loss_cost' => (string) ($cost?->stage_loss_cost ?? '0'),
+                'stage_held_output_cost' => (string) ($cost?->stage_held_output_cost ?? '0'),
                 'other_direct_cost' => (string) ($cost?->other_direct_cost ?? '0'),
                 'direct_labor_cost' => (string) ($cost?->direct_labor_cost ?? '0'),
                 'allocated_overhead' => (string) ($cost?->allocated_overhead ?? '0'),
@@ -175,7 +177,7 @@ final class CostingReportService
         $columns = $this->columns($type);
         $numericColumns = array_values(array_intersect(array_keys($columns), [
             'planned_quantity', 'good_quantity', 'received_quantity', 'planned_cost', 'actual_cost', 'variance',
-            'issued_cost', 'returned_cost', 'waste_cost', 'direct_labor_cost', 'allocated_overhead', 'capitalizable_cost',
+            'issued_cost', 'returned_cost', 'waste_cost', 'stage_loss_cost', 'stage_held_output_cost', 'direct_labor_cost', 'allocated_overhead', 'capitalizable_cost',
             'other_direct_cost', 'recognized_cost', 'wip', 'unit_cost', 'revenue', 'gross_profit', 'margin_percent',
         ]));
         $totals = collect($numericColumns)->reject(fn (string $column): bool => in_array($column, ['unit_cost', 'margin_percent'], true))
@@ -302,7 +304,7 @@ final class CostingReportService
         return $rows->groupBy($groupKey)->map(function (Collection $group) use ($labels): array {
             $first = $group->first();
             $row = collect($labels)->mapWithKeys(fn (string $label): array => [$label => $first[$label] ?? null])->all();
-            foreach (['planned_quantity', 'good_quantity', 'received_quantity', 'planned_cost', 'actual_cost', 'variance', 'issued_cost', 'returned_cost', 'waste_cost', 'other_direct_cost', 'direct_labor_cost', 'allocated_overhead', 'capitalizable_cost', 'recognized_cost', 'wip'] as $column) {
+            foreach (['planned_quantity', 'good_quantity', 'received_quantity', 'planned_cost', 'actual_cost', 'variance', 'issued_cost', 'returned_cost', 'waste_cost', 'stage_loss_cost', 'stage_held_output_cost', 'other_direct_cost', 'direct_labor_cost', 'allocated_overhead', 'capitalizable_cost', 'recognized_cost', 'wip'] as $column) {
                 $row[$column] = $this->sum($group, $column);
             }
             $hasReceipts = bccomp($row['received_quantity'], '0', 8) > 0;
@@ -382,11 +384,11 @@ final class CostingReportService
     private function columns(string $type): array
     {
         $keys = match ($type) {
-            self::ProductCost => ['product', 'planned_quantity', 'good_quantity', 'received_quantity', 'planned_cost', 'actual_cost', 'variance', 'waste_cost', 'direct_labor_cost', 'allocated_overhead', 'recognized_cost', 'wip', 'unit_cost'],
-            self::WorkOrderCost => ['work_order', 'sales_order', 'planned_quantity', 'good_quantity', 'received_quantity', 'issued_cost', 'returned_cost', 'waste_cost', 'other_direct_cost', 'direct_labor_cost', 'allocated_overhead', 'capitalizable_cost', 'recognized_cost', 'wip', 'unit_cost'],
+            self::ProductCost => ['product', 'planned_quantity', 'good_quantity', 'received_quantity', 'planned_cost', 'actual_cost', 'variance', 'waste_cost', 'stage_loss_cost', 'stage_held_output_cost', 'direct_labor_cost', 'allocated_overhead', 'recognized_cost', 'wip', 'unit_cost'],
+            self::WorkOrderCost => ['work_order', 'sales_order', 'planned_quantity', 'good_quantity', 'received_quantity', 'issued_cost', 'returned_cost', 'waste_cost', 'stage_loss_cost', 'stage_held_output_cost', 'other_direct_cost', 'direct_labor_cost', 'allocated_overhead', 'capitalizable_cost', 'recognized_cost', 'wip', 'unit_cost'],
             self::Profitability => ['sales_order', 'product', 'good_quantity', 'revenue', 'recognized_cost', 'wip', 'gross_profit', 'margin_percent'],
-            self::CostVariance => ['run', 'work_order', 'product', 'cost_center', 'status', 'planned_cost', 'actual_cost', 'variance', 'waste_cost'],
-            self::WorkInProgress => ['run', 'work_order', 'product', 'cost_center', 'status', 'issued_cost', 'returned_cost', 'waste_cost', 'other_direct_cost', 'direct_labor_cost', 'allocated_overhead', 'capitalizable_cost', 'recognized_cost', 'wip'],
+            self::CostVariance => ['run', 'work_order', 'product', 'cost_center', 'status', 'planned_cost', 'actual_cost', 'variance', 'waste_cost', 'stage_loss_cost', 'stage_held_output_cost'],
+            self::WorkInProgress => ['run', 'work_order', 'product', 'cost_center', 'status', 'issued_cost', 'returned_cost', 'waste_cost', 'stage_loss_cost', 'stage_held_output_cost', 'other_direct_cost', 'direct_labor_cost', 'allocated_overhead', 'capitalizable_cost', 'recognized_cost', 'wip'],
             self::FinishedGoodsCost => ['product', 'good_quantity', 'received_quantity', 'other_direct_cost', 'direct_labor_cost', 'allocated_overhead', 'recognized_cost', 'unit_cost'],
             default => ['run', 'work_order', 'product', 'cost_center', 'status', 'planned_quantity', 'good_quantity', 'planned_cost', 'actual_cost', 'direct_labor_cost', 'allocated_overhead', 'variance'],
         };

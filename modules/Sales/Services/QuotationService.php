@@ -2,15 +2,18 @@
 
 namespace Modules\Sales\Services;
 
+use App\Services\DocumentOwnerEffectProofService;
 use App\Services\RichTextSanitizer;
 use DomainException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Modules\Core\Models\ArchiveFile;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
+use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FilePickerService;
@@ -223,18 +226,31 @@ class QuotationService
         return $this->transition($record, Quotation::StatusRejected, QuotationRevision::StatusRejected, [Quotation::StatusSent, Quotation::StatusUnderReview], [QuotationRevision::StatusSent]);
     }
 
-    public function cancel(Quotation $record): Quotation
+    public function cancel(Quotation $record, ?string $reason = null): Quotation
     {
-        return DB::transaction(function () use ($record): Quotation {
-            $record = Quotation::query()->lockForUpdate()->findOrFail($record->getKey());
+        return DB::transaction(function () use ($record, $reason): Quotation {
+            Company::query()->whereKey($this->companies->requireCompanyId())->lockForUpdate()->firstOrFail();
+            $record = Quotation::query()->forCompany($this->companies->requireCompanyId())->lockForUpdate()->findOrFail($record->getKey());
             $record->loadMissing('currentRevision');
 
+            if ($record->status === Quotation::StatusCancelled
+                && app(DocumentOwnerEffectProofService::class)->cancelledQuotationIsSettled($record)) {
+                return $record->load($this->defaultRelations());
+            }
             if (! $record->canCancel()) {
                 throw new DomainException(__('quotations.messages.transition_not_allowed'));
             }
 
+            if (($record->sales_request_id !== null || $record->salesOrders()->withTrashed()->exists()) && blank($reason)) {
+                throw new DomainException(__('Cancellation reason is required.'));
+            }
+            app(SalesRequestService::class)->releaseQuotationConversion($record);
             $record->currentRevision?->forceFill(['status' => QuotationRevision::StatusCancelled])->save();
             $this->audit->saveUpdate($record, ['status' => Quotation::StatusCancelled]);
+            app(ActivityLogger::class)->log(request(), 'sales', 'quotation.cancelled', 'success', [
+                'subject' => $record, 'company_id' => $record->company_id, 'properties_only' => true,
+                'properties' => ['reason' => $reason === null ? null : trim($reason), 'owner_effects_reconciled' => true],
+            ]);
 
             return $record->refresh()->load($this->defaultRelations());
         });

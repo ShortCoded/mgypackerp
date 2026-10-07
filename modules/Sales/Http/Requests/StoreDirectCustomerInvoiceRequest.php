@@ -45,12 +45,12 @@ class StoreDirectCustomerInvoiceRequest extends FormRequest
                     'discount_type' => $line['discount_type'] ?? null,
                     'discount_value' => $line['discount_value'] ?? '0',
                     'discount_amount' => filled($line['discount_amount'] ?? null) ? trim((string) $line['discount_amount']) : '0',
-                    'tax_amount' => filled($line['tax_amount'] ?? null) ? trim((string) $line['tax_amount']) : '0',
+                    'tax_rate' => filled($line['tax_rate'] ?? null) ? trim((string) $line['tax_rate']) : '0',
                 ])->filter(fn (array $line): bool => filled($line['product_doc_num']))->values()->all(),
         ]);
 
         $this->normalizeNumericInput(['withholding_rate', 'discount_value', 'lines.*.discount_value', 'lines.*.discount_amount',
-            'exchange_rate', 'lines.*.quantity', 'lines.*.unit_price', 'lines.*.discount_amount', 'lines.*.tax_amount',
+            'exchange_rate', 'lines.*.quantity', 'lines.*.unit_price', 'lines.*.discount_amount', 'lines.*.tax_rate',
         ]);
     }
 
@@ -81,7 +81,7 @@ class StoreDirectCustomerInvoiceRequest extends FormRequest
             'lines.*.quantity' => ['required', 'numeric', 'gt:0'],
             'lines.*.unit_price' => ['nullable', 'numeric', 'decimal:0,8', 'regex:/^\d{1,16}(?:\.\d{1,8})?$/D', 'gt:0'],
             'lines.*.discount_amount' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,16}(?:\.\d{1,4})?$/D', 'min:0'],
-            'lines.*.tax_amount' => ['nullable', 'numeric', 'min:0'],
+            'lines.*.tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,3}(?:\.\d{1,4})?$/D', 'between:0,100'],
         ];
     }
 

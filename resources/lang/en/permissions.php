@@ -343,6 +343,22 @@ $inventoryPermissionLabels['inventory.unpriced_inventory_receipts.document_numbe
 $inventoryPermissionLabels['inventory.unpriced_inventory_receipts.document_number_settings.update'] = 'Update Unpriced Inventory Receipt Document Number Settings';
 
 return [
+    'customer_invoices.view_trashed' => 'View Archived Sales Invoices',
+    'customer_invoices.restore' => 'Restore Archived Sales Invoice History',
+    'production.handovers.view' => 'View Production Handovers to Warehouse',
+    'production.handovers.create' => 'Prepare Production Handover to Warehouse',
+    'production.handovers.approve' => 'Approve Production Handover to Warehouse',
+    'production.handovers.cancel' => 'Cancel Unreceived Production Handover',
+    'inventory.production_receipts.view' => 'View Warehouse Receipts from Production',
+    'inventory.production_receipts.create' => 'Record Actual Warehouse Receipt from Production',
+    'inventory.production_receipts.approve' => 'Approve Warehouse Receipt from Production',
+    'inventory.production_receipts.cancel' => 'Cancel Draft Warehouse Receipt from Production',
+    'inventory.production_receipts.correct_prepare' => 'Prepare Reversal Review of Posted Warehouse Receipt from Production',
+    'inventory.production_receipts.correct_approve' => 'Independently Approve Reversal of Posted Warehouse Receipt from Production',
+    'purchases.request_for_quotations.cancel' => 'Cancel Request for Quotations',
+    'purchases.supplier_quotation_entry.cancel' => 'Cancel Supplier Quotation',
+    'purchases.supplier_selection.cancel' => 'Cancel Supplier Selection After Resolving Dependencies',
+    'purchases.purchase_returns.cancel' => 'Cancel Draft Purchase Return',
     'production.runs.correct' => 'Correct Completed Production Run',
     'production.runs.correct_approve' => 'Approve or Reject Run Correction',
     'production.runs.correct_later_period' => 'Correct and Recomplete Production in a Later Period While Preserving the Original Period',

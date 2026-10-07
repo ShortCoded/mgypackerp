@@ -458,6 +458,7 @@
     let subtotal = '0';
     let lineDiscount = '0';
     let tax = '0';
+    const rows = [];
 
     $form.find('.js-quotation-line').each(function () {
       const $row = $(this);
@@ -466,6 +467,7 @@
       const base = numbers.round(numbers.multiply(quantity, unitPrice), 4);
       const discount = discountAmount(base, $row.find('[name$="[discount_type]"]').val(), $row.find('[name$="[discount_value]"]').val());
       const taxBase = numbers.subtract(base, discount);
+      rows.push({row:$row,base:taxBase,rate:decimalValue($row.find('[name$="[tax_rate]"]').val())});
       const rowTax = numbers.round(numbers.divide(numbers.multiply(taxBase, decimalValue($row.find('[name$="[tax_rate]"]').val())), '100', 8), 4);
       const total = numbers.add(taxBase, rowTax);
 
@@ -479,6 +481,22 @@
 
     const headerDiscount = discountAmount(numbers.subtract(subtotal, lineDiscount), $form.find('[name="discount_type"]').val(), $form.find('[name="discount_value"]').val());
     const discount = numbers.add(lineDiscount, headerDiscount);
+    const discountBase = numbers.subtract(subtotal, lineDiscount);
+    const last = rows.map((row,i) => numbers.compare(row.base,'0') > 0 ? i : -1).filter(i => i >= 0).at(-1);
+    let allocated = '0'; let remainingBase = discountBase; tax = '0';
+    rows.forEach((row,i) => {
+      let share = numbers.compare(headerDiscount,'0') === 0 || numbers.compare(discountBase,'0') <= 0 ? '0'
+        : i === last ? numbers.subtract(headerDiscount,allocated) : numbers.divide(numbers.multiply(headerDiscount,row.base),discountBase,4);
+      remainingBase = numbers.subtract(remainingBase,row.base);
+      const minimum = numbers.subtract(numbers.subtract(headerDiscount,allocated),remainingBase);
+      if (numbers.compare(share,minimum) < 0) share = minimum;
+      if (numbers.compare(share,row.base) > 0) share = row.base;
+      allocated = numbers.add(allocated,share);
+      const rowTax = numbers.round(numbers.divide(numbers.multiply(numbers.subtract(row.base,share),row.rate),'100',12),4);
+      tax = numbers.add(tax,rowTax);
+      row.row.find('.js-quotation-line-tax-amount').text(decimal(rowTax));
+      row.row.find('.js-quotation-line-total').text(decimal(numbers.add(row.base,rowTax)));
+    });
     const total = numbers.add(numbers.subtract(subtotal, discount), tax);
 
     $form.find('.js-quotation-subtotal').text(decimal(subtotal));

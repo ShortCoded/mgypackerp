@@ -101,6 +101,7 @@ Route::middleware('auth')
             Route::get('/sales-invoices/{customerInvoice}/edit', 'editInvoice')->middleware('can:customer_invoices.edit')->name('sales-invoices.edit');
             Route::put('/sales-invoices/{customerInvoice}', 'updateInvoice')->middleware('can:customer_invoices.edit')->name('sales-invoices.update');
             Route::delete('/sales-invoices/{customerInvoice}', 'destroyInvoice')->middleware('can:customer_invoices.delete')->name('sales-invoices.destroy');
+            Route::patch('/sales-invoices/{document}/restore', 'restoreInvoice')->middleware('can:customer_invoices.restore')->name('sales-invoices.restore');
             Route::get('/sales-invoices/{customerInvoice}/print', 'printInvoice')->middleware('can:customer_invoices.print')->name('sales-invoices.print');
             Route::post('/sales-invoices/{customerInvoice}/post', 'postInvoice')->middleware('can:customer_invoices.post')->name('sales-invoices.post');
             Route::post('/sales-invoices/{customerInvoice}/credit-allocations', 'allocateCustomerCredit')->middleware('can:customer_credits.allocate')->name('sales-invoices.credit-allocations.store');
@@ -109,6 +110,7 @@ Route::middleware('auth')
             Route::post('/sales-invoices/{customerInvoice}/credit-refunds/{customerCreditRefund}/reverse', 'reverseCustomerCreditRefund')->middleware('can:customer_credits.reverse_refund')->name('sales-invoices.credit-refunds.reverse');
             Route::post('/sales-invoices/{customerInvoice}/electronic-invoice', 'submitElectronicInvoice')->middleware('can:customer_invoices.electronic_invoice.submit')->name('sales-invoices.electronic-invoice.submit');
             Route::post('/sales-invoices/{customerInvoice}/reopen', 'reopenInvoice')->middleware('can:customer_invoices.reopen')->name('sales-invoices.reopen');
+            Route::post('/sales-invoices/{customerInvoice}/cancel-draft', 'cancelDraftInvoice')->middleware(['can:customer_invoices.cancel', IdempotentDocumentSubmission::class.':required'])->name('sales-invoices.cancel-draft');
             Route::post('/sales-invoices/{customerInvoice}/cancel-direct-service', 'cancelDirectServiceInvoice')->middleware('can:customer_invoices.cancel')->name('sales-invoices.cancel-direct-service');
             Route::get('/sales-invoices/{customerInvoice}/payment-schedule/print', 'printPaymentSchedule')->middleware('can:customer_invoices.print')->name('sales-invoices.payment-schedule.print');
             Route::post('/sales-invoices/{customerInvoice}/deliveries', 'deliverInvoice')->middleware('can:sales_deliveries.create')->middleware(IdempotentDocumentSubmission::class)->name('sales-invoices.deliveries.store');
@@ -120,7 +122,7 @@ Route::middleware('auth')
             Route::get('/customer-receipts', 'receipts')->middleware('can:customer_receipts.view')->name('customer-receipts.index');
             Route::get('/customer-receipts/create', 'createReceipt')->middleware('can:customer_receipts.create')->name('customer-receipts.create');
             Route::post('/customer-receipts', 'storeReceipt')->middleware('can:customer_receipts.create')->middleware(IdempotentDocumentSubmission::class)->name('customer-receipts.store');
-            Route::post('/customer-receipts/{customerReceipt}/reverse', 'reverseReceipt')->middleware('can:customer_receipts.cancel')->name('customer-receipts.reverse');
+            Route::post('/customer-receipts/{customerReceipt}/reverse', 'reverseReceipt')->middleware('can:customer_receipts.cancel')->middleware(IdempotentDocumentSubmission::class)->name('customer-receipts.reverse');
             Route::get('/customer-receipts/{customerReceipt}', 'showReceipt')->middleware('can:customer_receipts.view')->name('customer-receipts.show');
             Route::get('/customer-receipts/{customerReceipt}/print', 'printReceipt')->middleware('can:customer_receipts.print')->name('customer-receipts.print');
             Route::get('/customer-credit-refunds/{customerCreditRefund}/print', 'printCustomerCreditRefund')->middleware('can:customer_credits.refund')->name('customer-credit-refunds.print');

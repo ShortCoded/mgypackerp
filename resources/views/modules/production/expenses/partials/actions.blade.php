@@ -11,6 +11,7 @@
 <div class="dropstart font-sans-serif position-static d-inline-block">
     <button class="btn btn-link text-600 btn-sm dropdown-toggle btn-reveal float-end" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-bs-reference="parent" aria-expanded="false" aria-label="{{ __('common.fields.actions') }}"><span class="fas fa-ellipsis-h fs-10"></span></button>
     <div class="py-2 border dropdown-menu dropdown-menu-end">
+            <x-document-owner-actions :record="$record" />
         @if($canView)<a class="dropdown-item" href="{{ route('admin.production.expenses.show', $record) }}">{{ __('common.actions.view') }}</a>@endif
         @if($canEdit)<a class="dropdown-item" href="{{ route('admin.production.expenses.edit', $record) }}">{{ __('common.actions.edit') }}</a>@endif
         @if($canClone)<a class="dropdown-item" href="{{ route('admin.production.expenses.clone', $record) }}">{{ __('common.actions.clone_record') }}</a>@endif
@@ -20,6 +21,11 @@
         @endif
         @if($record->status === \Modules\Production\Models\ProductionExpenseRequest::StatusApproved && auth()->user()?->can('production.expenses.pay'))
             <button class="dropdown-item text-primary" type="button" data-action="post" data-url="{{ route('admin.production.expenses.pay', $record) }}">{{ __('production_execution.actions.pay') }}</button>
+        @endif
+        @if(!$isTrashed && $record->status === \Modules\Production\Models\ProductionExpenseRequest::StatusApproved)
+            @can('production.expenses.reverse')
+                <a class="dropdown-item text-danger" href="{{ route('admin.production.expenses.show', [$record, 'review_cancellation' => 1]) }}">{{ __('cancellation_review.withdraw_expense_approval') }}</a>
+            @endcan
         @endif
         @if($record->status === \Modules\Production\Models\ProductionExpenseRequest::StatusPaid && auth()->user()?->can('production.expenses.reverse'))
             <button class="dropdown-item text-danger" type="button" data-action="reason" data-reason-key="reason" data-prompt="{{ __('production_execution.messages.reversal_reason_required') }}" data-url="{{ route('admin.production.expenses.reverse', $record) }}">{{ __('production_execution.actions.reverse') }}</button>

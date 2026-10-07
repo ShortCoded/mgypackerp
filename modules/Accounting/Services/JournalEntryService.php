@@ -380,6 +380,36 @@ class JournalEntryService
         });
     }
 
+    public function assertPostedReversal(JournalEntry $source, JournalEntry $inverse): void
+    {
+        $source->refresh()->load('lines');
+        $inverse->refresh()->load('lines');
+        if ($source->trashed() || $inverse->trashed() || ! $source->is_posted || ! $inverse->is_posted
+            || $source->status !== JournalEntry::StatusPosted || $inverse->status !== JournalEntry::StatusPosted
+            || (int) $source->reversed_entry_id !== (int) $inverse->id || $inverse->reversed_entry_id !== null
+            || (int) $source->company_id !== (int) $inverse->company_id || $source->branch_id !== $inverse->branch_id
+            || $source->currency_id !== $inverse->currency_id
+            || bccomp((string) $source->exchange_rate, (string) $inverse->exchange_rate, 6) !== 0
+            || $source->lines->isEmpty() || $source->lines->count() !== $inverse->lines->count()
+            || $source->lines->pluck('line_no')->unique()->count() !== $source->lines->count()
+            || $inverse->lines->pluck('line_no')->unique()->count() !== $inverse->lines->count()) {
+            throw new DomainException(__('journal_entries.reversal_lineage_invalid'));
+        }
+        $opposites = $inverse->lines->keyBy('line_no');
+        foreach ($source->lines as $line) {
+            $opposite = $opposites->get($line->line_no);
+            foreach (['account_id', 'customer_id', 'supplier_id', 'employee_id', 'bank_account_id', 'cost_center_id', 'department_id', 'branch_id'] as $field) {
+                if ($opposite === null || $line->{$field} !== $opposite->{$field}) {
+                    throw new DomainException(__('journal_entries.reversal_lineage_invalid'));
+                }
+            }
+            if (bccomp((string) $line->debit_amount, (string) $opposite->credit_amount, 4) !== 0
+                || bccomp((string) $line->credit_amount, (string) $opposite->debit_amount, 4) !== 0) {
+                throw new DomainException(__('journal_entries.reversal_lineage_invalid'));
+            }
+        }
+    }
+
     public function assertNoPostedCostAllocations(int $journalEntryId): void
     {
         if (DB::table('cost_overhead_allocation_sources as source')

@@ -26,6 +26,8 @@ class Cheque extends Model
 
     public const StatusCollected = 'collected';
 
+    public const StatusCollectionReversed = 'collection_reversed';
+
     public const StatusDraft = 'draft';
 
     public const StatusIssued = 'issued';
@@ -118,7 +120,7 @@ class Cheque extends Model
 
     public static function receivedStatuses(): array
     {
-        return [self::StatusReceived, self::StatusDeposited, self::StatusCollected, self::StatusReturned, self::StatusCancelled];
+        return [self::StatusReceived, self::StatusDeposited, self::StatusCollected, self::StatusCollectionReversed, self::StatusReturned, self::StatusCancelled];
     }
 
     public static function issuedStatuses(): array
@@ -158,7 +160,7 @@ class Cheque extends Model
 
     public function isLockedForEditing(): bool
     {
-        return in_array($this->status, [self::StatusIssued, self::StatusDelivered, self::StatusCollected, self::StatusCleared, self::StatusClearingReversed, self::StatusReturned, self::StatusCancelled], true);
+        return in_array($this->status, [self::StatusIssued, self::StatusDelivered, self::StatusCollected, self::StatusCollectionReversed, self::StatusCleared, self::StatusClearingReversed, self::StatusReturned, self::StatusCancelled], true);
     }
 
     public function isDeletable(): bool

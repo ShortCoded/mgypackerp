@@ -333,7 +333,9 @@ class QuotationController extends Controller
 
     public function cancel(Request $request, Quotation $quotation): JsonResponse
     {
-        return $this->statusAction($request, $quotation, 'cancel', fn (): Quotation => $this->service->cancel($quotation), __('quotations.messages.cancelled'));
+        $data = $request->validate(['reason' => ['required', 'string', 'max:1000']]);
+
+        return $this->statusAction($request, $quotation, 'cancel', fn (): Quotation => $this->service->cancel($quotation, $data['reason']), __('quotations.messages.cancelled'));
     }
 
     public function convert(ConvertQuotationRequest $request, Quotation $quotation, SalesOrderService $orders, OperatingContextService $context): JsonResponse

@@ -1,22 +1,22 @@
 @if(\Illuminate\Support\Facades\Schema::hasTable('production_shift_entries'))
+@if(! in_array($record->status, ['completed', 'cancelled'], true))
 @can('production.runs.setup')
 <details class="card mb-3"><summary class="card-header">{{ __('production_execution.shift_evidence.defaults_title') }}</summary>
 <form method="POST" action="{{ route('admin.production.runs.shift-defaults', $record) }}">@csrf
 <div class="card-body row g-2">
-    <div class="col-md-3"><x-forms.label :label="__('production_execution.shift_evidence.shift_code')" /><x-forms.input name="shift_code" required /></div>
-    <div class="col-md-3"><x-forms.label :label="__('production_execution.fields.shift')" /><x-forms.input name="shift_name" required /></div>
-    <div class="col-md-3"><x-forms.label :label="__('production_execution.shift_evidence.shift_start')" /><x-forms.input type="time" name="starts_at" required /></div>
-    <div class="col-md-3"><x-forms.label :label="__('production_execution.shift_evidence.shift_end')" /><x-forms.input type="time" name="ends_at" required /></div>
+    <div class="col-12"><x-forms.label for="production-default-hr-shift" :label="__('production_execution.fields.shift')" required /><x-forms.select id="production-default-hr-shift" variant="local" name="hr_shift_id" required><option value="">{{ __('common.placeholders.select') }}</option>@foreach($hrShifts ?? [] as $shift)<option value="{{ $shift->id }}">{{ $shift->doc_num }} — {{ $shift->name }}</option>@endforeach</x-forms.select></div>
+    <div class="col-12"><p class="form-text">{{ __('production_execution.shift_evidence.hr_master_help') }}</p></div>
     <div class="col-12"><p class="form-text">{{ __('production_execution.shift_evidence.defaults_help') }}</p>@include('modules.production.runs.partials.shift-crew-rows')</div>
 </div><div class="card-footer"><button class="btn btn-primary btn-sm">{{ __('production_execution.shift_evidence.save_defaults') }}</button></div>
 </form></details>
 @endcan
+@endif
 @if(in_array($record->status, ['running', 'held'], true))
 @can('production.runs.progress')
 <details class="card mb-3"><summary class="card-header">{{ __('production_execution.shift_evidence.daily_title') }}</summary>
 <form method="POST" action="{{ route('admin.production.runs.shifts.store', $record) }}">@csrf
 <div class="card-body row g-2">
-    <div class="col-md-4"><x-forms.label :label="__('production_execution.fields.shift')" /><x-forms.select variant="local" name="production_shift_id" required><option value="">—</option>@foreach($productionShifts ?? [] as $shift)<option value="{{ $shift->id }}">{{ $shift->code }} — {{ $shift->name }}</option>@endforeach</x-forms.select></div>
+    <div class="col-md-4"><x-forms.label :label="__('production_execution.fields.shift')" /><x-forms.select variant="local" name="hr_shift_id" required><option value="">—</option>@foreach($hrShifts ?? [] as $shift)<option value="{{ $shift->id }}">{{ $shift->doc_num }} — {{ $shift->name }}</option>@endforeach</x-forms.select></div>
     <div class="col-md-4"><x-forms.label :label="__('production_execution.shift_evidence.work_date')" /><x-forms.input type="date" name="work_date" :value="now()->toDateString()" required /></div>
     <div class="col-md-4"><x-forms.label :label="__('production_execution.shift_evidence.sheet_kind')" /><x-forms.select variant="local" name="sheet_fields[sheet_kind]" required><option value="">—</option>@foreach(['injection', 'cover'] as $kind)<option value="{{ $kind }}">{{ __('production_execution.shift_evidence.'.$kind) }}</option>@endforeach</x-forms.select></div>
     <div class="col-md-4"><x-forms.label :label="__('production_execution.shift_evidence.actual_start')" /><x-forms.input type="datetime-local" name="started_at" step="1" :value="now()->format('Y-m-d\\TH:i:s')" required /></div>

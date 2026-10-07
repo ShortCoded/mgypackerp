@@ -7,8 +7,15 @@
     <div class="card-header d-flex justify-content-between"><h5>{{ __('production_run_correction.title') }} — {{ $record->run_number }}</h5><a class="btn btn-falcon-default btn-sm" href="{{ route('admin.production.runs.show', $record) }}">{{ __('Back') }}</a></div>
     <div class="card-body">
         <p>{{ __('production_run_correction.help') }}</p>
+        @if($record->material_accounting_mode === 'output_evidence')
+        <p>{{ __('production_receipt_cancellation.help') }}</p>
+        @foreach($record->inventoryDocuments->where('document_type', \Modules\Inventory\Models\InventoryDocument::TypeProductionReceipt) as $receiptDocument)
+        <a class="btn btn-outline-danger btn-sm mb-2" href="{{ route('admin.production.runs.receipt-cancellations.index', [$record, $receiptDocument->doc_num]) }}">{{ $receiptDocument->doc_num }} — {{ __('production_receipt_cancellation.title') }}</a>
+        @endforeach
+        @endif
         @if($errors->any())<div class="alert alert-danger"><ul>@foreach($errors->all() as $error)<li>{{ $error }}</li>@endforeach</ul></div>@endif
         @if(session('success'))<div class="alert alert-success">{{ session('success') }}</div>@endif
+        @foreach($blockers ?? [] as $blocker)<div class="alert alert-warning">{{ $blocker }}</div>@endforeach
         @if($correction_steps !== [])
         <div class="alert alert-warning">
             <h6>{{ __('production_run_correction.dependencies_title') }}</h6>
@@ -26,7 +33,7 @@
         </div>
         @endif
         @can('production.runs.correct')
-        @if($record->status === \Modules\Production\Models\ProductionRun::StatusCompleted && $correction_steps === [])
+        @if($record->material_accounting_mode !== 'output_evidence' && $record->status === \Modules\Production\Models\ProductionRun::StatusCompleted && $correction_steps === [] && ($blockers ?? []) === [])
         <form method="post" action="{{ route('admin.production.runs.corrections.store', $record) }}" novalidate>@csrf
             <x-forms.input type="hidden" name="fingerprint" :value="$fingerprint" />
             <div class="row g-3">
@@ -77,6 +84,7 @@
 @php($original = json_decode($correction->source_snapshot, true, 512, JSON_THROW_ON_ERROR))
 @php($corrected = json_decode($correction->corrected_output, true, 512, JSON_THROW_ON_ERROR))
 <div class="border rounded p-3 mb-3"><h6>#{{ $correction->id }} — {{ __('production_run_correction.'.$correction->status) }}</h6><p>{{ $correction->reason }} — {{ $dates->formatDateTime($correction->created_at) }}</p>
+@if(($corrected['kind'] ?? null) === 'receipt_cancellation')<p>{{ __('production_receipt_cancellation.title') }} — {{ __('production_receipt_cancellation.retained') }}</p>@endif
 <p>{{ __('production_run_correction.posting_date') }}: {{ $dates->formatDate($correction->posting_date) }} — {{ __('production_run_correction.'.($correction->correction_mode ?? 'original_period')) }}</p>
 @if($correction->receipt_date_basis !== null)
 <h6>{{ __('production_run_correction.receipt_dates') }}</h6><p>{{ __('production_run_correction.receipt_dates_help') }}</p>

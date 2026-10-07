@@ -46,7 +46,7 @@ class ElectronicInvoicePayloadBuilder
                 'discount' => (string) $line->discount_amount,
                 'net_amount' => bcsub((string) $line->line_total, (string) $line->tax_amount, 4),
                 'tax_code' => $taxCode,
-                'tax_rate' => (string) ($snapshot['tax_rate'] ?? 0),
+                'tax_rate' => (string) ($line->tax_rate ?? $snapshot['tax_rate'] ?? 0),
                 'tax_amount' => (string) $line->tax_amount,
                 'total' => (string) $line->line_total,
             ];

@@ -487,7 +487,7 @@ final class CustomerInvoiceCorrectionService
             'created_by' => auth()->id(), 'notes' => $proposal->reason.' — '.$proposal->recovery_reference]);
         foreach ($invoice->lines()->orderBy('id')->get() as $line) {
             $credit->lines()->create([...$line->only(['sales_order_line_id', 'delivery_line_id', 'product_id', 'unit_id', 'line_number', 'conversion_factor',
-                'base_quantity', 'description', 'quantity', 'unit_price', 'discount_amount', 'tax_amount', 'line_total', 'is_service', 'unit_cost']),
+                'base_quantity', 'description', 'quantity', 'unit_price', 'discount_amount', 'tax_amount', 'tax_rate', 'tax_calculation_basis', 'line_total', 'is_service', 'unit_cost']),
                 'source_snapshot' => [...($line->source_snapshot ?? []), 'original_invoice_line_public_id' => $line->public_id,
                     'customer_invoice_correction_id' => $proposal->id]]);
         }

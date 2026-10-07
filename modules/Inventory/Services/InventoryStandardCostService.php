@@ -169,7 +169,9 @@ class InventoryStandardCostService
             ->where('transaction_type', InventoryDocument::TypeProductionReceipt)->where('is_reversal', false)->where('quantity_in', '>', 0)
             ->where('source_type', InventoryDocument::class)
             ->whereIn('source_id', InventoryDocument::query()->where('company_id', $run->company_id)
-                ->where('production_run_id', $run->id)->where('status', InventoryDocument::StatusPosted)->select('id'))
+                ->where('branch_id', $run->branch_id)->where(fn ($query) => $query->where('production_run_id', $run->id)
+                ->orWhereHas('lines', fn ($lines) => $lines->where('production_run_id', $run->id)))
+                ->where('status', InventoryDocument::StatusPosted)->select('id'))
             ->orderBy('transaction_date')->orderBy('id')->lockForUpdate()->get();
         $quantity = $receipts->reduce(fn (string $sum, $row): string => bcadd($sum, (string) $row->quantity_in, 8), '0');
         if ($receipts->isEmpty() || bccomp($quantity, (string) $run->good_base_quantity, 8) !== 0
@@ -375,14 +377,17 @@ class InventoryStandardCostService
                 $balances[$accountId] = bcadd($balances[$accountId] ?? '0', $amount, 8);
             }
         };
-        $activeDocuments = InventoryDocument::where('company_id', $run->company_id)->where('production_run_id', $run->id)
+        $activeDocuments = InventoryDocument::where('company_id', $run->company_id)->where('branch_id', $run->branch_id)
+            ->where(fn ($query) => $query->where('production_run_id', $run->id)
+                ->orWhereHas('lines', fn ($lines) => $lines->where('production_run_id', $run->id)))
             ->where('status', InventoryDocument::StatusPosted)->with(['lines', 'journalEntry.lines'])->orderBy('id')->lockForUpdate()->get();
         foreach ($activeDocuments as $document) {
             if ($document->journalEntry === null) {
                 continue;
             }
             $documents[] = ['document' => $document->only(['id', 'doc_num', 'status']), 'journal' => $document->journalEntry->toArray()];
-            foreach ($document->lines as $line) {
+            foreach ($document->lines->filter(fn ($line): bool => (int) $line->production_run_id === (int) $run->id
+                || ($line->production_run_id === null && (int) $document->production_run_id === (int) $run->id)) as $line) {
                 $accounting = $line->product_snapshot['inventory_accounting'] ?? null;
                 if ($accounting === null) {
                     throw new DomainException(__('inventory_standard_cost.errors.costs'));

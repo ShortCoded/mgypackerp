@@ -20,6 +20,7 @@ use Modules\Production\DataTables\ProductionExecutionDataTable;
 use Modules\Production\Http\Requests\StoreProductionMaterialRequest;
 use Modules\Production\Models\ProductionMaterialRequest;
 use Modules\Production\Models\ProductionRun;
+use Modules\Production\Services\ProductionMaterialDemandService;
 use Modules\Production\Services\ProductionMaterialRequestService;
 
 class ProductionMaterialRequestController extends Controller
@@ -80,6 +81,7 @@ class ProductionMaterialRequestController extends Controller
             (bool) ($data['additional'] ?? false),
             $data['reason'] ?? null,
             $data['required_by_date'] ?? null,
+            $this->componentQuantities($data['lines'] ?? []),
         ));
 
         return redirect()->to($this->submitRedirectUrl($request, $record))
@@ -97,6 +99,7 @@ class ProductionMaterialRequestController extends Controller
             (bool) ($data['additional'] ?? false),
             $data['reason'] ?? null,
             $data['required_by_date'] ?? null,
+            $this->componentQuantities($data['lines'] ?? []),
         ));
 
         return redirect()->to($this->submitRedirectUrl($request, $record))
@@ -170,6 +173,14 @@ class ProductionMaterialRequestController extends Controller
         $this->assertProductionRequest($request, $productionMaterialRequest);
 
         return $this->jsonGuard(fn () => $this->service->approve($productionMaterialRequest));
+    }
+
+    public function cancel(Request $request, ProductionMaterialRequest $productionMaterialRequest): JsonResponse
+    {
+        $this->assertProductionRequest($request, $productionMaterialRequest);
+        $data = $request->validate(['reason' => ['required', 'string', 'max:1000']]);
+
+        return $this->jsonGuard(fn () => $this->service->cancelUnissued($productionMaterialRequest, $data['reason']));
     }
 
     public function issue(Request $request, ProductionMaterialRequest $productionMaterialRequest): JsonResponse|RedirectResponse
@@ -280,9 +291,10 @@ class ProductionMaterialRequestController extends Controller
 
         $selectedRunId = old('production_run_id', $record?->production_run_id ?? $request->integer('run'));
         $selectedRun = $runs->firstWhere('id', (int) $selectedRunId);
-        $remainingRequestableByRequirement = $selectedRun?->requirements
-            ->mapWithKeys(fn ($requirement): array => [
-                $requirement->getKey() => $this->service->remainingRequestableFor(
+        $materialOptions = $selectedRun === null ? collect() : ($mode === 'view' ? collect($selectedRun->requirements->all()) : app(ProductionMaterialDemandService::class)->options($selectedRun));
+        $remainingRequestableByRequirement = $materialOptions
+            ->mapWithKeys(fn ($requirement, int $index): array => [
+                $index => $this->service->remainingRequestableFor(
                     $requirement,
                     $mode === 'edit' ? $record?->getKey() : null,
                 ),
@@ -293,6 +305,7 @@ class ProductionMaterialRequestController extends Controller
             'mode' => $mode,
             'runs' => $runs,
             'selectedRun' => $selectedRun,
+            'materialOptions' => $materialOptions,
             'remainingRequestableByRequirement' => $remainingRequestableByRequirement,
             'stores' => BranchStore::query()->where('branch_id', $context['branch_id'])->orderBy('position')->get(),
         ]);
@@ -302,9 +315,16 @@ class ProductionMaterialRequestController extends Controller
     private function quantities(array $lines): array
     {
         return collect($lines)
-            ->filter(fn (array $line): bool => filled($line['quantity'] ?? null))
-            ->mapWithKeys(fn (array $line): array => [$line['requirement_id'] => $line['quantity']])
+            ->filter(fn (array $line): bool => filled($line['requirement_id'] ?? null))
+            ->mapWithKeys(fn (array $line): array => [$line['requirement_id'] => $line['quantity'] ?? '0'])
             ->all();
+    }
+
+    /** @param list<array<string, mixed>> $lines @return array<int, mixed> */
+    private function componentQuantities(array $lines): array
+    {
+        return collect($lines)->filter(fn (array $line): bool => blank($line['requirement_id'] ?? null) && filled($line['quantity'] ?? null))
+            ->mapWithKeys(fn (array $line): array => [(int) $line['product_component_id'] => $line['quantity']])->all();
     }
 
     /** @param list<array<string, mixed>> $lines @return array<int, mixed> */

@@ -115,7 +115,13 @@ class ProductionReportService
                 $machineQuery->whereHas('fixedAsset', fn ($assetQuery) => $assetQuery->where('asset_name', 'like', $search))
                     ->orWhereHas('machine', fn ($runMachineQuery) => $runMachineQuery->where('name', 'like', $search)->orWhere('code', 'like', $search));
             }))
-            ->when($filters['shift'] ?? null, fn ($query, $term) => $query->whereHas('shift', fn ($shiftQuery) => $shiftQuery->where('name', 'like', '%'.addcslashes($term, '%_\\').'%')))
+            ->when($filters['shift'] ?? null, function ($query, $term): void {
+                $search = '%'.addcslashes($term, '%_\\').'%';
+                $query->where(fn ($query) => $query->whereHas('shift', fn ($shift) => $shift->where('name', 'like', $search))
+                    ->orWhereExists(fn ($entries) => $entries->selectRaw('1')->from('production_shift_entries as entry')
+                        ->whereColumn('entry.production_run_id', 'production_runs.id')->whereColumn('entry.company_id', 'production_runs.company_id')
+                        ->whereColumn('entry.branch_id', 'production_runs.branch_id')->where('entry.sheet_fields->shift_name', 'like', $search)));
+            })
             ->when($filters['stage'] ?? null, fn ($query, $term) => $query->whereHas('stageSnapshot', fn ($stageQuery) => $stageQuery->where('stage_name', 'like', '%'.addcslashes($term, '%_\\').'%')))
             ->when($filters['order'] ?? null, fn ($query, $term) => $query->whereHas('order', fn ($orderQuery) => $orderQuery->where('doc_num', 'like', '%'.addcslashes($term, '%_\\').'%')))
             ->with([
@@ -129,6 +135,7 @@ class ProductionReportService
             ->get();
 
         $runs->each(function (ProductionRun $run) use ($filters, $hasDateFilter): void {
+            $run->setRelation('inventoryDocuments', $run->inventoryDocuments->merge($run->lineInventoryDocuments)->unique('id'));
             $recorded = bcadd(bcadd((string) $run->good_base_quantity, (string) $run->rejected_base_quantity, 8), bcadd((string) $run->rework_base_quantity, (string) $run->scrap_base_quantity, 8), 8);
             $unreceived = bcsub((string) $run->good_base_quantity, (string) $run->received_base_quantity, 8);
             $run->setAttribute('recorded_base_quantity', $recorded);
@@ -182,7 +189,7 @@ class ProductionReportService
                     ->filter(fn (InventoryDocument $document): bool => $document->document_type === InventoryDocument::TypeProductionReceipt
                         && $document->status === InventoryDocument::StatusPosted
                         && $this->controlDateMatches($document->document_date?->toDateString(), $filters))
-                    ->flatMap(fn (InventoryDocument $document) => $document->lines)
+                    ->flatMap(fn (InventoryDocument $document) => $document->lines->filter(fn ($line): bool => (int) $line->production_run_id === (int) $run->id || ($line->production_run_id === null && (int) $document->production_run_id === (int) $run->id)))
                     ->reduce(fn (string $total, $line): string => bcadd($total, (string) $line->base_quantity, 8), '0.00000000')
                 : (string) $run->received_base_quantity;
             $run->setAttribute('report_received_base_quantity', $reportReceived);
@@ -683,10 +690,10 @@ class ProductionReportService
             ->where('branch_id', $filters['branch_id'])
             ->where('document_type', InventoryDocument::TypeProductionReceipt)
             ->where('status', InventoryDocument::StatusPosted)
-            ->when($filters['production_run_id'] ?? null, fn ($query, $runId) => $query->where('production_run_id', $runId))
+            ->when($filters['production_run_id'] ?? null, fn ($query, $runId) => $query->where(fn ($source) => $source->where('production_run_id', $runId)->orWhereHas('lines', fn ($line) => $line->where('production_run_id', $runId))))
             ->when($filters['from'] ?? null, fn ($query, $from) => $query->whereDate('document_date', '>=', $from))
             ->when($filters['to'] ?? null, fn ($query, $to) => $query->whereDate('document_date', '<=', $to))
-            ->with(['productionRun.order.salesOrder', 'productionRun.product', 'branchStore', 'lines.product', 'journalEntry'])
+            ->with(['productionRun.order.salesOrder', 'productionRun.product', 'branchStore', 'lines.product', 'lines.productionRun.order', 'journalEntry'])
             ->orderByDesc('document_date')
             ->get();
     }

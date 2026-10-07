@@ -2,6 +2,7 @@
 
 namespace Modules\Purchases\Services;
 
+use App\Services\DocumentOwnerEffectProofService;
 use DomainException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
@@ -9,6 +10,7 @@ use Illuminate\Support\Facades\Gate;
 use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
@@ -328,33 +330,23 @@ class PurchaseOrderService
 
     public function cancel(PurchaseOrder $record, string $reason): PurchaseOrder
     {
+        if (blank($reason) || mb_strlen($reason) > 2000) {
+            throw new DomainException(__('Cancellation reason is required.'));
+        }
+
         return DB::transaction(function () use ($record, $reason): PurchaseOrder {
             $context = $this->currentContext();
-
-            /** @var PurchaseOrder $locked */
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = PurchaseOrder::query()->lockForUpdate()->findOrFail($record->getKey());
             $this->assertInCurrentContext($locked, $context);
-
-            if ($locked->trashed()) {
-                throw new DomainException(__('purchase_orders.messages.deleted_not_cancelable'));
-            }
-
-            if ($locked->isClosed() || $locked->closed_at !== null) {
-                throw new DomainException(__('purchase_orders.messages.closed_cancel_forbidden'));
-            }
-
-            if ($locked->status === PurchaseOrder::StatusDraft && $locked->approved_at !== null) {
-                throw new DomainException(__('purchase_orders.messages.reopened_cancel_forbidden'));
-            }
-
-            if ($locked->isCancelled()) {
+            if ($locked->isCancelled()
+                && app(DocumentOwnerEffectProofService::class)->cancelledPurchaseOrderIsSettled($locked)) {
                 return $this->load($locked);
             }
-
-            if ($locked->hasDownstreamDocuments()) {
+            if (! $locked->canCancelSafely()) {
                 throw new DomainException(__('purchase_orders.messages.received_cancel_forbidden'));
             }
-
+            $before = $locked->getAttributes();
             $locked->forceFill([
                 'status' => PurchaseOrder::StatusCancelled,
                 'cancelled_by' => auth()->id(),
@@ -362,11 +354,13 @@ class PurchaseOrderService
                 'cancel_reason' => trim($reason),
                 'updated_by' => auth()->id(),
             ])->save();
-
             $this->refreshSourceRequests($locked);
+            app(ProcurementAuditService::class)->record($locked, 'purchase_order.cancelled', [
+                'reason' => trim($reason), 'before' => $before, 'owner_effects_reconciled' => true,
+            ]);
 
             return $this->load($locked->refresh());
-        });
+        }, 3);
     }
 
     public function delete(PurchaseOrder $record): void

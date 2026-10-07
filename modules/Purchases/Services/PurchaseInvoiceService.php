@@ -217,6 +217,7 @@ class PurchaseInvoiceService
                 'updated_by' => auth()->id(),
             ])->save();
             $locked->refreshPaymentTotals();
+            app(ProcurementAuditService::class)->record($locked, 'purchase_invoice.cancelled', ['reason' => trim($reason)]);
 
             return $this->load($locked->refresh());
         });
@@ -298,6 +299,7 @@ class PurchaseInvoiceService
                 ])->save();
             }
             $locked->refreshPaymentTotals();
+            app(ProcurementAuditService::class)->record($locked, 'purchase_invoice.reversed', ['reason' => trim($reason)]);
 
             return $this->load($locked->refresh());
         }, 3);

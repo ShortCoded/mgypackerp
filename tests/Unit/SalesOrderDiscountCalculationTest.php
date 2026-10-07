@@ -12,7 +12,7 @@ test('commercial line and header discounts conserve four place allocations witho
     ], 'percentage', '5');
     expect($result['discount_value'])->toBe('5.0000')->and($result['header_discount_amount'])->toBe('49.5000')
         ->and(array_column($result['lines'], 'discount_amount'))->toBe(['145.0000', '14.5000'])
-        ->and(array_column($result['lines'], 'tax_amount'))->toBe(['126', '12.6'])
+        ->and(array_column($result['lines'], 'tax_amount'))->toBe(['126.0000', '12.6000'])
         ->and(array_column($result['lines'], 'line_total'))->toBe(['981.0000', '98.1000']);
 });
 

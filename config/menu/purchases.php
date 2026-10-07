@@ -77,6 +77,7 @@ return [
                 'actions' => [
                     'view' => 'purchases.supplier_quotation_entry.view', 'create' => 'purchases.supplier_quotation_entry.create',
                     'edit' => 'purchases.supplier_quotation_entry.edit', 'delete' => 'purchases.supplier_quotation_entry.delete',
+                    'cancel' => 'purchases.supplier_quotation_entry.cancel',
                     'view_trashed' => 'purchases.supplier_quotation_entry.view_trashed', 'restore' => 'purchases.supplier_quotation_entry.restore',
                     'print' => 'purchases.supplier_quotation_entry.print', 'view_prices' => 'purchases.prices.view',
                 ],
@@ -160,6 +161,7 @@ return [
                     'edit' => 'purchases.purchase_returns.edit', 'delete' => 'purchases.purchase_returns.delete',
                     'view_trashed' => 'purchases.purchase_returns.view_trashed', 'restore' => 'purchases.purchase_returns.restore',
                     'post' => 'purchases.purchase_returns.post', 'reverse' => 'purchases.purchase_returns.reverse',
+                    'cancel' => 'purchases.purchase_returns.cancel',
                     'print' => 'purchases.purchase_returns.print',
                 ],
                 'active' => ['admin.purchases.purchase-returns.*'], 'children' => [],

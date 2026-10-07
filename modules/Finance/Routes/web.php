@@ -240,6 +240,10 @@ Route::middleware('auth')
             Route::put('/document-number-settings', 'updateDocumentNumberSettings')->middleware('can:cheques.document_number_settings.update')->name('document-number-settings.update');
             Route::post('/{cheque}/mark-deposited', 'markDeposited')->middleware('can:cheques.mark_deposited')->name('mark-deposited');
             Route::post('/{cheque}/mark-collected', 'markCollected')->middleware('can:cheques.mark_collected')->name('mark-collected');
+            Route::get('/{cheque}/collection-correction', 'collectionCorrection')->middleware('can:cheques.view')->name('collection-correction');
+            Route::post('/{cheque}/collection-corrections', 'prepareCollectionCorrection')->middleware(['can:cheques.cancel', 'can:customer_receipts.cancel'])->name('collection-corrections.prepare');
+            Route::post('/{cheque}/collection-corrections/{correction}/approve', 'approveCollectionCorrection')->middleware(['can:cheques.cancel', 'can:customer_receipts.cancel'])->name('collection-corrections.approve');
+            Route::post('/{cheque}/collection-corrections/{correction}/reject', 'rejectCollectionCorrection')->middleware(['can:cheques.cancel', 'can:customer_receipts.cancel'])->name('collection-corrections.reject');
             Route::post('/{cheque}/mark-returned', 'markReturned')->middleware('can:cheques.mark_returned')->name('mark-returned');
             Route::post('/{cheque}/mark-issued', 'markIssued')->middleware('can:cheques.mark_issued')->name('mark-issued');
             Route::post('/{cheque}/mark-delivered', 'markDelivered')->middleware('can:cheques.mark_delivered')->name('mark-delivered');

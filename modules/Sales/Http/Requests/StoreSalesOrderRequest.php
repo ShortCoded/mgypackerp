@@ -45,7 +45,7 @@ class StoreSalesOrderRequest extends FormRequest
             'lines.*.quantity',
             'lines.*.unit_price',
             'lines.*.discount_amount',
-            'lines.*.tax_amount',
+            'lines.*.tax_rate',
             'payment_schedules.*.amount',
         ]);
     }
@@ -72,7 +72,7 @@ class StoreSalesOrderRequest extends FormRequest
             'lines.*.source_request_line_public_id' => ['nullable', 'uuid', 'distinct'],
             'lines.*.description' => ['nullable', 'string'], 'lines.*.quantity' => ['required', 'numeric', 'gt:0'],
             'lines.*.unit_price' => ['nullable', 'numeric', 'decimal:0,8', 'regex:/^\d{1,16}(?:\.\d{1,8})?$/D', 'gt:0'], 'lines.*.discount_amount' => ['nullable', 'numeric', 'min:0'],
-            'lines.*.tax_amount' => ['nullable', 'numeric', 'min:0'], 'lines.*.requested_date' => ['nullable', 'date'],
+            'lines.*.tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,3}(?:\.\d{1,4})?$/D', 'between:0,100'], 'lines.*.requested_date' => ['nullable', 'date'],
             'lines.*.specifications' => ['nullable', 'array'], 'lines.*.warehouse_notes' => ['nullable', 'string'],
             'lines.*.production_notes' => ['nullable', 'string'],
             'payment_schedules' => ['nullable', 'array'], 'payment_schedules.*.amount' => ['required', 'numeric', 'gt:0'],

@@ -7,6 +7,7 @@ use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Contracts\View\View;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -25,6 +26,7 @@ use Modules\Core\Models\Product;
 use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Core\Services\Select2ResponseService;
 use Modules\Finance\Models\BankAccount;
@@ -259,7 +261,7 @@ class ProcurementWorkflowController extends Controller
 
     public function showRfq(RequestForQuotation $requestForQuotation): View
     {
-        $this->assertCurrent($requestForQuotation);
+        $this->assertScopedHistoricalContext($requestForQuotation);
         $requestForQuotation->load(['requisition', 'lines.product', 'lines.unit', 'suppliers', 'quotations.supplier']);
 
         return $this->showView('request_for_quotation', $requestForQuotation, false);
@@ -344,7 +346,7 @@ class ProcurementWorkflowController extends Controller
 
     public function showQuotation(SupplierQuotation $supplierQuotation): View
     {
-        $this->assertCurrent($supplierQuotation);
+        $this->assertScopedHistoricalContext($supplierQuotation);
         $supplierQuotation->load(['supplier', 'currency', 'requestForQuotation', 'purchaseRequisition', 'purchaseOrder', 'lines.product', 'lines.unit', 'attachmentUsages.file']);
 
         return $this->showView('supplier_quotation', $supplierQuotation, true);
@@ -415,7 +417,7 @@ class ProcurementWorkflowController extends Controller
 
     public function showSelection(SupplierSelection $supplierSelection): View
     {
-        $this->assertCurrent($supplierSelection);
+        $this->assertScopedHistoricalContext($supplierSelection);
         $supplierSelection->load(['requestForQuotation', 'lines.supplier', 'lines.product', 'lines.unit', 'lines.purchaseOrder']);
 
         return $this->showView('supplier_selection', $supplierSelection, true);
@@ -428,6 +430,42 @@ class ProcurementWorkflowController extends Controller
 
             return $supplierSelection->refresh();
         }, 'admin.purchases.supplier-selection.show');
+    }
+
+    public function cancelRfq(Request $request, RequestForQuotation $requestForQuotation): JsonResponse|RedirectResponse
+    {
+        return $this->cancelSourcingDocument($request, $requestForQuotation, 'admin.purchases.request-for-quotations.show');
+    }
+
+    public function cancelQuotation(Request $request, SupplierQuotation $supplierQuotation): JsonResponse|RedirectResponse
+    {
+        return $this->cancelSourcingDocument($request, $supplierQuotation, 'admin.purchases.supplier-quotation-entry.show');
+    }
+
+    public function cancelSelection(Request $request, SupplierSelection $supplierSelection): JsonResponse|RedirectResponse
+    {
+        return $this->cancelSourcingDocument($request, $supplierSelection, 'admin.purchases.supplier-selection.show');
+    }
+
+    private function cancelSourcingDocument(Request $request, RequestForQuotation|SupplierQuotation|SupplierSelection $record, string $route): JsonResponse|RedirectResponse
+    {
+        $this->assertAdministrativeBranch();
+        $this->assertScopedHistoricalContext($record);
+        $data = $request->validate(['reason' => ['required', 'string', 'max:1000']]);
+
+        return $this->execute($request, fn () => $this->sourcing->cancelSourcingDocument($record, $data['reason']), $route);
+    }
+
+    private function assertScopedHistoricalContext(Model $record): void
+    {
+        $context = $this->context();
+        $scope = app(OperatingScopeAccessService::class);
+        $company = Company::query()->findOrFail($context['company_id']);
+        abort_unless((int) $record->company_id === $context['company_id']
+            && ((int) $record->branch_id === $context['branch_id'] || $this->isAdministrativeBranch())
+            && $scope->canAccessCompany(auth()->user(), $company)
+            && $scope->allowedBranchQuery(auth()->user(), [$company->doc_num])->whereKey($record->branch_id)->exists()
+            && $scope->allowedFinancialPeriodQuery(auth()->user(), [$company->doc_num])->whereKey($record->financial_period_id)->exists(), 404);
     }
 
     public function changeRequestsIndex(): View
@@ -912,7 +950,7 @@ class ProcurementWorkflowController extends Controller
 
     public function showReturn(PurchaseReturn $purchaseReturn): View
     {
-        $this->assertCurrent($purchaseReturn);
+        $this->assertScopedHistoricalContext($purchaseReturn);
         $purchaseReturn->load(['supplier', 'purchaseOrder', 'receipt', 'purchaseInvoice', 'lines.product', 'lines.unit']);
 
         return $this->showView('purchase_return', $purchaseReturn, true);
@@ -928,12 +966,22 @@ class ProcurementWorkflowController extends Controller
     public function reverseReturn(ProcurementWorkflowRequest $request, PurchaseReturn $purchaseReturn): JsonResponse|RedirectResponse
     {
         $this->assertInventoryBranch();
+        $this->assertScopedHistoricalContext($purchaseReturn);
 
         return $this->execute(
             $request,
             fn () => $this->settlement->reversePurchaseReturn($purchaseReturn, (string) $request->validated('reversal_reason')),
             'admin.purchases.purchase-returns.show',
         );
+    }
+
+    public function cancelReturn(ProcurementWorkflowRequest $request, PurchaseReturn $purchaseReturn): JsonResponse|RedirectResponse
+    {
+        $this->assertInventoryBranch();
+        $this->assertScopedHistoricalContext($purchaseReturn);
+
+        return $this->execute($request, fn () => $this->settlement->cancelDraftPurchaseReturn($purchaseReturn, (string) $request->validated('cancel_reason')),
+            'admin.purchases.purchase-returns.show');
     }
 
     public function supplierPaymentsIndex(): View
@@ -999,6 +1047,7 @@ class ProcurementWorkflowController extends Controller
             'cashVoucher', 'bankAccount.bank', 'bankAccount.account', 'cheque', 'currency', 'supplier', 'purchaseOrder',
             'allocations.purchaseInvoice', 'allocations.paymentSchedule', 'journalEntry',
         ]);
+        $this->assertScopedHistoricalContext($record);
 
         return $this->showView('supplier_payment', $record, true);
     }
@@ -1015,6 +1064,7 @@ class ProcurementWorkflowController extends Controller
     {
         $this->assertAdministrativeBranch();
         $record = $this->supplierPayment($supplierPayment);
+        $this->assertScopedHistoricalContext($record);
 
         return $this->execute(
             $request,

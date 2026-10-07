@@ -436,20 +436,7 @@ class InventoryDocumentController extends Controller
                 ->where('public_uuid', $data['branch_store_uuid'])
                 ->firstOrFail();
             if ($data['document_type'] === InventoryDocument::TypeReceipt) {
-                $documents = $this->guard(fn (): array => $productionCycle->receiveRunBatchFinishedGoods(
-                    $batch,
-                    (int) $store->getKey(),
-                ));
-                $docNums = collect($documents)->map(fn (InventoryDocument $document): string => $document->doc_num)->values()->all();
-                $url = route('admin.production.runs.batches.show', $batch);
-
-                return $this->respond(
-                    $request,
-                    ['doc_nums' => $docNums, 'url' => $url],
-                    $url,
-                    201,
-                    'inventory.movements.messages.posted',
-                );
+                throw ValidationException::withMessages(['document' => __('production_handover.old_direct_receipt_disabled')]);
             }
 
             $selectedLayers = collect($data['batch_material_selections'] ?? [])->mapWithKeys(fn (array $line): array => [(int) $line['requirement_id'] => collect($line['receipt_layers'] ?? [])

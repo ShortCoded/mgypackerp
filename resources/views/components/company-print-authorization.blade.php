@@ -1,5 +1,7 @@
 @props(['identity', 'policy' => 'report', 'company' => null])
-@php($showIdentity = app(\Modules\Core\Services\CompanyPrintIdentityService::class)->shouldShow($policy, $company))
+@php
+    $showIdentity = app(\Modules\Core\Services\CompanyPrintIdentityService::class)->shouldShow($policy, $company);
+@endphp
 @if($showIdentity)
 
 @php

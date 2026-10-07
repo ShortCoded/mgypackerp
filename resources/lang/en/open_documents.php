@@ -16,7 +16,7 @@ return [
         'title' => 'Ordered correction plan',
         'help' => 'Review and complete each step separately, then refresh this plan. Keep the document branch; recovery of a historical payment posts in the current open period. Dependent documents are not reversed automatically.',
         'return' => 'Review and reverse the posted purchase return',
-        'return_draft' => 'Review and delete the unposted return draft',
+        'return_draft' => 'Review and cancel the unposted return draft, preserving its history',
         'payment' => 'Review payment recovery, then reverse the supplier payment',
         'voucher' => 'Review and correct the original scheduled cash payment',
         'invoice' => 'Reverse the supplier invoice through Open Document',

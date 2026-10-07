@@ -12,6 +12,7 @@
 <div class="dropdown font-sans-serif position-static">
 <button class="btn btn-link text-600 btn-sm dropdown-toggle btn-reveal" type="button" data-bs-toggle="dropdown" aria-label="{{ __('Actions') }}"><span class="fas fa-ellipsis-h"></span></button>
 <div class="dropdown-menu dropdown-menu-end py-2">
+<x-document-owner-actions :record="$record" />
 @if(!$record->trashed())
 <a class="dropdown-item" href="{{ route($prefix.'.show', $record->doc_num) }}">{{ __('common.actions.view') }}</a>
 @if($editableDraft && Route::has($prefix.'.edit') && $isOwnBranch) @can($permission.'.edit')<a class="dropdown-item" href="{{ route($prefix.'.edit', $record->doc_num) }}">{{ __('common.actions.edit') }}</a>@endcan @endif
@@ -25,7 +26,7 @@
         @can('purchases.supplier_quotation_entry.create') @can('purchases.prices.view')<a class="dropdown-item" href="{{ route('admin.purchases.supplier-quotation-entry.create-source', [\Modules\Purchases\Models\SupplierQuotation::SourcePurchaseRequisition, $record->doc_num]) }}">{{ __('Enter supplier quotation') }}</a>@endcan @endcan
         @if($record->status !== 'fully_converted') @can('purchase_orders.create') @can('purchases.prices.view')<a class="dropdown-item" href="{{ route('admin.purchases.purchase-orders.create', ['purchase_requisition_doc_nums' => [$record->doc_num]]) }}">{{ __('Create Purchase Order') }}</a>@endcan @endcan @endif
     @endif
-    @if($record->status === 'approved' && ($isOwnBranch || ($isAdministrativeBranch ?? false))) @can($permission.'.cancel')<button type="button" class="dropdown-item text-danger" data-procurement-action="{{ route($prefix.'.cancel', $record->doc_num) }}" data-reason-field="cancel_reason">{{ __('Cancel') }}</button>@endcan @endif
+    @if($record->canCancelSafely() && ($isOwnBranch || ($isAdministrativeBranch ?? false))) @can($permission.'.cancel')<button type="button" class="dropdown-item text-danger" data-procurement-action="{{ route($prefix.'.cancel', $record->doc_num) }}" data-reason-field="cancel_reason">{{ __('Cancel') }}</button>@endcan @endif
 @endif
 @if($screen === 'request_for_quotations' && $draft && $isOwnBranch) @can($permission.'.approve')<button type="button" class="dropdown-item" data-procurement-action="{{ route($prefix.'.issue', $record->doc_num) }}">{{ __('Issue RFQ') }}</button>@endcan @endif
 @if($screen === 'supplier_quotations' && $draft && $isOwnBranch) @can($permission.'.edit')<button type="button" class="dropdown-item" data-procurement-action="{{ route($prefix.'.submit', $record->doc_num) }}">{{ __('Submit') }}</button>@endcan @endif

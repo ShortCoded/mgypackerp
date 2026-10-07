@@ -79,12 +79,40 @@ test('authorized users see an Arabic production order toolbar and can open the c
         ->assertJsonPath('data.0.created_by', e($user->name))
         ->assertJsonPath('recordsFiltered', 1);
 
+    $stage = $order->orderStageSnapshots()->create([
+        'company_id' => $company->getKey(),
+        'route_scope_key' => 'order',
+        'sequence' => 1,
+        'stage_code' => 'FACTORY',
+        'stage_name' => 'Factory workflow',
+    ]);
+    foreach (['checklist_confirmed', 'factory_execution_assigned', 'accepted_output_received'] as $eventType) {
+        $stage->events()->create(['event_type' => $eventType, 'status' => 'pending', 'occurred_at' => now()]);
+    }
+
     $this->actingAs($user)->withSession($context)
         ->get(route('admin.production.work-orders.show', $order))
         ->assertSuccessful()
         ->assertSee('إنتاج مستقل للمخزون')
         ->assertSee($branch->name)
+        ->assertSee('تم تأكيد قائمة التحقق')
+        ->assertSee('تم إسناد التنفيذ إلى المصنع')
+        ->assertSee('تم استلام الناتج المقبول')
+        ->assertDontSee('production_execution.orders.event_types.')
         ->assertDontSee('Operating factory');
+
+    $user->forceFill(['locale' => 'en'])->save();
+    app()->setLocale('en');
+    $this->actingAs($user)->withSession([...$context, 'locale' => 'en'])
+        ->get(route('admin.production.work-orders.show', $order))
+        ->assertSuccessful()
+        ->assertSee('Checklist confirmed')
+        ->assertSee('Factory execution assigned')
+        ->assertSee('Accepted output received')
+        ->assertDontSee('production_execution.orders.event_types.');
+    $user->forceFill(['locale' => 'ar'])->save();
+    app()->setLocale('ar');
+    $this->withSession(['locale' => 'ar']);
 
     $administrativeBranch = Branch::query()->create([
         'doc_number' => 99002,
@@ -303,7 +331,7 @@ test('movement quantity fields stay numeric and date fields stay date pickers', 
 test('production labor is constrained to active labor employees', function (): void {
     $storeRequest = file_get_contents(base_path('modules/Production/Http/Requests/StoreProductionRunRequest.php'));
     $laborRequest = file_get_contents(base_path('modules/Production/Http/Requests/RecordProductionLaborRequest.php'));
-    $runView = file_get_contents(resource_path('views/modules/production/runs/show.blade.php'));
+    $runView = file_get_contents(resource_path('views/modules/production/runs/partials/labor-operation.blade.php'));
     $runForm = file_get_contents(resource_path('views/modules/production/runs/form.blade.php'));
 
     expect($storeRequest)->toContain("'regular_labor', 'casual_labor'")

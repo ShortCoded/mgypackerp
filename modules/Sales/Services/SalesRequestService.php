@@ -7,13 +7,13 @@ use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Sales\Models\Customer;
-use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesRequest;
@@ -34,6 +34,7 @@ class SalesRequestService
     public function save(array $data, ?SalesRequest $request = null): SalesRequest
     {
         return DB::transaction(function () use ($data, $request): SalesRequest {
+            Company::query()->whereKey($request?->company_id ?? (int) $data['company_id'])->lockForUpdate()->firstOrFail();
             $record = $request ? SalesRequest::query()->lockForUpdate()->findOrFail($request->id) : new SalesRequest;
             if ($record->exists && ! $record->isEditable()) {
                 throw new DomainException(__('Only draft, rejected, or reopened sales requests can be edited.'));
@@ -264,7 +265,9 @@ class SalesRequestService
     {
         DB::transaction(function () use ($request): void {
             $record = SalesRequest::query()->lockForUpdate()->findOrFail($request->id);
-            if ($record->status !== 'draft' || $record->approved_at !== null || $record->closed_at !== null
+            $this->assertActiveOperatingContext($record);
+            $this->periods->resolveOpenForPostingDate((int) $record->company_id, $record->request_date, (int) $record->financial_period_id, lockForUpdate: true);
+            if (! in_array($record->status, [SalesRequest::StatusDraft, SalesRequest::StatusReopened], true) || ! $record->isEditable()
                 || $record->hasConversionHistory()) {
                 throw new DomainException(__('Only unused drafts can be deleted.'));
             }
@@ -277,7 +280,9 @@ class SalesRequestService
     {
         return DB::transaction(function () use ($request): SalesRequest {
             $record = SalesRequest::onlyTrashed()->lockForUpdate()->findOrFail($request->id);
-            if ($record->status !== 'draft' || ! $record->isEditable() || $record->hasConversionHistory()) {
+            $this->assertActiveOperatingContext($record);
+            $this->periods->resolveOpenForPostingDate((int) $record->company_id, $record->request_date, (int) $record->financial_period_id, lockForUpdate: true);
+            if (! in_array($record->status, [SalesRequest::StatusDraft, SalesRequest::StatusReopened], true) || ! $record->isEditable() || $record->hasConversionHistory()) {
                 throw new DomainException(__('Only unused drafts can be restored.'));
             }
             $record->restore();
@@ -306,9 +311,9 @@ class SalesRequestService
             if (in_array($status, ['rejected', 'cancelled', 'closed'], true) && blank($reason)) {
                 throw new DomainException(__('A reason is required for this action.'));
             }
-            if ($status === 'cancelled' && ($record->approved_at !== null || $record->closed_at !== null
-                || $record->quotations()->withTrashed()->exists() || $record->orders()->withTrashed()->exists()
-                || CustomerInvoice::query()->withTrashed()->where('source_type', 'sales_request')->where('source_id', $record->getKey())->exists())) {
+            if ($status === 'cancelled' && ((($record->approved_at !== null || $record->closed_at !== null)
+                    && ! ($record->status === SalesRequest::StatusReopened && $record->isEditable()))
+                || $record->hasConversionHistory())) {
                 throw new DomainException(__('A sales request with conversions or downstream documents cannot be cancelled.'));
             }
             $resultStatus = $status === SalesRequest::StatusApproved ? $this->statusAfterApproval($record) : $status;
@@ -463,6 +468,7 @@ class SalesRequestService
     public function convertToOrder(SalesRequest $request, array $data): SalesOrder
     {
         return DB::transaction(function () use ($request, $data): SalesOrder {
+            Company::query()->whereKey($request->company_id)->lockForUpdate()->firstOrFail();
             $record = SalesRequest::query()->with(['lines.product', 'lines.unit'])->lockForUpdate()->findOrFail($request->getKey());
             if (! in_array($record->status, ['approved', 'partially_converted'], true) || ! $record->customer_id || ! $record->currency_id) {
                 throw new DomainException(__('Conversion requires an approved request with a customer and currency.'));
@@ -522,7 +528,7 @@ class SalesRequestService
                 SalesRequestLine::query()->lockForUpdate()->findOrFail($line['sales_request_line_id'])->increment('converted_quantity', $line['quantity']);
             }
             $this->syncConversionClosure($record);
-            $this->audit->record($record, 'sales_request.converted', ['target' => 'order', 'document' => $order->doc_num]);
+            $this->audit->record($record, 'sales_request.converted', ['target' => 'order', 'document' => $order->doc_num, 'conversion_lines' => $this->conversionProof($order)]);
 
             return $order;
         });
@@ -532,6 +538,7 @@ class SalesRequestService
     public function convertToQuotation(SalesRequest $request, array $data): Quotation
     {
         return DB::transaction(function () use ($request, $data): Quotation {
+            Company::query()->whereKey($request->company_id)->lockForUpdate()->firstOrFail();
             $record = SalesRequest::query()->with(['customer', 'currency', 'lines.product', 'lines.unit'])->lockForUpdate()->findOrFail($request->getKey());
             if (! in_array($record->status, ['approved', 'partially_converted'], true) || ! $record->customer_id || ! $record->currency_id) {
                 throw new DomainException(__('Conversion requires an approved request with a customer and currency.'));
@@ -586,7 +593,7 @@ class SalesRequestService
                 SalesRequestLine::query()->lockForUpdate()->findOrFail($line['sales_request_line_id'])->increment('converted_quantity', $line['quantity']);
             }
             $this->syncConversionClosure($record);
-            $this->audit->record($record, 'sales_request.converted', ['target' => 'quotation', 'document' => $quotation->doc_num]);
+            $this->audit->record($record, 'sales_request.converted', ['target' => 'quotation', 'document' => $quotation->doc_num, 'conversion_lines' => $this->conversionProof($quotation)]);
 
             return $quotation;
         });
@@ -596,6 +603,7 @@ class SalesRequestService
     public function convert(SalesRequest $request, string $target, array $selection, array $conversionContext = []): Quotation|SalesOrder
     {
         return DB::transaction(function () use ($request, $target, $selection, $conversionContext): Quotation|SalesOrder {
+            Company::query()->whereKey($request->company_id)->lockForUpdate()->firstOrFail();
             $record = SalesRequest::query()->with(['customer', 'currency', 'lines.product', 'lines.unit'])->lockForUpdate()->findOrFail($request->id);
             if ($record->status === 'approved') {
                 if (! $record->customer_id && ! empty($conversionContext['customer_doc_num'])) {
@@ -658,10 +666,143 @@ class SalesRequestService
                 throw new DomainException(__('Choose quotation or sales order as the conversion target.'));
             }
             $this->syncConversionClosure($record);
-            $this->audit->record($record, 'sales_request.converted', ['target' => $target, 'document' => $document->doc_num]);
+            $this->audit->record($record, 'sales_request.converted', ['target' => $target, 'document' => $document->doc_num, 'conversion_lines' => $this->conversionProof($document)]);
 
             return $document;
         });
+    }
+
+    /** @return list<array{source_line_id: int, product_id: int, unit_id: int, quantity: string}> */
+    private function conversionProof(Quotation|SalesOrder $document): array
+    {
+        $lines = $document instanceof Quotation ? $document->currentRevision->lines : $document->lines;
+
+        return $lines->map(fn ($line): array => ['source_line_id' => (int) $line->sales_request_line_id,
+            'product_id' => (int) $line->product_id, 'unit_id' => (int) $line->unit_id,
+            'quantity' => (string) $line->quantity])->all();
+    }
+
+    /** @return list<array<string, mixed>> */
+    private function quotationConversionProof(Quotation $quotation): array
+    {
+        $audits = DB::table('activity_log')->where('company_id', $quotation->company_id)
+            ->where('subject_type', SalesRequest::class)->where('subject_id', $quotation->sales_request_id)
+            ->where('event', 'sales_request.converted')->where('properties->target', 'quotation')
+            ->where('properties->document', $quotation->doc_num)->get();
+        if ($audits->count() !== 1) {
+            throw new DomainException(__('cancellation_review.source_conversion_unproven'));
+        }
+        $proof = json_decode($audits->sole()->properties, true, flags: JSON_THROW_ON_ERROR)['conversion_lines'] ?? [];
+        if (! is_array($proof) || ! array_is_list($proof) || $proof === []) {
+            throw new DomainException(__('cancellation_review.source_conversion_unproven'));
+        }
+        foreach ($proof as $line) {
+            if (! is_array($line) || count(array_intersect(['source_line_id', 'product_id', 'unit_id', 'quantity'], array_keys($line))) !== 4
+                || ! is_int($line['source_line_id']) || $line['source_line_id'] <= 0
+                || ! is_int($line['product_id']) || $line['product_id'] <= 0
+                || ! is_int($line['unit_id']) || $line['unit_id'] <= 0
+                || ! is_string($line['quantity']) || ! preg_match('/^\d+(?:\.\d{1,8})?$/D', $line['quantity'])
+                || bccomp($line['quantity'], '0', 8) <= 0) {
+                throw new DomainException(__('cancellation_review.source_conversion_unproven'));
+            }
+        }
+        if (count(array_unique(array_column($proof, 'source_line_id'))) !== count($proof)) {
+            throw new DomainException(__('cancellation_review.source_conversion_unproven'));
+        }
+
+        return $proof;
+    }
+
+    public function hasQuotationConversionProof(Quotation $quotation): bool
+    {
+        if ($quotation->sales_request_id === null) {
+            return true;
+        }
+        try {
+            $this->quotationConversionProof($quotation);
+        } catch (DomainException|\JsonException) {
+            return false;
+        }
+
+        return true;
+    }
+
+    public function releaseQuotationConversion(Quotation $quotation): void
+    {
+        if ($quotation->sales_request_id === null) {
+            return;
+        }
+        $source = SalesRequest::withTrashed()->with('lines')->lockForUpdate()->find($quotation->sales_request_id);
+        if (! $source instanceof SalesRequest || (int) $source->company_id !== (int) $quotation->company_id
+            || (int) $source->branch_id !== (int) $quotation->branch_id || (int) $source->customer_id !== (int) $quotation->customer_id
+            || (int) $source->currency_id !== (int) $quotation->currency_id) {
+            throw new DomainException(__('The document is outside the active operating context.'));
+        }
+        $released = [];
+        foreach ($this->quotationConversionProof($quotation) as $item) {
+            $line = $source->lines->firstWhere('id', $item['source_line_id']);
+            if (! $line instanceof SalesRequestLine || (int) $line->product_id !== (int) $item['product_id']
+                || (int) $line->unit_id !== (int) $item['unit_id'] || bccomp((string) $item['quantity'], '0', 8) <= 0
+                || bccomp((string) $line->converted_quantity, (string) $item['quantity'], 8) < 0) {
+                throw new DomainException(__('cancellation_review.source_conversion_unproven'));
+            }
+            $after = bcsub((string) $line->converted_quantity, (string) $item['quantity'], 8);
+            $released[] = ['source_line_public_id' => $line->public_id, 'quantity' => (string) $item['quantity'],
+                'converted_before' => (string) $line->converted_quantity, 'converted_after' => $after];
+            $line->forceFill(['converted_quantity' => $after])->save();
+        }
+        $previous = $source->status;
+        $hasConverted = $source->lines()->where('converted_quantity', '>', 0)->exists();
+        $hasRemaining = $source->lines()->whereColumn('converted_quantity', '<', 'quantity')->exists();
+        $status = in_array($previous, [SalesRequest::StatusApproved, 'partially_converted', 'converted'], true)
+            ? (! $hasConverted ? SalesRequest::StatusApproved : ($hasRemaining ? 'partially_converted' : 'converted')) : $previous;
+        $proof = ['event' => 'conversion_reversed', 'quotation' => $quotation->doc_num, 'from' => $previous, 'to' => $status,
+            'at' => now()->toIso8601String(), 'by' => auth()->id(), 'lines' => $released,
+            'closed_at_before' => $source->closed_at?->toISOString(), 'closed_by_before' => $source->closed_by];
+        $source->forceFill(['status' => $status, 'status_history' => [...($source->status_history ?? []), $proof]])->save();
+        $this->audit->record($source, 'sales_request.conversion_reversed', $proof);
+    }
+
+    public function releaseOrderConversion(SalesOrder $order): void
+    {
+        if ($order->sales_request_id === null || $order->quotation_id !== null) {
+            return;
+        }
+        $source = SalesRequest::withTrashed()->with('lines')->lockForUpdate()->find($order->sales_request_id);
+        if (! $source instanceof SalesRequest || (int) $source->company_id !== (int) $order->company_id
+            || (int) $source->branch_id !== (int) $order->branch_id || (int) $source->customer_id !== (int) $order->customer_id
+            || (int) $source->currency_id !== (int) $order->currency_id) {
+            throw new DomainException(__('The document is outside the active operating context.'));
+        }
+        $previousClosedAt = $source->closed_at?->toISOString();
+        $previousClosedBy = $source->closed_by;
+        $released = [];
+        foreach ($order->lines as $line) {
+            $original = $source->lines->firstWhere('id', $line->sales_request_line_id);
+            if (! $original instanceof SalesRequestLine
+                || (int) $original->product_id !== (int) $line->product_id || (int) $original->unit_id !== (int) $line->unit_id
+                || isset($released[$original->id])) {
+                throw new DomainException(__('Each order line must keep its selected sales request product and unit.'));
+            }
+            $after = bcsub((string) $original->converted_quantity, (string) $line->quantity, 8);
+            if (bccomp($after, '0', 8) < 0) {
+                throw new DomainException(__('Converted quantity exceeds the remaining request quantity.'));
+            }
+            $released[$original->id] = ['source_line_public_id' => $original->public_id,
+                'quantity' => (string) $line->quantity, 'converted_before' => (string) $original->converted_quantity,
+                'converted_after' => $after];
+            $original->forceFill(['converted_quantity' => $after])->save();
+        }
+        $previous = $source->status;
+        $hasConverted = $source->lines()->where('converted_quantity', '>', 0)->exists();
+        $hasRemaining = $source->lines()->whereColumn('converted_quantity', '<', 'quantity')->exists();
+        $status = in_array($previous, [SalesRequest::StatusApproved, 'partially_converted', 'converted'], true)
+            ? (! $hasConverted ? SalesRequest::StatusApproved : ($hasRemaining ? 'partially_converted' : 'converted')) : $previous;
+        $proof = ['event' => 'conversion_reversed', 'order' => $order->doc_num, 'from' => $previous,
+            'to' => $status, 'at' => now()->toIso8601String(), 'by' => auth()->id(), 'lines' => array_values($released),
+            'closed_at_before' => $previousClosedAt, 'closed_by_before' => $previousClosedBy];
+        $source->forceFill(['status' => $status, 'status_history' => [...($source->status_history ?? []), $proof]])->save();
+        $this->audit->record($source, 'sales_request.conversion_reversed', $proof);
     }
 
     private function syncConversionClosure(SalesRequest $request): void

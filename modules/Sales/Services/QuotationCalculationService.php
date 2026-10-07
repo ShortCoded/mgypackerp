@@ -49,6 +49,15 @@ class QuotationCalculationService
         }
 
         $headerDiscount = $this->discountAmount($this->amounts->subtract($subtotal, $lineDiscountTotal), $discountType, $discountValue);
+        $bases = array_map(fn (array $line): string => $this->amounts->subtract($this->amounts->unitPriceTotal($line['quantity'], $line['unit_price']), $line['discount_amount']), $calculatedLines);
+        $shares = app(SalesOrderDiscountService::class)->headerShares($headerDiscount, $bases);
+        $taxTotal = '0.0000';
+        foreach ($calculatedLines as $index => &$line) {
+            $line['tax_amount'] = app(SalesTaxService::class)->amount($this->amounts->subtract($bases[$index], $shares[$index]), $line['tax_rate']);
+            $line['line_total'] = $this->amounts->add($bases[$index], $line['tax_amount']);
+            $taxTotal = $this->amounts->add($taxTotal, $line['tax_amount']);
+        }
+        unset($line);
         $discountAmount = $this->amounts->add($lineDiscountTotal, $headerDiscount);
         $total = $this->amounts->add($this->amounts->subtract($subtotal, $discountAmount), $taxTotal);
 

@@ -1,6 +1,7 @@
 <?php
 
 return [
+    'reversal_lineage_invalid' => 'القيد العكسي المرحل لا يطابق أثر القيد الأصلي بالكامل.',
     'title' => 'قيود اليومية',
     'create' => 'إنشاء قيد يومية',
     'document_title' => 'قيد اليومية :doc_num',

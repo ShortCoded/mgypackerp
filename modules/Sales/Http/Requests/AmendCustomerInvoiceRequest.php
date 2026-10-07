@@ -28,7 +28,7 @@ class AmendCustomerInvoiceRequest extends FormRequest
         }
         $this->replace($input);
 
-        $this->normalizeNumericInput(['withholding_rate', 'discount_value', 'lines.*.discount_value', 'lines.*.discount_amount', 'lines.*.quantity', 'payment_schedules.*.amount']);
+        $this->normalizeNumericInput(['withholding_rate', 'discount_value', 'lines.*.discount_value', 'lines.*.discount_amount', 'lines.*.quantity', 'lines.*.tax_rate', 'payment_schedules.*.amount']);
     }
 
     public function rules(): array
@@ -44,6 +44,7 @@ class AmendCustomerInvoiceRequest extends FormRequest
             'lines.*.invoice_line_public_id' => ['required', 'uuid'],
             'lines.*.discount_amount' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,16}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.quantity' => ['required', 'numeric', 'gt:0'],
+            'lines.*.tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,3}(?:\.\d{1,4})?$/D', 'between:0,100'],
             'payment_schedules' => ['required', 'array', 'min:1'],
             'payment_schedules.*.due_date' => ['required', 'date'],
             'payment_schedules.*.amount' => ['required', 'numeric', 'gt:0'],

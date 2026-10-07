@@ -24,7 +24,12 @@ use Modules\Maintenance\Models\MaintenanceMaterialRequest;
 use Modules\Production\Models\ProductionMaterialRequirement;
 use Modules\Production\Models\ProductionQualityInspection;
 use Modules\Production\Models\ProductionRun;
+use Modules\Production\Services\ProductionCancellationOwnerService;
 use Modules\Production\Services\ProductionCorrectionContextService;
+use Modules\Production\Services\ProductionReceiptCancellationService;
+use Modules\Production\Services\ProductionStageOutputCostService;
+use Modules\Production\Services\ProductionStageTransferService;
+use Modules\Production\Services\ProductionWarehouseReceiptCorrectionService;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\SalesIssueOrder;
 use Modules\Sales\Models\SalesOrder;
@@ -46,6 +51,29 @@ class InventoryDocumentPostingService
 
     public function post(InventoryDocument $document): InventoryDocument
     {
+        if ($document->document_type === InventoryDocument::TypeProductionHandover
+            || ($document->document_type === InventoryDocument::TypeProductionReceipt && $document->source_document_type === InventoryDocument::class)) {
+            throw new DomainException(__('production_handover.old_direct_receipt_disabled'));
+        }
+
+        return $this->postDocument($document);
+    }
+
+    public function postProductionWarehouseReceipt(InventoryDocument $document): InventoryDocument
+    {
+        Gate::authorize('inventory.production_receipts.approve');
+        if (DB::transactionLevel() < 1 || $document->document_type !== InventoryDocument::TypeProductionReceipt
+            || $document->source_document_type !== InventoryDocument::class
+            || ! InventoryDocument::query()->where('company_id', $document->company_id)->whereKey($document->source_document_id)
+                ->where('document_type', InventoryDocument::TypeProductionHandover)->where('status', InventoryDocument::StatusApproved)->exists()) {
+            throw new DomainException(__('production_handover.invalid_state'));
+        }
+
+        return $this->postDocument($document);
+    }
+
+    private function postDocument(InventoryDocument $document): InventoryDocument
+    {
         return DB::transaction(function () use ($document): InventoryDocument {
             Company::query()->whereKey($document->company_id)->lockForUpdate()->firstOrFail();
             $locked = InventoryDocument::query()
@@ -63,6 +91,14 @@ class InventoryDocumentPostingService
 
             if ($locked->lines->isEmpty()) {
                 throw new DomainException(__('An inventory document must contain at least one line.'));
+            }
+
+            if (in_array($locked->document_type, [InventoryDocument::TypeMaterialIssue, InventoryDocument::TypeAdditionalMaterialIssue,
+                InventoryDocument::TypeMaterialReturn, InventoryDocument::TypeMaterialConsumption, InventoryDocument::TypeProductionWaste], true)) {
+                $runIds = $locked->lines->pluck('production_run_id')->push($locked->production_run_id)->filter()->unique();
+                foreach (ProductionRun::query()->where('company_id', $locked->company_id)->whereIn('id', $runIds)->lockForUpdate()->get() as $run) {
+                    app(ProductionStageOutputCostService::class)->assertCostMutationAllowed($run);
+                }
             }
 
             $this->costPolicies->assertPostingDateAllowed(
@@ -435,9 +471,18 @@ class InventoryDocumentPostingService
         $period = app(ProductionCorrectionContextService::class)->target($run, (string) $proposal->posting_date,
             $proposal->correction_mode ?? ProductionCorrectionContextService::OriginalPeriod,
             (int) ($proposal->posting_financial_period_id ?? $proposal->financial_period_id));
+        app(ProductionReceiptCancellationService::class)->assertSelectedReceipt($proposal, $document);
 
         return $this->reverseDocument($document, $reason, correctingRun: $run, postingDate: (string) $proposal->posting_date,
             correctionPeriodId: (int) $period->id, correctionId: $correctionId);
+    }
+
+    public function reverseForProductionWarehouseCorrection(InventoryDocument $document, int $proposalId): InventoryDocument
+    {
+        $proposal = app(ProductionWarehouseReceiptCorrectionService::class)->execution($proposalId, (int) $document->id);
+
+        return $this->reverseDocument($document, $proposal->reason, postingDate: $proposal->posting_date->toDateString(),
+            correctionPeriodId: (int) $proposal->posting_financial_period_id, warehouseCorrectionId: $proposalId);
     }
 
     public function reverseForManualCorrection(InventoryDocument $document, int $proposalId): InventoryDocument
@@ -456,12 +501,33 @@ class InventoryDocumentPostingService
             correctionPeriodId: (int) $proposal->posting_financial_period_id, invoiceCorrectionId: $proposalId);
     }
 
-    private function reverseDocument(InventoryDocument $document, ?string $reason = null, ?SalesReturn $correctingReturn = null, ?ProductionRun $correctingRun = null, ?string $postingDate = null, ?int $correctionPeriodId = null, ?int $correctionId = null, ?int $manualCorrectionId = null, ?int $invoiceCorrectionId = null): InventoryDocument
+    public function reverseForProductionMaterialCorrection(InventoryDocument $document, int $ownerId): InventoryDocument
     {
-        return DB::transaction(function () use ($document, $reason, $correctingReturn, $correctingRun, $postingDate, $correctionPeriodId, $correctionId, $manualCorrectionId, $invoiceCorrectionId): InventoryDocument {
+        $owner = app(ProductionCancellationOwnerService::class)->executionForInventoryDocument($ownerId, (int) $document->id);
+
+        return $this->reverseDocument($document, $owner->reason.' — '.$owner->evidence, postingDate: $owner->posting_date,
+            correctionPeriodId: (int) $owner->posting_financial_period_id, materialCorrectionId: $ownerId);
+    }
+
+    public function assertProductionOwnerOriginal(InventoryDocument $document): void
+    {
+        $transactions = $document->transactions()->where('is_reversal', false)->orderBy('id')->get();
+        if ($document->status !== InventoryDocument::StatusPosted || ! $this->originalTransactionsComplete($document, $transactions)) {
+            throw new DomainException(__('production_run_correction.lineage_invalid'));
+        }
+        $this->accounting->assertManualCorrectionAccounting($document);
+    }
+
+    private function reverseDocument(InventoryDocument $document, ?string $reason = null, ?SalesReturn $correctingReturn = null, ?ProductionRun $correctingRun = null, ?string $postingDate = null, ?int $correctionPeriodId = null, ?int $correctionId = null, ?int $manualCorrectionId = null, ?int $invoiceCorrectionId = null, ?int $warehouseCorrectionId = null, ?int $materialCorrectionId = null): InventoryDocument
+    {
+        return DB::transaction(function () use ($document, $reason, $correctingReturn, $correctingRun, $postingDate, $correctionPeriodId, $correctionId, $manualCorrectionId, $invoiceCorrectionId, $warehouseCorrectionId, $materialCorrectionId): InventoryDocument {
             Company::query()->whereKey($document->company_id)->lockForUpdate()->firstOrFail();
             $locked = InventoryDocument::query()->lockForUpdate()->findOrFail($document->getKey());
             $invoiceCorrection = $invoiceCorrectionId === null ? null : app(CustomerInvoiceCorrectionService::class)->execution($invoiceCorrectionId, (int) $locked->id);
+            $warehouseCorrection = $warehouseCorrectionId === null ? null
+                : app(ProductionWarehouseReceiptCorrectionService::class)->execution($warehouseCorrectionId, (int) $locked->id);
+            $materialCorrection = $materialCorrectionId === null ? null
+                : app(ProductionCancellationOwnerService::class)->executionForInventoryDocument($materialCorrectionId, (int) $locked->id);
 
             if ($locked->status === InventoryDocument::StatusReversed) {
                 if ($correctingReturn !== null) {
@@ -473,6 +539,12 @@ class InventoryDocumentPostingService
 
             if ($locked->status !== InventoryDocument::StatusPosted) {
                 throw new DomainException(__('Only a posted inventory document can be reversed.'));
+            }
+            if (in_array($locked->document_type, [InventoryDocument::TypeMaterialIssue, InventoryDocument::TypeAdditionalMaterialIssue,
+                InventoryDocument::TypeMaterialConsumption, InventoryDocument::TypeMaterialReturn, InventoryDocument::TypeProductionWaste], true)) {
+                foreach (ProductionRun::query()->whereIn('id', $locked->lines()->whereNotNull('production_run_id')->select('production_run_id'))->get() as $run) {
+                    app(ProductionStageTransferService::class)->assertCostMutationAllowed($run);
+                }
             }
             if ($locked->source_document_type === MaintenanceMaterialRequest::class
                 || in_array($locked->document_type, [
@@ -496,7 +568,7 @@ class InventoryDocumentPostingService
             if ($correctingRun !== null && ! $isProductionCorrection) {
                 throw new DomainException(__('production_run_correction.lineage_invalid'));
             }
-            if (! $isProductionCorrection && $invoiceCorrection === null && ($locked->production_order_id !== null
+            if (! $isProductionCorrection && $materialCorrection === null && $warehouseCorrection === null && $invoiceCorrection === null && ($locked->production_order_id !== null
                 || $locked->production_run_id !== null
                 || $locked->production_run_batch_id !== null
                 || in_array($locked->source_document_type, [ProductionRun::class, ProductionMaterialRequirement::class], true)
@@ -554,7 +626,7 @@ class InventoryDocumentPostingService
                 && $locked->document_type !== InventoryDocument::TypeSalesDelivery
                 && ! $isControlledReturnReceipt
                 && ! $isControlledReturnDisposition
-                && ! $isProductionCorrection) {
+                && ! $isProductionCorrection && $materialCorrection === null && $warehouseCorrection === null) {
                 throw new DomainException(__('inventory.movements.reversal.source_workflow_required'));
             }
 
@@ -582,7 +654,7 @@ class InventoryDocumentPostingService
                 : app(InventoryMovementCorrectionService::class)->execution($manualCorrectionId, (int) $locked->id);
             $period = FinancialPeriod::query()->lockForUpdate()->findOrFail($locked->financial_period_id);
 
-            if (($period->is_closed && ! $isProductionCorrection && $salesCorrection === null && $manualCorrection === null && $invoiceCorrection === null) || (int) $period->company_id !== (int) $locked->company_id) {
+            if (($period->is_closed && ! $isProductionCorrection && $materialCorrection === null && $warehouseCorrection === null && $salesCorrection === null && $manualCorrection === null && $invoiceCorrection === null) || (int) $period->company_id !== (int) $locked->company_id) {
                 throw new DomainException(__('Inventory movements cannot be reversed in a closed or unrelated financial period.'));
             }
 
@@ -613,7 +685,7 @@ class InventoryDocumentPostingService
                 $this->costPolicies->assertPostingDateAllowed((int) $locked->company_id, (int) $storeId, $reversalDate);
             }
             app(FinancialPeriodService::class)->resolveOpenForPostingDate((int) $locked->company_id, $reversalDate,
-                expectedPeriodId: ($isProductionCorrection || $salesCorrection !== null || $manualCorrection !== null || $invoiceCorrection !== null) ? $correctionPeriodId : (int) $locked->financial_period_id, lockForUpdate: true);
+                expectedPeriodId: ($isProductionCorrection || $materialCorrection !== null || $warehouseCorrection !== null || $salesCorrection !== null || $manualCorrection !== null || $invoiceCorrection !== null) ? $correctionPeriodId : (int) $locked->financial_period_id, lockForUpdate: true);
             foreach ($transactions->sortByDesc(fn (InventoryTransaction $transaction): bool => bccomp((string) $transaction->quantity_in, '0', 8) > 0) as $transaction) {
                 if (bccomp((string) $transaction->quantity_in, '0', 8) > 0) {
                     $position = $this->availability->forProduct(
@@ -647,7 +719,7 @@ class InventoryDocumentPostingService
                         'inventory_serial_identity_id',
                     ]),
                     'transaction_date' => $reversalDate,
-                    'financial_period_id' => ($isProductionCorrection || $salesCorrection !== null || $manualCorrection !== null || $invoiceCorrection !== null) ? $correctionPeriodId : $transaction->financial_period_id,
+                    'financial_period_id' => ($isProductionCorrection || $warehouseCorrection !== null || $salesCorrection !== null || $manualCorrection !== null || $invoiceCorrection !== null) ? $correctionPeriodId : $transaction->financial_period_id,
                     'unit_cost' => $completedCost === null ? null : bcdiv($completedCost, $completedQuantity, 8),
                     'total_cost' => $completedCost,
                     'quantity_in' => $transaction->quantity_out,
@@ -670,7 +742,11 @@ class InventoryDocumentPostingService
                 }
             }
 
-            if ($isProductionCorrection) {
+            if ($warehouseCorrection !== null) {
+                $this->accounting->reverseForProductionWarehouseCorrection($locked, (int) $warehouseCorrection->id);
+            } elseif ($materialCorrection !== null) {
+                $this->accounting->reverseForProductionMaterialCorrection($locked, (int) $materialCorrection->id);
+            } elseif ($isProductionCorrection) {
                 $this->accounting->reverseForProductionCorrection($locked, $correctingRun, $correctionId);
             } elseif ($salesCorrection !== null) {
                 $this->accounting->reverseForSalesReturnCorrection($locked, $correctingReturn, $correctionId);

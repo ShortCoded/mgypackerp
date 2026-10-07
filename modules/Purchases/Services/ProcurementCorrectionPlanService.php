@@ -86,9 +86,9 @@ class ProcurementCorrectionPlanService
     {
         $draft = $return->status === PurchaseReturn::StatusDraft;
         $step = $this->step($return, 'return', 'admin.purchases.purchase-returns.show',
-            'purchases.purchase_returns.view', $draft ? 'purchases.purchase_returns.delete' : 'purchases.purchase_returns.reverse', $request);
+            'purchases.purchase_returns.view', $draft ? 'purchases.purchase_returns.cancel' : 'purchases.purchase_returns.reverse', $request);
         $step['action'] = __('open_documents.correction_steps.'.($draft ? 'return_draft' : 'return'));
-        $step['action_route'] = $draft ? 'admin.purchases.purchase-returns.destroy' : 'admin.purchases.purchase-returns.reverse';
+        $step['action_route'] = $draft ? 'admin.purchases.purchase-returns.cancel' : 'admin.purchases.purchase-returns.reverse';
 
         return $step;
     }

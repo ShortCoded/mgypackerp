@@ -5,6 +5,7 @@ namespace Modules\Production\Models;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Support\Str;
@@ -44,7 +45,7 @@ class ProductionRun extends Model
         'received_base_quantity', 'planned_start_at', 'planned_end_at', 'actual_start_at',
         'actual_end_at', 'production_shift_id', 'production_machine_id', 'production_mold_id', 'fixed_asset_id',
         'batch_lot', 'work_description', 'planned_labor_count', 'actual_labor_count', 'labor_details',
-        'material_accounting_mode', 'material_evidence_policy',
+        'uses_hr_shift_evidence', 'material_accounting_mode', 'material_evidence_policy',
         'status', 'setup_status', 'setup_started_at', 'setup_completed_at', 'correction_sequence',
         'correction_document_date', 'correction_manufacture_date', 'correction_expiry_date',
         'correction_receipt_basis',
@@ -62,6 +63,7 @@ class ProductionRun extends Model
     protected function casts(): array
     {
         return [
+            'uses_hr_shift_evidence' => 'boolean',
             'conversion_factor' => 'decimal:8', 'planned_quantity' => 'decimal:8',
             'planned_base_quantity' => 'decimal:8', 'good_base_quantity' => 'decimal:8',
             'rejected_base_quantity' => 'decimal:8', 'rework_base_quantity' => 'decimal:8',
@@ -209,6 +211,12 @@ class ProductionRun extends Model
     public function inventoryDocuments(): HasMany
     {
         return $this->hasMany(InventoryDocument::class, 'production_run_id')->orderBy('document_date')->orderBy('id');
+    }
+
+    public function lineInventoryDocuments(): BelongsToMany
+    {
+        return $this->belongsToMany(InventoryDocument::class, 'inventory_document_lines', 'production_run_id', 'inventory_document_id')
+            ->whereNull('inventory_document_lines.deleted_at')->distinct();
     }
 
     public function reservations(): HasMany

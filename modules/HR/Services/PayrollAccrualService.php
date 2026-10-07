@@ -7,6 +7,7 @@ use Carbon\CarbonPeriod;
 use DomainException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Modules\HR\Models\HrEmployee;
 use Modules\HR\Models\HrPayrollAttendancePolicy;
 use Modules\Production\Models\ProductionRun;
@@ -472,6 +473,8 @@ final class PayrollAccrualService
         CarbonImmutable $activeEnd,
         array $policyByDate,
     ): array {
+        $measured = Schema::hasColumn('production_piece_approvals', 'output_evidence_snapshot');
+        $date = $measured ? 'coalesce(approval.output_completed_at, run.actual_end_at)' : 'run.actual_end_at';
         $approvals = DB::table('production_piece_approvals as approval')
             ->join('production_runs as run', 'run.id', '=', 'approval.production_run_id')
             ->whereNull('approval.revoked_at')
@@ -479,21 +482,32 @@ final class PayrollAccrualService
             ->where('approval.company_id', $employee->company_id)
             ->where('approval.branch_id', $employee->branch_id)
             ->where('approval.employee_id', $employee->getKey())
-            ->where('run.status', ProductionRun::StatusCompleted)
+            ->where(function ($query) use ($measured): void {
+                $query->where('run.status', ProductionRun::StatusCompleted);
+                if ($measured) {
+                    $query->orWhereNotNull('approval.output_evidence_snapshot');
+                }
+            })
             ->whereNull('run.deleted_at')
-            ->whereBetween('run.actual_end_at', [$activeStart->startOfDay(), $activeEnd->endOfDay()])
-            ->orderBy('run.actual_end_at')
+            ->whereBetween(DB::raw($date), [$activeStart->startOfDay(), $activeEnd->endOfDay()])
+            ->orderByRaw($date)
             ->orderBy('approval.id')
             ->sharedLock()
             ->get([
                 'approval.id', 'approval.quantity', 'approval.rate', 'approval.pay_basis',
                 'approval.run_good_base_quantity', 'approval.approved_at', 'approval.approved_by',
                 'run.id as run_id', 'run.public_id', 'run.run_number', 'run.production_order_id',
-                'run.actual_end_at', 'run.completed_by', 'run.good_base_quantity',
+                'run.actual_end_at', 'run.completed_by', 'run.good_base_quantity', DB::raw($date.' as piece_output_at'),
+                ...($measured ? ['approval.output_evidence_snapshot'] : []),
             ]);
 
         $sources = $approvals->map(function (object $approval) use ($employee, $policyByDate): ?array {
-            $completedDate = CarbonImmutable::parse($approval->actual_end_at)->toDateString();
+            if (($approval->output_evidence_snapshot ?? null) !== null) {
+                app(\Modules\Production\Services\ProductionPieceOutputApprovalService::class)->assertEvidence(
+                    DB::table('production_piece_approvals')->where('company_id', $employee->company_id)->find($approval->id),
+                    ProductionRun::query()->where('company_id', $employee->company_id)->findOrFail($approval->run_id));
+            }
+            $completedDate = CarbonImmutable::parse($approval->piece_output_at)->toDateString();
             if (($policyByDate[$completedDate]->piece_accrual_method ?? null) !== HrPayrollAttendancePolicy::PieceApprovedOutput) {
                 return null;
             }
@@ -517,8 +531,8 @@ final class PayrollAccrualService
                 'production_run_public_id' => (string) $approval->public_id,
                 'production_run_number' => (string) $approval->run_number,
                 'production_order_id' => (int) $approval->production_order_id,
-                'completed_at' => CarbonImmutable::parse($approval->actual_end_at)->toIso8601String(),
-                'completed_by' => $approval->completed_by === null ? null : (int) $approval->completed_by,
+                'completed_at' => CarbonImmutable::parse($approval->piece_output_at)->toIso8601String(),
+                'completed_by' => ($approval->output_evidence_snapshot ?? null) !== null ? (int) $approval->approved_by : ($approval->completed_by === null ? null : (int) $approval->completed_by),
                 'approved_at' => (string) $approval->approved_at,
                 'approved_by' => $approval->approved_by === null ? null : (int) $approval->approved_by,
                 'quantity' => $quantity,
@@ -547,15 +561,22 @@ final class PayrollAccrualService
 
     private function hasPieceApprovals(HrEmployee $employee, string $periodStart, string $periodEnd): bool
     {
+        $measured = Schema::hasColumn('production_piece_approvals', 'output_evidence_snapshot');
+        $date = $measured ? 'coalesce(approval.output_completed_at, run.actual_end_at)' : 'run.actual_end_at';
         return DB::table('production_piece_approvals as approval')
             ->join('production_runs as run', 'run.id', '=', 'approval.production_run_id')
             ->whereNull('approval.revoked_at')
             ->whereColumn('approval.correction_sequence', 'run.correction_sequence')
             ->where('approval.company_id', $employee->company_id)
             ->where('approval.employee_id', $employee->getKey())
-            ->where('run.status', ProductionRun::StatusCompleted)
+            ->where(function ($query) use ($measured): void {
+                $query->where('run.status', ProductionRun::StatusCompleted);
+                if ($measured) {
+                    $query->orWhereNotNull('approval.output_evidence_snapshot');
+                }
+            })
             ->whereNull('run.deleted_at')
-            ->whereBetween('run.actual_end_at', [CarbonImmutable::parse($periodStart)->startOfDay(), CarbonImmutable::parse($periodEnd)->endOfDay()])
+            ->whereBetween(DB::raw($date), [CarbonImmutable::parse($periodStart)->startOfDay(), CarbonImmutable::parse($periodEnd)->endOfDay()])
             ->exists();
     }
 

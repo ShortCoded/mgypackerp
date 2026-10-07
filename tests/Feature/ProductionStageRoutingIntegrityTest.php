@@ -1,10 +1,16 @@
 <?php
 
 use App\Models\User;
+use App\Services\PostingAccountResolver;
+use Carbon\Carbon;
 use Database\Seeders\DefaultOperatingContextSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Modules\Accounting\Models\JournalEntry;
+use Modules\Accounting\Models\JournalEntryLine;
 use Modules\Core\Models\Branch;
+use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
@@ -12,12 +18,16 @@ use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Inventory\Models\InventoryDocument;
+use Modules\Inventory\Models\InventoryTransaction;
+use Modules\Inventory\Services\InventoryMovementService;
 use Modules\Production\Models\ProductionOrderStageEvent;
 use Modules\Production\Models\ProductionOrderStageSnapshot;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Models\ProductionRunBatch;
 use Modules\Production\Models\ProductionStage;
 use Modules\Production\Models\ProductProductionStage;
+use Modules\Production\Services\ProductionCostService;
 use Modules\Production\Services\ProductionCycleService;
 use Spatie\Permission\Models\Permission;
 
@@ -705,4 +715,47 @@ test('one production batch can produce partial quantities for multiple order lin
         'planned_start_at' => now()->addHours(3)->toDateTimeString(),
         'planned_end_at' => now()->addHours(4)->toDateTimeString(),
     ]))->toThrow(DomainException::class, __('production_execution.messages.order_stage_selection_invalid'));
+});
+
+require_once __DIR__.'/../ManufacturingInventorySupport.php';
+
+test('actual prior-stage material stock and GL cost cannot be silently omitted from a final-stage receipt', function (): void {
+    $this->travelTo(Carbon::parse('2026-09-29 12:00:00'));
+    $f = manufacturingInventoryFixture('-SYNTHETIC-STAGE-COST', isolatedCompany: true);
+    $store = BranchStore::query()->create(['branch_id' => $f['branch']->id, 'name' => 'SYNTHETIC actual stage cost store']);
+    app(InventoryMovementService::class)->createAndPost(['company_id' => $f['company']->id,
+        'financial_period_id' => $f['period']->id, 'branch_id' => $f['branch']->id, 'branch_store_id' => $store->id,
+        'document_type' => InventoryDocument::TypeAdjustmentIn, 'document_date' => now()->toDateString()],
+        [['product_id' => $f['raw']->id, 'quantity' => '4', 'unit_cost' => '10']]);
+    $stages = collect(['FORM', 'PACK'])->map(fn (string $code) => ProductionStage::query()->create(['company_id' => $f['company']->id,
+        'branch_id' => $f['branch']->id, 'code' => 'SYNTHETIC-COST-'.$code, 'name' => 'SYNTHETIC '.$code, 'status' => 'active']));
+    ProductComponent::query()->where('company_id', $f['company']->id)->where('product_id', $f['finished']->id)->update(['production_stage_id' => $stages->first()->id]);
+    $cycle = app(ProductionCycleService::class);
+    $order = $cycle->releaseOrder($cycle->createMakeToStockOrder(['company_id' => $f['company']->id, 'branch_id' => $f['branch']->id,
+        'financial_period_id' => $f['period']->id, 'order_stage_public_ids' => $stages->pluck('public_id')->all()],
+        [['product_id' => $f['finished']->id, 'unit_id' => $f['unit']->id, 'quantity' => '2']]));
+    $snapshots = $cycle->stagesForLine($order, $order->lines->sole());
+    $runs = $snapshots->map(fn ($stage) => $cycle->createRun($order->lines->sole(), ['production_order_stage_snapshot_id' => $stage->id,
+        'planned_quantity' => '2', 'planned_start_at' => now(), 'planned_end_at' => now()->addHour(), 'production_machine_id' => $f['machine']->id, 'production_mold_id' => $f['mold']->id]));
+    $forming = $runs->first();
+    $cycle->reserveRun($forming, $store->id);
+    $cycle->issueMaterials($forming->fresh(), $store->id);
+    $cycle->startRun($cycle->completeSetup($cycle->startSetup($forming->fresh())));
+    $cycle->recordProgress($forming->fresh(), ['good_base_quantity' => '2']);
+    $cycle->accountMaterials($forming->fresh(), $store->id, [$forming->requirements->sole()->id => ['consumed_quantity' => '4', 'waste_quantity' => '0']]);
+    $cycle->completeRun($forming->fresh());
+    $packing = $cycle->startRun($cycle->completeSetup($cycle->startSetup($runs->last()->fresh())));
+    $cycle->recordProgress($packing->fresh(), ['good_base_quantity' => '2']);
+    $costs = app(ProductionCostService::class);
+    expect($forming->fresh()->good_base_quantity)->toBe('2.00000000')->and($forming->fresh()->status)->toBe('completed')
+        ->and($costs->runPosition($forming->fresh())['wip'])->toBe('40.00000000')->and($costs->runPosition($packing->fresh())['wip'])->toBe('0.00000000');
+    $wipAccount = app(PostingAccountResolver::class)->resolve($f['company']->id, PostingAccountResolver::WorkInProcessInventory, 'SYNTHETIC actual stage cost');
+    $net = JournalEntryLine::query()->where('account_id', $wipAccount->id)->whereHas('journalEntry', fn ($query) => $query->where('is_posted', true))
+        ->selectRaw('coalesce(sum(debit_amount - credit_amount), 0) as balance')->value('balance');
+    expect(bcadd((string) $net, '0', 4))->toBe('40.0000');
+    $ledger = [InventoryTransaction::count(), JournalEntry::count()];
+    expect(fn () => DB::transaction(fn () => $cycle->prepareFinishedGoodsReceipt($packing->fresh(), $store->id, '2')))
+        ->toThrow(DomainException::class, __('production_daily_report.correction.stage_cost_transfer_required'));
+    expect([InventoryTransaction::count(), JournalEntry::count()])->toBe($ledger)
+        ->and($packing->fresh()->received_base_quantity)->toBe('0.00000000');
 });

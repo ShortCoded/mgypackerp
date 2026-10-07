@@ -1,6 +1,14 @@
 <?php
 
 return [
+    'invoice_source_amount_exceeded' => 'Existing invoice allocations exceed the source amount. Review their correction evidence before invoicing again.',
+    'invoice_source_tax_locked' => 'Linked invoice tax is preserved from its source document; a replacement rate cannot be entered.',
+    'source_tax_help' => 'Tax is allocated from the source document; the rate is shown and booked source amounts are preserved.',
+    'legacy_tax_rate_required' => 'Enter an explicit VAT rate before changing commercial terms for a historical taxable line whose rate was not recorded.',
+    'legacy_tax_help' => 'Historical tax amount preserved; its rate was not recorded. Enter an explicit rate to change its calculation.',
+    'tax_rate_invalid' => 'Enter a VAT percentage from zero to 100 with at most four decimal places.',
+    'tax_rate' => 'VAT rate (%)',
+    'draft_cancel_ineligible' => 'Only an unused original draft invoice without posting, settlements, deliveries or electronic submissions can be cancelled. Source quantities are released and the original invoice is retained.',
     'wht' => [
         'preserve_invoice_history' => 'This invoice has actual withholding history. Use the documented correction workflow that preserves the original invoice and historical amounts.',
         'title' => 'Customer withholding certificates',

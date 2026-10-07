@@ -19,6 +19,7 @@ use Modules\Core\Services\CompanyPrintIdentityService;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
@@ -493,9 +494,31 @@ class SalesCycleController extends Controller
         return response()->json(['message' => __('Saved successfully')]);
     }
 
+    public function restoreInvoice(Request $request, string $document, CustomerInvoiceService $service): JsonResponse
+    {
+        $context = $this->requiredContext($request);
+        $invoice = CustomerInvoice::onlyTrashed()->where('company_id', $context['company_id'])
+            ->where('branch_id', $context['branch_id'])->where('financial_period_id', $context['financial_period_id'])
+            ->where('doc_num', $document)->firstOrFail();
+        $service->restoreArchived($invoice);
+
+        return response()->json(['message' => __('Saved successfully')]);
+    }
+
     public function showReceipt(CustomerReceipt $customerReceipt): View
     {
+        $this->assertReceiptScope($customerReceipt);
+
         return $this->show('customer_receipt', $customerReceipt->load(['customer', 'receivedByEmployee', 'currency', 'cashbox', 'bankAccount.bank', 'order', 'cashVoucher', 'cheque', 'allocations.invoice', 'allocations.invoiceSchedule', 'journalEntry.lines']));
+    }
+
+    private function assertReceiptScope(CustomerReceipt $receipt): void
+    {
+        $scope = app(OperatingScopeAccessService::class);
+        $company = $receipt->company;
+        abort_unless($company !== null && $scope->canAccessCompany(auth()->user(), $company)
+            && $scope->allowedBranchQuery(auth()->user(), [$company->doc_num])->whereKey($receipt->branch_id)->exists()
+            && $scope->allowedFinancialPeriodQuery(auth()->user(), [$company->doc_num])->whereKey($receipt->financial_period_id)->exists(), 404);
     }
 
     public function showReturn(SalesReturn $salesReturn): View
@@ -547,10 +570,12 @@ class SalesCycleController extends Controller
                     $sourceRequest = SalesRequest::query()->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
                         ->where('doc_num', $request->validated('source_request_doc_num'))->firstOrFail();
 
+                    $payload['lines'] = array_map(fn (array $line): array => [...$line, 'tax_rate' => $line['tax_rate'] ?? '0'], $payload['lines']);
+
                     return $requestService->convertToOrder($sourceRequest, $payload);
                 }
 
-                $payload['lines'] = collect($payload['lines'])->map(fn (array $line): array => collect($line)->except('source_request_line_public_id')->all())->all();
+                $payload['lines'] = collect($payload['lines'])->map(fn (array $line): array => [...collect($line)->except('source_request_line_public_id')->all(), 'tax_rate' => $line['tax_rate'] ?? '0'])->all();
 
                 return $service->create(collect($payload)->except('source_request_doc_num')->all());
             });
@@ -749,6 +774,13 @@ class SalesCycleController extends Controller
         return response()->json(['data' => $service->reopen($customerInvoice, (string) $request->validated('reason'))]);
     }
 
+    public function cancelDraftInvoice(SalesOrderActionRequest $request, CustomerInvoice $customerInvoice, CustomerInvoiceService $service): JsonResponse
+    {
+        $data = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
+
+        return response()->json(['data' => $service->cancelDraft($customerInvoice, $data['reason'])]);
+    }
+
     public function cancelDirectServiceInvoice(SalesOrderActionRequest $request, CustomerInvoice $customerInvoice, CustomerInvoiceService $service): JsonResponse
     {
         return response()->json(['data' => $service->cancelDirectService($customerInvoice, (string) $request->validated('reason'))]);
@@ -777,6 +809,7 @@ class SalesCycleController extends Controller
 
     public function reverseReceipt(Request $request, CustomerReceipt $customerReceipt): JsonResponse
     {
+        $this->assertReceiptScope($customerReceipt);
         $context = $this->requiredContext($request);
         abort_unless((int) $customerReceipt->branch_id === (int) $context['branch_id'], 404);
         $data = $request->validate(['reason' => ['required', 'string', 'max:2000']]);
@@ -1045,6 +1078,7 @@ class SalesCycleController extends Controller
             return [
                 ...collect($line)->except(['product_doc_num', 'unit_doc_num'])->all(),
                 'product_id' => $product->getKey(),
+                'tax_rate' => $line['tax_rate'] ?? null,
                 'unit_id' => $unit?->getKey(),
                 'description' => trim((string) ($line['description'] ?? '')) ?: $product->name,
             ];

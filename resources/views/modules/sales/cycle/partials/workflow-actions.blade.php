@@ -327,6 +327,7 @@
     @can('customer_receipts.cancel')
         <form data-sales-ui class="js-sales-cycle-action border rounded p-3 my-3" action="{{ route('admin.sales.customer-receipts.reverse', $record) }}" method="POST">
             @csrf
+            <x-forms.input type="hidden" name="_submission_token" :value="(string) \Illuminate\Support\Str::uuid()" />
             <label class="form-label">{{ __('Reversal reason') }}</label>
             <x-forms.textarea class="form-control mb-2" name="reason" required></x-forms.textarea>
             <button class="btn btn-warning btn-sm" type="submit">{{ __('Reverse Collection') }}</button>

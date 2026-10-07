@@ -116,6 +116,7 @@ class ProcurementWorkflowRequest extends FormRequest
             'admin.purchases.purchase-returns.reverse' => [
                 'reversal_reason' => ['required', 'string', 'max:2000'],
             ],
+            'admin.purchases.purchase-returns.cancel' => ['cancel_reason' => ['required', 'string', 'max:1000']],
             'admin.purchases.supplier-payments.store' => $this->supplierPaymentRules(),
             'admin.purchases.supplier-payments.cancel' => [
                 'cancel_reason' => ['required', 'string', 'max:2000'],

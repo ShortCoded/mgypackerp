@@ -2,11 +2,15 @@
 
 use App\Http\Middleware\IdempotentDocumentSubmission;
 use Illuminate\Support\Facades\Route;
+use Modules\Production\Http\Controllers\ProductionCancellationOwnerController;
+use Modules\Production\Http\Controllers\ProductionDailyReportController;
 use Modules\Production\Http\Controllers\ProductionExpenseRequestController;
+use Modules\Production\Http\Controllers\ProductionHandoverController;
 use Modules\Production\Http\Controllers\ProductionMaterialRequestController;
 use Modules\Production\Http\Controllers\ProductionMaterialSubstitutionController;
 use Modules\Production\Http\Controllers\ProductionOrderController;
 use Modules\Production\Http\Controllers\ProductionQualityController;
+use Modules\Production\Http\Controllers\ProductionReceiptCancellationController;
 use Modules\Production\Http\Controllers\ProductionReportController;
 use Modules\Production\Http\Controllers\ProductionRunController;
 use Modules\Production\Http\Controllers\ProductionRunCorrectionController;
@@ -17,6 +21,25 @@ Route::middleware('auth')
     ->prefix('admin/production')
     ->as('admin.production.')
     ->group(function (): void {
+        Route::post('/runs/{productionRun}/piece-output-approval', [ProductionDailyReportController::class, 'approvePieceOutput'])->middleware(['can:production.runs.complete', 'can:production.runs.correct_approve'])->name('runs.piece-output-approval');
+        Route::post('/runs/{productionRun}/piece-output-withdrawal', [ProductionDailyReportController::class, 'withdrawPieceOutput'])->middleware('can:production.runs.correct')->name('runs.piece-output-withdrawal');
+        Route::get('/runs/{productionRun}/cancellation-owner', [ProductionCancellationOwnerController::class, 'run'])->middleware('can:production.runs.view')->name('runs.cancellation-owner');
+        Route::post('/runs/{productionRun}/cancellation-owners', [ProductionCancellationOwnerController::class, 'prepareRun'])->middleware('can:production.runs.cancel')->name('runs.cancellation-owners.prepare');
+        Route::post('/runs/{productionRun}/cancellation-owners/{owner}/approve', [ProductionCancellationOwnerController::class, 'approveRun'])->middleware(['can:production.runs.cancel', 'can:production.runs.correct_approve'])->name('runs.cancellation-owners.approve');
+        Route::post('/runs/{productionRun}/cancellation-owners/{owner}/reject', [ProductionCancellationOwnerController::class, 'rejectRun'])->middleware('can:production.runs.correct_approve')->name('runs.cancellation-owners.reject');
+        Route::get('/work-orders/{productionOrder}/cancellation-owner', [ProductionCancellationOwnerController::class, 'order'])->middleware('can:production.orders.view')->name('work-orders.cancellation-owner');
+        Route::post('/work-orders/{productionOrder}/cancellation-owners', [ProductionCancellationOwnerController::class, 'prepareOrder'])->middleware('can:production.orders.cancel')->name('work-orders.cancellation-owners.prepare');
+        Route::post('/work-orders/{productionOrder}/cancellation-owners/{owner}/approve', [ProductionCancellationOwnerController::class, 'approveOrder'])->middleware(['can:production.orders.cancel', 'can:production.runs.correct_approve'])->name('work-orders.cancellation-owners.approve');
+        Route::post('/work-orders/{productionOrder}/cancellation-owners/{owner}/reject', [ProductionCancellationOwnerController::class, 'rejectOrder'])->middleware('can:production.runs.correct_approve')->name('work-orders.cancellation-owners.reject');
+        Route::prefix('handovers')->name('handovers.')->controller(ProductionHandoverController::class)->group(function (): void {
+            Route::get('/', 'index')->middleware('can:production.handovers.view')->name('index');
+            Route::get('/runs/{productionRun}/create', 'create')->middleware('can:production.handovers.create')->name('create');
+            Route::post('/runs/{productionRun}', 'store')->middleware(['can:production.handovers.create', IdempotentDocumentSubmission::class.':required'])->name('store');
+            Route::get('/{inventoryDocument}', 'show')->name('show');
+            Route::post('/{inventoryDocument}/approve', 'approve')->middleware(['can:production.handovers.approve', IdempotentDocumentSubmission::class.':required'])->name('approve');
+            Route::post('/{inventoryDocument}/cancel', 'cancel')->middleware(['can:production.handovers.cancel', IdempotentDocumentSubmission::class.':required'])->name('cancel');
+        });
+
         Route::prefix('stages')->name('stages.')->controller(ProductionStageController::class)->group(function (): void {
             Route::get('/', 'index')->middleware('can:production.stages.view')->name('index');
             Route::get('/data', 'data')->middleware('can:production.stages.view')->name('data');
@@ -44,6 +67,7 @@ Route::middleware('auth')
         Route::delete('/material-requests/{productionMaterialRequest}', [ProductionMaterialRequestController::class, 'destroy'])->middleware('can:production.material_requests.delete')->name('material-requests.destroy');
         Route::get('/material-requests/{productionMaterialRequest}/print', [ProductionMaterialRequestController::class, 'print'])->middleware('can:production.material_requests.print')->name('material-requests.print');
         Route::post('/material-requests/{productionMaterialRequest}/approve', [ProductionMaterialRequestController::class, 'approve'])->middleware(['can:production.material_requests.approve', IdempotentDocumentSubmission::class])->name('material-requests.approve');
+        Route::post('/material-requests/{productionMaterialRequest}/cancel', [ProductionMaterialRequestController::class, 'cancel'])->middleware(['can:production.material_requests.cancel', IdempotentDocumentSubmission::class.':required'])->name('material-requests.cancel');
         Route::post('/material-requests/{productionMaterialRequest}/purchase-requisition', [ProductionMaterialRequestController::class, 'createPurchaseRequisition'])->middleware(['can:production.material_requests.view', 'can:purchases.purchase_requisitions.create', IdempotentDocumentSubmission::class.':required'])->name('material-requests.purchase-requisition');
         Route::post('/material-requests/{productionMaterialRequest}/allocate-shortage', [ProductionMaterialRequestController::class, 'allocateShortage'])->middleware(['can:production.material_requests.approve', IdempotentDocumentSubmission::class.':required'])->name('material-requests.allocate-shortage');
         Route::post('/material-requests/{productionMaterialRequest}/reconcile-reservations', [ProductionMaterialRequestController::class, 'reconcileReservations'])->middleware(['can:production.material_requests.approve', IdempotentDocumentSubmission::class.':required'])->name('material-requests.reconcile-reservations');
@@ -63,6 +87,7 @@ Route::middleware('auth')
         Route::post('/expenses/{productionExpenseRequest}/approve', [ProductionExpenseRequestController::class, 'approve'])->middleware('can:production.expenses.approve')->name('expenses.approve');
         Route::post('/expenses/{productionExpenseRequest}/pay', [ProductionExpenseRequestController::class, 'pay'])->middleware('can:production.expenses.pay')->name('expenses.pay');
         Route::post('/expenses/{productionExpenseRequest}/reverse', [ProductionExpenseRequestController::class, 'reverse'])->middleware('can:production.expenses.reverse')->name('expenses.reverse');
+        Route::post('/expenses/{productionExpenseRequest}/withdraw-approval', [ProductionExpenseRequestController::class, 'withdrawApproval'])->middleware(['can:production.expenses.reverse', IdempotentDocumentSubmission::class.':required'])->name('expenses.withdraw-approval');
         Route::get('/expenses/{productionExpenseRequest}', [ProductionExpenseRequestController::class, 'show'])->middleware('can:production.expenses.view')->name('expenses.show');
 
         Route::get('/quality', [ProductionQualityController::class, 'index'])->middleware('can:production.quality.view')->name('quality.index');
@@ -114,6 +139,7 @@ Route::middleware('auth')
             Route::get('/{productionOrder}/edit', 'edit')->middleware('can:production.orders.edit')->name('edit');
             Route::put('/{productionOrder}', 'update')->name('update');
             Route::delete('/{productionOrder}', 'destroy')->middleware('can:production.orders.delete')->name('destroy');
+            Route::post('/{productionOrder}/cancel', 'cancel')->middleware(['can:production.orders.cancel', IdempotentDocumentSubmission::class.':required'])->name('cancel');
             Route::get('/{productionOrder}', 'show')->middleware('can:production.orders.view')->name('show');
             Route::get('/{productionOrder}/print', 'print')->middleware('can:production.orders.print')->name('print');
             Route::get('/{productionOrder}/requirement/print', 'printRequirement')->middleware('can:production.orders.print')->name('requirement.print');
@@ -137,6 +163,7 @@ Route::middleware('auth')
             Route::get('/select2/workers', 'workersLookup')->name('select2.workers');
             Route::get('/orders/{docNum}/lines', 'orderLinesForOrder')->name('orders.lines');
             Route::get('/batches/{productionRunBatch}', 'showBatch')->middleware('can:production.runs.view')->name('batches.show');
+            Route::get('/batches/{productionRunBatch}/issue', 'createBatchIssue')->middleware('can:production.runs.issue')->name('batches.issue-create');
             Route::post('/batches/{productionRunBatch}/issue', 'issueBatch')->middleware(['can:production.runs.issue', IdempotentDocumentSubmission::class.':required'])->name('batches.issue');
             Route::get('/create', 'create')->middleware('can:production.runs.plan')->name('create');
             Route::post('/', 'store')->middleware(['can:production.runs.plan', IdempotentDocumentSubmission::class.':required'])->name('store');
@@ -150,6 +177,9 @@ Route::middleware('auth')
             Route::get('/{productionRun}/materials/print', 'printMaterials')->middleware('can:production.runs.print')->name('materials.print');
             Route::get('/{productionRun}/quality/print', 'printQuality')->middleware('can:production.runs.print')->name('quality.print');
             Route::get('/{productionRun}/corrections', [ProductionRunCorrectionController::class, 'index'])->name('corrections.index');
+            Route::get('/{productionRun}/receipt-cancellations/{receipt}', [ProductionReceiptCancellationController::class, 'index'])->name('receipt-cancellations.index');
+            Route::post('/{productionRun}/receipt-cancellations/{receipt}', [ProductionReceiptCancellationController::class, 'store'])->middleware(['can:production.runs.correct', IdempotentDocumentSubmission::class.':required'])->name('receipt-cancellations.store');
+            Route::post('/{productionRun}/receipt-cancellations/{receipt}/{correction}/approve', [ProductionReceiptCancellationController::class, 'approve'])->middleware(['can:production.runs.correct_approve', IdempotentDocumentSubmission::class.':required'])->whereNumber('correction')->name('receipt-cancellations.approve');
             Route::get('/{productionRun}/material-substitutions', [ProductionMaterialSubstitutionController::class, 'index'])->name('material-substitutions.index');
             Route::get('/{productionRun}/material-substitutions/products', [ProductionMaterialSubstitutionController::class, 'products'])->name('material-substitutions.products');
             Route::post('/{productionRun}/material-substitutions', [ProductionMaterialSubstitutionController::class, 'store'])->middleware(IdempotentDocumentSubmission::class.':required')->name('material-substitutions.store');
@@ -173,11 +203,28 @@ Route::middleware('auth')
             Route::post('/{productionRun}/shifts/close', 'closeShift')->middleware(['can:production.runs.progress', IdempotentDocumentSubmission::class.':required'])->name('shifts.close');
             Route::get('/{productionRun}/shifts/print', 'printShift')->middleware('can:production.runs.print')->name('shifts.print');
             Route::post('/{productionRun}/output-evidence', 'outputEvidence')->middleware(['can:production.runs.account_materials', 'can:production.runs.progress', IdempotentDocumentSubmission::class.':required'])->name('output-evidence');
+            Route::get('/{productionRun}/stage-transfers', 'stageTransfers')->middleware('can:production.runs.view')->name('stage-transfers.index');
+            Route::get('/{productionRun}/stage-output-costs', 'stageOutputCosts')->middleware('can:production.runs.view')->name('stage-output-costs.index');
+            Route::post('/{productionRun}/stage-output-costs', 'prepareStageOutputCosts')->middleware(['can:production.runs.account_materials', IdempotentDocumentSubmission::class.':required'])->name('stage-output-costs.prepare');
+            Route::post('/{productionRun}/stage-output-costs/{outputOwner}/recover', 'prepareStageOutputRecovery')->middleware(['can:production.runs.account_materials', IdempotentDocumentSubmission::class.':required'])->whereNumber('outputOwner')->name('stage-output-costs.recover');
+            Route::post('/{productionRun}/stage-output-costs/{outputOwner}/approve', 'approveStageOutputCosts')->middleware(['can:production.runs.correct_approve', IdempotentDocumentSubmission::class.':required'])->whereNumber('outputOwner')->name('stage-output-costs.approve');
+            Route::post('/{productionRun}/stage-output-costs/{outputOwner}/reverse', 'reverseStageOutputCosts')->middleware(['can:production.runs.correct_approve', IdempotentDocumentSubmission::class.':required'])->whereNumber('outputOwner')->name('stage-output-costs.reverse');
+            Route::post('/{productionRun}/stage-output-costs/{outputOwner}/reject', 'rejectStageOutputCosts')->middleware(['can:production.runs.correct_approve', IdempotentDocumentSubmission::class.':required'])->whereNumber('outputOwner')->name('stage-output-costs.reject');
+            Route::post('/{productionRun}/stage-transfers', 'prepareStageTransfer')->middleware(['can:production.runs.account_materials', IdempotentDocumentSubmission::class.':required'])->name('stage-transfers.prepare');
+            Route::post('/{productionRun}/stage-transfers/{transfer}/approve', 'approveStageTransfer')->middleware(['can:production.runs.correct_approve', IdempotentDocumentSubmission::class.':required'])->whereNumber('transfer')->name('stage-transfers.approve');
+            Route::post('/{productionRun}/stage-transfers/{transfer}/reverse', 'reverseStageTransfer')->middleware(['can:production.runs.correct_approve', IdempotentDocumentSubmission::class.':required'])->whereNumber('transfer')->name('stage-transfers.reverse');
+            Route::post('/{productionRun}/stage-transfers/{transfer}/reject', 'rejectStageTransfer')->middleware(['can:production.runs.correct_approve', IdempotentDocumentSubmission::class.':required'])->whereNumber('transfer')->name('stage-transfers.reject');
             Route::post('/{productionRun}/checklist', 'confirmChecklist')->middleware(['can:production.orders.release', IdempotentDocumentSubmission::class.':required'])->name('checklist');
             Route::post('/{productionRun}/labor', 'labor')->middleware(['can:production.runs.labor', IdempotentDocumentSubmission::class.':required'])->name('labor');
             Route::post('/{productionRun}/account-materials', 'account')->middleware(['can:production.runs.account_materials', IdempotentDocumentSubmission::class])->name('account');
             Route::post('/{productionRun}/receive', 'receive')->middleware(['can:production.runs.receive', IdempotentDocumentSubmission::class.':required'])->name('receive');
             Route::post('/{productionRun}/complete', 'complete')->middleware(['can:production.runs.complete', IdempotentDocumentSubmission::class])->name('complete');
+            Route::get('/{productionRun}/daily-reports/{entry}/correction', [ProductionDailyReportController::class, 'correction'])->name('daily-reports.correction');
+            Route::post('/{productionRun}/daily-reports/{entry}/correction', [ProductionDailyReportController::class, 'prepareCorrection'])->middleware(['can:production.runs.correct', IdempotentDocumentSubmission::class.':required'])->name('daily-reports.correction-prepare');
+            Route::post('/{productionRun}/daily-reports/{entry}/quality-batches/{batch}/withdraw', [ProductionDailyReportController::class, 'withdrawQuality'])->middleware(['can:production.quality.review', IdempotentDocumentSubmission::class.':required'])->whereNumber('batch')->name('daily-reports.quality-withdraw');
+            Route::get('/{productionRun}/daily-reports/create', [ProductionDailyReportController::class, 'create'])->middleware('can:production.runs.progress')->name('daily-reports.create');
+            Route::post('/{productionRun}/daily-reports', [ProductionDailyReportController::class, 'store'])->middleware(['can:production.runs.progress', IdempotentDocumentSubmission::class.':required'])->name('daily-reports.store');
+            Route::get('/{productionRun}/actions/{operation}', 'operation')->whereIn('operation', ['setup', 'reserve', 'issue', 'return', 'account', 'labor', 'complete', 'cancel', 'crew', 'checklist'])->name('operation');
             Route::get('/{productionRun}', 'show')->middleware('can:production.runs.view')->name('show');
         });
         Route::get('/reports/operations', [ProductionReportController::class, 'index'])

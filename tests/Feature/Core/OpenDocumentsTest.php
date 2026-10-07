@@ -261,7 +261,7 @@ test('Open Document menu remains visible for every correction-only workflow perm
         'sales_returns.correct_prepare',
         'sales_returns.correct_approve',
     ] as $permission) {
-        $actor = openDocumentsActor([$permission]);
+        $actor = openDocumentsActor([$permission, 'production.runs.view']);
         $menu = app(MenuService::class)->getMenu($actor);
         $tools = collect($menu)->firstWhere('label', 'tools');
         $filesAndDocuments = collect($tools['children'] ?? [])->firstWhere('label', 'files_documents');
@@ -806,17 +806,20 @@ test('Open Document routes approved sales order reopening through its workflow a
     $reopened = $order->fresh();
     expect($reopened->status)->toBe(SalesOrder::StatusReopened)
         ->and($reopened->reopen_reason)->toBe('Correct the agreed quantity.')
-        ->and($reopened->canCancelSafely())->toBeFalse();
+        ->and($reopened->canCancelSafely())->toBeTrue();
     Permission::findOrCreate('sales_orders.cancel', 'web');
     $actor->givePermissionTo('sales_orders.cancel');
-    $this->postJson(route('admin.sales.sales-orders.cancel', $order), ['reason' => 'Delete the previously approved order.'])->assertUnprocessable();
-    expect($order->fresh()->status)->toBe(SalesOrder::StatusReopened);
 
     $orders = app(SalesOrderService::class);
     $orders->approve($orders->submit($order->fresh()));
     $order->forceFill(['status' => SalesOrder::StatusReopened])->save();
     expect($order->fresh()->isEditable())->toBeFalse()
         ->and(fn () => $orders->submit($order->fresh()))->toThrow(DomainException::class);
+    $unused = $orders->reopen($orders->approve($orders->create(salesCycleOrderPayload($fixture))), 'SYNTHETIC bounded unused order review');
+    $approvedAt = $unused->approved_at->toISOString();
+    $this->postJson(route('admin.sales.sales-orders.cancel', $unused), ['reason' => 'SYNTHETIC unused order withdrawn'])->assertOk();
+    expect($unused->fresh()->status)->toBe(SalesOrder::StatusCancelled)->and($unused->fresh()->trashed())->toBeFalse()
+        ->and($unused->fresh()->approved_at->toISOString())->toBe($approvedAt)->and($unused->fresh()->reopened_at)->not->toBeNull();
 });
 
 test('a previously approved sales order cannot be deleted when a stale state reports draft', function (): void {
@@ -1050,11 +1053,10 @@ test('Open Document reopens an unsent purchase order and blocks orders with down
 
     expect($order->fresh()->status)->toBe(PurchaseOrder::StatusDraft)
         ->and($order->fresh()->approved_at)->not->toBeNull()
-        ->and($order->fresh()->isDeletable())->toBeFalse()
+        ->and($order->fresh()->isDeletable())->toBeTrue()
         ->and(Activity::query()->where('event', 'purchase_order.reopened')->exists())->toBeTrue();
-    expect(fn () => $orders->delete($order->fresh()))->toThrow(DomainException::class);
-    expect(fn () => $orders->cancel($order->fresh(), 'Do not cancel an approved order after reopening.'))->toThrow(DomainException::class)
-        ->and($order->fresh()->status)->toBe(PurchaseOrder::StatusDraft);
+    expect($order->fresh()->hasReopenEvidence())->toBeTrue();
+    expect($order->fresh()->canCancelSafely())->toBeTrue();
     $this->get(route('admin.purchases.purchase-orders.show', $order->doc_num))
         ->assertOk()
         ->assertDontSee(route('admin.purchases.purchase-orders.cancel', $order->doc_num), false);
@@ -1114,9 +1116,12 @@ test('Open Document reopens an unsent purchase order and blocks orders with down
         'reason' => 'Revise a closed order without discarding its history.',
     ])->assertOk()->assertJsonPath('summary.opened', 1);
     expect($order->fresh()->closed_at)->not->toBeNull()
-        ->and($order->fresh()->isDeletable())->toBeFalse();
-    expect(fn () => $orders->cancel($order->fresh(), 'Do not cancel a previously closed order.'))->toThrow(DomainException::class)
-        ->and(fn () => $orders->delete($order->fresh()))->toThrow(DomainException::class);
+        ->and($order->fresh()->isDeletable())->toBeTrue();
+    expect($order->fresh()->hasReopenEvidence())->toBeTrue();
+    $history = $order->fresh()->only(['approved_at', 'closed_at', 'reopened_at']);
+    $orders->cancel($order->fresh(), 'SYNTHETIC unused closed order withdrawn');
+    expect($order->fresh()->status)->toBe(PurchaseOrder::StatusCancelled)->and($order->fresh()->trashed())->toBeFalse()
+        ->and($order->fresh()->only(array_keys($history)))->toEqual($history);
 });
 
 test('Open Document reopens a purchase requisition and preserves downstream sourcing locks', function (): void {
@@ -1143,12 +1148,11 @@ test('Open Document reopens a purchase requisition and preserves downstream sour
     expect($requisition->fresh()->status)->toBe(PurchaseRequisition::StatusDraft)
         ->and($requisition->fresh()->approved_at)->not->toBeNull()
         ->and((string) $requisition->fresh()->lines()->firstOrFail()->approved_quantity)->toBe('0.00000000');
-    expect(fn () => $sourcing->deleteRequisition($requisition->fresh()))->toThrow(DomainException::class);
-    expect(fn () => $sourcing->finishRequisition($requisition->fresh(), PurchaseRequisition::StatusCancelled, 'Do not cancel an approved request after reopening.'))->toThrow(DomainException::class)
-        ->and($requisition->fresh()->status)->toBe(PurchaseRequisition::StatusDraft);
+    expect($requisition->fresh()->hasReopenEvidence())->toBeTrue();
+    expect($requisition->fresh()->canCancelSafely())->toBeTrue();
     $this->get(route('admin.purchases.purchase-requisitions.show', $requisition->doc_num))
         ->assertOk()
-        ->assertDontSee(route('admin.purchases.purchase-requisitions.cancel', $requisition->doc_num), false);
+        ->assertSee(route('admin.purchases.purchase-requisitions.cancel', $requisition->doc_num), false);
 
     $sourcing->submitRequisition($requisition->fresh());
     $sourcing->approveRequisition($requisition->fresh());
@@ -1185,8 +1189,7 @@ test('Open Document reopens a purchase requisition and preserves downstream sour
     ])->assertOk()->assertJsonPath('summary.opened', 1);
     expect($closedRequisition->fresh()->status)->toBe(PurchaseRequisition::StatusDraft)
         ->and($closedRequisition->fresh()->closed_at)->not->toBeNull();
-    expect(fn () => $sourcing->finishRequisition($closedRequisition->fresh(), PurchaseRequisition::StatusCancelled, 'No longer needed.'))->toThrow(DomainException::class)
-        ->and(fn () => $sourcing->deleteRequisition($closedRequisition->fresh()))->toThrow(DomainException::class);
+    expect($closedRequisition->fresh()->hasReopenEvidence())->toBeTrue();
     $this->get(route('admin.purchases.purchase-requisitions.edit', $closedRequisition->doc_num))->assertForbidden();
     Permission::findOrCreate('purchases.purchase_requisitions.edit', 'web');
     $actor->givePermissionTo('purchases.purchase_requisitions.edit');
@@ -1211,6 +1214,10 @@ test('Open Document reopens a purchase requisition and preserves downstream sour
     $sourcing->approveRequisition($closedRequisition->fresh());
     expect($closedRequisition->fresh()->isLockedForEditing())->toBeTrue()
         ->and($closedLine->fresh()->approved_quantity)->toBe('125.50000000');
+    $history = $closedRequisition->fresh()->only(['approved_at', 'closed_at', 'reopened_at']);
+    $sourcing->finishRequisition($closedRequisition->fresh(), PurchaseRequisition::StatusCancelled, 'SYNTHETIC unused request withdrawn');
+    expect($closedRequisition->fresh()->status)->toBe(PurchaseRequisition::StatusCancelled)->and($closedRequisition->fresh()->trashed())->toBeFalse()
+        ->and($closedRequisition->fresh()->only(array_keys($history)))->toEqual($history);
 });
 
 /** @param array<string, mixed> $fixture */
@@ -1250,14 +1257,14 @@ test('Open Document finds every production run by its order number and routes to
     $otherCompany = $fixture['company']->replicate();
     $otherCompany->fill(['doc_number' => 9905, 'doc_num' => 'SYNTHETIC-OPEN-OTHER-COMPANY', 'name' => 'SYNTHETIC other company', 'is_main' => false])->save();
     openDocumentsProductionRun([...$fixture, 'company' => $otherCompany], 71, 'FOREIGN-COMPANY');
-    $actor = openDocumentsActor([$permission]);
+    $actor = openDocumentsActor([$permission, 'production.runs.view']);
     $this->actingAs($actor)->withSession(salesCycleSession($fixture));
     $this->get(route('admin.tools.open-documents.index'))->assertOk()->assertSee('production_runs', false);
     $selection = ['document_type' => 'production_runs', 'from_number' => 71, 'to_number' => 73];
     $response = $this->postJson(route('admin.tools.open-documents.preview'), $selection)->assertOk()
         ->assertJsonPath('navigation_only', true)->assertJsonPath('not_found', 2)->assertJsonCount(2, 'documents');
     foreach ($runs as $index => $run) {
-        $url = route('admin.production.runs.corrections.index', $run);
+        $url = route('admin.production.runs.cancellation-owner', $run);
         $response->assertJsonPath('documents.'.$index.'.doc_num', $run->run_number)
             ->assertJsonPath('documents.'.$index.'.doc_number', 71)->assertJsonPath('documents.'.$index.'.correction_url', $url);
         $this->get($url)->assertOk();
@@ -1266,6 +1273,11 @@ test('Open Document finds every production run by its order number and routes to
     $this->postJson(route('admin.tools.open-documents.store'), [...$selection, 'preview_token' => $response->json('preview_token')])
         ->assertUnprocessable()->assertJsonValidationErrors('document_type');
     expect([InventoryTransaction::count(), DB::table('journal_entries')->count(), $runs[0]->fresh()->status])->toBe($before);
+    $actor->revokePermissionTo('production.runs.view');
+    $this->postJson(route('admin.tools.open-documents.preview'), $selection)->assertOk()
+        ->assertJsonPath('documents.0.decision', 'blocked')->assertJsonPath('documents.0.correction_url', null);
+    $this->get(route('admin.production.runs.cancellation-owner', $runs[0]))->assertForbidden();
+    $actor->givePermissionTo('production.runs.view');
     $fixture['period']->update(['is_closed' => true]);
     $this->postJson(route('admin.tools.open-documents.preview'), $selection)->assertOk()
         ->assertJsonPath('documents.0.decision', 'closed_period')->assertJsonPath('documents.0.correction_url', null);

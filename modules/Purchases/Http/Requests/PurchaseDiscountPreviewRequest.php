@@ -28,7 +28,7 @@ class PurchaseDiscountPreviewRequest extends FormRequest
         return [
             'invoice_doc_num' => ['nullable', 'string'], 'purchase_order_doc_num' => ['nullable', 'string'],
             'header_discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])], 'header_discount_value' => $money,
-            'freight_amount' => $money, 'freight_tax_rate' => ['nullable', 'numeric', 'between:0,100'],
+            'freight_amount' => $money, 'freight_tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,3}(?:\.\d{1,4})?$/D', 'between:0,100'],
             'inherit_header_discount' => ['boolean'], 'lines' => ['required', 'array', 'min:1', 'max:500'],
             'lines.*.public_id' => ['nullable', 'uuid'], 'lines.*.purchase_order_line_public_id' => ['nullable', 'uuid'],
             'lines.*.product_doc_num' => ['required', 'string'], 'lines.*.unit_doc_num' => ['required', 'string'],

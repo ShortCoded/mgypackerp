@@ -63,10 +63,11 @@ class ProductionReportController extends Controller
             ->where('runs.financial_period_id', $context['financial_period_id'])
             ->whereIn('runs.branch_id', $branch ? [(int) $branch->getKey()] : ($branches->modelKeys() ?: [0]))
             ->whereNull('runs.deleted_at');
+        $shiftName = 'coalesce('.DB::connection()->getQueryGrammar()->wrap('shift_entry.sheet_fields->shift_name').', production_shifts.name)';
         [$column, $label] = match ($kind) {
             'product' => ['products.doc_num', 'products.name'],
             'machine' => ['coalesce(fixed_assets.asset_name, production_machines.name)', 'coalesce(fixed_assets.asset_name, production_machines.name)'],
-            'shift' => ['production_shifts.name', 'production_shifts.name'],
+            'shift' => [$shiftName, $shiftName],
             'stage' => ['production_order_stage_snapshots.stage_name', 'production_order_stage_snapshots.stage_name'],
             'order' => ['production_orders.doc_num', 'production_orders.doc_num'],
         };
@@ -74,7 +75,9 @@ class ProductionReportController extends Controller
             'product' => $query->join('products', 'products.id', '=', 'runs.product_id'),
             'machine' => $query->leftJoin('fixed_assets', 'fixed_assets.id', '=', 'runs.fixed_asset_id')
                 ->leftJoin('production_machines', 'production_machines.id', '=', 'runs.production_machine_id'),
-            'shift' => $query->join('production_shifts', 'production_shifts.id', '=', 'runs.production_shift_id'),
+            'shift' => $query->leftJoin('production_shifts', 'production_shifts.id', '=', 'runs.production_shift_id')
+                ->leftJoin('production_shift_entries as shift_entry', fn ($join) => $join->on('shift_entry.production_run_id', '=', 'runs.id')
+                    ->on('shift_entry.company_id', '=', 'runs.company_id')->on('shift_entry.branch_id', '=', 'runs.branch_id')),
             'stage' => $query->join('production_order_stage_snapshots', 'production_order_stage_snapshots.id', '=', 'runs.production_order_stage_snapshot_id'),
             'order' => $query->join('production_orders', 'production_orders.id', '=', 'runs.production_order_id'),
         };

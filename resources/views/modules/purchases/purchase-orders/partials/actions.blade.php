@@ -8,6 +8,7 @@
         <span class="fas fa-ellipsis-h fs-10"></span>
     </button>
     <div class="dropdown-menu dropdown-menu-end py-2">
+    <x-document-owner-actions :record="$record" />
         @can('purchase_orders.view')
             <a class="dropdown-item" href="{{ route('admin.purchases.purchase-orders.show', $docNum) }}">
                 <span class="fas fa-eye me-2"></span>{{ __('common.actions.view') }}
@@ -58,7 +59,7 @@
             @endcan
         @endif
 
-        @if(! $isTrashed && ! $record->isClosed() && $record->closed_at === null && ! $record->isCancelled() && ! ($record->isDraft() && $record->approved_at !== null) && ! $record->hasDownstreamDocuments())
+        @if(! $isTrashed && $record->canCancelSafely())
             @can('purchase_orders.cancel')
                 <button class="dropdown-item text-danger js-purchase-order-row-action" type="button" data-url="{{ route('admin.purchases.purchase-orders.cancel', $docNum) }}" data-method="POST" data-action="cancel">
                     <span class="fas fa-ban me-2"></span>{{ __('purchase_orders.actions.cancel') }}

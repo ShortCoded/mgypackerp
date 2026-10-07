@@ -3,6 +3,7 @@
 use App\Models\User;
 use Database\Seeders\DefaultOperatingContextSeeder;
 use Dom\HTMLDocument;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Modules\Auth\Database\Seeders\PermissionSeeder;
 use Modules\Auth\Services\PermissionRegistryService;
@@ -42,6 +43,20 @@ function quotationPdfText(string $content): string
         @unlink($path);
     }
 }
+
+test('quotation cancellation review respects its unbound period and records a mandatory reason through the native action', function (): void {
+    $f = createQuotationThroughHttp();
+    $quotation = $f['quotation'];
+    expect(array_key_exists('financial_period_id', $quotation->getAttributes()))->toBeFalse();
+    $url = route('admin.sales.quotations.cancel', $quotation);
+    $this->get(route('admin.sales.quotations.show', [$quotation, 'review_cancellation' => 1]))->assertOk()
+        ->assertSee(__('cancellation_review.period_unbound'))->assertSee('data-document-cancellation-form', false);
+    $this->postJson($url, [])->assertUnprocessable()->assertJsonValidationErrors('reason');
+    $this->postJson($url, ['reason' => 'SYNTHETIC withdrawn quotation'])->assertOk()->assertJsonPath('success', true);
+    expect($quotation->fresh()->status)->toBe(Quotation::StatusCancelled);
+    $activity = DB::table('activity_log')->where('event', 'quotation.cancelled')->latest('id')->first();
+    expect(json_decode($activity->properties, true)['reason'])->toBe('SYNTHETIC withdrawn quotation');
+});
 
 function quotationPdfPageCount(string $content): int
 {
@@ -1219,4 +1234,54 @@ test('accepted quotation preserves commercial input modes and booked amounts on 
     $order = $orders->update($order, $payload);
     expect($order->total_amount)->toBe('23.1317')->and($order->lines->sole()->discount_amount)->toBe('2.2545');
     expect($quotation->fresh()->currentRevision->total)->toBe('69.3948');
+    foreach (['23.1317', '23.1314'] as $expected) {
+        $partial = $orders->createFromQuotation($quotation->fresh(), $context, [['public_id' => $line->public_uuid, 'quantity' => '1']]);
+        expect($partial->total_amount)->toBe($expected)->and($partial->lines->sole()->tax_rate)->toBe('14.0000')
+            ->and($partial->lines->sole()->tax_calculation_basis)->toBe('source_allocation');
+        $partial = $partial->fresh()->load('lines');
+        $partialLine = $partial->lines->sole();
+        $this->get(route('admin.sales.sales-orders.edit', $partial))->assertOk()
+            ->assertSee('data-booked-gross="'.bcsub(bcadd($partialLine->line_total, $partialLine->discount_amount, 4), $partialLine->tax_amount, 4).'"', false);
+        $before = [$partial->getAttributes(), $partialLine->getAttributes(), DB::table('activity_log')->count()];
+        $this->travel(2)->seconds();
+        $partial = $orders->update($partial, [...$partial->only(['discount_type', 'discount_value', 'withholding_rate', 'withholding_basis', 'customer_reference', 'sales_employee_id', 'notes', 'internal_notes']),
+            'order_date' => $partial->order_date->toDateString(), 'expected_delivery_date' => $partial->expected_delivery_date->toDateString(),
+            'lines' => [$partialLine->only(['public_id', 'product_id', 'unit_id', 'description', 'quantity', 'unit_price', 'discount_type', 'discount_value', 'tax_rate'])], 'payment_schedules' => []]);
+        expect([$partial->getAttributes(), $partial->lines->sole()->getAttributes(), DB::table('activity_log')->count()])->toEqual($before);
+    }
+    expect(bcadd((string) $quotation->salesOrders()->sum('total_amount'), '0', 4))->toBe($revision->fresh()->total)
+        ->and(bcadd((string) $quotation->salesOrders()->sum('tax_amount'), '0', 4))->toBe($revision->fresh()->tax_amount);
+});
+
+test('native unchanged edit preserves the final quotation rounding allocation when an absent line discount displays as fixed zero', function (): void {
+    $f = createQuotationThroughHttp(['sales_orders.create', 'sales_orders.edit', 'sales_orders.view', 'sales_orders.view_prices', 'sales_orders.approve', 'sales_orders.reopen'], [
+        'valid_until' => now()->addMonth()->toDateString(), 'payment_milestones' => [],
+        'lines' => [['product_doc_num' => 'Product-00901', 'unit_doc_num' => 'Unit-00501', 'quantity' => '3',
+            'unit_price' => '22.54545', 'discount_type' => null, 'discount_value' => '0', 'tax_rate' => '14']],
+    ]);
+    $quotation = $f['quotation'];
+    $this->postJson(route('admin.sales.quotations.mark-sent', $quotation))->assertOk();
+    $this->postJson(route('admin.sales.quotations.accept', $quotation))->assertOk();
+    $orders = app(SalesOrderService::class);
+    $context = ['company_id' => $quotation->company_id, 'branch_id' => $quotation->branch_id];
+    for ($index = 0; $index < 3; $index++) {
+        $order = $orders->createFromQuotation($quotation->fresh(), $context,
+            [['public_id' => $quotation->currentRevision->lines->sole()->public_uuid, 'quantity' => '1']]);
+    }
+    $order = $orders->reopen($orders->approve($order), 'SYNTHETIC unchanged zero discount proof')->load('lines')->fresh('lines');
+    $line = $order->lines->sole();
+    expect($line->discount_type)->toBeNull();
+    $before = [$order->getAttributes(), $line->getAttributes(), DB::table('activity_log')->count()];
+    $this->travel(2)->seconds();
+    $this->putJson(route('admin.sales.sales-orders.update', $order), ['amendment_token' => $order->amendmentToken(),
+        'customer_doc_num' => $order->customer->doc_num, 'currency_doc_num' => $f['currency']->doc_num,
+        'order_date' => $order->order_date->toDateString(), 'expected_delivery_date' => $order->expected_delivery_date->toDateString(),
+        'discount_type' => $order->discount_type, 'discount_value' => $order->discount_value,
+        'notes' => $order->notes, 'internal_notes' => $order->internal_notes, 'customer_reference' => $order->customer_reference,
+        'lines' => [['public_id' => $line->public_id, 'product_doc_num' => $f['product']->doc_num, 'unit_doc_num' => $f['unit']->doc_num,
+            'description' => $line->description, 'quantity' => $line->quantity, 'unit_price' => $line->unit_price,
+            'discount_type' => 'fixed', 'discount_value' => '0', 'tax_rate' => $line->tax_rate]], 'payment_schedules' => []])->assertOk();
+    $order = $order->fresh('lines');
+    expect([$order->getAttributes(), $order->lines->sole()->getAttributes(), DB::table('activity_log')->count()])->toBe($before)
+        ->and(bcadd((string) $quotation->salesOrders()->sum('total_amount'), '0', 4))->toBe($quotation->currentRevision->total);
 });

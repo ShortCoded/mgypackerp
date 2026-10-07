@@ -101,8 +101,7 @@ class PersonalDashboardService
             'recent_updates' => $this->notifications->latestFor($user, 8)
                 ->map(fn ($notification): array => [
                     'id' => $notification->public_uuid,
-                    'title' => $notification->title,
-                    'body' => $notification->body,
+                    ...$this->notifications->presentation($notification),
                     'severity' => $notification->severity,
                     'url' => route('admin.notifications.open', $notification, false),
                     'time' => $this->dates->formatDateTime($notification->delivered_at ?: $notification->created_at, ''),

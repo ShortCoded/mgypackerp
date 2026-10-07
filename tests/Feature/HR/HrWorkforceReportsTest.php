@@ -459,7 +459,7 @@ test('actual workforce PDFs render populated employee and leave reports in both 
         'code' => 'workforce-pdf-paid', 'name' => 'Paid Annual Leave', 'status' => 'active',
         'metadata' => ['requires_balance' => true, 'payment_status' => 'paid'],
     ]);
-    $leave = workforceRequest($fixture, $leaveType, $approver, 2);
+    $leave = workforceRequest($fixture, $leaveType, $approver, 2, ['public_uuid' => '4005fd01-197e-42ff-95f8-77fc086c8917']);
     foreach (['hr.employee_reports.view', 'hr.employee_reports.export', 'hr.leave_reports.view', 'hr.leave_reports.export'] as $permission) {
         Permission::findOrCreate($permission, 'web');
     }
@@ -489,11 +489,12 @@ test('actual workforce PDFs render populated employee and leave reports in both 
             $extract = new Process(['pdftotext', '-layout', '-', '-']);
             $extract->setInput($pdf);
             $extract->run();
+            $text = Normalizer::normalize($extract->getOutput(), Normalizer::FORM_KC);
             expect($extract->isSuccessful())->toBeTrue()
-                ->and($extract->getOutput())->toContain($report['needle']);
+                ->and($text)->toContain($report['needle']);
             if ($locale === 'en') {
                 $expectedDate = $report['route'] === 'admin.hr.reports.employees.export' ? '2026-01-21' : '2026-09-01';
-                expect($extract->getOutput())->toContain(app(DateFormatService::class)->formatDate($expectedDate))
+                expect($text)->toContain(app(DateFormatService::class)->formatDate($expectedDate))
                     ->not->toContain($expectedDate.' 00:00:00');
             }
         }

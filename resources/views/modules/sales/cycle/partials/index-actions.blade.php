@@ -19,7 +19,7 @@
             'partially_converted' => ['closed' => ['cancel', __('Close')]],
             default => [],
         };
-        if ($record->approved_at !== null || $record->closed_at !== null
+        if ((($record->approved_at !== null || $record->closed_at !== null) && ! ($record->status === 'reopened' && $record->isEditable()))
             || (bool) $record->getAttribute('has_converted_lines')
             || (bool) $record->getAttribute('has_quotations')
             || (bool) $record->getAttribute('has_orders')
@@ -47,10 +47,7 @@
         if (in_array($record->status, ['approved', 'partially_fulfilled', 'fulfilled', 'rejected', 'closed'], true)) {
             $openDocumentType = 'sales_orders';
         }
-        if (! in_array($record->status, ['cancelled', 'closed'], true) && $record->reopened_at === null
-            && ! $record->has_fulfillment_quantities && ! $record->has_production_orders
-            && ! $record->has_invoices && ! $record->has_deliveries
-            && ! $record->has_receipts && ! $record->has_returns) {
+        if ($record->canCancelSafely()) {
             $workflow[] = ['url' => route($prefix.'.cancel', $record), 'permission' => 'sales_orders.cancel', 'label' => __('Cancel'), 'reason' => true];
         }
     }
@@ -98,6 +95,7 @@
     <div class="dropdown-menu dropdown-menu-end py-2">
         @if(!$trashed)
             <a class="dropdown-item" href="{{ route($prefix.'.show', $record) }}">{{ __('common.actions.view') }}</a>
+            <x-document-owner-actions :record="$record" />
             @if($editable)@can($kind.'.edit')<a class="dropdown-item" href="{{ route($prefix.'.edit', $record) }}">{{ __('common.actions.edit') }}</a>@endcan @endif
             @can($kind.'.print')<a class="dropdown-item" href="{{ route($prefix.'.print', $record) }}" target="_blank">{{ __('common.actions.print') }}</a>@endcan
             @foreach($workflow as $action)
@@ -105,7 +103,11 @@
             @endforeach
             @if($openDocumentType) @can($kind.'.reopen')<a class="dropdown-item" href="{{ route('admin.tools.open-documents.index', ['document_type' => $openDocumentType, 'from_number' => $record->doc_number, 'to_number' => $record->doc_number]) }}">{{ __('open_documents.actions.review_edit_reopen') }}</a>@endcan @endif
             @if($deletable)@can($kind.'.delete')<button class="dropdown-item text-danger js-sales-index-action" type="button" data-url="{{ route($prefix.'.destroy', $record) }}" data-method="DELETE">{{ __('common.actions.delete') }}</button>@endcan @endif
-        @elseif(in_array($kind, ['sales_requests', 'sales_orders']) && $record->status === 'draft')
+        @elseif(($kind === 'sales_requests' && in_array($record->status, ['draft', 'reopened'], true))
+            || ($kind === 'sales_orders' && in_array($record->status, ['draft', 'cancelled'], true))
+            || ($kind === 'customer_invoices' && (($record->status === 'cancelled' && (int) $record->posting_revision > 0)
+                || ($record->status === 'draft' && $record->document_type === 'invoice'
+                    && (in_array($record->source_type, [null, 'direct', 'sales_order'], true) || $record->source_type === 'sales_request')))))
             @can($kind.'.restore')<button class="dropdown-item text-success js-sales-index-action" type="button" data-url="{{ route($prefix.'.restore', $record->doc_num) }}" data-method="PATCH">{{ __('common.actions.restore') }}</button>@endcan
         @endif
     </div>

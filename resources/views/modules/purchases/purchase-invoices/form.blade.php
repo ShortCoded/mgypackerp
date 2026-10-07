@@ -1100,6 +1100,9 @@
     </div>
     @include('modules.purchases.procurement.attachments', ['attachmentRecord' => $record, 'attachmentsReadonly' => $isReadonly])
 </form>
+    @if($mode === 'view' && $record)
+    <x-document-cancellation-review :record="$record" />
+    @endif
 @endsection
 
 @push('scripts')

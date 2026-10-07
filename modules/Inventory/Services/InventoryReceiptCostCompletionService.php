@@ -25,6 +25,7 @@ use Modules\Inventory\Models\InventoryValueAdjustment;
 use Modules\Inventory\Models\InventoryValueAdjustmentLine;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Production\Models\ProductionRun;
+use Modules\Production\Services\ProductionStageTransferService;
 
 class InventoryReceiptCostCompletionService
 {
@@ -186,6 +187,9 @@ class InventoryReceiptCostCompletionService
             ->with('document')->orderBy('id')->lockForUpdate()->get()->keyBy(fn (InventoryDocumentLine $line): string => $line->inventory_document_id.':'.$line->id);
         $runs = ProductionRun::query()->where('company_id', $document->company_id)->whereIn('id', $transactions->pluck('production_run_id')->filter()->unique())
             ->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+        foreach ($runs as $run) {
+            app(ProductionStageTransferService::class)->assertCostMutationAllowed($run);
+        }
         if (InventoryValueAdjustment::query()->where('company_id', $document->company_id)
             ->where('status', InventoryValueAdjustment::StatusPosted)->whereDate('posting_date', '>', $postingDate)
             ->whereHas('lines', fn ($query) => $query->whereIn('source_transaction_id', $transactions->modelKeys()))->exists()) {

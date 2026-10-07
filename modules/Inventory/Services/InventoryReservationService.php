@@ -15,6 +15,7 @@ use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\WarehouseLocation;
 use Modules\Production\Models\ProductionMaterialRequestLine;
 use Modules\Production\Models\ProductionMaterialRequirement;
+use Modules\Production\Services\ProductionMaterialDemandService;
 
 class InventoryReservationService
 {
@@ -31,6 +32,7 @@ class InventoryReservationService
         bool $matchBatch = false,
     ): InventoryReservation {
         return DB::transaction(function () use ($requirement, $branchStoreId, $quantity, $warehouseLocationId, $allowBeyondRequirement, $materialRequestLineId, $batchLot, $matchBatch): InventoryReservation {
+            Company::query()->whereKey($requirement->run->company_id)->lockForUpdate()->firstOrFail();
             $locked = ProductionMaterialRequirement::query()
                 ->with('run.order.salesOrder')
                 ->lockForUpdate()
@@ -39,6 +41,14 @@ class InventoryReservationService
             $order = $run->order;
             $remainingRequirement = bcsub((string) $locked->planned_quantity, (string) $locked->reserved_quantity, 8);
             $reserveQuantity = $quantity ?? $remainingRequirement;
+            if (! $allowBeyondRequirement) {
+                $requestId = $materialRequestLineId === null ? null : ProductionMaterialRequestLine::query()->whereKey($materialRequestLineId)
+                    ->where('production_material_requirement_id', $locked->id)->value('production_material_request_id');
+                $sharedRemaining = app(ProductionMaterialDemandService::class)->remaining($locked, $requestId === null ? null : (int) $requestId);
+                if (bccomp($reserveQuantity, $sharedRemaining, 8) > 0) {
+                    throw new DomainException(__('production_execution.messages.material_request_exceeds_bom'));
+                }
+            }
 
             if (bccomp($reserveQuantity, '0', 8) <= 0
                 || (! $allowBeyondRequirement && bccomp($reserveQuantity, $remainingRequirement, 8) > 0)) {

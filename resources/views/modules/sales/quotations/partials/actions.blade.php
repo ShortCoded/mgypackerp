@@ -13,6 +13,7 @@
             <span class="fas fa-ellipsis-h fs-10"></span>
         </button>
         <div class="py-2 border dropdown-menu dropdown-menu-end">
+            <x-document-owner-actions :record="$record" />
             @if ($canView)
                 <a class="dropdown-item" href="{{ route('admin.sales.quotations.show', $record->doc_num) }}" data-doc-num="{{ $record->doc_num }}">
                     {{ __('common.actions.view') }}
@@ -46,7 +47,7 @@
                     @can('quotations.revisions.create')<button class="dropdown-item js-create-quotation-revision" type="button" data-url="{{ route('admin.sales.quotations.revisions.create', $record) }}">{{ __('quotations.actions.create_revision') }}</button>@endcan
                 @endif
                 @if($record->canCancel())
-                    @can('quotations.cancel')<button class="dropdown-item text-danger js-quotation-status-action" type="button" data-url="{{ route('admin.sales.quotations.cancel', $record) }}">{{ __('quotations.actions.cancel') }}</button>@endcan
+                    @can('quotations.cancel')<a class="dropdown-item text-danger" href="{{ route('admin.sales.quotations.show', [$record, 'review_cancellation' => 1]) }}#document-cancellation-review">{{ __('cancellation_review.title') }}</a>@endcan
                 @endif
                 @if ($canClone)
                     <a class="dropdown-item js-clone-record" href="{{ route('admin.sales.quotations.clone', $record->doc_num) }}" data-doc-num="{{ $record->doc_num }}">

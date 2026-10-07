@@ -14,6 +14,7 @@ class ProductionProgressEntry extends Model
         'good_weight_kg', 'production_scrap_weight_kg',
         'notes', 'recorded_by', 'production_run_correction_id',
         'material_evidence', 'material_documents', 'production_shift_entry_id',
+        'stage_output_cost_owner_id',
     ];
 
     protected static function booted(): void

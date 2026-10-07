@@ -2,13 +2,17 @@
 
 namespace Modules\Purchases\Services;
 
+use App\Services\DocumentOwnerEffectProofService;
 use DomainException;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\Product;
@@ -16,6 +20,7 @@ use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\HR\Models\HrEmployee;
 use Modules\Production\Models\ProductionOrder;
@@ -123,22 +128,20 @@ class ProcurementSourcingService
     public function finishRequisition(PurchaseRequisition $requisition, string $status, ?string $reason = null): PurchaseRequisition
     {
         return DB::transaction(function () use ($requisition, $status, $reason): PurchaseRequisition {
+            Company::query()->whereKey($this->context()['company_id'])->lockForUpdate()->firstOrFail();
             $locked = $this->lockRequisition($requisition, true, allowAdministrativeAccess: true);
             $this->requireStatus($status, [PurchaseRequisition::StatusCancelled, PurchaseRequisition::StatusClosed]);
             if ($locked->status === $status) {
                 return $locked;
             }
             $this->requireStatus($locked->status, [PurchaseRequisition::StatusDraft, PurchaseRequisition::StatusSubmitted,
-                PurchaseRequisition::StatusRejected, PurchaseRequisition::StatusApproved,
+                PurchaseRequisition::StatusRejected, PurchaseRequisition::StatusClosed, PurchaseRequisition::StatusApproved,
                 PurchaseRequisition::StatusPartiallyConverted, PurchaseRequisition::StatusFullyConverted]);
             if ($status === PurchaseRequisition::StatusCancelled) {
                 if (blank($reason)) {
                     throw new DomainException(__('Cancellation reason is required.'));
                 }
-                if ($locked->closed_at !== null
-                    || ($locked->approved_at !== null && $locked->status !== PurchaseRequisition::StatusApproved)
-                    || in_array($locked->status, [PurchaseRequisition::StatusPartiallyConverted, PurchaseRequisition::StatusFullyConverted], true)
-                    || $locked->hasDownstreamDocuments()) {
+                if (! $locked->canCancelSafely()) {
                     throw new DomainException(__('A closed, converted, or reopened purchase request cannot be cancelled.'));
                 }
                 $values = ['cancelled_by' => auth()->id(), 'cancelled_at' => now(), 'cancel_reason' => trim($reason)];
@@ -162,7 +165,7 @@ class ProcurementSourcingService
         DB::transaction(function () use ($requisition): void {
             $locked = $this->lockRequisition($requisition);
             $this->requireStatus($locked->status, [PurchaseRequisition::StatusDraft]);
-            if ($locked->approved_at !== null || $locked->closed_at !== null || $locked->hasDownstreamDocuments()) {
+            if ((($locked->approved_at !== null || $locked->closed_at !== null) && ! $locked->hasReopenEvidence()) || $locked->hasDownstreamDocuments()) {
                 throw new DomainException(__('Only unused drafts can be deleted.'));
             }
             $locked->forceFill(['deleted_by' => auth()->id()])->save();
@@ -963,6 +966,89 @@ class ProcurementSourcingService
             $this->audit->record($locked, 'sourcing_draft.deleted');
             $locked->delete();
         }, 3);
+    }
+
+    public function cancelSourcingDocument(RequestForQuotation|SupplierQuotation|SupplierSelection $record, string $reason): RequestForQuotation|SupplierQuotation|SupplierSelection
+    {
+        Gate::authorize($this->sourcingCancellationPermission($record));
+        if (trim($reason) === '' || mb_strlen($reason) > 1000) {
+            throw new DomainException(__('cancellation_review.reason_required'));
+        }
+
+        return DB::transaction(function () use ($record, $reason): RequestForQuotation|SupplierQuotation|SupplierSelection {
+            $context = $this->context();
+            $company = Company::query()->lockForUpdate()->findOrFail($context['company_id']);
+            $scope = app(OperatingScopeAccessService::class);
+            if (! Branch::query()->where('company_id', $context['company_id'])->whereKey($context['branch_id'])->where('type', Branch::TypeAdministrative)->exists()
+                || ! $scope->canAccessCompany(auth()->user(), $company)
+                || ! $scope->allowedBranchQuery(auth()->user(), [$company->doc_num])->whereKey($record->branch_id)->exists()
+                || ! $scope->allowedFinancialPeriodQuery(auth()->user(), [$company->doc_num])->whereKey($record->financial_period_id)->exists()
+                || ! $scope->allowedFinancialPeriodQuery(auth()->user(), [$company->doc_num], openOnly: true)->whereKey($context['financial_period_id'])->exists()) {
+                throw new DomainException(__('The document is outside the active operating context.'));
+            }
+            $rfqId = $record instanceof RequestForQuotation ? $record->getKey() : $record->request_for_quotation_id;
+            if ($rfqId !== null) {
+                RequestForQuotation::query()->where('company_id', $context['company_id'])->lockForUpdate()->findOrFail($rfqId);
+            }
+            $locked = $record->newQuery()->lockForUpdate()->findOrFail($record->getKey());
+            $this->assertContext($locked, $context, source: true);
+            $postingPeriod = app(FinancialPeriodService::class)->resolveOpenForPostingDate(
+                $context['company_id'], now()->toDateString(), $context['financial_period_id'], lockForUpdate: true,
+            );
+            if ($locked->status === 'cancelled') {
+                return $locked;
+            }
+            $blockers = $this->sourcingCancellationBlockers($locked);
+            if ($blockers !== []) {
+                throw new DomainException(implode(' ', $blockers));
+            }
+            $originalStatus = $locked->status;
+            $locked->forceFill(['status' => 'cancelled', 'updated_by' => auth()->id()])->save();
+            $this->audit->record($locked, 'sourcing_document.cancelled', [
+                'reason' => trim($reason), 'original_status' => $originalStatus,
+                'source_financial_period_id' => $locked->financial_period_id,
+                'cancellation_financial_period_id' => $postingPeriod->getKey(),
+            ]);
+
+            return $locked->refresh();
+        }, 3);
+    }
+
+    public function sourcingCancellationPermission(RequestForQuotation|SupplierQuotation|SupplierSelection $record): string
+    {
+        return match (true) {
+            $record instanceof RequestForQuotation => 'purchases.request_for_quotations.cancel',
+            $record instanceof SupplierQuotation => 'purchases.supplier_quotation_entry.cancel',
+            default => 'purchases.supplier_selection.cancel',
+        };
+    }
+
+    /** @return list<string> */
+    public function sourcingCancellationBlockers(RequestForQuotation|SupplierQuotation|SupplierSelection $record): array
+    {
+        $allowed = match (true) {
+            $record instanceof RequestForQuotation => ['draft', 'issued'],
+            $record instanceof SupplierQuotation => ['draft', 'submitted'],
+            default => ['draft', 'approved'],
+        };
+        if (! in_array($record->status, $allowed, true)) {
+            return [__('cancellation_review.owner_workflow')];
+        }
+        $hasDependencies = app(DocumentOwnerEffectProofService::class)->sourcingHasUnsettledEffects($record);
+
+        return $hasDependencies ? [__('cancellation_review.sourcing_dependencies')] : [];
+    }
+
+    /** @param Builder<Model> $query
+     * @param  class-string<Model>  $model
+     */
+    private function whereSourcingCancellationUnproven(Builder $query, string $model): void
+    {
+        $table = $query->getModel()->getTable();
+        $query->where($table.'.status', '<>', 'cancelled')->orWhereNotNull($table.'.deleted_at')
+            ->orWhereNotExists(fn ($audit) => $audit->selectRaw('1')->from('activity_log')
+                ->whereColumn('activity_log.subject_id', $table.'.id')->where('activity_log.subject_type', $model)
+                ->where('activity_log.event', 'sourcing_document.cancelled'));
     }
 
     public function comparison(RequestForQuotation $rfq): Collection

@@ -233,8 +233,11 @@ class ChequeService
 
     public function cancel(Cheque $record, string $reason): Cheque
     {
+        if ($record->isReceived() && $record->status === Cheque::StatusCollectionReversed) {
+            app(ChequeCollectionCorrectionService::class)->assertApproved($record);
+        }
         $allowed = $record->isReceived()
-            ? [Cheque::StatusReceived, Cheque::StatusDeposited]
+            ? [Cheque::StatusReceived, Cheque::StatusDeposited, Cheque::StatusCollectionReversed]
             : [Cheque::StatusDraft, Cheque::StatusIssued, Cheque::StatusDelivered, Cheque::StatusClearingReversed];
 
         return $this->transition($record, Cheque::StatusCancelled, $allowed, [
@@ -277,6 +280,10 @@ class ChequeService
                 ->findOrFail($record->getKey());
 
             $this->assertOwned($locked, $companyId);
+
+            if ($locked->isReceived() && $locked->status === Cheque::StatusCollectionReversed) {
+                app(ChequeCollectionCorrectionService::class)->assertApproved($locked);
+            }
 
             if ($locked->trashed()) {
                 throw new DomainException(__('cheques.messages.deleted_not_actionable'));

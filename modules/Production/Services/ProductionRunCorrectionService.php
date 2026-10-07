@@ -48,6 +48,7 @@ final class ProductionRunCorrectionService
             'posting_period' => FinancialPeriod::query()->where('company_id', $run->company_id)->find(request()->session()->get(OperatingContextService::FinancialPeriodIdKey)),
             'fingerprint' => $this->fingerprint($snapshot),
             'impact' => $this->impact($snapshot),
+            'blockers' => array_values(array_filter([$this->ownerWorkflowBlocker($run)])),
             'correction_steps' => $this->dependencies->steps($snapshot['dependency_snapshot']),
             'corrections' => DB::table('production_run_corrections')->where('production_run_id', $run->getKey())->orderByDesc('id')->get()];
     }
@@ -107,6 +108,15 @@ final class ProductionRunCorrectionService
             Company::query()->whereKey($this->companies->requireCompanyId())->lockForUpdate()->firstOrFail();
             $run = $this->scopedRun($run, true);
             $proposal = $this->proposal($run, $correctionId);
+            if (data_get(json_decode($proposal->corrected_output, true, 512, JSON_THROW_ON_ERROR), 'kind') === ProductionPieceOutputApprovalService::WithdrawalKind) {
+                return app(ProductionPieceOutputApprovalService::class)->approveWithdrawal($run, $correctionId);
+            }
+            if (data_get(json_decode($proposal->corrected_output, true, 512, JSON_THROW_ON_ERROR), 'kind') === ProductionDailyReportCorrectionService::Kind) {
+                return app(ProductionDailyReportCorrectionService::class)->approve($run, $correctionId);
+            }
+            if (data_get(json_decode($proposal->corrected_output, true, 512, JSON_THROW_ON_ERROR), 'kind') === ProductionReceiptCancellationService::Kind) {
+                return app(ProductionReceiptCancellationService::class)->approve($run, $correctionId);
+            }
             if (($proposal->correction_mode ?? ProductionCorrectionContextService::OriginalPeriod) === ProductionCorrectionContextService::LaterPeriod) {
                 Gate::authorize('production.runs.correct_later_period');
             }
@@ -254,9 +264,29 @@ final class ProductionRunCorrectionService
         return $snapshot;
     }
 
+    private function ownerWorkflowBlocker(ProductionRun $run): ?string
+    {
+        if (InventoryDocument::query()->where('company_id', $run->company_id)->where('branch_id', $run->branch_id)
+            ->where(fn ($source) => $source->where('document_type', InventoryDocument::TypeProductionHandover)
+                ->orWhere(fn ($receipt) => $receipt->where('document_type', InventoryDocument::TypeProductionReceipt)->where('source_document_type', InventoryDocument::class)))->whereNotIn('status', [InventoryDocument::StatusCancelled, InventoryDocument::StatusReversed])
+            ->whereHas('lines', fn ($query) => $query->where('production_run_id', $run->id))->exists()) {
+            return __('production_handover.receipts_must_be_corrected');
+        }
+        if (app(ProductionShiftEvidenceService::class)->hasDailyReports($run)) {
+            return __('production_execution.evidence.correction_requires_review');
+        }
+
+        return null;
+    }
+
     /** @param array<string, mixed> $snapshot */
     private function assertCorrectable(ProductionRun $run, array $snapshot): void
     {
+        app(ProductionStageTransferService::class)->assertRunRecovery($run);
+        $ownerBlocker = $this->ownerWorkflowBlocker($run);
+        if ($ownerBlocker !== null) {
+            throw new DomainException($ownerBlocker);
+        }
         if ($run->status !== ProductionRun::StatusCompleted) {
             throw new DomainException(__('production_run_correction.completed_required'));
         }
@@ -423,8 +453,11 @@ final class ProductionRunCorrectionService
     }
 
     /** @param iterable<object> $approvals @param array<string, mixed> $dependencySnapshot */
-    private function invalidatePiecePayroll(ProductionRun $run, int $correctionId, iterable $approvals, array $dependencySnapshot): void
+    public function invalidatePiecePayroll(ProductionRun $run, int $correctionId, iterable $approvals, array $dependencySnapshot): void
     {
+        if ($this->dependencies->steps($dependencySnapshot) !== []) {
+            throw new DomainException(__('production_daily_report.correction.payroll_recovery_required'));
+        }
         $this->dependencies->assertCanInvalidateCalculatedPayroll($dependencySnapshot);
         $ids = collect($approvals)->whereNull('revoked_at')->pluck('id')->all();
         if ($ids === []) {

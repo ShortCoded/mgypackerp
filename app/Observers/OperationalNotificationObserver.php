@@ -60,7 +60,7 @@ class OperationalNotificationObserver
 
         $module = $definition['module'];
         $status = (string) $subject->getAttribute('status');
-        $documentNumber = (string) ($subject->getAttribute('doc_num') ?: $subject->getAttribute('public_uuid') ?: $subject->getKey());
+        $documentNumber = (string) ($subject->getAttribute('doc_num') ?: $subject->getAttribute('run_number') ?: $subject->getAttribute('public_uuid') ?: $subject->getKey());
         $urgent = ($subject instanceof MaintenanceRequest || $subject instanceof MaintenanceWorkOrder)
             && ((bool) $subject->getAttribute('is_machine_stopped') || $subject->getAttribute('priority') === 'urgent');
         $severity = $urgent ? 'urgent' : $definition['severity'];

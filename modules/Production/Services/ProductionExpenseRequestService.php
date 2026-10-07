@@ -5,16 +5,21 @@ namespace Modules\Production\Services;
 use App\Services\PostingAccountResolver;
 use DomainException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Currency;
+use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\DocumentNumberService;
+use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\Cashbox;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Services\CashVoucherService;
+use Modules\Inventory\Models\InventoryDocument;
 use Modules\Maintenance\Models\MaintenanceWorkOrder;
 use Modules\Production\Models\ProductionExpenseRequest;
 use Modules\Production\Models\ProductionRun;
@@ -333,7 +338,8 @@ class ProductionExpenseRequestService
             $locked = ProductionExpenseRequest::query()->with(['cashbox.account', 'bankAccount.account', 'currency', 'expenseAccount', 'run', 'maintenanceWorkOrder.asset'])->lockForUpdate()->findOrFail($request->getKey());
             $this->assertContext($locked, $context);
             if ($locked->production_run_id !== null) {
-                ProductionRun::query()->whereKey($locked->production_run_id)->lockForUpdate()->firstOrFail();
+                $run = ProductionRun::query()->whereKey($locked->production_run_id)->lockForUpdate()->firstOrFail();
+                app(ProductionStageTransferService::class)->assertCostMutationAllowed($run, conversionOnly: true);
             }
 
             if ($locked->status !== ProductionExpenseRequest::StatusApproved) {
@@ -427,6 +433,61 @@ class ProductionExpenseRequestService
         });
     }
 
+    public function withdrawApproval(ProductionExpenseRequest $request, string $reason): ProductionExpenseRequest
+    {
+        Gate::authorize('production.expenses.reverse');
+
+        return DB::transaction(function () use ($request, $reason): ProductionExpenseRequest {
+            $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
+            $locked = ProductionExpenseRequest::query()->lockForUpdate()->findOrFail($request->getKey());
+            $this->assertContext($locked, $context);
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], $locked->request_date,
+                $context['financial_period_id'], lockForUpdate: true);
+            if (mb_strlen(trim($reason)) < 5 || mb_strlen($reason) > 2000) {
+                throw new DomainException(__('production_execution.messages.reversal_reason_required'));
+            }
+            if ($locked->production_run_id === null || $locked->paid_at !== null || $locked->paid_by !== null
+                || $locked->cash_voucher_id !== null || $locked->journal_entry_id !== null || $locked->reversal_journal_entry_id !== null
+                || $locked->cost_accounting_snapshot !== null
+                || JournalEntry::withTrashed()->where('company_id', $locked->company_id)->where('source_id', $locked->id)
+                    ->whereIn('source_type', ['production_expense_payment', 'production_expense_reversal'])->exists()) {
+                throw new DomainException(__('cancellation_review.expense_withdraw_ineligible'));
+            }
+            if ($locked->status === ProductionExpenseRequest::StatusRejected
+                && DB::table('activity_log')->where('company_id', $locked->company_id)->where('subject_type', ProductionExpenseRequest::class)
+                    ->where('subject_id', $locked->id)->where('event', 'production.expense.approval_withdrawn')->exists()) {
+                return $locked;
+            }
+            if ($locked->status !== ProductionExpenseRequest::StatusApproved || $locked->approved_by === null || $locked->approved_at === null) {
+                throw new DomainException(__('cancellation_review.expense_withdraw_ineligible'));
+            }
+            $run = ProductionRun::query()->lockForUpdate()->findOrFail($locked->production_run_id);
+            $this->assertContext($run, $context);
+            app(ProductionStageTransferService::class)->assertCostMutationAllowed($run, conversionOnly: true);
+            if ($run->status === ProductionRun::StatusCancelled || bccomp((string) $run->received_base_quantity, '0', 8) > 0
+                || InventoryDocument::query()->where('company_id', $run->company_id)
+                    ->where('branch_id', $run->branch_id)->whereIn('status', ['draft', 'approved', 'posted'])
+                    ->whereIn('document_type', [
+                        InventoryDocument::TypeProductionReceipt,
+                        InventoryDocument::TypeProductionHandover,
+                    ])->where(fn ($query) => $query->where('production_run_id', $run->id)
+                    ->orWhereHas('lines', fn ($lines) => $lines->where('production_run_id', $run->id)))->exists()) {
+                throw new DomainException(__('production_stage_transfer.owner_recovery_required'));
+            }
+            $before = $locked->getRawOriginal();
+            $locked->forceFill(['status' => ProductionExpenseRequest::StatusRejected, 'updated_by' => auth()->id()])->save();
+            app(ActivityLogger::class)->log(request(), 'production', 'production.expense.approval_withdrawn', 'success', [
+                'subject' => $locked, 'causer' => auth()->user(), 'company_id' => $locked->company_id,
+                'branch_id' => $locked->branch_id, 'financial_period_id' => $locked->financial_period_id,
+                'properties_only' => true, 'properties' => ['reason' => trim($reason), 'before_snapshot' => $before,
+                    'after_status' => ProductionExpenseRequest::StatusRejected, 'unpaid' => true, 'financial_effect' => 'none'],
+            ]);
+
+            return $locked->refresh();
+        }, 3);
+    }
+
     public function reverse(ProductionExpenseRequest $request, string $reason): ProductionExpenseRequest
     {
         return DB::transaction(function () use ($request, $reason): ProductionExpenseRequest {
@@ -435,7 +496,8 @@ class ProductionExpenseRequestService
             $locked = ProductionExpenseRequest::query()->with(['cashVoucher', 'journalEntry'])->lockForUpdate()->findOrFail($request->getKey());
             $this->assertContext($locked, $context);
             if ($locked->production_run_id !== null) {
-                ProductionRun::query()->whereKey($locked->production_run_id)->lockForUpdate()->firstOrFail();
+                $run = ProductionRun::query()->whereKey($locked->production_run_id)->lockForUpdate()->firstOrFail();
+                app(ProductionStageTransferService::class)->assertCostMutationAllowed($run, conversionOnly: true);
             }
 
             if ($locked->status !== ProductionExpenseRequest::StatusPaid || ! $locked->journalEntry

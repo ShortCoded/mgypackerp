@@ -3,6 +3,7 @@
 namespace Modules\Sales\Models;
 
 use App\Models\User;
+use App\Services\DocumentOwnerEffectProofService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -187,17 +188,10 @@ class SalesOrder extends Model
 
     public function canCancelSafely(): bool
     {
-        if (! in_array($this->status, [self::StatusDraft, self::StatusPendingApproval, self::StatusHeldCredit], true)
-            || $this->approved_at !== null || $this->reopened_at !== null) {
-            return false;
-        }
-
-        $hasFulfilledQuantity = $this->lines()->where(function (Builder $query): void {
-            $query->where('delivered_quantity', '>', 0)
-                ->orWhere('invoiced_quantity', '>', 0);
-        })->exists();
-
-        return ! $hasFulfilledQuantity && ! $this->hasDownstreamDocuments();
+        return ! $this->trashed()
+            && in_array($this->status, [self::StatusDraft, self::StatusPendingApproval, self::StatusHeldCredit,
+                self::StatusApproved, self::StatusReopened, self::StatusClosed, self::StatusPartiallyFulfilled, self::StatusFulfilled], true)
+            && ! app(DocumentOwnerEffectProofService::class)->salesOrderHasUnsettledEffects($this);
     }
 
     public function hasDownstreamDocuments(): bool

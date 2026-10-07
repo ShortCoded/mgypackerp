@@ -14,6 +14,7 @@
             <span class="fas fa-ellipsis-h fs-10"></span>
         </button>
         <div class="py-2 border dropdown-menu dropdown-menu-end">
+            <x-document-owner-actions :record="$record" />
             @if ($isTrashed)
                 @if ($canView)
                     <a class="dropdown-item" href="{{ route($routePrefix.'.show', $record->doc_num) }}" data-doc-num="{{ $record->doc_num }}">

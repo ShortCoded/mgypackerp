@@ -40,6 +40,26 @@ class SalesOrderDiscountService
         return $this->amount($base, 'fixed', $line['discount_amount'] ?? '0');
     }
 
+    /** @param list<string> $bases @return list<string> */
+    public function headerShares(string $discount, array $bases): array
+    {
+        if (bccomp($discount, '0', 4) === 0) {
+            return array_fill(0, count($bases), '0.0000');
+        }
+        $shares = $this->amounts->splitQuantityByWeights($discount, $bases, 4);
+        $remainingBase = $this->amounts->sum($bases);
+        $allocated = '0.0000';
+        foreach ($bases as $index => $base) {
+            $remainingBase = $this->amounts->subtract($remainingBase, $base);
+            $minimum = $this->amounts->subtract($this->amounts->subtract($discount, $allocated), $remainingBase);
+            $share = bccomp($shares[$index], $minimum, 4) < 0 ? $minimum : $shares[$index];
+            $shares[$index] = bccomp($share, $base, 4) > 0 ? $base : $share;
+            $allocated = $this->amounts->add($allocated, $shares[$index]);
+        }
+
+        return $shares;
+    }
+
     /**
      * @param  list<array<string, mixed>>  $lines
      * @return array{lines: list<array<string, mixed>>, discount_type: ?string, discount_value: ?string, header_discount_amount: string}
@@ -56,12 +76,11 @@ class SalesOrderDiscountService
         }
         unset($line);
         $headerDiscount = $this->amount($this->amounts->sum($bases), $type, $value ?? '0');
-        $shares = bccomp($headerDiscount, '0', 4) === 0
-            ? array_fill(0, count($lines), '0.0000')
-            : $this->amounts->splitQuantityByWeights($headerDiscount, $bases, 4);
+        $shares = $this->headerShares($headerDiscount, $bases);
         foreach ($lines as $index => &$line) {
             $line['header_discount_amount'] = $shares[$index];
             $line['discount_amount'] = $this->amounts->add($line['discount_amount'], $shares[$index]);
+            $line = [...$line, ...app(SalesTaxService::class)->calculate($line, $this->amounts->subtract($this->amounts->unitPriceTotal($line['quantity'], $line['unit_price']), $line['discount_amount']))];
             $line['line_total'] = $this->amounts->add($this->amounts->subtract($this->amounts->unitPriceTotal($line['quantity'], $line['unit_price']), $line['discount_amount']), $line['tax_amount'] ?? '0');
             if (($type !== null || $line['discount_type'] !== null) && ! empty($line['price_list_line_id'])) {
                 app(PriceListPricingService::class)->assertOrderDiscountWithinSnapshot($line);

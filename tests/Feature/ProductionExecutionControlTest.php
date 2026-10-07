@@ -203,7 +203,8 @@ test('production quality capture is mobile friendly', function (): void {
         ->toContain('URL.createObjectURL(file)')
         ->toContain('preview.replaceChildren()');
 
-    expect($view)
+    $laborView = file_get_contents(resource_path('views/modules/production/runs/operation.blade.php')).file_get_contents(resource_path('views/modules/production/runs/partials/labor-operation.blade.php'));
+    expect($laborView)
         ->toContain('data-production-labor-planning')
         ->toContain("route('admin.production.runs.labor'")
         ->toContain('actualDurationHours()')

@@ -380,7 +380,7 @@ class OpenDocumentsService
         return $handler['type'] === self::ProductionRuns
             ? $query->with('order')->whereHas('order', fn (Builder $order): Builder => $order
                 ->where('company_id', $context['company_id'])->where('branch_id', $context['branch_id'])
-                ->where('financial_period_id', $context['financial_period_id'])->whereBetween('doc_number', [$fromNumber, $toNumber]))
+                ->where('financial_period_id', $context['source_financial_period_id'] ?? $context['financial_period_id'])->whereBetween('doc_number', [$fromNumber, $toNumber]))
             : $query->whereBetween('doc_number', [$fromNumber, $toNumber]);
     }
 
@@ -599,14 +599,15 @@ class OpenDocumentsService
         $laterSalesCorrection = ! $production && ! $periodOpen && $request->user()?->can('sales_returns.correct_later_period')
             && ($request->user()?->can('sales_returns.correct_prepare') || $request->user()?->can('sales_returns.correct_approve'));
         $allowsPeriod = $periodOpen || $laterSalesCorrection || ($production && $request->user()?->can('production.runs.correct_later_period'));
-        $available = ! $record->trashed() && $allowsPeriod && ($production || ($permission !== null && $request->user()?->can($permission)));
+        $available = ! $record->trashed() && $allowsPeriod
+            && ($production ? $request->user()?->can('production.runs.view') : ($permission !== null && $request->user()?->can($permission)));
         $decision = match (true) {
             $record->trashed() => 'deleted',
             ! $allowsPeriod => 'closed_period',
             $available => 'correction_workflow',
             default => 'blocked',
         };
-        $url = $available ? route($production ? 'admin.production.runs.corrections.index' : ($laterSalesCorrection ? 'admin.sales.sales-returns.corrections.index' : 'admin.sales.sales-returns.show'), $record) : null;
+        $url = $available ? route($production ? 'admin.production.runs.cancellation-owner' : ($laterSalesCorrection ? 'admin.sales.sales-returns.corrections.index' : 'admin.sales.sales-returns.show'), $record) : null;
         $dependencies = [];
         $lines = [];
         $correctionSteps = [];

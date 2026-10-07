@@ -33,6 +33,8 @@ class InventoryDocument extends Model
 
     public const TypeProductionReceipt = 'production_receipt';
 
+    public const TypeProductionHandover = 'production_handover';
+
     public const TypeMaterialIssue = 'production_material_issue';
 
     public const TypeAdditionalMaterialIssue = 'production_additional_material_issue';
@@ -79,6 +81,8 @@ class InventoryDocument extends Model
     }
 
     public const StatusDraft = 'draft';
+
+    public const StatusApproved = 'approved';
 
     public const StatusPosted = 'posted';
 
@@ -200,6 +204,16 @@ class InventoryDocument extends Model
     public function customerDeliveryReceipt(): HasOne
     {
         return $this->hasOne(SalesDeliveryReceipt::class, 'inventory_document_id');
+    }
+
+    public function isHandoverWarehouseReceipt(): bool
+    {
+        return $this->document_type === self::TypeProductionReceipt
+            && $this->source_document_type === self::class
+            && $this->source_document_id !== null
+            && self::query()->withTrashed()->where('company_id', $this->company_id)
+                ->where('branch_id', $this->branch_id)->where('document_type', self::TypeProductionHandover)
+                ->whereKey($this->source_document_id)->exists();
     }
 
     public function productionOrder(): BelongsTo

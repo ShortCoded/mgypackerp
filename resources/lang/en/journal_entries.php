@@ -1,6 +1,7 @@
 <?php
 
 return [
+    'reversal_lineage_invalid' => 'The posted reversal does not exactly reconcile with its original journal entry.',
     'title' => 'Journal Entries',
     'create' => 'Create Journal Entry',
     'document_title' => 'Journal Entry :doc_num',

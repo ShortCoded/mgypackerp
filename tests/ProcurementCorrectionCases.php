@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Support\Str;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Models\JournalEntryLine;
 use Modules\Core\Models\Company;
@@ -12,6 +13,7 @@ use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Production\Models\ProductionExpenseRequest;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseInvoicePaymentSchedule;
+use Modules\Purchases\Models\PurchaseReturn;
 use Modules\Purchases\Models\SupplierPaymentContext;
 use Modules\Purchases\Services\ProcurementCorrectionPlanService;
 use Modules\Purchases\Services\ProcurementReceivingService;
@@ -269,7 +271,7 @@ test('partial purchase correction follows each reviewed return payment invoice a
         ->reduce(fn (string $sum, $row): string => bcadd($sum, bcsub($row->quantity_in, $row->quantity_out, 8), 8), '0'))->toBe('0.00000000');
 });
 
-test('draft return correction lists the permitted delete action and actually clears the invoice blocker', function (): void {
+test('draft return correction cancels the retained owner document and clears the invoice blocker', function (): void {
     $fixture = procurementCorrectionFixture();
     $fixture['invoice'] = app(PurchaseInvoiceService::class)->approve(app(PurchaseInvoiceService::class)->create($fixture['invoice_data'])['record']);
     procurementUseBranch($fixture, $fixture['branch']);
@@ -281,8 +283,18 @@ test('draft return correction lists the permitted delete action and actually cle
     ]);
     $fixture['user']->revokePermissionTo('purchases.purchase_returns.reverse');
     $step = app(ProcurementCorrectionPlanService::class)->forReceipt($fixture['receipts']->first(), request())[0];
-    expect($step['action_route'])->toBe('admin.purchases.purchase-returns.destroy')->and($step['permitted'])->toBeTrue();
-    $this->deleteJson(route($step['action_route'], $return->doc_num))->assertOk();
+    expect($step['action_route'])->toBe('admin.purchases.purchase-returns.cancel')->and($step['permitted'])->toBeTrue();
+    $lines = $return->lines->map->getRawOriginal()->all();
+    $stock = InventoryTransaction::query()->get()->map->getRawOriginal()->all();
+    $journals = JournalEntry::query()->get()->map->getRawOriginal()->all();
+    $payload = ['cancel_reason' => 'SYNTHETIC abandoned return retained', '_submission_token' => (string) Str::uuid()];
+    $this->postJson(route($step['action_route'], $return->doc_num), $payload)->assertOk();
+    $this->postJson(route($step['action_route'], $return->doc_num), $payload)->assertOk();
+    expect($return->fresh()->status)->toBe(PurchaseReturn::StatusCancelled)
+        ->and($return->fresh()->trashed())->toBeFalse()->and($return->fresh()->cancel_reason)->toBe($payload['cancel_reason'])
+        ->and($return->fresh()->lines->map->getRawOriginal()->all())->toBe($lines)
+        ->and(InventoryTransaction::query()->get()->map->getRawOriginal()->all())->toBe($stock)
+        ->and(JournalEntry::query()->get()->map->getRawOriginal()->all())->toBe($journals);
     procurementUseBranch($fixture, $fixture['admin']);
     expect(app(PurchaseInvoiceService::class)->reversalPlan($fixture['invoice']->fresh())['can_reverse'])->toBeTrue();
 });

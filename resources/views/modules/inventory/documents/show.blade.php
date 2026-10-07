@@ -36,11 +36,17 @@
                 @endif
             @endif
             @if($record->status === \Modules\Inventory\Models\InventoryDocument::StatusPosted)
-                @can('inventory.documents.reverse')
-                    @can('inventory.documents.view')
-                        <a class="btn btn-outline-danger btn-sm" href="{{ route('admin.inventory.documents.reversal-preview', $record) }}">{{ __('inventory.movements.actions.reverse') }}</a>
+                @if($record->isHandoverWarehouseReceipt())
+                    @canany(['inventory.production_receipts.correct_prepare', 'inventory.production_receipts.correct_approve'])
+                        <a class="btn btn-outline-danger btn-sm" href="{{ route('admin.inventory.production-receipts.corrections.index', $record) }}">{{ __('production_receipt_cancellation.title') }}</a>
+                    @endcanany
+                @else
+                    @can('inventory.documents.reverse')
+                        @can('inventory.documents.view')
+                            <a class="btn btn-outline-danger btn-sm" href="{{ route('admin.inventory.documents.reversal-preview', $record) }}">{{ __('inventory.movements.actions.reverse') }}</a>
+                        @endcan
                     @endcan
-                @endcan
+                @endif
             @endif
         </div>
     </div>
@@ -77,6 +83,7 @@
 </tbody></table></div></div>
 @endif
 </div>
+    <x-document-cancellation-review :record="$record" />
 @endsection
 
 @push('scripts')<script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Production/execution.js') }}"></script>@endpush

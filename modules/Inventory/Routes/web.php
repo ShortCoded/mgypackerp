@@ -17,11 +17,25 @@ use Modules\Inventory\Http\Controllers\OpeningStockQuantityCorrectionController;
 use Modules\Inventory\Http\Controllers\SalesIssueController;
 use Modules\Inventory\Http\Controllers\StockCountController;
 use Modules\Inventory\Http\Controllers\UnpricedInventoryReceiptController;
+use Modules\Production\Http\Controllers\ProductionHandoverController;
+use Modules\Production\Http\Controllers\ProductionWarehouseReceiptCorrectionController;
 
 Route::middleware('auth')
     ->prefix('admin/inventory')
     ->as('admin.inventory.')
     ->group(function (): void {
+        Route::prefix('production-receipts')->name('production-receipts.')->controller(ProductionHandoverController::class)->group(function (): void {
+            Route::get('/', 'warehouseIndex')->middleware('can:inventory.production_receipts.view')->name('index');
+            Route::get('/handovers/{inventoryDocument}/create', 'createReceipt')->middleware('can:inventory.production_receipts.create')->name('create');
+            Route::post('/handovers/{inventoryDocument}', 'storeReceipt')->middleware(['can:inventory.production_receipts.create', IdempotentDocumentSubmission::class.':required'])->name('store');
+            Route::get('/{inventoryDocument}/corrections', [ProductionWarehouseReceiptCorrectionController::class, 'index'])->name('corrections.index');
+            Route::post('/{inventoryDocument}/corrections', [ProductionWarehouseReceiptCorrectionController::class, 'store'])->middleware(['can:inventory.production_receipts.correct_prepare', IdempotentDocumentSubmission::class.':required'])->name('corrections.store');
+            Route::post('/{inventoryDocument}/corrections/{correction}/approve', [ProductionWarehouseReceiptCorrectionController::class, 'approve'])->middleware(['can:inventory.production_receipts.correct_approve', IdempotentDocumentSubmission::class.':required'])->whereNumber('correction')->name('corrections.approve');
+            Route::get('/{inventoryDocument}', 'showReceipt')->middleware('can:inventory.production_receipts.view')->name('show');
+            Route::post('/{inventoryDocument}/approve', 'approveReceipt')->middleware(['can:inventory.production_receipts.approve', IdempotentDocumentSubmission::class.':required'])->name('approve');
+            Route::post('/{inventoryDocument}/cancel', 'cancelReceipt')->middleware(['can:inventory.production_receipts.cancel', IdempotentDocumentSubmission::class.':required'])->name('cancel');
+        });
+
         Route::prefix('opening-stock-quantity-corrections')->name('opening-stock-quantity-corrections.')
             ->controller(OpeningStockQuantityCorrectionController::class)->group(function (): void {
                 Route::get('/', 'index')->name('index');

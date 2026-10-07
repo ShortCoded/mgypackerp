@@ -17,6 +17,7 @@
                     <span class="badge rounded-pill badge-subtle-secondary">{{ __('production_execution.statuses.'.$record->status) }}</span>
                 </div>
                 <div class="d-flex flex-wrap gap-2">
+                    <x-document-owner-actions :record="$record" :menu="false" />
                     @if($canManageProduction && $record->canAmendBeforeExecution() && ($record->status === \Modules\Production\Models\ProductionOrder::StatusDraft || auth()->user()?->can('production.orders.release')))
                         @can('production.orders.edit')
                             <a class="btn btn-falcon-primary btn-sm" href="{{ route('admin.production.work-orders.edit', $record) }}">{{ __('common.actions.edit') }}</a>
@@ -140,6 +141,7 @@
             <div class="alert alert-warning">{{ __('common.no_data') }}</div>
         @endforelse
     </div>
+    <x-document-cancellation-review :record="$record" />
 @endsection
 
 @push('styles')

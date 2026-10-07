@@ -188,7 +188,7 @@ test('sales request direct invoice HTTP preserves source quantity and explicitly
     $payload = directDiscountPayload($f, ['source_request_doc_num' => $request->doc_num, 'discount_type' => 'fixed', 'discount_value' => '50',
         'withholding_rate' => '1', 'withholding_basis' => SalesWithholdingService::EtaNetExcludingTax]);
     $payload['lines'][0] += ['source_request_line_public_id' => $sourceLine->public_id, 'discount_type' => 'percentage', 'discount_value' => '10'];
-    $payload['lines'][0]['tax_amount'] = '119';
+    $payload['lines'][0]['tax_rate'] = '14';
     $this->postJson(route('admin.sales.sales-invoices.store'), $payload)->assertCreated();
     $invoice = CustomerInvoice::query()->where('source_type', 'sales_request')->where('source_id', $request->id)->sole();
     expect($invoice->subtotal_amount)->toBe('1000.0000')->and($invoice->discount_amount)->toBe('150.0000')
@@ -217,7 +217,7 @@ test('request to order to partial invoice HTTP conserves commercial discount VAT
         'order_date' => now()->toDateString(), 'expected_delivery_date' => now()->addDay()->toDateString(),
         'discount_type' => 'fixed', 'discount_value' => '50', 'withholding_rate' => '1', 'withholding_basis' => 'eta_t4_net_excluding_tax',
         'lines' => [['source_request_line_public_id' => $source->public_id, 'product_doc_num' => $f['service']->doc_num, 'unit_doc_num' => $f['unit']->doc_num,
-            'quantity' => '3', 'discount_type' => 'percentage', 'discount_value' => '10', 'tax_amount' => '371']]])->assertCreated();
+            'quantity' => '3', 'discount_type' => 'percentage', 'discount_value' => '10', 'tax_rate' => '14']]])->assertCreated();
     $order = SalesOrder::query()->where('sales_request_id', $request->id)->sole();
     $order = app(SalesOrderService::class)->approve($order);
     expect($order->withholding_basis)->toBe('eta_t4_net_excluding_tax')->and($order->withholding_amount)->toBe('26.5000')

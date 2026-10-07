@@ -9,8 +9,10 @@ use Modules\Inventory\Services\InventoryGlReconciliationService;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Services\ProductionCostService;
 use Modules\Production\Services\ProductionRunCorrectionService;
+use Spatie\Permission\Models\Permission;
 
 require_once __DIR__.'/ProductionLaterPeriodCorrectionSupport.php';
+require_once __DIR__.'/ProductionHandoverSupport.php';
 
 test('completed production from a closed period reverses and recompletes through real routes in a frozen later period with original history and reconciled stock GL', function (): void {
     $fixture = productionLaterPeriodFixture();
@@ -76,12 +78,19 @@ test('completed production from a closed period reverses and recompletes through
     $fixture['cycle']->reviewInspection($inspection, true);
     expect($inspection->financial_period_id)->toBe($fixture['target']->id)->and($inspection->inspection_date->toDateString())->toBe('2026-10-04')
         ->and($inspection->correction_sequence)->toBe(1);
-    $this->withHeader('Idempotency-Key', (string) Str::uuid())->postJson(route('admin.production.runs.receive', $run), [
-        'branch_store_id' => $fixture['store']->id, 'base_quantity' => '9',
-    ])->assertOk();
+    foreach (['production.handovers.create', 'production.handovers.approve'] as $permission) {
+        $fixture['user']->givePermissionTo(Permission::findOrCreate($permission, 'web'));
+        $fixture['approver']->givePermissionTo(Permission::findOrCreate($permission, 'web'));
+    }
+    $warehouse = closureSyntheticUser();
+    foreach (['inventory.production_receipts.create', 'inventory.production_receipts.approve', 'production.runs.correct_later_period'] as $permission) {
+        $warehouse->givePermissionTo(Permission::findOrCreate($permission, 'web'));
+    }
+    productionHandoverHttpReceipt($run, ['_submission_token' => (string) Str::uuid(),
+        'branch_store_id' => $fixture['store']->id, 'base_quantity' => '9'], $warehouse)->assertOk();
     $this->withHeader('Idempotency-Key', (string) Str::uuid())->postJson(route('admin.production.runs.complete', $run))->assertOk();
     $run->refresh();
-    $replacement = $run->inventoryDocuments()->where('status', InventoryDocument::StatusPosted)->where('document_type', InventoryDocument::TypeProductionReceipt)->sole();
+    $replacement = $run->lineInventoryDocuments()->where('status', InventoryDocument::StatusPosted)->where('document_type', InventoryDocument::TypeProductionReceipt)->sole();
     expect($run->financial_period_id)->toBe($fixture['period']->id)->and($run->actual_end_at->toDateTimeString())->toBe($ended)
         ->and($run->status)->toBe(ProductionRun::StatusCompleted)->and($run->received_base_quantity)->toBe('9.00000000')
         ->and($replacement->financial_period_id)->toBe($fixture['target']->id)->and($replacement->document_date->toDateString())->toBe('2026-10-04')
@@ -97,13 +106,14 @@ test('completed production from a closed period reverses and recompletes through
         expect($reconciliation['wip']['difference'])->toBe('0.0000')->and($reconciliation['finished_goods']['difference'])->toBe('0.0000');
         expect($reconciliation['production_waste']['subledger'])->toBe('2.0000')->and($reconciliation['production_waste']['difference'])->toBe('0.0000');
     }
-    $second = app(ProductionRunCorrectionService::class)->preview($run);
+    expect(app(ProductionRunCorrectionService::class)->preview($run)['blockers'])
+        ->toContain(__('production_handover.receipts_must_be_corrected'));
     $this->withHeader('Idempotency-Key', (string) Str::uuid())->postJson(route('admin.production.runs.corrections.store', $run), [
-        ...$fixture['payload'], 'fingerprint' => $second['fingerprint'], 'reason' => 'SYNTHETIC next correction review',
+        ...$fixture['payload'], 'reason' => 'SYNTHETIC next correction review',
     ])->assertForbidden();
     $this->actingAs($fixture['user'])->withSession($fixture['session'])->postJson(route('admin.production.runs.corrections.store', $run), [
-        ...$fixture['payload'], 'fingerprint' => $second['fingerprint'], 'reason' => 'SYNTHETIC next correction review',
-    ])->assertOk();
+        ...$fixture['payload'], 'reason' => 'SYNTHETIC owner receipt correction must run first',
+    ])->assertUnprocessable();
 });
 
 test('later production approval refuses target closure context change or revoked later privilege without changing original effects', function (string $failure): void {

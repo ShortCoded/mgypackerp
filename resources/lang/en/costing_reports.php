@@ -26,6 +26,9 @@ return [
         'allocation_analysis' => ['title' => 'Allocation Analysis', 'description' => 'Trace posted and draft overhead pools from source journals through allocation runs to production targets.'],
     ],
     'columns' => [
+        'stage_loss_cost' => 'Recognized abnormal output loss',
+        'stage_held_output_cost' => 'Held rejected / rework output cost',
+
         'run' => 'Production run',
         'work_order' => 'Production order',
         'sales_order' => 'Sales order',

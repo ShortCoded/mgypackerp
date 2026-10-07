@@ -83,6 +83,19 @@ class ProductionMaterialRequest extends Model
         return $this->run()->whereNotIn('status', [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled])->exists();
     }
 
+    public function canCancelUnissued(): bool
+    {
+        if ($this->trashed() || ! in_array($this->status, [self::StatusDraft, self::StatusSubmitted,
+            self::StatusApproved, self::StatusShortage, self::StatusRejected], true)
+            || $this->purchase_requisition_id !== null || $this->lines()->where('issued_quantity', '>', 0)->exists()) {
+            return false;
+        }
+
+        return ! DB::table('inventory_documents')->where('production_material_request_id', $this->getKey())->exists()
+            && ! DB::table('inventory_document_lines')
+                ->whereIn('production_material_request_line_id', $this->lines()->select('id'))->exists();
+    }
+
     public function resolveRouteBinding($value, $field = null): ?self
     {
         $context = app(OperatingContextService::class)->snapshot(request());

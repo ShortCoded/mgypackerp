@@ -100,7 +100,7 @@ return [
         'discount_value' => 'قيمة الخصم',
         'discount_amount' => 'مبلغ الخصم',
         'revision_discount' => 'خصم المستند',
-        'tax_rate' => 'نسبة الضريبة',
+        'tax_rate' => 'نسبة الضريبة (%)',
         'tax_amount' => 'مبلغ الضريبة',
         'subtotal' => 'الإجمالي الفرعي',
         'total' => 'الإجمالي',

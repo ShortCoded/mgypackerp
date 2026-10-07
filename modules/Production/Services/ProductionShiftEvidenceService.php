@@ -17,9 +17,9 @@ use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\HR\Models\HrEmployee;
+use Modules\HR\Models\HrShift;
 use Modules\Production\Models\ProductionMachine;
 use Modules\Production\Models\ProductionRun;
-use Modules\Production\Models\ProductionShift;
 
 class ProductionShiftEvidenceService
 {
@@ -28,28 +28,23 @@ class ProductionShiftEvidenceService
     public const TextFields = ['product_size', 'bag_type', 'bag_size', 'carton_type', 'carton_size', 'cover_components'];
 
     /** @param array<string, mixed> $data */
-    public function saveDefaults(ProductionRun $run, array $data): ProductionShift
+    public function saveDefaults(ProductionRun $run, array $data): HrShift
     {
-        return DB::transaction(function () use ($run, $data): ProductionShift {
+        return DB::transaction(function () use ($run, $data): HrShift {
             Gate::authorize('production.runs.setup');
             $locked = $this->lockedRun($run);
+            if (in_array($locked->status, [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled], true)) {
+                throw new DomainException(__('production_execution.messages.material_request_run_closed'));
+            }
             $equipment = $this->equipment($locked);
             $crew = $this->crew($locked, $data['crew'] ?? [], now()->toDateString());
-            $shift = ProductionShift::query()->where('company_id', $locked->company_id)->where('branch_id', $locked->branch_id)->where('code', $data['shift_code'])->lockForUpdate()->first();
-            if ($shift !== null && ! $shift->is_active) {
-                throw new DomainException(__('production_execution.shift_evidence.shift_invalid'));
-            }
-            if ($shift === null) {
-                $shift = ProductionShift::query()->create(['company_id' => $locked->company_id, 'branch_id' => $locked->branch_id,
-                    'code' => $data['shift_code'], 'name' => $data['shift_name'], 'starts_at' => $data['starts_at'], 'ends_at' => $data['ends_at']]);
-            } elseif ($shift->name !== $data['shift_name'] || substr($shift->starts_at, 0, 5) !== $data['starts_at'] || substr($shift->ends_at, 0, 5) !== $data['ends_at']) {
-                throw new DomainException(__('production_execution.shift_evidence.shift_definition_changed'));
-            }
-            $key = ['company_id' => $locked->company_id, 'branch_id' => $locked->branch_id, 'production_shift_id' => $shift->id,
+            $shift = $this->hrShift((int) $data['hr_shift_id']);
+            $key = ['company_id' => $locked->company_id, 'branch_id' => $locked->branch_id, 'hr_shift_id' => $shift->id,
                 'fixed_asset_id' => $equipment['fixed_asset_id'], 'production_machine_id' => $equipment['production_machine_id']];
             $prior = DB::table('production_shift_crews')->where($key)->first();
             DB::table('production_shift_crews')->updateOrInsert($key, ['crew_snapshot' => json_encode($crew, JSON_THROW_ON_ERROR),
                 'updated_by' => auth()->id(), 'updated_at' => now(), 'created_at' => $prior?->created_at ?? now()]);
+            $locked->update(['uses_hr_shift_evidence' => true]);
             $this->audit($locked, 'production.shift.defaults_saved', ['shift_id' => $shift->id, 'equipment' => $equipment, 'crew' => $crew]);
 
             return $shift;
@@ -57,23 +52,23 @@ class ProductionShiftEvidenceService
     }
 
     /** @param array<string, mixed> $data */
-    public function record(ProductionRun $run, array $data): object
+    public function record(ProductionRun $run, array $data, bool $dailySheet = false): object
     {
-        return DB::transaction(function () use ($run, $data): object {
+        return DB::transaction(function () use ($run, $data, $dailySheet): object {
             Gate::authorize('production.runs.progress');
             $locked = $this->lockedRun($run);
             if (! in_array($locked->status, [ProductionRun::StatusRunning, ProductionRun::StatusHeld], true)) {
                 throw new DomainException(__('production_execution.shift_evidence.active_run_required'));
             }
-            $shift = ProductionShift::query()->where('company_id', $locked->company_id)->where('branch_id', $locked->branch_id)->where('is_active', true)->find($data['production_shift_id']);
-            if ($shift === null) {
-                throw new DomainException(__('production_execution.shift_evidence.shift_invalid'));
-            }
+            $shift = $this->hrShift((int) $data['hr_shift_id']);
             $equipment = $this->equipment($locked);
             $date = CarbonImmutable::parse($data['work_date'])->toDateString();
             $start = CarbonImmutable::parse($data['started_at']);
             $end = filled($data['ended_at'] ?? null) ? CarbonImmutable::parse($data['ended_at']) : null;
-            if ($start->toDateString() !== $date || $start->isFuture() || ($locked->actual_start_at !== null && $start->lessThan($locked->actual_start_at))
+            $shiftDate = $shift->crosses_midnight && filled($shift->end_time) && $start->format('H:i:s') <= $shift->end_time
+                ? $start->subDay()->toDateString() : $start->toDateString();
+            if (! in_array($date, [$start->toDateString(), $shiftDate], true) || $start->isFuture() || ($locked->actual_start_at !== null && ($dailySheet && ($data['sheet_fields']['time_basis'] ?? null) === 'hr_schedule'
+                    ? $date < $locked->actual_start_at->toDateString() : $start->lessThan($locked->actual_start_at)))
                 || ($end !== null && ($end->isFuture() || $end->lessThan($start))) || $start->diffInHours($end ?? now()) > 24) {
                 throw new DomainException(__('production_execution.shift_evidence.time_invalid'));
             }
@@ -83,10 +78,16 @@ class ProductionShiftEvidenceService
             }
             $period = app(FinancialPeriodService::class)->resolveOpenForPostingDate((int) $locked->company_id, $date, lockForUpdate: true);
             $defaults = DB::table('production_shift_crews')->where(['company_id' => $locked->company_id, 'branch_id' => $locked->branch_id,
-                'production_shift_id' => $shift->id, 'fixed_asset_id' => $equipment['fixed_asset_id'], 'production_machine_id' => $equipment['production_machine_id']])->first();
+                'hr_shift_id' => $shift->id, 'fixed_asset_id' => $equipment['fixed_asset_id'], 'production_machine_id' => $equipment['production_machine_id']])->first();
             $submittedCrew = $data['crew'] ?? null;
-            $crew = $this->crew($locked, $submittedCrew ?? json_decode($defaults?->crew_snapshot ?? '[]', true, flags: JSON_THROW_ON_ERROR), $date);
+            $crewRows = $submittedCrew ?? json_decode($defaults?->crew_snapshot ?? '[]', true, flags: JSON_THROW_ON_ERROR);
+            $crew = $dailySheet && $crewRows === [] ? [] : $this->crew($locked, $crewRows, $date);
             $fields = $data['sheet_fields'] ?? [];
+            if ($dailySheet) {
+                $fields['entry_source'] = 'daily_sheet';
+            } else {
+                unset($fields['entry_source'], $fields['time_basis']);
+            }
             $basis = (string) ($locked->orderLine->bom_snapshot['basis_base_quantity'] ?? '1');
             if (filled($fields['pack_ratio'] ?? null) && bccomp((string) $fields['pack_ratio'], $basis, 8) !== 0) {
                 throw new DomainException(__('production_execution.shift_evidence.pack_ratio_mismatch'));
@@ -96,16 +97,19 @@ class ProductionShiftEvidenceService
                 throw new DomainException(__('production_execution.evidence.policy_invalid'));
             }
             $fields = [...$fields, 'basis_base_quantity' => $basis, 'basis_unit_name' => $locked->orderLine->bom_snapshot['basis_unit_name'] ?? $locked->unit?->name,
-                'product_name' => $locked->product?->name, 'shift_name' => $shift->name, 'crew_source' => $submittedCrew === null ? 'default' : 'override'];
-            if ($this->entries($locked)->where('production_shift_id', $shift->id)->whereDate('work_date', $date)->exists()) {
+                'product_name' => $locked->product?->name, 'shift_name' => $shift->name,
+                'hr_shift_snapshot' => ['id' => $shift->id, 'doc_num' => $shift->doc_num, 'name' => $shift->name,
+                    'start_time' => $shift->start_time, 'end_time' => $shift->end_time, 'break_minutes' => $shift->break_minutes, 'crosses_midnight' => $shift->crosses_midnight], 'crew_source' => $crew === [] ? 'sheet_only' : ($submittedCrew === null ? 'default' : 'override')];
+            if ($this->entries($locked)->where('hr_shift_id', $shift->id)->whereDate('work_date', $date)->exists()) {
                 throw new DomainException(__('production_execution.shift_evidence.entry_exists'));
             }
             $id = DB::table('production_shift_entries')->insertGetId(['public_id' => (string) Str::uuid(), 'company_id' => $locked->company_id,
                 'branch_id' => $locked->branch_id, 'financial_period_id' => $period->id, 'production_run_id' => $locked->id,
-                'production_shift_id' => $shift->id, 'work_date' => $date, 'started_at' => $start, 'ended_at' => $end,
+                'hr_shift_id' => $shift->id, 'work_date' => $date, 'started_at' => $start, 'ended_at' => $end,
                 'downtime_minutes' => $data['downtime_minutes'] ?? '0', 'equipment_snapshot' => json_encode($equipment, JSON_THROW_ON_ERROR),
                 'crew_snapshot' => json_encode($crew, JSON_THROW_ON_ERROR), 'sheet_fields' => json_encode($fields, JSON_THROW_ON_ERROR),
                 'notes' => $data['notes'] ?? null, 'recorded_by' => auth()->id(), 'created_at' => now(), 'updated_at' => now()]);
+            $locked->update(['uses_hr_shift_evidence' => true]);
             $entry = $this->entries($locked)->where('id', $id)->first();
             $this->audit($locked, 'production.shift.entry_recorded', ['entry_id' => $id, 'crew_source' => $fields['crew_source'], 'work_date' => $date]);
 
@@ -113,14 +117,20 @@ class ProductionShiftEvidenceService
         });
     }
 
-    public function assertProgressEntry(ProductionRun $run, ?int $entryId): void
+    public function assertProgressEntry(ProductionRun $run, ?int $entryId, ?CarbonImmutable $recordedAt = null): void
     {
         if ($entryId === null) {
+            if ($run->uses_hr_shift_evidence) {
+                throw new DomainException(__('production_execution.shift_evidence.entry_required'));
+            }
+
             return;
         }
+        $at = $recordedAt ?? CarbonImmutable::now();
         $entry = $this->entries($run)->where('id', $entryId)->first();
-        if ($entry === null || CarbonImmutable::parse($entry->started_at)->isFuture()
-            || ($entry->ended_at !== null && CarbonImmutable::parse($entry->ended_at)->lessThan(now()))) {
+        if ($entry === null || $at->isFuture() || CarbonImmutable::parse($entry->started_at)->greaterThan($at)
+            || CarbonImmutable::parse($entry->started_at)->diffInHours($at) > 24
+            || ($entry->ended_at !== null && CarbonImmutable::parse($entry->ended_at)->lessThan($at))) {
             throw new DomainException(__('production_execution.shift_evidence.entry_invalid'));
         }
         $equipment = json_decode($entry->equipment_snapshot, true, flags: JSON_THROW_ON_ERROR);
@@ -173,7 +183,9 @@ class ProductionShiftEvidenceService
             }
             $rows = $progress->get($entry->id, collect());
             $entry->good_base_quantity = $rows->reduce(fn (string $sum, $row): string => bcadd($sum, (string) $row->good_base_quantity, 8), '0.00000000');
-            $entry->output_pieces = bcmul($entry->good_base_quantity, $entry->sheet_fields['basis_base_quantity'], 8);
+            $entry->has_quantity_corrections = $rows->contains(fn ($row): bool => $row->production_run_correction_id !== null);
+            $entry->output_pieces = ($entry->sheet_fields['entry_source'] ?? null) === 'daily_sheet'
+                ? ($entry->sheet_fields['actual_pieces'] ?? null) : bcmul($entry->good_base_quantity, $entry->sheet_fields['basis_base_quantity'], 8);
             $entry->scrap_weight_kg = $rows->reduce(fn (string $sum, $row): string => bcadd($sum, (string) ($row->production_scrap_weight_kg ?? '0'), 8), '0.00000000');
             $entry->notes_log = $rows->map(fn ($row): array => ['at' => $row->recorded_at, 'notes' => $row->notes, 'materials' => $row->material_evidence ?? []])->all();
             $entry->material_used = '0.00000000';
@@ -187,7 +199,7 @@ class ProductionShiftEvidenceService
                 }
             }
             $elapsed = $this->decimal(max(0, CarbonImmutable::parse($entry->started_at)->diffInMinutes($entry->ended_at ? CarbonImmutable::parse($entry->ended_at) : now())));
-            $entry->working_hours = bcdiv(bcsub((string) $elapsed, (string) $entry->downtime_minutes, 8), '60', 8);
+            $entry->working_hours = $entry->sheet_fields['working_hours'] ?? bcdiv(bcsub((string) $elapsed, (string) $entry->downtime_minutes, 8), '60', 8);
 
             return $entry;
         });
@@ -196,6 +208,27 @@ class ProductionShiftEvidenceService
     public function entries(ProductionRun $run): Builder
     {
         return DB::table('production_shift_entries')->where('company_id', $run->company_id)->where('branch_id', $run->branch_id)->where('production_run_id', $run->id);
+    }
+
+    public function hasDailyReports(ProductionRun $run): bool
+    {
+        return $this->entries($run)->where('sheet_fields->entry_source', 'daily_sheet')->exists();
+    }
+
+    public function pendingDailyReports(ProductionRun $run): bool
+    {
+        return $run->progressEntries()->whereNull('material_documents')->whereIn('production_shift_entry_id',
+            $this->entries($run)->where('sheet_fields->entry_source', 'daily_sheet')->select('id'))->exists();
+    }
+
+    private function hrShift(int $id): HrShift
+    {
+        $shift = HrShift::query()->where('status', 'active')->lockForUpdate()->find($id);
+        if ($shift === null) {
+            throw new DomainException(__('production_execution.shift_evidence.shift_invalid'));
+        }
+
+        return $shift;
     }
 
     /** @param list<array<string, mixed>> $rows @return list<array<string, mixed>> */
@@ -248,6 +281,8 @@ class ProductionShiftEvidenceService
             || (int) $locked->financial_period_id !== (int) $context['financial_period_id']) {
             throw new DomainException(__('production_execution.messages.operating_context_required'));
         }
+
+        app(ProductionReceiptCancellationService::class)->assertManufacturingAllowed($locked);
 
         return $locked;
     }

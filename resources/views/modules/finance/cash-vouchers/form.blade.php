@@ -39,6 +39,9 @@
 @section('title', $title)
 
 @section('content')
+@if($mode === 'view' && request()->boolean('review_cancellation'))
+    <div class="alert alert-info">{{ __('cancellation_review.owner_navigation') }}</div>
+@endif
 @if($record?->exists) @include('modules.purchases.procurement.document-cycle', ['record' => $record]) @endif
 <form class="js-finance-form js-crud-form js-cash-voucher-form"
     action="{{ $action }}"

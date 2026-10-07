@@ -5,6 +5,7 @@ namespace Modules\Purchases\Services;
 use DomainException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\BranchStore;
@@ -16,6 +17,7 @@ use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\OperatingScopeAccessService;
 use Modules\Finance\Models\BankAccount;
 use Modules\Finance\Models\CashVoucher;
 use Modules\Finance\Models\Cheque;
@@ -217,6 +219,44 @@ class ProcurementSettlementService
             $this->audit->record($locked, 'purchase_return.deleted');
 
             return $locked;
+        }, 3);
+    }
+
+    public function cancelDraftPurchaseReturn(PurchaseReturn $record, string $reason): PurchaseReturn
+    {
+        Gate::authorize('purchases.purchase_returns.cancel');
+
+        return DB::transaction(function () use ($record, $reason): PurchaseReturn {
+            $context = $this->context();
+            $company = Company::query()->lockForUpdate()->findOrFail($context['company_id']);
+            $return = PurchaseReturn::query()->lockForUpdate()->findOrFail($record->getKey());
+            $scope = app(OperatingScopeAccessService::class);
+            if ((int) $return->company_id !== $context['company_id'] || (int) $return->branch_id !== $context['branch_id']
+                || ! $scope->canAccessCompany(auth()->user(), $company)
+                || ! $scope->allowedBranchQuery(auth()->user(), [$company->doc_num])->whereKey($return->branch_id)->exists()
+                || ! $scope->allowedFinancialPeriodQuery(auth()->user(), [$company->doc_num])->whereKey($return->financial_period_id)->exists()
+                || ! $scope->allowedFinancialPeriodQuery(auth()->user(), [$company->doc_num], openOnly: true)->whereKey($context['financial_period_id'])->exists()) {
+                throw new DomainException(__('The purchase return is outside the active operating context.'));
+            }
+            $postingPeriod = app(FinancialPeriodService::class)->resolveOpenForPostingDate(
+                $context['company_id'], now()->toDateString(), $context['financial_period_id'], lockForUpdate: true,
+            );
+            if ($return->status === PurchaseReturn::StatusCancelled) {
+                return $return;
+            }
+            if (blank($reason) || mb_strlen($reason) > 1000 || $return->status !== PurchaseReturn::StatusDraft
+                || $return->posted_at !== null || $return->approved_at !== null || $return->journal_entry_id !== null
+                || $return->grni_reversal_journal_entry_id !== null || $return->reversal_journal_entry_id !== null
+                || InventoryTransaction::query()->where('source_type', PurchaseReturn::class)->where('source_id', $return->getKey())->exists()
+                || JournalEntry::query()->whereIn('source_type', ['purchase_return', 'grni_purchase_return'])->where('source_id', $return->getKey())->exists()) {
+                throw new DomainException(__('cancellation_review.return_draft_only'));
+            }
+            $return->forceFill(['status' => PurchaseReturn::StatusCancelled, 'cancelled_at' => now(), 'cancelled_by' => auth()->id(),
+                'cancel_reason' => trim($reason), 'updated_by' => auth()->id()])->save();
+            $this->audit->record($return, 'purchase_return.cancelled', ['reason' => trim($reason),
+                'source_financial_period_id' => $return->financial_period_id, 'cancellation_financial_period_id' => $postingPeriod->getKey()]);
+
+            return $return->refresh()->load('lines');
         }, 3);
     }
 

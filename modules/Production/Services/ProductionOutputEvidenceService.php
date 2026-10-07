@@ -72,12 +72,17 @@ class ProductionOutputEvidenceService
                 || $stages->contains(fn ($stage): bool => in_array($roles[$stage->public_id]['role'], ['quality', 'receipt'], true) && $stage->sequence <= $manufacturing->sequence)) {
                 throw new DomainException(__('production_execution.evidence.factory_structure_invalid'));
             }
-        } elseif (($lineStages->isNotEmpty() ? $lineStages : $stages)->count() > 1) {
-            throw new DomainException(__('production_execution.evidence.multistage_requires_review'));
         }
 
-        return ['version' => 1, 'requirements' => $policy, 'execution_structure' => $executionStructure, 'stage_roles' => $stageRoles,
+        $result = ['version' => 1, 'requirements' => $policy, 'execution_structure' => $executionStructure, 'stage_roles' => $stageRoles,
             'workflow_stage_fingerprint' => $executionStructure === self::StructureFactoryWorkflow ? $this->workflowStageFingerprint($run) : null];
+        if ($executionStructure === self::StructurePhysicalRoute && app(ProductionStageTransferService::class)->stages($run)->count() > 1) {
+            app(ProductionStageTransferService::class)->requireSchema();
+            $result['stage_transfer_version'] = 1;
+            $result['physical_stage_fingerprint'] = app(ProductionStageTransferService::class)->routeFingerprint($run);
+        }
+
+        return $result;
     }
 
     /**
@@ -101,6 +106,12 @@ class ProductionOutputEvidenceService
         }
         $good = $this->quantity($data['good_base_quantity'] ?? '0');
         $nextGood = bcadd((string) $run->good_base_quantity, $good, 8);
+        if (app(ProductionStageTransferService::class)->isManaged($run)) {
+            foreach (['rejected_base_quantity', 'rework_base_quantity', 'scrap_base_quantity'] as $field) {
+                $good = bcadd($good, $this->quantity($data[$field] ?? '0'), 8);
+                $nextGood = bcadd($nextGood, bcadd((string) $run->{$field}, $this->quantity($data[$field] ?? '0'), 8), 8);
+            }
+        }
         $resolved = [];
         foreach ($requirements as $publicId => $requirement) {
             $definition = $definitions[$publicId] ?? [];
@@ -130,11 +141,7 @@ class ProductionOutputEvidenceService
             if (bccomp($used, '0', 8) > 0 && bccomp($good, '0', 8) <= 0) {
                 throw new DomainException(__('production_execution.evidence.material_usage_requires_output'));
             }
-            $classification = $row['waste_classification'] ?? null;
-            if (bccomp($waste, '0', 8) > 0 && (! in_array($classification, ['process_scrap', 'packaging_loss', 'roll_trim', 'rejected_output'], true)
-                || blank($row['notes'] ?? null))) {
-                throw new DomainException(__('production_execution.evidence.waste_details_required'));
-            }
+            $wasteDetails = $this->wasteDetails($row, $waste);
             $available = bcsub(bcsub(bcadd((string) $requirement->issued_quantity, (string) $requirement->additional_issued_quantity, 8), (string) $requirement->returned_quantity, 8), bcadd((string) $requirement->consumed_quantity, (string) $requirement->waste_quantity, 8), 8);
             if (bccomp($used, '0', 8) < 0 || bccomp(bcadd($used, $waste, 8), $available, 8) > 0) {
                 throw new DomainException(__('production_execution.evidence.material_capacity_exceeded'));
@@ -147,14 +154,26 @@ class ProductionOutputEvidenceService
                 'unit_name' => $requirement->unit?->name,
                 'consumed_quantity' => $used,
                 'waste_quantity' => $waste,
-                'waste_classification' => bccomp($waste, '0', 8) > 0 ? $classification : null,
-                'notes' => filled($row['notes'] ?? null) ? trim($row['notes']) : null,
+                ...$wasteDetails,
                 'consumed_receipt_layer_ids' => array_map('intval', $row['consumed_receipt_layer_ids'] ?? []),
                 'waste_receipt_layer_ids' => array_map('intval', $row['waste_receipt_layer_ids'] ?? []),
             ];
         }
 
         return $resolved;
+    }
+
+    /** @param array<string, mixed> $row @return array{waste_classification: ?string, notes: ?string} */
+    public function wasteDetails(array $row, string $waste): array
+    {
+        $classification = $row['waste_classification'] ?? null;
+        if (bccomp($waste, '0', 8) > 0 && (! in_array($classification, ['process_scrap', 'packaging_loss', 'roll_trim', 'rejected_output'], true)
+            || blank($row['notes'] ?? null))) {
+            throw new DomainException(__('production_execution.evidence.waste_details_required'));
+        }
+
+        return ['waste_classification' => bccomp($waste, '0', 8) > 0 ? $classification : null,
+            'notes' => filled($row['notes'] ?? null) ? trim($row['notes']) : null];
     }
 
     public function quantity(mixed $value): string

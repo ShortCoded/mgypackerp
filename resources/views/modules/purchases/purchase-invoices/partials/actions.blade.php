@@ -8,6 +8,7 @@
         <span class="fas fa-ellipsis-h fs-10"></span>
     </button>
     <div class="dropdown-menu dropdown-menu-end py-2">
+    <x-document-owner-actions :record="$record" />
         @can('purchase_invoices.view')
             <a class="dropdown-item" href="{{ route('admin.purchases.purchase-invoices.show', $docNum) }}">
                 <span class="fas fa-eye me-2"></span>{{ __('common.actions.view') }}

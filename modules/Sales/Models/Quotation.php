@@ -3,6 +3,7 @@
 namespace Modules\Sales\Models;
 
 use App\Models\User;
+use App\Services\DocumentOwnerEffectProofService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -227,8 +228,9 @@ class Quotation extends Model
 
     public function canCancel(): bool
     {
-        return ! $this->trashed() && ! in_array($this->status, [self::StatusCancelled, self::StatusConverted], true)
-            && ! $this->salesOrders()->withTrashed()->exists();
+        return ! $this->trashed() && $this->status !== self::StatusCancelled
+            && ($this->status !== self::StatusConverted || $this->salesOrders()->withTrashed()->exists())
+            && ! app(DocumentOwnerEffectProofService::class)->quotationHasUnsettledEffects($this);
     }
 
     public function canIssueRevision(): bool

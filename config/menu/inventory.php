@@ -13,6 +13,14 @@ return [
         ],
         'children' => [
             [
+                'label' => 'inventory_handovers', 'title' => 'production_handover.warehouse_title', 'icon' => 'dolly',
+                'route' => 'admin.inventory.production-receipts.index', 'permission' => 'inventory.production_receipts.view',
+                'actions' => ['view' => 'inventory.production_receipts.view', 'create' => 'inventory.production_receipts.create',
+                    'approve' => 'inventory.production_receipts.approve', 'cancel' => 'inventory.production_receipts.cancel',
+                    'correct_prepare' => 'inventory.production_receipts.correct_prepare', 'correct_approve' => 'inventory.production_receipts.correct_approve'],
+                'active' => ['admin.inventory.production-receipts.*'], 'children' => [],
+            ],
+            [
                 'label' => 'inventory_stock_balance_inquiry',
                 'title' => 'Stock Balance Inquiry',
                 'icon' => 'search',

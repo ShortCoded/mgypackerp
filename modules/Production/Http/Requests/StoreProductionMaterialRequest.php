@@ -40,7 +40,8 @@ class StoreProductionMaterialRequest extends FormRequest
             'required_by_date' => ['nullable', 'date'],
             'submit_action' => ['nullable', Rule::in(['save', 'save_view', 'save_edit', 'save_back', 'save_clone'])],
             'lines' => ['nullable', 'array'],
-            'lines.*.requirement_id' => ['required', 'integer', 'distinct'],
+            'lines.*.requirement_id' => ['nullable', 'integer', 'distinct', 'required_without:lines.*.product_component_id'],
+            'lines.*.product_component_id' => ['nullable', 'integer', 'distinct', 'required_without:lines.*.requirement_id'],
             'lines.*.quantity' => ['nullable', 'numeric', 'gt:0'],
         ];
     }

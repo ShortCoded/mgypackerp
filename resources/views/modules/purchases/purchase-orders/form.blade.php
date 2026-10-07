@@ -639,6 +639,9 @@
             </td>
         </tr>
     </template>
+    @if($mode === 'view' && $record)
+    <x-document-cancellation-review :record="$record" />
+    @endif
 @endsection
 
 @push('scripts')

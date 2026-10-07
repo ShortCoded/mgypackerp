@@ -314,6 +314,7 @@
             </div>
         </div>
     </div>
+    <x-document-cancellation-review :record="$record" />
 @endsection
 
 @push('styles')<link rel="stylesheet" href="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/css/modules/Production/execution.css') }}">@endpush

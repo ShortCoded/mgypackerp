@@ -22,7 +22,7 @@
         $buttons[] = ['key' => 'represent', 'url' => route('admin.finance.cheques.represent', $record->doc_num), 'class' => 'btn-falcon-info'];
     }
     $canReverseClearing = $record->isIssued() && $record->status === \Modules\Finance\Models\Cheque::StatusCleared && auth()->user()?->can('cheques.mark_cleared');
-    $canCancel = (($record->isReceived() && in_array($record->status, ['received', 'deposited'], true)) || ($record->isIssued() && in_array($record->status, ['draft', 'issued', 'delivered', 'clearing_reversed'], true))) && auth()->user()?->can('cheques.cancel');
+    $canCancel = (($record->isReceived() && in_array($record->status, ['received', 'deposited', 'collection_reversed'], true)) || ($record->isIssued() && in_array($record->status, ['draft', 'issued', 'delivered', 'clearing_reversed'], true))) && auth()->user()?->can('cheques.cancel');
 @endphp
 
 @foreach($buttons as $button)
@@ -35,6 +35,10 @@
     <button type="button" class="btn btn-falcon-warning btn-sm js-cheque-reverse-clearing" data-url="{{ route('admin.finance.cheques.reverse-clearing', $record->doc_num) }}">
         {{ __('cheques.actions.reverse_clearing') }}
     </button>
+@endif
+
+@if($record->isReceived() && in_array($record->status, ['collected', 'collection_reversed'], true))
+<a class="btn btn-falcon-warning btn-sm" href="{{ route('admin.finance.cheques.collection-correction', $record->doc_num) }}">{{ __('cheque_collection_correction.title') }}</a>
 @endif
 
 @if($canCancel)

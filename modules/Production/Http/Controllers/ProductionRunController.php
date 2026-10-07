@@ -9,6 +9,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -24,6 +25,7 @@ use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\Core\Services\Select2ResponseService;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\HR\Models\HrEmployee;
+use Modules\HR\Models\HrShift;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Production\DataTables\ProductionExecutionDataTable;
 use Modules\Production\Http\Requests\ProductionShiftEvidenceRequest;
@@ -35,10 +37,14 @@ use Modules\Production\Models\ProductionOrderLine;
 use Modules\Production\Models\ProductionOrderStageSnapshot;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Models\ProductionRunBatch;
-use Modules\Production\Models\ProductionShift;
+use Modules\Production\Models\ProductionStageOutputCostOwner;
+use Modules\Production\Models\ProductionStageTransfer;
 use Modules\Production\Services\ProductionCorrectionContextService;
 use Modules\Production\Services\ProductionCycleService;
+use Modules\Production\Services\ProductionHandoverService;
 use Modules\Production\Services\ProductionShiftEvidenceService;
+use Modules\Production\Services\ProductionStageOutputCostService;
+use Modules\Production\Services\ProductionStageTransferService;
 
 class ProductionRunController extends Controller
 {
@@ -408,11 +414,37 @@ class ProductionRunController extends Controller
                 'requirements.product', 'requirements.unit', 'progressEntries', 'inspections.results',
                 'inventoryDocuments.journalEntry', 'materialRequests', 'expenseRequests',
             ]),
+            'batchRuns' => app(ProductionHandoverService::class)->runs($productionRun),
+            'linkedWarehouseDocuments' => InventoryDocument::query()->where('company_id', $productionRun->company_id)->where('branch_id', $productionRun->branch_id)
+                ->whereHas('lines', fn ($query) => $query->where('production_run_id', $productionRun->id))
+                ->whereIn('document_type', [InventoryDocument::TypeProductionHandover, InventoryDocument::TypeProductionReceipt])
+                ->orderByDesc('id')->paginate(20, pageName: 'documents_page'),
             'stores' => BranchStore::query()->where('branch_id', $productionRun->branch_id)->orderBy('position')->get(),
             'shiftEntries' => Schema::hasTable('production_shift_entries') ? app(ProductionShiftEvidenceService::class)->report($productionRun) : collect(),
-            'productionShifts' => ProductionShift::query()->where('company_id', $productionRun->company_id)->where('branch_id', $productionRun->branch_id)->where('is_active', true)->get(),
+            'hrShifts' => HrShift::query()->where('status', 'active')->orderBy('name')->get(),
             'workers' => HrEmployee::withTrashed()->where('company_id', $productionRun->company_id)->where('branch_id', $productionRun->branch_id)
                 ->whereIn('id', collect(old('labor_details', $productionRun->labor_details ?? []))->pluck('employee_id'))->get()->keyBy('id'),
+        ]);
+    }
+
+    public function operation(Request $request, ProductionRun $productionRun, string $operation): View
+    {
+        $permissions = ['setup' => 'production.runs.setup', 'reserve' => 'production.runs.reserve', 'issue' => 'production.runs.issue',
+            'return' => 'production.runs.issue', 'account' => 'production.runs.account_materials', 'labor' => 'production.runs.labor',
+            'complete' => 'production.runs.complete', 'cancel' => 'production.runs.cancel', 'crew' => 'production.runs.setup',
+            'checklist' => 'production.orders.release'];
+        abort_unless(isset($permissions[$operation]), 404);
+        Gate::authorize($permissions[$operation]);
+        $this->assertRunInCurrentContext($request, $productionRun);
+        $record = $productionRun->load(['order', 'orderLine', 'product', 'unit', 'requirements.product', 'requirements.unit', 'progressEntries', 'order.orderStageSnapshots']);
+        $workers = HrEmployee::withTrashed()->where('company_id', $record->company_id)->where('branch_id', $record->branch_id)
+            ->whereIn('id', collect(old('labor_details', $record->labor_details ?? []))->pluck('employee_id'))->get()->keyBy('id');
+        $dailyEntries = $record->progressEntries()->whereNull('material_documents')->whereIn('production_shift_entry_id',
+            app(ProductionShiftEvidenceService::class)->entries($record)->where('sheet_fields->entry_source', 'daily_sheet')->select('id'))->orderBy('recorded_at')->get();
+
+        return view('modules.production.runs.operation', compact('record', 'operation', 'workers', 'dailyEntries') + [
+            'stores' => BranchStore::query()->where('branch_id', $record->branch_id)->orderBy('position')->get(),
+            'hrShifts' => HrShift::query()->where('status', 'active')->orderBy('name')->get(),
         ]);
     }
 
@@ -440,6 +472,14 @@ class ProductionRunController extends Controller
                 ->orderBy('id')
                 ->get(),
         ]);
+    }
+
+    public function createBatchIssue(Request $request, ProductionRunBatch $productionRunBatch): View
+    {
+        Gate::authorize('production.runs.issue');
+        $view = $this->showBatch($request, $productionRunBatch);
+
+        return view('modules.production.runs.batch-issue', $view->getData());
     }
 
     public function issueBatch(Request $request, ProductionRunBatch $productionRunBatch): JsonResponse|RedirectResponse
@@ -627,12 +667,174 @@ class ProductionRunController extends Controller
             str('production-shift-'.$productionRun->run_number)->slug().'.pdf', 'L');
     }
 
+    public function stageTransfers(Request $request, ProductionRun $productionRun): View
+    {
+        $this->assertRunInCurrentContext($request, $productionRun);
+        $service = app(ProductionStageTransferService::class);
+        $stages = $service->stages($productionRun);
+        $index = $stages->search(fn ($stage): bool => (int) $stage->id === (int) $productionRun->production_order_stage_snapshot_id);
+        $next = $index === false ? null : $stages->get($index + 1);
+        $targets = ProductionRun::query()->where('company_id', $productionRun->company_id)->where('branch_id', $productionRun->branch_id)
+            ->where('financial_period_id', $productionRun->financial_period_id)->where('production_order_line_id', $productionRun->production_order_line_id)
+            ->where('production_order_stage_snapshot_id', $next?->id ?? 0)->whereNotIn('status', [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled])->orderBy('id')->get();
+        $target = $targets->firstWhere('id', $request->integer('target')) ?? ($targets->count() === 1 ? $targets->first() : null);
+        $preview = null;
+        $blocker = null;
+        $ready = Schema::hasTable('production_stage_transfers');
+        if (! $ready) {
+            $blocker = __('production_stage_transfer.migration_required');
+        } elseif ($target !== null && $service->isManaged($productionRun) && $service->isManaged($target)) {
+            try {
+                $preview = $service->preview($productionRun, $target);
+            } catch (DomainException $exception) {
+                $blocker = $exception->getMessage();
+            }
+        }
+        $transfers = $ready ? ProductionStageTransfer::query()->where('company_id', $productionRun->company_id)
+            ->where(fn ($query) => $query->where('source_run_id', $productionRun->id)->orWhere('target_run_id', $productionRun->id))
+            ->with(['sourceRun', 'targetRun'])->latest('id')->paginate(20) : null;
+
+        return view('modules.production.runs.stage-transfers', ['record' => $productionRun, 'targets' => $targets,
+            'target' => $target, 'preview' => $preview, 'blocker' => $blocker, 'transfers' => $transfers, 'schemaReady' => $ready]);
+    }
+
+    public function prepareStageTransfer(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
+    {
+        $this->assertRunInCurrentContext($request, $productionRun);
+        $data = $request->validate(['target_run_id' => ['required', 'integer', 'min:1'], 'base_quantity' => ['required', 'numeric', 'gt:0', 'decimal:0,8'],
+            'reason' => ['required', 'string', 'min:5', 'max:2000'], 'evidence' => ['required', 'string', 'min:5', 'max:2000'],
+            'fingerprint' => ['required', 'string', 'size:64'], '_submission_token' => ['required', 'uuid']]);
+        $target = ProductionRun::query()->where('company_id', $productionRun->company_id)->where('branch_id', $productionRun->branch_id)
+            ->where('financial_period_id', $productionRun->financial_period_id)->findOrFail($data['target_run_id']);
+        $owner = $this->guard(fn () => app(ProductionStageTransferService::class)->prepare($productionRun, $target,
+            (string) $data['base_quantity'], $data['reason'], $data['evidence'], $data['fingerprint'], $data['_submission_token']));
+
+        return $this->respond($request, ['transfer_id' => $owner->id], route('admin.production.runs.stage-transfers.index', $productionRun));
+    }
+
+    public function approveStageTransfer(Request $request, ProductionRun $productionRun, ProductionStageTransfer $transfer): JsonResponse|RedirectResponse
+    {
+        $this->assertRunInCurrentContext($request, $productionRun);
+        abort_unless(in_array((int) $productionRun->id, [(int) $transfer->source_run_id, (int) $transfer->target_run_id], true), 404);
+        $owner = $this->guard(fn () => app(ProductionStageTransferService::class)->approve($transfer));
+
+        return $this->respond($request, ['transfer_id' => $owner->id], route('admin.production.runs.stage-transfers.index', $productionRun));
+    }
+
+    public function rejectStageTransfer(Request $request, ProductionRun $productionRun, ProductionStageTransfer $transfer): JsonResponse|RedirectResponse
+    {
+        $this->assertRunInCurrentContext($request, $productionRun);
+        abort_unless(in_array((int) $productionRun->id, [(int) $transfer->source_run_id, (int) $transfer->target_run_id], true), 404);
+        $data = $request->validate(['reason' => ['required', 'string', 'min:5', 'max:2000']]);
+        $owner = $this->guard(fn () => app(ProductionStageTransferService::class)->reject($transfer, $data['reason']));
+
+        return $this->respond($request, ['transfer_id' => $owner->id], route('admin.production.runs.stage-transfers.index', $productionRun));
+    }
+
+    public function reverseStageTransfer(Request $request, ProductionRun $productionRun, ProductionStageTransfer $transfer): JsonResponse|RedirectResponse
+    {
+        $this->assertRunInCurrentContext($request, $productionRun);
+        abort_unless(in_array((int) $productionRun->id, [(int) $transfer->source_run_id, (int) $transfer->target_run_id], true), 404);
+        $data = $request->validate(['reason' => ['required', 'string', 'min:5', 'max:2000']]);
+        $owner = $this->guard(fn () => app(ProductionStageTransferService::class)->reverse($transfer, $data['reason']));
+
+        return $this->respond($request, ['transfer_id' => $owner->id], route('admin.production.runs.stage-transfers.index', $productionRun));
+    }
+
+    public function stageOutputCosts(Request $request, ProductionRun $productionRun): View
+    {
+        $this->assertRunInCurrentContext($request, $productionRun);
+        $service = app(ProductionStageOutputCostService::class);
+        $preview = null;
+        $blocker = null;
+        $ready = Schema::hasTable('production_stage_output_cost_owners');
+        try {
+            $preview = $service->preview($productionRun);
+        } catch (DomainException $exception) {
+            $blocker = $exception->getMessage();
+        }
+        $owners = $ready ? ProductionStageOutputCostOwner::query()->where('company_id', $productionRun->company_id)
+            ->where('production_run_id', $productionRun->id)->latest('id')->paginate(20) : null;
+        $active = $ready ? ProductionStageOutputCostOwner::query()->where('company_id', $productionRun->company_id)
+            ->where('production_run_id', $productionRun->id)->where('kind', 'allocation')->where('status', 'posted')->first() : null;
+        $recovery = $active === null ? null : $this->guard(fn () => $service->recoveryPreview($active));
+        $quality = $productionRun->inspections()->whereNull('production_quality_output_batch_id')
+            ->whereIn('status', ['approved', 'closed'])->whereNotNull('approved_at')->orderByDesc('id')->limit(100)->get();
+
+        return view('modules.production.runs.stage-output-costs', ['record' => $productionRun, 'preview' => $preview, 'blocker' => $blocker,
+            'owners' => $owners, 'activeOwner' => $active, 'recovery' => $recovery, 'quality' => $quality]);
+    }
+
+    public function prepareStageOutputCosts(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
+    {
+        $this->assertRunInCurrentContext($request, $productionRun);
+        $data = $request->validate(['scrap_treatment' => ['required', Rule::in(['none', 'normal', 'abnormal'])], 'completed_stage_units' => ['accepted'],
+            'quality_ids' => ['nullable', 'array:rejected,rework,scrap'], 'quality_ids.*' => ['nullable', 'integer', 'min:1'],
+            'reason' => ['required', 'string', 'min:5', 'max:2000'], 'evidence' => ['required', 'string', 'min:5', 'max:2000'],
+            'fingerprint' => ['required', 'string', 'size:64'], '_submission_token' => ['required', 'uuid']]);
+        $qualityIds = [];
+        foreach (['rejected', 'rework', 'scrap'] as $kind) {
+            if (filled($data['quality_ids'][$kind] ?? null)) {
+                $qualityIds[$kind] = (int) $data['quality_ids'][$kind];
+            }
+        }
+        $owner = $this->guard(fn () => app(ProductionStageOutputCostService::class)->prepareAllocation($productionRun,
+            $data['scrap_treatment'], $request->boolean('completed_stage_units'), $qualityIds, $data['reason'], $data['evidence'], $data['fingerprint'], $data['_submission_token']));
+
+        return $this->respond($request, ['owner_id' => $owner->id], route('admin.production.runs.stage-output-costs.index', $productionRun));
+    }
+
+    public function prepareStageOutputRecovery(Request $request, ProductionRun $productionRun, ProductionStageOutputCostOwner $outputOwner): JsonResponse|RedirectResponse
+    {
+        $this->assertRunInCurrentContext($request, $productionRun);
+        abort_unless((int) $outputOwner->production_run_id === (int) $productionRun->id, 404);
+        $data = $request->validate(['output_kind' => ['required', Rule::in(['rejected', 'rework'])], 'base_quantity' => ['required', 'numeric', 'gt:0', 'decimal:0,8'],
+            'quality_inspection_id' => ['required', 'integer', 'min:1'], 'reason' => ['required', 'string', 'min:5', 'max:2000'],
+            'evidence' => ['required', 'string', 'min:5', 'max:2000'], 'fingerprint' => ['required', 'string', 'size:64'], '_submission_token' => ['required', 'uuid']]);
+        $owner = $this->guard(fn () => app(ProductionStageOutputCostService::class)->prepareRecovery($outputOwner, $data['output_kind'], (string) $data['base_quantity'],
+            (int) $data['quality_inspection_id'], $data['reason'], $data['evidence'], $data['fingerprint'], $data['_submission_token']));
+
+        return $this->respond($request, ['owner_id' => $owner->id], route('admin.production.runs.stage-output-costs.index', $productionRun));
+    }
+
+    public function approveStageOutputCosts(Request $request, ProductionRun $productionRun, ProductionStageOutputCostOwner $outputOwner): JsonResponse|RedirectResponse
+    {
+        $this->assertRunInCurrentContext($request, $productionRun);
+        abort_unless((int) $outputOwner->production_run_id === (int) $productionRun->id, 404);
+        $owner = $this->guard(fn () => app(ProductionStageOutputCostService::class)->approve($outputOwner));
+
+        return $this->respond($request, ['owner_id' => $owner->id], route('admin.production.runs.stage-output-costs.index', $productionRun));
+    }
+
+    public function rejectStageOutputCosts(Request $request, ProductionRun $productionRun, ProductionStageOutputCostOwner $outputOwner): JsonResponse|RedirectResponse
+    {
+        $this->assertRunInCurrentContext($request, $productionRun);
+        abort_unless((int) $outputOwner->production_run_id === (int) $productionRun->id, 404);
+        $data = $request->validate(['reason' => ['required', 'string', 'min:5', 'max:2000']]);
+        $owner = $this->guard(fn () => app(ProductionStageOutputCostService::class)->reject($outputOwner, $data['reason']));
+
+        return $this->respond($request, ['owner_id' => $owner->id], route('admin.production.runs.stage-output-costs.index', $productionRun));
+    }
+
+    public function reverseStageOutputCosts(Request $request, ProductionRun $productionRun, ProductionStageOutputCostOwner $outputOwner): JsonResponse|RedirectResponse
+    {
+        $this->assertRunInCurrentContext($request, $productionRun);
+        abort_unless((int) $outputOwner->production_run_id === (int) $productionRun->id, 404);
+        $data = $request->validate(['reason' => ['required', 'string', 'min:5', 'max:2000']]);
+        $owner = $this->guard(fn () => app(ProductionStageOutputCostService::class)->reverse($outputOwner, $data['reason']));
+
+        return $this->respond($request, ['owner_id' => $owner->id], route('admin.production.runs.stage-output-costs.index', $productionRun));
+    }
+
     public function outputEvidence(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
         $this->assertRunInCurrentContext($request, $productionRun);
+        if (! $request->has('requirements') && ! $productionRun->requirements()->exists()) {
+            $request->merge(['requirements' => []]);
+        }
         $data = $request->validate([
             'execution_structure' => ['required', Rule::in(['physical_route', 'factory_workflow'])],
-            'requirements' => ['required', 'array', 'min:1'],
+            'requirements' => ['present', 'array'],
             'requirements.*.requirement_public_id' => ['required', 'uuid', 'distinct'],
             'requirements.*.basis' => ['required', Rule::in(['output_components', 'measured_material'])],
             'stage_roles' => ['nullable', 'array'],
@@ -659,6 +861,7 @@ class ProductionRunController extends Controller
         $this->assertRunInCurrentContext($request, $productionRun);
         $data = $request->validate([
             'good_base_quantity' => ['nullable', 'numeric', 'min:0'],
+            'stage_input_base_quantity' => ['nullable', 'numeric', 'min:0', 'decimal:0,8'],
             'rejected_base_quantity' => ['nullable', 'numeric', 'min:0'],
             'rework_base_quantity' => ['nullable', 'numeric', 'min:0'],
             'scrap_base_quantity' => ['nullable', 'numeric', 'min:0'],
@@ -700,10 +903,13 @@ class ProductionRunController extends Controller
         $validated = $request->validate([
             'branch_store_id' => ['required', 'integer', 'exists:branch_stores,id'],
             'warehouse_location_id' => ['prohibited'],
+            'daily_progress_public_id' => ['nullable', 'uuid'],
             'lines' => ['required', 'array', 'min:1'],
-            'lines.*.requirement_id' => ['required', 'integer', 'exists:production_material_requirements,id'],
+            'lines.*.requirement_id' => ['required', 'integer', 'distinct', 'exists:production_material_requirements,id'],
             'lines.*.consumed_quantity' => ['required', 'numeric', 'min:0'],
             'lines.*.waste_quantity' => ['required', 'numeric', 'min:0'],
+            'lines.*.waste_classification' => ['nullable', Rule::in(['process_scrap', 'packaging_loss', 'roll_trim', 'rejected_output'])],
+            'lines.*.notes' => ['nullable', 'string', 'max:1000'],
             'lines.*.consumed_receipt_layer_ids' => ['nullable', 'array', 'max:10000'],
             'lines.*.consumed_receipt_layer_ids.*' => ['required', 'integer', 'min:1', 'distinct'],
             'lines.*.waste_receipt_layer_ids' => ['nullable', 'array', 'max:10000'],
@@ -713,15 +919,20 @@ class ProductionRunController extends Controller
             $line['requirement_id'] => [
                 'consumed_quantity' => $line['consumed_quantity'],
                 'waste_quantity' => $line['waste_quantity'],
+                'waste_classification' => $line['waste_classification'] ?? null,
+                'notes' => $line['notes'] ?? null,
                 'consumed_receipt_layer_ids' => $line['consumed_receipt_layer_ids'] ?? [],
                 'waste_receipt_layer_ids' => $line['waste_receipt_layer_ids'] ?? [],
             ],
         ])->all();
+        $dailyProgress = filled($validated['daily_progress_public_id'] ?? null)
+            ? $productionRun->progressEntries()->where('public_id', $validated['daily_progress_public_id'])->firstOrFail() : null;
         $documents = $this->guard(fn (): array => $this->cycle->accountMaterials(
             $productionRun,
             $validated['branch_store_id'],
             $accounting,
             null,
+            $dailyProgress,
         ));
 
         return $this->respond($request, collect($documents)->map->doc_num->all(), route('admin.production.runs.show', $productionRun));
@@ -730,21 +941,7 @@ class ProductionRunController extends Controller
     public function receive(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse
     {
         $this->assertRunInCurrentContext($request, $productionRun);
-        $validated = $request->validate([
-            'branch_store_id' => ['required', 'integer', 'exists:branch_stores,id'],
-            'warehouse_location_id' => ['prohibited'],
-            'base_quantity' => ['required', 'numeric', 'gt:0'],
-            'serial_numbers' => ['nullable', 'string', 'max:1000000'],
-        ]);
-        $document = $this->guard(fn () => $this->cycle->receiveFinishedGoods(
-            $productionRun,
-            $validated['branch_store_id'],
-            (string) $validated['base_quantity'],
-            null,
-            array_values(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', $validated['serial_numbers'] ?? '')))),
-        ));
-
-        return $this->respond($request, ['doc_num' => $document->doc_num], route('admin.production.runs.show', $productionRun));
+        throw ValidationException::withMessages(['document' => __('production_handover.old_direct_receipt_disabled')]);
     }
 
     public function complete(Request $request, ProductionRun $productionRun): JsonResponse|RedirectResponse

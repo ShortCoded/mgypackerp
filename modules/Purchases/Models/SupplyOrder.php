@@ -3,6 +3,7 @@
 namespace Modules\Purchases\Models;
 
 use App\Models\User;
+use App\Services\DocumentOwnerEffectProofService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -75,6 +76,13 @@ class SupplyOrder extends Model
             ->where($field ?? $this->getRouteKeyName(), $value)
             ->where('company_id', $companyId)
             ->first();
+    }
+
+    public function canCancelSafely(): bool
+    {
+        return ! $this->trashed() && in_array($this->status, [self::StatusDraft, self::StatusIssued,
+            self::StatusPartiallyReceived, self::StatusFullyReceived, self::StatusClosed], true)
+            && ! app(DocumentOwnerEffectProofService::class)->supplyOrderHasUnsettledEffects($this);
     }
 
     public function fulfillmentStatus(): string

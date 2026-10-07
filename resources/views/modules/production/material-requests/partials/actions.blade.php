@@ -11,6 +11,7 @@
 <div class="dropstart font-sans-serif position-static d-inline-block">
     <button class="btn btn-link text-600 btn-sm dropdown-toggle btn-reveal float-end" type="button" data-bs-toggle="dropdown" data-bs-boundary="viewport" data-bs-reference="parent" aria-expanded="false" aria-label="{{ __('common.fields.actions') }}"><span class="fas fa-ellipsis-h fs-10"></span></button>
     <div class="py-2 border dropdown-menu dropdown-menu-end">
+            <x-document-owner-actions :record="$record" />
         @if($canView)<a class="dropdown-item" href="{{ route('admin.production.material-requests.show', $record) }}">{{ __('common.actions.view') }}</a>@endif
         @if($canEdit)<a class="dropdown-item" href="{{ route('admin.production.material-requests.edit', $record) }}">{{ __('common.actions.edit') }}</a>@endif
         @if($canClone)<a class="dropdown-item" href="{{ route('admin.production.material-requests.clone', $record) }}">{{ __('common.actions.clone_record') }}</a>@endif

@@ -1192,18 +1192,36 @@ test('a production batch issues only available BOM materials for all included pr
         ]))
         ->assertOk()
         ->assertJsonCount(2, 'data.outputs');
-    $receiptResponse = $this->actingAs($fixture['user'])->withSession($session)
+    $this->actingAs($fixture['user'])->withSession($session)
         ->postJson($issueUrl, [
             '_submission_token' => (string) Str::uuid(),
             'document_type' => InventoryDocument::TypeReceipt,
             'branch_store_uuid' => $fixture['store']->public_uuid,
             'production_run_batch_public_id' => $batch->public_id,
-        ])
-        ->assertCreated();
-    $receiptDocuments = InventoryDocument::query()->whereIn('doc_num', data_get($receiptResponse->json(), 'data.doc_nums'))->get();
-    expect($receiptDocuments)->toHaveCount(2)
-        ->and($receiptDocuments->every(fn (InventoryDocument $receipt): bool => $receipt->document_type === InventoryDocument::TypeProductionReceipt
-            && (int) $receipt->production_run_batch_id === (int) $batch->getKey()))->toBeTrue();
+        ])->assertUnprocessable();
+    foreach (['production.handovers.create', 'production.handovers.approve'] as $permission) {
+        $fixture['user']->givePermissionTo(Permission::findOrCreate($permission, 'web'));
+    }
+    $handoverResponse = $this->postJson(route('admin.production.handovers.store', $runs->first()), productionSubmission([
+        'branch_store_id' => $fixture['store']->id, 'document_date' => now()->toDateString(),
+        'lines' => $runs->map(fn (ProductionRun $run): array => ['run_public_id' => $run->public_id, 'quantity' => '1'])->all(),
+    ]))->assertOk();
+    $handover = InventoryDocument::query()->where('company_id', $fixture['company']->id)->where('doc_num', $handoverResponse->json('doc_num'))->sole();
+    $this->postJson(route('admin.production.handovers.approve', $handover), productionSubmission())->assertOk();
+    $warehouse = closureSyntheticUser();
+    foreach (['inventory.production_receipts.create', 'inventory.production_receipts.approve'] as $permission) {
+        $warehouse->givePermissionTo(Permission::findOrCreate($permission, 'web'));
+    }
+    $receiptResponse = $this->actingAs($warehouse)->withSession($session)->postJson(route('admin.inventory.production-receipts.store', $handover), productionSubmission([
+        'document_date' => now()->toDateString(),
+        'lines' => $handover->lines->map(fn ($line): array => ['line_public_id' => $line->public_id, 'quantity' => '1'])->all(),
+    ]))->assertOk();
+    $receipt = InventoryDocument::query()->where('company_id', $fixture['company']->id)->where('doc_num', $receiptResponse->json('doc_num'))->sole();
+    $this->postJson(route('admin.inventory.production-receipts.approve', $receipt), productionSubmission())->assertOk();
+    expect($receipt->fresh()->status)->toBe(InventoryDocument::StatusPosted)
+        ->and((int) $receipt->production_run_batch_id)->toBe((int) $batch->id)
+        ->and($receipt->lines)->toHaveCount(2)
+        ->and($receipt->lines->pluck('production_run_id')->sort()->values()->all())->toBe($runs->pluck('id')->sort()->values()->all());
     foreach ($runs as $run) {
         expect($cycle->completeRun($run->fresh())->status)->toBe(ProductionRun::StatusCompleted);
     }
@@ -2897,7 +2915,7 @@ test('canonical inventory and production pages use real routes and keep html ope
         ->get(route('admin.production.runs.show', $run))
         ->assertOk()
         ->assertSee('Additional Material Issue')
-        ->assertSee('Unused Material Return')
+        ->assertSee(__('production_daily_report.operations.return'))
         ->assertDontSee('In-Process Quality Sample')
         ->assertDontSee('ERP UI Shell');
     $runPdf = $this->actingAs($fixture['user'])
@@ -4194,6 +4212,8 @@ test('the browser run workflow auto generates and accounts a twenty five compone
         'production.runs.account_materials',
         'production.runs.receive',
         'production.runs.print',
+        'production.handovers.create',
+        'production.handovers.approve',
     ];
 
     foreach ($permissions as $permission) {
@@ -4310,15 +4330,26 @@ test('the browser run workflow auto generates and accounts a twenty five compone
         'branch_store_id' => $fixture['store']->getKey(),
         'lines' => $accountingLines,
     ])->assertRedirect();
-    $post('admin.production.runs.receive', [
-        'branch_store_id' => $fixture['store']->getKey(),
-        'base_quantity' => '1',
-    ])->assertRedirect();
-
-    $receipt = InventoryDocument::query()
-        ->where('production_run_id', $run->getKey())
-        ->where('document_type', InventoryDocument::TypeProductionReceipt)
-        ->firstOrFail();
+    $this->postJson(route('admin.production.runs.receive', $run), productionSubmission([
+        'branch_store_id' => $fixture['store']->id, 'base_quantity' => '1',
+    ]))->assertUnprocessable();
+    $this->post(route('admin.production.handovers.store', $run), productionSubmission([
+        'branch_store_id' => $fixture['store']->id, 'document_date' => now()->toDateString(),
+        'lines' => [['run_public_id' => $run->public_id, 'quantity' => '1']],
+    ]))->assertRedirect();
+    $handover = InventoryDocument::query()->where('company_id', $run->company_id)->where('production_run_id', $run->id)
+        ->where('document_type', InventoryDocument::TypeProductionHandover)->sole();
+    $this->post(route('admin.production.handovers.approve', $handover), productionSubmission())->assertRedirect();
+    $warehouse = closureSyntheticUser();
+    foreach (['inventory.production_receipts.create', 'inventory.production_receipts.approve'] as $permission) {
+        $warehouse->givePermissionTo(Permission::findOrCreate($permission, 'web'));
+    }
+    $this->actingAs($warehouse)->withSession($session)->post(route('admin.inventory.production-receipts.store', $handover), productionSubmission([
+        'document_date' => now()->toDateString(), 'lines' => [['line_public_id' => $handover->lines->sole()->public_id, 'quantity' => '1']],
+    ]))->assertRedirect();
+    $receipt = InventoryDocument::query()->where('company_id', $run->company_id)->where('source_document_type', InventoryDocument::class)
+        ->where('source_document_id', $handover->id)->where('document_type', InventoryDocument::TypeProductionReceipt)->sole();
+    $this->post(route('admin.inventory.production-receipts.approve', $receipt), productionSubmission())->assertRedirect();
 
     expect((float) $receipt->lines->first()->total_cost)->toBe(50.0)
         ->and($run->fresh()->received_base_quantity)->toBe('1.00000000');

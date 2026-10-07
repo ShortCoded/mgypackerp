@@ -10,6 +10,7 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Lang;
 use Illuminate\Support\Str;
 use Modules\Core\Models\CalendarEvent;
 use Modules\Core\Models\ChatConversation;
@@ -24,6 +25,41 @@ class NotificationService
         private readonly DateFormatService $dates,
         private readonly NotificationAccessService $access,
     ) {}
+
+    /** @return array{title: string, body: ?string} */
+    public function presentation(UserNotification|stdClass $notification): array
+    {
+        $original = ['title' => (string) $notification->title, 'body' => $notification->body];
+        $metadata = $notification->metadata ?? null;
+        if (is_string($metadata)) {
+            $metadata = json_decode($metadata, true);
+        }
+        if (! is_array($metadata) || blank($metadata['subject_type'] ?? null) || blank($metadata['document_number'] ?? null)) {
+            return $original;
+        }
+        $module = explode('.', (string) $notification->type, 2)[0];
+        $status = (string) ($metadata['status'] ?? '');
+        if ($notification->type !== $module.'.'.$status
+            || ! Lang::hasForLocale('notifications.modules.'.$module, 'en')
+            || ! Lang::hasForLocale('notifications.statuses.'.$status, 'en')) {
+            return $original;
+        }
+        foreach (['ar', 'en'] as $locale) {
+            $parameters = ['module' => Lang::get('notifications.modules.'.$module, [], $locale),
+                'status' => Lang::get('notifications.statuses.'.$status, [], $locale)];
+            if ($original['title'] === Lang::get('notifications.operational.title', $parameters, $locale)
+                && $original['body'] === Lang::get('notifications.operational.body', ['document' => $metadata['document_number']], $locale)) {
+                return ['title' => __('notifications.operational.title', ['module' => __('notifications.modules.'.$module), 'status' => __('notifications.statuses.'.$status)]),
+                    'body' => __('notifications.operational.body', ['document' => $metadata['document_number']])];
+            }
+            if ($original['title'] === Lang::get('notifications.operational.unassigned_title', [], $locale)
+                && $original['body'] === Lang::get('notifications.operational.unassigned_body', [], $locale)) {
+                return ['title' => __('notifications.operational.unassigned_title'), 'body' => __('notifications.operational.unassigned_body')];
+            }
+        }
+
+        return $original;
+    }
 
     /**
      * @param  array<string, mixed>  $metadata
@@ -245,6 +281,7 @@ class NotificationService
                 'suppress_in_app_alert',
                 'title',
                 'body',
+                'metadata',
                 'url',
                 'read_at',
                 'delivered_at',

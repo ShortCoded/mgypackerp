@@ -26,7 +26,7 @@ class SalesCycleDataTable
     {
         $prefix = self::routePrefix($kind);
         $table = $query->getModel()->getTable();
-        if (in_array($kind, ['sales_requests', 'sales_orders'], true)) {
+        if (in_array($kind, ['sales_requests', 'sales_orders', 'customer_invoices'], true)) {
             $trash = $request->string('trash', 'active')->toString();
             if (in_array($trash, ['trashed', 'all'], true)) {
                 abort_unless($request->user()?->can($kind.'.view_trashed'), 403);
@@ -96,8 +96,12 @@ class SalesCycleDataTable
                     ? app(NumericFormatService::class)->format($amount)
                     : '—';
             })
-            ->addColumn('actions', fn ($record): string => view('modules.sales.cycle.partials.index-actions', ['record' => $record, 'prefix' => $prefix, 'kind' => $kind, 'canDeleteDraft' => $record->status === 'draft' && match ($kind) {
-                'sales_requests' => $record->approved_at === null && $record->closed_at === null && ! $record->has_quotations && ! $record->has_orders, 'sales_orders' => $record->approved_at === null && $record->reopened_at === null && ! $record->quotation_id && ! $record->sales_request_id && ! $record->has_invoices && ! $record->deliveries_exists && ! $record->production_orders_exists && ! $record->has_receipts && ! $record->has_reservations, 'customer_invoices' => $record->canDeleteDraft(), default => false
+            ->addColumn('actions', fn ($record): string => view('modules.sales.cycle.partials.index-actions', ['record' => $record, 'prefix' => $prefix, 'kind' => $kind, 'canDeleteDraft' => match ($kind) {
+                'sales_requests' => in_array($record->status, ['draft', 'reopened'], true) && $record->isEditable() && ! $record->hasConversionHistory(),
+                'sales_orders' => ($record->status === 'reopened' && $record->isEditable() && $record->canCancelSafely() && $request->user()?->can('sales_orders.cancel'))
+                    || ($record->status === 'draft' && $record->approved_at === null && $record->reopened_at === null && ! $record->quotation_id && ! $record->sales_request_id && ! $record->has_invoices && ! $record->deliveries_exists && ! $record->production_orders_exists && ! $record->has_receipts && ! $record->has_reservations),
+                'customer_invoices' => $record->canDeleteDraft() && ($record->status !== 'reopened' || $request->user()?->can('customer_invoices.cancel')),
+                default => false,
             }])->render())
             ->orderColumn('doc_num', $table.'.doc_number $1')
             ->orderColumn('date', $table.'.'.$dateColumn.' $1')

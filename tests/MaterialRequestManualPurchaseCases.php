@@ -9,6 +9,7 @@ use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Production\Models\ProductionMaterialRequest;
 use Modules\Production\Services\ProductionMaterialRequestService;
 use Modules\Purchases\Models\PurchaseRequisition;
+use Modules\Purchases\Services\ProcurementSourcingService;
 use Spatie\Permission\Models\Permission;
 
 require_once __DIR__.'/ManufacturingInventorySupport.php';
@@ -53,6 +54,31 @@ test('shortage procurement is explicit scoped permission guarded and retry safe'
         app()->setLocale($locale);
         $this->get(route('admin.production.material-requests.show', $request))->assertOk()->assertSee($purchase->doc_num)->assertSee(__('production_execution.manual_purchase_linked'));
     }
+    $cancelled = app(ProcurementSourcingService::class)->finishRequisition($purchase, PurchaseRequisition::StatusCancelled, 'SYNTHETIC cancelled sourcing');
+    $cancelledBefore = $cancelled->attributesToArray();
+    foreach (['en', 'ar'] as $locale) {
+        $this->withSession(['locale' => $locale]);
+        app()->setLocale($locale);
+        $this->get(route('admin.production.material-requests.show', $request))->assertOk()
+            ->assertSee(__('production_execution.manual_purchase_replace_action'));
+    }
+    $replacement = $service->createPurchaseRequisition($request->fresh());
+    expect($replacement->id)->not->toBe($purchase->id)
+        ->and($replacement->lines->sole()->requested_quantity)->toBe('1.00000000')
+        ->and($request->fresh()->purchase_requisition_id)->toBe($replacement->id)
+        ->and($purchase->fresh()->attributesToArray())->toBe($cancelledBefore)
+        ->and($service->createPurchaseRequisition($request->fresh())->id)->toBe($replacement->id)
+        ->and(PurchaseRequisition::query()->where('company_id', $f['company']->id)->count())->toBe(2);
+    $audit = DB::table('activity_log')->where('subject_type', ProductionMaterialRequest::class)->where('subject_id', $request->id)
+        ->where('event', 'production_material_request.purchase_requisition_replaced')->sole();
+    $properties = json_decode($audit->properties, true, flags: JSON_THROW_ON_ERROR);
+    expect($properties['previous_id'])->toBe($purchase->id)->and($properties['replacement_id'])->toBe($replacement->id)
+        ->and($properties['previous_owner_effects_settled'])->toBeTrue();
+    app(ProcurementSourcingService::class)->finishRequisition($replacement, PurchaseRequisition::StatusCancelled, 'SYNTHETIC second cancellation');
+    DB::table('activity_log')->where('subject_type', PurchaseRequisition::class)->where('subject_id', $replacement->id)
+        ->where('event', 'purchase_requisition.cancelled')->delete();
+    expect(fn () => $service->createPurchaseRequisition($request->fresh()))->toThrow(DomainException::class, __('production_execution.manual_purchase_replacement_blocked'));
+    expect(PurchaseRequisition::query()->where('company_id', $f['company']->id)->count())->toBe(2);
     request()->session()->put(OperatingContextService::BranchIdKey, 999999);
     expect(fn () => $service->createPurchaseRequisition($request))->toThrow(DomainException::class);
 });

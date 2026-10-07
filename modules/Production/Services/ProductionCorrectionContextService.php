@@ -75,10 +75,11 @@ final class ProductionCorrectionContextService
         $proposal = DB::table('production_run_corrections')->where('id', $run->active_correction_id)
             ->where('company_id', $run->company_id)->where('production_run_id', $run->id)->where('status', 'approved')->first();
         $original = $proposal === null ? null : json_decode($proposal->source_snapshot, true, 512, JSON_THROW_ON_ERROR);
+        $receiptOnly = $proposal !== null && data_get(json_decode($proposal->corrected_output, true, 512, JSON_THROW_ON_ERROR), 'kind') === ProductionReceiptCancellationService::Kind;
         if ($proposal === null || (int) $proposal->financial_period_id !== (int) $run->financial_period_id
             || (int) $proposal->posting_financial_period_id !== (int) $run->correction_posting_financial_period_id
             || $proposal->posting_date !== $run->correction_document_date?->toDateString()
-            || (int) data_get($original, 'run.correction_sequence', -1) + 1 !== (int) $run->correction_sequence
+            || (int) data_get($original, 'run.correction_sequence', -1) + ($receiptOnly ? 0 : 1) !== (int) $run->correction_sequence
             || (int) $proposal->prepared_by === (int) $proposal->approved_by || $proposal->approved_at === null) {
             throw new DomainException(__('production_run_correction.lineage_invalid'));
         }
@@ -98,5 +99,44 @@ final class ProductionCorrectionContextService
         $mode = $expected === (int) $run->financial_period_id ? self::OriginalPeriod : self::LaterPeriod;
 
         return $this->target($run, $run->correction_document_date?->toDateString() ?? now()->toDateString(), $mode, $expected);
+    }
+
+    public function ownerPostingPeriod(ProductionRun $run, string $date): FinancialPeriod
+    {
+        $active = (int) request()->session()->get(OperatingContextService::FinancialPeriodIdKey);
+
+        return $this->target($run, $date, $active === (int) $run->financial_period_id ? self::OriginalPeriod : self::LaterPeriod, $active);
+    }
+
+    public function assertMeasuredExecution(ProductionRun $run): void
+    {
+        if ($run->active_correction_id === null && (int) $run->correction_sequence === 0) {
+            return;
+        }
+        $this->executionPeriodId($run);
+        $proposal = app(ProductionDailyReportCorrectionService::class)->assertApprovedCorrection($run, (int) $run->active_correction_id);
+        $output = json_decode($proposal->corrected_output, true, flags: JSON_THROW_ON_ERROR);
+        if (! ($output['reopens_execution'] ?? false)) {
+            throw new DomainException(__('production_run_correction.lineage_invalid'));
+        }
+    }
+
+    public function assertOwnedPeriod(ProductionRun $run, int $periodId): void
+    {
+        if (! DB::table('financial_periods')->where('company_id', $run->company_id)->where('id', $periodId)->exists()) {
+            throw new DomainException(__('production_run_correction.lineage_invalid'));
+        }
+        if ($periodId === (int) $run->financial_period_id) {
+            return;
+        }
+        $owners = DB::table('production_run_corrections')->where('company_id', $run->company_id)->where('production_run_id', $run->id)
+            ->where('financial_period_id', $run->financial_period_id)->where('posting_financial_period_id', $periodId)
+            ->where('correction_mode', self::LaterPeriod)->where('corrected_output->kind', ProductionDailyReportCorrectionService::Kind)->where('status', 'approved')->orderBy('id')->get();
+        if ($owners->isEmpty()) {
+            throw new DomainException(__('production_run_correction.lineage_invalid'));
+        }
+        foreach ($owners as $owner) {
+            app(ProductionDailyReportCorrectionService::class)->assertApprovedCorrection($run, (int) $owner->id);
+        }
     }
 }

@@ -8,6 +8,7 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Schema;
 use Modules\Accounting\Models\Account;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Accounting\Models\JournalEntryLine;
@@ -24,7 +25,10 @@ use Modules\Inventory\Models\InventoryValueAdjustment;
 use Modules\Inventory\Models\InventoryValueAdjustmentLine;
 use Modules\Maintenance\Models\MaintenanceMaterialRequest;
 use Modules\Production\Models\ProductionRun;
+use Modules\Production\Services\ProductionCancellationOwnerService;
 use Modules\Production\Services\ProductionCorrectionContextService;
+use Modules\Production\Services\ProductionReceiptCancellationService;
+use Modules\Production\Services\ProductionWarehouseReceiptCorrectionService;
 use Modules\Sales\Models\SalesReturn;
 use Modules\Sales\Services\CustomerInvoiceCorrectionService;
 use Modules\Sales\Services\SalesAccountingService;
@@ -57,6 +61,18 @@ class InventoryAccountingPostingService
                 ->whereColumn('source.allocation_run_id', 'allocation.id')->whereColumn('source.account_id', 'line.account_id'))
             ->distinct()->pluck('line.account_id');
         array_push($ids, ...$expenseIds->all(), ...$allocationIds->all());
+        if (Schema::hasTable('production_stage_transfers')) {
+            foreach (['source_account_id', 'target_account_id'] as $field) {
+                $stageIds = DB::table('production_stage_transfers')->where('company_id', $companyId)->whereNotNull('journal_entry_id')
+                    ->selectRaw('distinct '.$jsonId('posting_snapshot', $field).' as account_id')->pluck('account_id');
+                array_push($ids, ...$stageIds->all());
+            }
+        }
+        if (Schema::hasTable('production_stage_output_cost_owners')) {
+            $outputIds = DB::table('production_stage_output_cost_owners')->where('company_id', $companyId)->whereNotNull('journal_entry_id')
+                ->selectRaw('distinct '.$jsonId('posting_snapshot', 'source_account_id').' as account_id')->pluck('account_id');
+            array_push($ids, ...$outputIds->all());
+        }
 
         return Account::withTrashed()->forCompany($companyId)->whereIn('id', array_values(array_filter($ids)))
             ->orderBy('id')->pluck('id')->map(fn ($id): int => (int) $id)->all();
@@ -144,9 +160,31 @@ class InventoryAccountingPostingService
         }
         $period = app(ProductionCorrectionContextService::class)->target($run, $proposal->posting_date,
             $proposal->correction_mode ?? 'original_period', (int) ($proposal->posting_financial_period_id ?? $proposal->financial_period_id));
+        app(ProductionReceiptCancellationService::class)->assertSelectedReceipt($proposal, $document);
         $this->assertProductionCorrectionSourceJournal($document);
 
         return $this->reverseLocked($document, $proposal->posting_date, (int) $period->id);
+    }
+
+    public function reverseForProductionWarehouseCorrection(InventoryDocument $document, int $proposalId): ?JournalEntry
+    {
+        $proposal = app(ProductionWarehouseReceiptCorrectionService::class)->execution($proposalId, (int) $document->id);
+        $this->assertManualCorrectionAccounting($document);
+
+        return $this->reverseLocked($document, $proposal->posting_date->toDateString(), (int) $proposal->posting_financial_period_id);
+    }
+
+    public function reverseForProductionMaterialCorrection(InventoryDocument $document, int $ownerId): ?JournalEntry
+    {
+        $owner = app(ProductionCancellationOwnerService::class)->executionForInventoryDocument($ownerId, (int) $document->id);
+        $run = ProductionRun::query()->where('company_id', $owner->company_id)->findOrFail($owner->production_run_id);
+        $period = app(ProductionCorrectionContextService::class)->ownerPostingPeriod($run, $owner->posting_date);
+        if ((int) $period->id !== (int) $owner->posting_financial_period_id) {
+            throw new DomainException(__('production_run_correction.target_changed'));
+        }
+        $this->assertProductionCorrectionSourceJournal($document);
+
+        return $this->reverseLocked($document, $owner->posting_date, (int) $period->id);
     }
 
     public function reverseForManualCorrection(InventoryDocument $document, int $proposalId): ?JournalEntry

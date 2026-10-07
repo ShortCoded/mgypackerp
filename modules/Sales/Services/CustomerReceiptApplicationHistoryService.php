@@ -56,11 +56,12 @@ final class CustomerReceiptApplicationHistoryService
         }
     }
 
-    public function assertEvidence(int $companyId): void
+    public function assertEvidence(int $companyId, ?int $receiptId = null): void
     {
         DB::table('customer_receipt_application_events')->where(fn ($query) => $query->where('company_id', $companyId)
             ->orWhereIn('allocation_id', CustomerReceiptAllocation::query()
                 ->whereHas('receipt', fn ($query) => $query->withTrashed()->where('company_id', $companyId))->select('id')))
+            ->when($receiptId !== null, fn ($query) => $query->where('receipt_id', $receiptId))
             ->orderBy('id')->chunkById(100, function ($events): void {
                 $receipts = CustomerReceipt::withTrashed()->whereIn('id', $events->pluck('receipt_id'))->get()->keyBy('id');
                 $journals = JournalEntry::withTrashed()->whereIn('id', $events->pluck('journal_entry_id'))->get()->keyBy('id');
@@ -94,6 +95,7 @@ final class CustomerReceiptApplicationHistoryService
                 }
             });
         CustomerReceiptAllocation::query()->whereHas('receipt', fn ($query) => $query->withTrashed()->where('company_id', $companyId))
+            ->when($receiptId !== null, fn ($query) => $query->where('customer_receipt_id', $receiptId))
             ->whereNotNull('settlement_evidence')->with('receipt')->orderBy('id')->chunkById(100, function ($allocations): void {
                 foreach ($allocations as $allocation) {
                     $events = $this->events($allocation->id);

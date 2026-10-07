@@ -17,14 +17,14 @@
     <div class="card mb-3"><div class="card-header d-flex justify-content-between"><div><h5 class="mb-0">{{ __('Correct Sales Invoice') }}</h5><small>{{ $record->doc_num }} · {{ __('Posting revision') }} {{ $record->posting_revision }}</small></div><a class="btn btn-falcon-default btn-sm" href="{{ route('admin.sales.sales-invoices.show', $record) }}">{{ __('Back') }}</a></div><div class="card-body">@unless($directDiscountInputs)<div class="alert alert-warning">{{ __('This correction uses the original Sales Order and Delivery lineage. Quantities cannot exceed their original delivered/service eligibility. Reposting creates a new revision journal after the original reversal.') }}</div>@endunless
         @if($directDiscountInputs)
         <p class="text-muted">{{ __('sales_ui.invoice_direct_amendment_help') }}</p>
-        <div class="table-responsive"><table class="table table-sm table-bordered align-middle sales-order-grid"><thead><tr><th>#</th><th>{{ __('Product') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th><th>{{ __('Unit price') }}</th><th>{{ __('Discount') }}</th><th>{{ __('Tax') }}</th><th>{{ __('Line total') }}</th><th></th></tr></thead><tbody data-sales-lines>
+        <div class="table-responsive"><table class="table table-sm table-bordered align-middle sales-order-grid"><thead><tr><th>#</th><th>{{ __('Product') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th><th>{{ __('Unit price') }}</th><th>{{ __('Discount') }}</th><th>{{ __('sales_ui.tax_rate') }}</th><th>{{ __('Line total') }}</th><th></th></tr></thead><tbody data-sales-lines>
         @foreach($record->lines as $index => $invoiceLine)
             @include('modules.sales.cycle.partials.sales-order-line', ['index' => $index, 'line' => [
                 'invoice_line_public_id' => $invoiceLine->public_id, 'product_doc_num' => $invoiceLine->product?->doc_num,
                 'unit_doc_num' => $invoiceLine->unit?->doc_num, 'quantity' => old('lines.'.$index.'.quantity', $invoiceLine->quantity),
                 'unit_price' => $invoiceLine->unit_price, 'discount_type' => old('lines.'.$index.'.discount_type', $invoiceLine->discount_type ?? 'fixed'),
                 'discount_value' => old('lines.'.$index.'.discount_value', $invoiceLine->discount_value ?? bcsub((string) $invoiceLine->discount_amount, (string) $invoiceLine->header_discount_amount, 4)),
-                'discount_amount' => $invoiceLine->discount_amount, 'tax_amount' => $invoiceLine->tax_amount, 'tax_locked' => true,
+                'discount_amount' => $invoiceLine->discount_amount, 'tax_amount' => $invoiceLine->tax_amount, 'tax_rate' => old('lines.'.$index.'.tax_rate', $invoiceLine->tax_rate), 'tax_calculation_basis' => $invoiceLine->tax_calculation_basis,
                 'invoice_booked_quantity' => $invoiceLine->quantity,
                 'linked_existing_line' => true, 'price_locked' => true], 'showRequestedDate' => false, 'discountInputsEnabled' => true])
         @endforeach

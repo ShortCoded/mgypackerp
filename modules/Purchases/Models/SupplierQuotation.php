@@ -71,6 +71,11 @@ class SupplierQuotation extends Model
         return $this->belongsTo(PurchaseOrder::class);
     }
 
+    public function generatedPurchaseOrders(): HasMany
+    {
+        return $this->hasMany(PurchaseOrder::class, 'supplier_quotation_id');
+    }
+
     public function sourceDocument(): RequestForQuotation|PurchaseRequisition|PurchaseOrder|null
     {
         return match ($this->source_type) {

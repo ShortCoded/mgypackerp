@@ -37,10 +37,9 @@ class ProductionShiftEvidenceRequest extends FormRequest
             'crew.*.planned_hours' => ['nullable', 'numeric', 'min:0', 'max:24', 'decimal:0,4'],
         ];
         if ($defaults) {
-            return [...$common, 'shift_code' => ['required', 'string', 'max:30', 'regex:/^[A-Za-z0-9_-]+$/'],
-                'shift_name' => ['required', 'string', 'max:100'], 'starts_at' => ['required', 'date_format:H:i'], 'ends_at' => ['required', 'date_format:H:i']];
+            return [...$common, 'hr_shift_id' => ['required', 'integer', 'min:1']];
         }
-        $rules = [...$common, 'production_shift_id' => ['required', 'integer', 'min:1'], 'work_date' => ['required', 'date_format:Y-m-d'],
+        $rules = [...$common, 'hr_shift_id' => ['required', 'integer', 'min:1'], 'work_date' => ['required', 'date_format:Y-m-d'],
             'started_at' => ['required', 'date'], 'ended_at' => ['nullable', 'date', 'after_or_equal:started_at'],
             'downtime_minutes' => ['nullable', 'numeric', 'min:0', 'max:1440', 'decimal:0,4'], 'notes' => ['nullable', 'string', 'max:5000'],
             'sheet_fields' => ['required', 'array:sheet_kind,cavities,cycle_seconds,piece_weight_grams,average_piece_weight_grams,machine_speed,pack_ratio,product_size,bag_type,bag_size,carton_type,carton_size,cover_components,primary_material_requirement_public_id'],

@@ -128,6 +128,16 @@ class ProductionOrderController extends Controller
             : to_route('admin.production.work-orders.index')->with('success', __('production_execution.messages.order_deleted'));
     }
 
+    public function cancel(Request $request, ProductionOrder $productionOrder): JsonResponse
+    {
+        $this->requiredFactoryContext($request);
+        $this->assertInCurrentContext($request, $productionOrder);
+        $data = $request->validate(['reason' => ['required', 'string', 'max:1000']]);
+        $record = $this->guard(fn (): ProductionOrder => $this->cycle->cancelUnexecutedOrder($productionOrder, $data['reason']));
+
+        return response()->json(['success' => true, 'doc_num' => $record->doc_num, 'status' => $record->status]);
+    }
+
     public function restore(Request $request, string $productionOrder): JsonResponse|RedirectResponse
     {
         $context = $this->requiredFactoryContext($request);

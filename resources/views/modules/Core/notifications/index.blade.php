@@ -103,6 +103,7 @@
             <div class="list-group list-group-flush">
                 @forelse ($notifications as $notification)
                     @php
+                        $content = app(\Modules\Core\Services\NotificationService::class)->presentation($notification);
                         $moduleKey = $notification->module ? str_replace(['.', '-'], '_', $notification->module) : null;
                         $moduleTranslationKey = $moduleKey ? 'notifications.modules.'.$moduleKey : null;
                         $moduleLabel = $moduleTranslationKey && trans()->has($moduleTranslationKey)
@@ -113,7 +114,7 @@
                         <div class="d-flex justify-content-between gap-3">
                             <div class="min-w-0">
                                 <div class="d-flex flex-wrap align-items-center gap-2 mb-1">
-                                    <span class="fw-semibold">{{ $notification->title }}</span>
+                                    <span class="fw-semibold">{{ $content['title'] }}</span>
                                     @if ($notification->requires_action)
                                         <span class="badge badge-subtle-warning">{{ __('notifications.requires_action') }}</span>
                                     @endif
@@ -121,7 +122,7 @@
                                         <span class="badge badge-subtle-secondary">{{ $moduleLabel }}</span>
                                     @endif
                                 </div>
-                                @if ($notification->body)<p class="mb-1 text-700">{{ $notification->body }}</p>@endif
+                                @if ($content['body'])<p class="mb-1 text-700">{{ $content['body'] }}</p>@endif
                                 <span class="small text-600">{{ app(\Modules\Core\Services\DateFormatService::class)->formatDateTime($notification->delivered_at ?: $notification->created_at) }}@if ($notification->branch) · {{ $notification->branch->name }}@endif</span>
                             </div>
                             <span class="fas fa-arrow-{{ config('languages.available.'.app()->getLocale().'.dir') === 'rtl' ? 'left' : 'right' }} text-500 mt-1" aria-hidden="true"></span>

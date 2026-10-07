@@ -242,6 +242,7 @@ Route::middleware('auth')
                 Route::post('/from/{purchaseRequisition}', 'storeRfq')->middleware('can:purchases.request_for_quotations.create')->middleware(IdempotentDocumentSubmission::class)->name('store');
                 Route::get('/{requestForQuotation}', 'showRfq')->middleware('can:purchases.request_for_quotations.view')->name('show');
                 Route::post('/{requestForQuotation}/issue', 'issueRfq')->middleware('can:purchases.request_for_quotations.approve')->name('issue');
+                Route::post('/{requestForQuotation}/cancel', 'cancelRfq')->middleware('can:purchases.request_for_quotations.cancel')->middleware(IdempotentDocumentSubmission::class.':required')->name('cancel');
             });
 
             Route::prefix('supplier-quotation-entry')->name('supplier-quotation-entry.')->group(function (): void {
@@ -256,6 +257,7 @@ Route::middleware('auth')
                 Route::post('/from/{requestForQuotation}', 'storeQuotation')->middleware(['can:purchases.supplier_quotation_entry.create', 'can:purchases.prices.view'])->middleware(IdempotentDocumentSubmission::class)->name('store');
                 Route::get('/{supplierQuotation}', 'showQuotation')->middleware('can:purchases.supplier_quotation_entry.view')->name('show');
                 Route::post('/{supplierQuotation}/submit', 'submitQuotation')->middleware('can:purchases.supplier_quotation_entry.edit')->name('submit');
+                Route::post('/{supplierQuotation}/cancel', 'cancelQuotation')->middleware('can:purchases.supplier_quotation_entry.cancel')->middleware(IdempotentDocumentSubmission::class.':required')->name('cancel');
             });
             Route::get('supplier-quotation-lines', 'quotationLinesIndex')->middleware('can:purchases.supplier_quotation_entry.view')->name('supplier-quotation-lines.index');
             Route::get('supplier-quotation-comparison', 'comparisonIndex')->middleware('can:purchases.supplier_quotation_comparison.view')->name('supplier-quotation-comparison.index');
@@ -269,6 +271,7 @@ Route::middleware('auth')
                 Route::put('/{supplierSelection}', 'updateSelection')->middleware(['can:purchases.supplier_selection.approve', 'can:purchases.prices.view'])->name('update');
                 Route::get('/{supplierSelection}', 'showSelection')->middleware('can:purchases.supplier_selection.view')->name('show');
                 Route::post('/{supplierSelection}/approve', 'approveSelection')->middleware(['can:purchases.supplier_selection.approve', 'can:purchases.prices.view'])->name('approve');
+                Route::post('/{supplierSelection}/cancel', 'cancelSelection')->middleware('can:purchases.supplier_selection.cancel')->middleware(IdempotentDocumentSubmission::class.':required')->name('cancel');
             });
 
             Route::get('purchase-order-lines', 'inquiry')->defaults('procurement_screen', 'purchase_order_lines')->middleware('can:purchase_orders.view')->name('purchase-order-lines.index');
@@ -334,7 +337,8 @@ Route::middleware('auth')
                 Route::delete('/{purchaseReturn}', 'destroyReturn')->middleware('can:purchases.purchase_returns.delete')->name('destroy');
                 Route::get('/{purchaseReturn}', 'showReturn')->middleware('can:purchases.purchase_returns.view')->name('show');
                 Route::post('/{purchaseReturn}/approve', 'approveReturn')->middleware('can:purchases.purchase_returns.post')->name('approve');
-                Route::post('/{purchaseReturn}/reverse', 'reverseReturn')->middleware('can:purchases.purchase_returns.reverse')->name('reverse');
+                Route::post('/{purchaseReturn}/reverse', 'reverseReturn')->middleware('can:purchases.purchase_returns.reverse')->middleware(IdempotentDocumentSubmission::class)->name('reverse');
+                Route::post('/{purchaseReturn}/cancel', 'cancelReturn')->middleware('can:purchases.purchase_returns.cancel')->middleware(IdempotentDocumentSubmission::class.':required')->name('cancel');
             });
             Route::get('purchase-return-lines', 'returnLinesIndex')->middleware('can:purchases.purchase_returns.view')->name('purchase-return-lines.index');
 
@@ -345,7 +349,7 @@ Route::middleware('auth')
                 Route::post('/', 'storeSupplierPayment')->middleware('can:supplier_payments.create')->middleware(IdempotentDocumentSubmission::class)->name('store');
                 Route::get('/{supplierPayment}', 'showSupplierPayment')->middleware('can:supplier_payments.view')->name('show');
                 Route::post('/{supplierPayment}/approve', 'approveSupplierPayment')->middleware('can:supplier_payments.approve')->name('approve');
-                Route::post('/{supplierPayment}/cancel', 'cancelSupplierPayment')->middleware('can:supplier_payments.cancel')->name('cancel');
+                Route::post('/{supplierPayment}/cancel', 'cancelSupplierPayment')->middleware('can:supplier_payments.cancel')->middleware(IdempotentDocumentSubmission::class)->name('cancel');
             });
             Route::get('supplier-payment-allocations', 'inquiry')->defaults('procurement_screen', 'supplier_payment_allocations')->middleware('can:supplier_payments.view')->name('supplier-payment-allocations.index');
             Route::post('supplier-payment-allocations/{supplierPayment}', 'allocateSupplierPayment')->middleware(['can:purchases.supplier_payment_allocations.create', 'can:purchases.prices.view'])->name('supplier-payment-allocations.store');

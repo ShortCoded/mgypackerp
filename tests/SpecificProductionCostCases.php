@@ -3,6 +3,7 @@
 use Carbon\Carbon;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
+use Illuminate\Testing\TestResponse;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
 use Modules\Inventory\Models\InventoryCostPolicy;
@@ -20,6 +21,7 @@ use Modules\Production\Services\ProductionCostService;
 use Modules\Production\Services\ProductionMaterialRequestService;
 use Spatie\Permission\Models\Permission;
 
+require_once __DIR__.'/ProductionHandoverSupport.php';
 require_once __DIR__.'/ManufacturingInventorySupport.php';
 
 /** @return array<string, mixed> */
@@ -137,6 +139,8 @@ test('actual batch issue selects partial receipt layers replaces only own unlink
     $original = $fixture['run']->reservations()->get();
     expect($original)->toHaveCount(2);
     $this->get(route('admin.production.runs.batches.show', $fixture['batch']))->assertOk()
+        ->assertSee(route('admin.production.runs.batches.issue-create', $fixture['batch']), false);
+    $this->get(route('admin.production.runs.batches.issue-create', $fixture['batch']))->assertOk()
         ->assertSee('data-layer-store-selector', false)->assertSee('lines[0][receipt_layers][0][layer_id]', false);
     $url = route('admin.production.runs.batches.issue', $fixture['batch']);
     $payload = ['_submission_token' => (string) Str::uuid(), 'branch_store_id' => $fixture['store']->id, 'lines' => [[
@@ -253,7 +257,7 @@ test('finished goods HTTP receipt requires resolved materials and quality and co
         'company_id' => $f['company']->id, 'code' => 'SYNTHETIC-FINAL-RECEIPT', 'name' => 'SYNTHETIC final quality release',
         'is_final_production' => true, 'is_active' => true,
     ]);
-    foreach (['production.runs.view', 'production.runs.setup', 'production.runs.progress', 'production.runs.account_materials', 'production.runs.receive', 'production.runs.complete'] as $ability) {
+    foreach (['production.runs.view', 'production.runs.setup', 'production.runs.progress', 'production.runs.account_materials', 'production.runs.receive', 'production.handovers.create', 'production.handovers.approve', 'production.runs.complete'] as $ability) {
         Permission::findOrCreate($ability, 'web');
         $f['user']->givePermissionTo($ability);
     }
@@ -265,26 +269,30 @@ test('finished goods HTTP receipt requires resolved materials and quality and co
         $this->postJson(route('admin.production.runs.'.$action, $f['run']), ['_submission_token' => (string) Str::uuid()])->assertOk();
     }
     $this->postJson(route('admin.production.runs.progress', $f['run']), ['_submission_token' => (string) Str::uuid(), 'good_base_quantity' => '5'])->assertOk();
-    $receive = route('admin.production.runs.receive', $f['run']);
+    $warehouse = closureSyntheticUser();
+    foreach (['inventory.production_receipts.create', 'inventory.production_receipts.approve'] as $permission) {
+        $warehouse->givePermissionTo(Permission::findOrCreate($permission, 'web'));
+    }
+    $receive = fn (array $data): TestResponse => productionHandoverHttpReceipt($f['run'], $data, $warehouse);
     $payload = ['_submission_token' => (string) Str::uuid(), 'branch_store_id' => $f['store']->id, 'base_quantity' => '2'];
-    $this->postJson($receive, $payload)->assertUnprocessable();
+    $receive($payload)->assertUnprocessable();
     $this->postJson(route('admin.production.runs.account', $f['run']), ['_submission_token' => (string) Str::uuid(), 'branch_store_id' => $f['store']->id,
         'lines' => [['requirement_id' => $f['requirement']->id, 'consumed_quantity' => '10', 'waste_quantity' => '0']]])->assertOk();
-    $this->postJson($receive, [...$payload, '_submission_token' => (string) Str::uuid()])->assertUnprocessable();
+    $receive([...$payload, '_submission_token' => (string) Str::uuid()])->assertUnprocessable();
     $inspection = $f['cycle']->recordInspection($f['run']->fresh(), ['quality_inspection_type_id' => $finalType->id, 'result' => 'passed', 'disposition' => 'release']);
     $f['cycle']->reviewInspection($inspection, true);
     $this->get(route('admin.production.runs.show', $f['run']))->assertOk()->assertSee('admin/production/runs', false);
-    $first = $this->postJson($receive, $payload)->assertOk();
-    $this->postJson($receive, $payload)->assertOk()->assertJsonPath('data.doc_num', $first->json('data.doc_num'));
+    $first = $receive($payload)->assertOk();
+    $receive($payload)->assertOk()->assertJsonPath('doc_num', $first->json('doc_num'));
     expect($f['run']->fresh()->received_base_quantity)->toBe('2.00000000');
     $this->postJson(route('admin.production.runs.complete', $f['run']), [])->assertUnprocessable();
-    $this->postJson($receive, [...$payload, '_submission_token' => (string) Str::uuid(), 'base_quantity' => '3'])->assertOk();
+    $receive([...$payload, '_submission_token' => (string) Str::uuid(), 'base_quantity' => '3'])->assertOk();
     $this->postJson(route('admin.production.runs.complete', $f['run']), [])->assertOk();
     $run = $f['run']->fresh();
     expect($run->status)->toBe(ProductionRun::StatusCompleted)->and($run->received_base_quantity)->toBe('5.00000000')
         ->and($run->order->status)->toBe(ProductionOrder::StatusCompleted)
         ->and(app(ProductionCostService::class)->runPosition($run)['wip'])->toBe('0.00000000');
-    $receipts = InventoryDocument::query()->where('production_run_id', $run->id)->where('document_type', InventoryDocument::TypeProductionReceipt)->get();
+    $receipts = $run->lineInventoryDocuments()->where('document_type', InventoryDocument::TypeProductionReceipt)->get();
     expect($receipts)->toHaveCount(2);
     $costs = $receipts->map(fn ($receipt): string => $receipt->transactions->sole()->total_cost)->all();
     expect(bcadd($costs[0], $costs[1], 8))->toBe('160.00000000')->and(bcadd($costs[0], '0', 8))->toBe('64.00000000')
@@ -297,5 +305,5 @@ test('finished goods HTTP receipt requires resolved materials and quality and co
     $stock = InventoryTransaction::query()->where('product_id', $f['finished']->id)->where('branch_store_id', $f['store']->id)
         ->where('stock_status', InventoryTransaction::StatusAvailable)->selectRaw('coalesce(sum(quantity_in - quantity_out),0) as quantity')->first()->quantity;
     expect(bcadd((string) $stock, '0', 8))->toBe('5.00000000');
-    $this->postJson($receive, [...$payload, '_submission_token' => (string) Str::uuid(), 'base_quantity' => '1'])->assertUnprocessable();
+    $receive([...$payload, '_submission_token' => (string) Str::uuid(), 'base_quantity' => '1'])->assertUnprocessable();
 })->with(['ar', 'en']);

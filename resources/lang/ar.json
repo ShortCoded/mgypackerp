@@ -208,6 +208,7 @@
     "Code": "الكود",
     "Collected": "محصل",
     "Collection": "التحصيل",
+    "Collection Reversed": "تم عكس التحصيل",
     "Commercial notes": "ملاحظات تجارية",
     "Commercial return": "مرتجع تجاري",
     "Commercial value": "القيمة التجارية",
@@ -1261,7 +1262,7 @@
     "Target Invoice": "الفاتورة المستهدفة",
     "Target base quantity": "الكمية المستهدفة بالوحدة الأساسية",
     "Tax": "الضريبة",
-    "Tax %": "نسبة الضريبة",
+    "Tax %": "نسبة الضريبة (%)",
     "Tax / Electronic Invoice Status": "حالة الضريبة / الفاتورة الإلكترونية",
     "The :driver driver has no configured read-only audit guard.": "لم يتم إعداد حماية تقتصر على القراءة لتدقيق اتصال قاعدة البيانات :driver.",
     "The :driver driver has no configured read-only review guard.": "لم يتم إعداد حماية تقتصر على القراءة لمراجعة اتصال قاعدة البيانات :driver.",
@@ -1749,6 +1750,7 @@
     "Historical returned or cancelled cheque settlement reversal.": "عكس تسوية شيك قديم مرتد أو ملغى.",
     "Source Goods Receipt": "إذن الاستلام المصدر",
     "Create Request for Quotation": "إنشاء طلب عرض سعر",
+    "Request for Quotation": "طلب عرض سعر",
     "Created at": "تاريخ الإنشاء",
     "Updated at": "تاريخ التعديل",
     "Unable to complete the action.": "تعذر إتمام الإجراء.",
@@ -1944,5 +1946,8 @@
     "No data available": "لا توجد بيانات",
     "Prepared": "مُجهّز",
     "Activated": "مُفعّل",
-    "Value Adjustment": "تسوية قيمة"
+    "Value Adjustment": "تسوية قيمة",
+    "Confirm": "تأكيد",
+    "Production progress can only be recorded for a running or held run.": "لا يمكن تسجيل تقدم الإنتاج إلا لتشغيلة قيد التشغيل أو متوقفة مؤقتًا.",
+    "Production Handover": "تسليم الإنتاج"
 }

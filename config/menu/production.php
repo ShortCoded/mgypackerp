@@ -13,6 +13,13 @@ return [
         ],
         'children' => [
             [
+                'label' => 'production_handovers', 'title' => 'production_handover.title', 'icon' => 'dolly',
+                'route' => 'admin.production.handovers.index', 'permission' => 'production.handovers.view',
+                'actions' => ['view' => 'production.handovers.view', 'create' => 'production.handovers.create',
+                    'approve' => 'production.handovers.approve', 'cancel' => 'production.handovers.cancel'],
+                'active' => ['admin.production.handovers.*'], 'children' => [],
+            ],
+            [
                 'label' => 'production_stages',
                 'title' => 'Production Stages',
                 'icon' => 'list-ol',
@@ -62,6 +69,7 @@ return [
                     'plan' => 'production.orders.plan',
                     'release' => 'production.orders.release',
                     'short_close' => 'production.orders.short_close',
+                    'cancel' => 'production.orders.cancel',
                     'print' => 'production.orders.print',
                     'document_number_settings_update' => 'production.orders.document_number_settings.update',
                 ],
@@ -117,6 +125,7 @@ return [
                     'view_trashed' => 'production.material_requests.view_trashed',
                     'restore' => 'production.material_requests.restore',
                     'approve' => 'production.material_requests.approve',
+                    'cancel' => 'production.material_requests.cancel',
                     'reopen' => 'production.material_requests.reopen',
                     'issue' => 'production.material_requests.issue',
                     'print' => 'production.material_requests.print',

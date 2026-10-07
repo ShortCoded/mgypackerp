@@ -2,12 +2,14 @@
 
 namespace Modules\Sales\Services;
 
+use App\Services\DocumentOwnerEffectProofService;
 use DomainException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Modules\Core\Models\BranchStore;
+use Modules\Core\Models\Company;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
@@ -40,6 +42,7 @@ class SalesOrderService
     public function createFromQuotation(Quotation $quotation, array $context, ?array $selection = null): SalesOrder
     {
         return DB::transaction(function () use ($quotation, $context, $selection): SalesOrder {
+            Company::query()->whereKey($quotation->company_id)->lockForUpdate()->firstOrFail();
             $locked = Quotation::query()
                 ->with(['currentRevision.lines.product', 'currentRevision.lines.unit', 'currentRevision.paymentMilestones'])
                 ->lockForUpdate()
@@ -73,8 +76,10 @@ class SalesOrderService
                 $expectedDeliveryDate = now()->toDateString();
             }
 
-            $converted = SalesOrderLine::query()->whereIn('quotation_revision_line_id', $revision->lines->modelKeys())
-                ->selectRaw('quotation_revision_line_id, sum(quantity) as converted')->groupBy('quotation_revision_line_id')->pluck('converted', 'quotation_revision_line_id');
+            $reconciledCancelledOrders = $this->reconciledCancelledQuotationOrders($locked);
+            $converted = SalesOrderLine::query()->whereNotIn('sales_order_id', $reconciledCancelledOrders)->whereIn('quotation_revision_line_id', $revision->lines->modelKeys())
+                ->selectRaw('quotation_revision_line_id, sum(quantity) as quantity, sum(discount_amount) as discount, sum(header_discount_amount) as header_discount, sum(tax_amount) as tax, sum(line_total + discount_amount - tax_amount) as gross')
+                ->groupBy('quotation_revision_line_id')->get()->keyBy('quotation_revision_line_id');
             $requested = $selection === null ? null : collect($selection)->keyBy('public_id');
             if ($requested !== null && ($requested->count() !== count($selection) || $requested->keys()->diff($revision->lines->pluck('public_uuid'))->isNotEmpty())) {
                 throw new DomainException(__('Select each source line once.'));
@@ -82,7 +87,8 @@ class SalesOrderService
             $convertedLines = [];
             foreach ($this->quotationLines($revision) as $line) {
                 $source = $revision->lines->firstWhere('id', $line['quotation_revision_line_id']);
-                $remaining = bcsub((string) $source->quantity, (string) ($converted[$source->id] ?? 0), 8);
+                $prior = $converted->get($source->id);
+                $remaining = bcsub((string) $source->quantity, (string) ($prior?->quantity ?? 0), 8);
                 $quantity = $requested === null ? $remaining : (string) ($requested->get($source->public_uuid)['quantity'] ?? '0');
                 if (bccomp($quantity, '0', 8) === 0) {
                     continue;
@@ -90,11 +96,21 @@ class SalesOrderService
                 $this->amounts->assertPositive($quantity, __('Converted quantity must be positive.'));
                 $this->amounts->assertNotGreaterThan($quantity, $remaining, __('Converted quantity exceeds the remaining quotation quantity.'));
                 $ratio = bcdiv($quantity, (string) $source->quantity, 12);
+                $final = bccomp($quantity, $remaining, 8) === 0;
+                $share = [];
+                foreach (['discount' => $line['discount_amount'], 'header_discount' => $line['header_discount_amount'],
+                    'tax' => $line['tax_amount'], 'gross' => $this->amounts->unitPriceTotal($source->quantity, $source->unit_price)] as $key => $total) {
+                    $remainingAmount = $this->amounts->subtract((string) $total, (string) ($prior?->{$key} ?? 0));
+                    $slice = $key === 'gross' ? $this->amounts->unitPriceTotal($quantity, $source->unit_price) : $this->amounts->multiply((string) $total, $ratio);
+                    $share[$key] = $final || bccomp($slice, $remainingAmount, 4) > 0 ? $remainingAmount : $slice;
+                    if (bccomp($share[$key], '0', 4) < 0) {
+                        throw new DomainException(__('sales_ui.invoice_source_tax_locked'));
+                    }
+                }
                 $convertedLines[] = [...$line, 'quantity' => $quantity,
-                    'discount_value' => $line['discount_type'] === 'fixed' ? $this->amounts->multiply($line['discount_value'], $ratio) : $line['discount_value'],
-                    'header_discount_amount' => $this->amounts->multiply($line['header_discount_amount'], $ratio),
-                    'discount_amount' => $this->amounts->multiply($line['discount_amount'], $ratio),
-                    'tax_amount' => $this->amounts->multiply($line['tax_amount'], $ratio)];
+                    'discount_value' => $line['discount_type'] === 'fixed' ? $this->amounts->subtract($share['discount'], $share['header_discount']) : $line['discount_value'],
+                    'header_discount_amount' => $share['header_discount'], 'discount_amount' => $share['discount'],
+                    'tax_amount' => $share['tax'], 'line_total' => $this->amounts->add($this->amounts->subtract($share['gross'], $share['discount']), $share['tax'])];
             }
             if ($convertedLines === []) {
                 throw new DomainException(__('This quotation revision was already converted.'));
@@ -137,8 +153,17 @@ class SalesOrderService
     public function create(array $data, bool $preserveSourceDiscounts = false): SalesOrder
     {
         return DB::transaction(function () use ($data, $preserveSourceDiscounts): SalesOrder {
+            Company::query()->whereKey($data['company_id'])->lockForUpdate()->firstOrFail();
             $this->assertRequiredContext($data);
             $lines = $this->validatedLines($data['lines'] ?? [], (int) $data['company_id']);
+            if ($preserveSourceDiscounts) {
+                foreach ($lines as $index => &$line) {
+                    if (isset($data['lines'][$index]['line_total'])) {
+                        $line['line_total'] = $data['lines'][$index]['line_total'];
+                    }
+                }
+                unset($line);
+            }
             $discounts = $preserveSourceDiscounts ? ['lines' => $lines] : app(SalesOrderDiscountService::class)->calculate($lines, $data['discount_type'] ?? null, $data['discount_value'] ?? '0');
             $lines = $discounts['lines'];
             $data = [...$data, ...collect($discounts)->except('lines')->all()];
@@ -208,6 +233,38 @@ class SalesOrderService
             $data['exchange_rate'] = $locked->exchange_rate;
             $lines = $this->validatedLines($data['lines'] ?? [], (int) $locked->company_id);
             $currentLines = $locked->lines()->lockForUpdate()->get();
+            foreach ($lines as $index => &$line) {
+                $input = $data['lines'][$index];
+                $source = $currentLines->firstWhere('public_id', $input['public_id'] ?? '');
+                if (! $source instanceof SalesOrderLine) {
+                    continue;
+                }
+                $sameTerms = (int) $source->product_id === (int) $line['product_id'] && (int) $source->unit_id === (int) $line['unit_id']
+                    && bccomp($source->quantity, (string) $line['quantity'], 8) === 0
+                    && bccomp($source->unit_price, (string) $line['unit_price'], 8) === 0
+                    && (! array_key_exists('discount_type', $input) || (($input['discount_type'] ?? null) === ($source->discount_type ?? 'fixed')
+                        && bccomp((string) ($input['discount_value'] ?? 0), (string) ($source->discount_value ?? $this->amounts->subtract($source->discount_amount, $source->header_discount_amount ?? '0')), 4) === 0))
+                    && (! array_key_exists('discount_type', $data) || (($data['discount_type'] ?? null) === $locked->discount_type
+                        && bccomp((string) ($data['discount_value'] ?? 0), (string) ($locked->discount_value ?? 0), 4) === 0));
+                $submittedRate = filled($input['tax_rate'] ?? null) ? app(SalesTaxService::class)->rate($input['tax_rate']) : null;
+                if ($submittedRate === null) {
+                    if ($source->tax_rate === null && bccomp($source->tax_amount, '0', 4) > 0 && ! $sameTerms
+                        && ! array_key_exists('tax_amount', $input) && ! $locked->canAppendProductionAmendment()) {
+                        throw new DomainException(__('sales_ui.legacy_tax_rate_required'));
+                    }
+                    $line['tax_rate'] = $source->tax_rate;
+                    $line['tax_calculation_basis'] = $source->tax_calculation_basis;
+                    $line['tax_amount'] = $input['tax_amount'] ?? $source->tax_amount;
+                } elseif ($sameTerms && $source->tax_rate !== null && bccomp($submittedRate, $source->tax_rate, 4) === 0) {
+                    $line['tax_rate'] = $source->tax_rate;
+                    $line['tax_calculation_basis'] = $source->tax_calculation_basis;
+                    $line['tax_amount'] = $source->tax_amount;
+                } else {
+                    $line['tax_rate'] = $submittedRate;
+                    $line['tax_calculation_basis'] = SalesTaxService::Rate;
+                }
+            }
+            unset($line);
             if (array_key_exists('discount_type', $data) && $locked->canAppendProductionAmendment() && ! $locked->canReplaceUnexecutedLines()
                 && (($data['discount_type'] ?? null) !== $locked->discount_type || bccomp((string) ($data['discount_value'] ?? 0), (string) ($locked->discount_value ?? 0), 4) !== 0)) {
                 throw new DomainException(__('sales_ui.production_amendment_locked_terms'));
@@ -255,13 +312,17 @@ class SalesOrderService
                     && (int) $source->product_id === (int) $line['product_id'] && (int) $source->unit_id === (int) $line['unit_id']
                     && bccomp((string) $source->quantity, (string) $line['quantity'], 8) === 0
                     && bccomp((string) $source->unit_price, (string) $line['unit_price'], 8) === 0
-                    && $source->discount_type === ($line['discount_type'] ?? null)
+                    && ($source->discount_type ?? 'fixed') === ($line['discount_type'] ?? 'fixed')
                     && bccomp((string) ($source->discount_value ?? 0), (string) ($line['discount_value'] ?? 0), 4) === 0
+                    && $source->tax_rate === ($line['tax_rate'] ?? null)
+                    && $source->tax_calculation_basis === ($line['tax_calculation_basis'] ?? SalesTaxService::LegacyAmount)
                     && bccomp((string) $source->tax_amount, (string) $line['tax_amount'], 4) === 0;
             }
             if ($preserveQuotationDiscounts) {
                 foreach ($lines as $index => &$line) {
                     $source = $existingByPublicId->get($data['lines'][$index]['public_id']);
+                    $line['discount_type'] = $source->discount_type;
+                    $line['discount_value'] = $source->discount_value;
                     $line['discount_amount'] = $source->discount_amount;
                     $line['header_discount_amount'] = $source->header_discount_amount;
                     $line['line_total'] = $source->line_total;
@@ -269,7 +330,21 @@ class SalesOrderService
                 unset($line);
                 $discounts = ['lines' => $lines, 'discount_type' => $locked->discount_type, 'discount_value' => $locked->discount_value, 'header_discount_amount' => $locked->header_discount_amount];
             } else {
+                foreach ($lines as &$line) {
+                    if ($line['tax_rate'] !== null) {
+                        $line['tax_calculation_basis'] = SalesTaxService::Rate;
+                    }
+                }
+                unset($line);
                 $discounts = app(SalesOrderDiscountService::class)->calculate($lines, $discountType, $discountValue);
+                foreach ($discounts['lines'] as $index => $line) {
+                    $source = $existingByPublicId->get($data['lines'][$index]['public_id'] ?? '');
+                    if ($source instanceof SalesOrderLine && $line['tax_rate'] === null && bccomp($source->tax_amount, '0', 4) > 0
+                        && ! array_key_exists('tax_amount', $data['lines'][$index])
+                        && bccomp($this->amounts->subtract($line['line_total'], $line['tax_amount']), $this->amounts->subtract($source->line_total, $source->tax_amount), 4) !== 0) {
+                        throw new DomainException(__('sales_ui.legacy_tax_rate_required'));
+                    }
+                }
             }
             $lines = $discounts['lines'];
             $data = [...$data, ...collect($discounts)->except('lines')->all()];
@@ -355,6 +430,9 @@ class SalesOrderService
                 if (array_key_exists('discount_type', $line) && ($line['discount_type'] !== $source->discount_type || bccomp((string) ($line['discount_value'] ?? 0), (string) ($source->discount_value ?? 0), 4) !== 0)) {
                     throw new DomainException(__('sales_ui.production_amendment_locked_terms'));
                 }
+                if ($source->tax_rate !== ($line['tax_rate'] ?? null) || $source->tax_calculation_basis !== ($line['tax_calculation_basis'] ?? SalesTaxService::LegacyAmount)) {
+                    throw new DomainException(__('sales_ui.production_amendment_locked_terms'));
+                }
                 foreach (['product_id', 'unit_id', 'description', 'unit_price', 'discount_amount', 'tax_amount', 'conversion_factor'] as $field) {
                     $same = in_array($field, ['unit_price', 'conversion_factor'], true)
                         ? bccomp((string) $line[$field], (string) $source->{$field}, 8) === 0
@@ -373,16 +451,24 @@ class SalesOrderService
                     ]));
                 }
                 if (bccomp((string) $line['quantity'], (string) $source->quantity, 8) !== 0) {
+                    if ($source->tax_rate !== null && bccomp($source->tax_rate, '0', 4) > 0) {
+                        throw new DomainException(__('sales_ui.production_amendment_locked_terms'));
+                    }
+                    $line['line_total'] = $this->amounts->add($this->amounts->subtract($this->amounts->unitPriceTotal($line['quantity'], $line['unit_price']), $line['discount_amount']), $line['tax_amount']);
                     $source->update([
                         'quantity' => $line['quantity'],
                         'base_quantity' => $line['base_quantity'],
                         'line_total' => $line['line_total'],
                     ]);
+                } else {
+                    $line['line_total'] = $source->line_total;
                 }
+                $line['header_discount_amount'] = $source->header_discount_amount;
             } else {
                 if (filled($line['discount_type'] ?? null) || bccomp((string) ($line['discount_value'] ?? 0), '0', 4) > 0) {
                     throw new DomainException(__('sales_ui.production_amendment_locked_terms'));
                 }
+                $line = app(SalesOrderDiscountService::class)->calculate([$line], null, '0')['lines'][0];
                 $nextLineNumber++;
                 $order->lines()->create([...$line, 'line_number' => $nextLineNumber]);
             }
@@ -448,6 +534,15 @@ class SalesOrderService
     {
         DB::transaction(function () use ($order): void {
             $record = SalesOrder::query()->lockForUpdate()->findOrFail($order->id);
+            $this->assertReopenContext($record);
+            if ($record->status === SalesOrder::StatusReopened && $record->isEditable() && $record->canCancelSafely()) {
+                Gate::authorize('sales_orders.cancel');
+                $record = $this->cancel($record, __('cancellation_review.archive_reopened_reason'));
+                $record->delete();
+                $this->audit->record($record, 'sales_order.deleted', ['archive_after_cancel' => true]);
+
+                return;
+            }
             if ($record->status !== SalesOrder::StatusDraft || $record->approved_at !== null || $record->reopened_at !== null
                 || $record->quotation_id || $record->sales_request_id
                 || $record->invoices()->withTrashed()->exists() || $record->deliveries()->exists()
@@ -464,6 +559,16 @@ class SalesOrderService
     {
         return DB::transaction(function () use ($order): SalesOrder {
             $record = SalesOrder::onlyTrashed()->lockForUpdate()->findOrFail($order->id);
+            $this->assertReopenContext($record);
+            if ($record->status === SalesOrder::StatusCancelled
+                && DB::table('activity_log')->where('company_id', $record->company_id)->where('subject_type', SalesOrder::class)
+                    ->where('subject_id', $record->id)->where('event', 'sales_order.deleted')->where('properties->archive_after_cancel', true)->exists()
+                && app(DocumentOwnerEffectProofService::class)->cancelledSalesOrderIsSettled($record, allowArchived: true)) {
+                $record->restore();
+                $this->audit->record($record, 'sales_order.restored', ['restored_as_cancelled' => true]);
+
+                return $record;
+            }
             if (! $record->isEditable() || $record->status !== SalesOrder::StatusDraft) {
                 throw new DomainException(__('Only unused drafts can be restored.'));
             }
@@ -614,22 +719,27 @@ class SalesOrderService
 
     public function cancel(SalesOrder $order, string $reason): SalesOrder
     {
+        if (blank($reason) || mb_strlen($reason) > 2000) {
+            throw new DomainException(__('open_documents.validation.reason_required'));
+        }
+
         return DB::transaction(function () use ($order, $reason): SalesOrder {
+            Company::query()->whereKey($order->company_id)->lockForUpdate()->firstOrFail();
             $locked = SalesOrder::query()->with('lines')->lockForUpdate()->findOrFail($order->getKey());
-            if (! in_array($locked->status, [SalesOrder::StatusDraft, SalesOrder::StatusPendingApproval, SalesOrder::StatusHeldCredit], true)
-                || $locked->approved_at !== null || $locked->reopened_at !== null) {
-                throw new DomainException(__('The sales order cannot be cancelled from its current status.'));
+            $this->assertReopenContext($locked);
+            if ($locked->status === SalesOrder::StatusCancelled
+                && app(DocumentOwnerEffectProofService::class)->cancelledSalesOrderIsSettled($locked)) {
+                return $locked;
             }
-            if ($locked->lines->contains(fn (SalesOrderLine $line): bool => $this->amounts->compare($line->delivered_quantity, '0', 8) > 0 || $this->amounts->compare($line->invoiced_quantity, '0', 8) > 0)) {
-                throw new DomainException(__('An order with deliveries or invoices must be reversed through downstream documents.'));
-            }
-            if ($locked->hasDownstreamDocuments()) {
+            if (! $locked->canCancelSafely()) {
                 throw new DomainException(__('An order with downstream documents cannot be cancelled.'));
             }
             foreach (InventoryReservation::query()->where('sales_order_id', $locked->getKey())->where('status', InventoryReservation::StatusActive)->lockForUpdate()->get() as $reservation) {
                 $reservation->update(['released_quantity' => bcadd((string) $reservation->released_quantity, $reservation->remaining_quantity, 8), 'status' => InventoryReservation::StatusReleased, 'released_by' => auth()->id(), 'released_at' => now(), 'release_reason' => trim($reason)]);
             }
-            $locked->lines()->update(['reserved_quantity' => 0, 'reserved_base_quantity' => 0]);
+            $locked->lines()->where(fn ($query) => $query->where('reserved_quantity', '<>', 0)->orWhere('reserved_base_quantity', '<>', 0))
+                ->update(['reserved_quantity' => 0, 'reserved_base_quantity' => 0]);
+            app(SalesRequestService::class)->releaseOrderConversion($locked);
             $from = $locked->status;
             $locked->update(['status' => SalesOrder::StatusCancelled, 'cancelled_by' => auth()->id(), 'cancelled_at' => now(), 'cancel_reason' => trim($reason), 'updated_by' => auth()->id()]);
             $this->recordStatus($locked, $from, SalesOrder::StatusCancelled, $reason);
@@ -701,6 +811,8 @@ class SalesOrderService
                 'base_quantity' => $unitSnapshot['base_quantity'],
                 'discount_amount' => $discount,
                 'tax_amount' => $tax,
+                'tax_rate' => filled($line['tax_rate'] ?? null) ? app(SalesTaxService::class)->rate($line['tax_rate']) : null,
+                'tax_calculation_basis' => $line['tax_calculation_basis'] ?? (filled($line['tax_rate'] ?? null) ? SalesTaxService::Rate : SalesTaxService::LegacyAmount),
                 'line_total' => $total,
                 'product_classification_snapshot' => $product->item_classification,
                 'reserved_quantity' => 0, 'reserved_base_quantity' => 0,
@@ -716,7 +828,7 @@ class SalesOrderService
     /** @param list<array<string, mixed>> $lines @return array{subtotal_amount: string, discount_amount: string, tax_amount: string, total_amount: string} */
     private function totals(array $lines): array
     {
-        $subtotal = $this->amounts->sum(array_map(fn (array $line): string => $this->amounts->unitPriceTotal($line['quantity'], $line['unit_price']), $lines));
+        $subtotal = $this->amounts->sum(array_map(fn (array $line): string => $this->amounts->subtract($this->amounts->add($line['line_total'], $line['discount_amount']), $line['tax_amount']), $lines));
         $discount = $this->amounts->sum(array_column($lines, 'discount_amount'));
         $tax = $this->amounts->sum(array_column($lines, 'tax_amount'));
 
@@ -748,6 +860,19 @@ class SalesOrderService
         }
     }
 
+    /** @return list<int> */
+    private function reconciledCancelledQuotationOrders(Quotation $quotation): array
+    {
+        $ids = [];
+        foreach ($quotation->salesOrders()->withTrashed()->where('status', SalesOrder::StatusCancelled)->lazyById() as $order) {
+            if (app(DocumentOwnerEffectProofService::class)->cancelledSalesOrderIsSettled($order)) {
+                $ids[] = (int) $order->id;
+            }
+        }
+
+        return $ids;
+    }
+
     private function consumeQuotation(SalesOrder $order): void
     {
         if (! $order->quotation_id || ! $order->quotation_revision_id) {
@@ -758,9 +883,10 @@ class SalesOrderService
         if ($quotation->status !== Quotation::StatusAccepted || $quotation->current_revision_id !== $revision->getKey()) {
             throw new DomainException(__('Only the accepted current quotation revision can be converted.'));
         }
+        $reconciledCancelledOrders = $this->reconciledCancelledQuotationOrders($quotation);
         $complete = true;
         foreach ($revision->lines as $line) {
-            $converted = (string) SalesOrderLine::query()->where('quotation_revision_line_id', $line->id)->sum('quantity');
+            $converted = (string) SalesOrderLine::query()->whereNotIn('sales_order_id', $reconciledCancelledOrders)->where('quotation_revision_line_id', $line->id)->sum('quantity');
             $this->amounts->assertNotGreaterThan($converted, $line->quantity, __('Converted quantity exceeds the remaining quotation quantity.'));
             $complete = $complete && bccomp($converted, (string) $line->quantity, 8) === 0;
         }
@@ -772,26 +898,11 @@ class SalesOrderService
     {
         $baseDiscount = $this->amounts->sum($revision->lines->pluck('discount_amount'));
         $documentDiscount = $this->amounts->subtract($revision->discount_amount, $baseDiscount);
-        $discountableTotal = $this->amounts->sum($revision->lines->map(
-            fn ($line): string => $this->amounts->subtract(
-                $this->amounts->unitPriceTotal($line->quantity, $line->unit_price),
-                $line->discount_amount,
-            ),
-        ));
-        $allocatedDocumentDiscount = '0.0000';
-        $lastIndex = $revision->lines->count() - 1;
+        $bases = $revision->lines->values()->map(fn ($line): string => $this->amounts->subtract($this->amounts->unitPriceTotal($line->quantity, $line->unit_price), $line->discount_amount))->all();
+        $shares = app(SalesOrderDiscountService::class)->headerShares($documentDiscount, $bases);
 
-        return $revision->lines->values()->map(function ($line, int $index) use ($documentDiscount, $discountableTotal, &$allocatedDocumentDiscount, $lastIndex): array {
-            $share = '0.0000';
-            if ($this->amounts->compare($documentDiscount, '0') > 0) {
-                if ($index === $lastIndex) {
-                    $share = $this->amounts->subtract($documentDiscount, $allocatedDocumentDiscount);
-                } else {
-                    $lineBase = $this->amounts->subtract($this->amounts->unitPriceTotal($line->quantity, $line->unit_price), $line->discount_amount);
-                    $share = $this->amounts->round($this->amounts->multiply($documentDiscount, bcdiv($lineBase, $discountableTotal, 8), 8));
-                    $allocatedDocumentDiscount = $this->amounts->add($allocatedDocumentDiscount, $share);
-                }
-            }
+        return $revision->lines->values()->map(function ($line, int $index) use ($shares): array {
+            $share = $shares[$index];
 
             return [
                 'quotation_revision_line_id' => $line->getKey(),
@@ -809,6 +920,8 @@ class SalesOrderService
                 'header_discount_amount' => $share,
                 'discount_amount' => $this->amounts->add($line->discount_amount, $share),
                 'tax_amount' => $line->tax_amount,
+                'tax_rate' => $line->tax_rate,
+                'tax_calculation_basis' => SalesTaxService::SourceAllocation,
                 'requested_date' => $line->requested_date,
                 'specifications' => $line->specifications,
                 'customer_notes' => $line->notes,

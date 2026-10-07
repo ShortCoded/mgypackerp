@@ -30,6 +30,7 @@ class SyncErpPermissionsCommand extends Command
         {--show-created : List all missing permission names that would be created}
         {--show-admin-diff : Show admin role permission diff (adds/removes/remaining)}
         {--skip-admin-sync : During real execution, skip assigning permissions to admin role}
+        {--skip-legacy-grant-sync : During real execution, do not expand existing role or user grants}
         {--export-audit= : Export audit data as JSON to the given path}';
 
     /**
@@ -73,6 +74,7 @@ HELP;
         $showCreated = (bool) $this->option('show-created');
         $showAdminDiff = (bool) $this->option('show-admin-diff');
         $skipAdminSync = (bool) $this->option('skip-admin-sync');
+        $skipLegacyGrantSync = (bool) $this->option('skip-legacy-grant-sync');
         $exportAudit = $this->option('export-audit');
 
         try {
@@ -263,6 +265,7 @@ HELP;
             $stalePermissions,
             $adminRole,
             $skipAdminSync,
+            $skipLegacyGrantSync,
             &$deletedStaleCount,
             &$adminAssignedPermissionsCount,
             &$expandedLegacyGrants,
@@ -276,7 +279,9 @@ HELP;
                 ]);
             }
 
-            $expandedLegacyGrants = $legacyGrants->migrate($permissionNames, $guardName);
+            if (! $skipLegacyGrantSync) {
+                $expandedLegacyGrants = $legacyGrants->migrate($permissionNames, $guardName);
+            }
 
             if ($prune && $stalePermissions->isNotEmpty()) {
                 $deletedStaleCount = $this->deleteStalePermissions($stalePermissions);
@@ -328,6 +333,9 @@ HELP;
         }
 
         $this->line('Existing role and user grants expanded to individual screens: '.$expandedLegacyGrants);
+        if ($skipLegacyGrantSync) {
+            $this->line('Legacy role and user grant sync skipped (--skip-legacy-grant-sync).');
+        }
 
         if (! $adminRole instanceof Role) {
             $this->warn('Permissions were synced, but no admin role was found. Admin role permissions were not updated.');

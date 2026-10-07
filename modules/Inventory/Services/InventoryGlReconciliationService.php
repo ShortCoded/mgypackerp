@@ -12,6 +12,7 @@ use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\InventoryValueAdjustment;
 use Modules\Inventory\Models\InventoryValueAdjustmentLine;
+use Modules\Production\Services\ProductionStageOutputCostService;
 
 class InventoryGlReconciliationService
 {
@@ -25,6 +26,9 @@ class InventoryGlReconciliationService
             $this->accounts->resolve($companyId, PostingAccountResolver::PackagingMaterialInventory, __('Inventory reconciliation'))->getKey(),
         ])->unique()->values()->all();
         $wasteAccountIds = [$this->accounts->resolve($companyId, PostingAccountResolver::AbnormalWasteLoss, __('Inventory reconciliation'))->getKey()];
+        $wasteAccountIds = array_values(array_unique([...$wasteAccountIds, ...app(ProductionStageOutputCostService::class)->historicalLossAccountIds($companyId)]));
+        $stageLoss = bcsub(app(ProductionStageOutputCostService::class)->recognizedLoss($companyId, $financialPeriodId, $branchId),
+            app(ProductionStageOutputCostService::class)->lossRoundingDifference($companyId, $financialPeriodId, $branchId), 8);
         $adjustmentAccountIds = [
             $this->accounts->resolve($companyId, PostingAccountResolver::InventoryAdjustmentGain, __('Inventory reconciliation'))->getKey(),
             $this->accounts->resolve($companyId, PostingAccountResolver::InventoryAdjustmentLoss, __('Inventory reconciliation'))->getKey(),
@@ -69,8 +73,8 @@ class InventoryGlReconciliationService
             $this->row(
                 'production_waste',
                 __('Production waste'),
-                $this->eventValue($companyId, [InventoryDocument::TypeProductionWaste], $wasteAccountIds, $financialPeriodId, $branchId),
-                $this->eventGlValue($companyId, [InventoryDocument::TypeProductionWaste], $wasteAccountIds, $financialPeriodId, $branchId),
+                $this->amount(bcadd($this->eventValue($companyId, [InventoryDocument::TypeProductionWaste], $wasteAccountIds, $financialPeriodId, $branchId), $stageLoss, 8)),
+                $this->amount(bcadd($this->eventGlValue($companyId, [InventoryDocument::TypeProductionWaste], $wasteAccountIds, $financialPeriodId, $branchId), $this->stageLossGl($companyId, $financialPeriodId, $branchId, $wasteAccountIds), 8)),
             ),
             $this->row(
                 'inventory_adjustments',
@@ -176,8 +180,23 @@ class InventoryGlReconciliationService
 
         $capitalizedCosts = $this->capitalizedProductionCosts($companyId, $financialPeriodId, $branchId);
 
-        return $this->amount(bcadd(bcadd($numbers->normalizeScientificNotation((string) $value) ?? '0',
-            $numbers->normalizeScientificNotation((string) $completion) ?? '0', 8), $capitalizedCosts, 8));
+        return $this->amount(bcsub(bcadd(bcadd($numbers->normalizeScientificNotation((string) $value) ?? '0',
+            $numbers->normalizeScientificNotation((string) $completion) ?? '0', 8), $capitalizedCosts, 8),
+            bcsub(app(ProductionStageOutputCostService::class)->recognizedLoss($companyId, $financialPeriodId, $branchId),
+                app(ProductionStageOutputCostService::class)->lossRoundingDifference($companyId, $financialPeriodId, $branchId), 8), 8));
+    }
+
+    /** @param list<int> $accountIds */
+    private function stageLossGl(int $companyId, ?int $periodId, ?int $branchId, array $accountIds): string
+    {
+        $value = DB::table('journal_entry_lines as line')->join('journal_entries as entry', 'entry.id', '=', 'line.journal_entry_id')
+            ->where('entry.company_id', $companyId)->whereNull('entry.deleted_at')->where('entry.status', JournalEntry::StatusPosted)->where('entry.is_posted', true)
+            ->whereIn('entry.source_type', ['production_stage_output_loss', 'production_stage_output_loss_reversal'])->whereIn('line.account_id', $accountIds)
+            ->when($periodId !== null, fn ($query) => $query->where('entry.financial_period_id', $periodId))
+            ->when($branchId !== null, fn ($query) => $query->whereRaw('coalesce(line.branch_id, entry.branch_id) = ?', [$branchId]))
+            ->selectRaw('coalesce(sum((line.debit_amount-line.credit_amount)*entry.exchange_rate), 0) as amount')->value('amount');
+
+        return (new NumericFormatService)->normalizeScientificNotation((string) $value) ?? '0.00000000';
     }
 
     private function capitalizedProductionCosts(int $companyId, ?int $periodId, ?int $branchId): string

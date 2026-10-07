@@ -173,6 +173,14 @@ class ProductionExpenseRequestController extends Controller
         return $this->jsonGuard(fn () => $this->service->pay($productionExpenseRequest));
     }
 
+    public function withdrawApproval(Request $request, ProductionExpenseRequest $productionExpenseRequest): JsonResponse
+    {
+        $this->assertProductionExpense($request, $productionExpenseRequest);
+        $data = $request->validate(['reason' => ['required', 'string', 'min:5', 'max:2000']]);
+
+        return $this->jsonGuard(fn () => $this->service->withdrawApproval($productionExpenseRequest, $data['reason']));
+    }
+
     public function reverse(Request $request, ProductionExpenseRequest $productionExpenseRequest): JsonResponse
     {
         $this->assertProductionExpense($request, $productionExpenseRequest);

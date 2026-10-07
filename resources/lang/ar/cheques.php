@@ -62,6 +62,7 @@ return [
         'received' => 'وارد',
         'deposited' => 'مودع',
         'collected' => 'محصل',
+        'collection_reversed' => 'عُكس التحصيل من السند الأصلي',
         'draft' => 'مسودة',
         'issued' => 'مصدر',
         'delivered' => 'مسلم',

@@ -19,6 +19,8 @@ class PurchaseReturn extends Model
 
     public const StatusPosted = 'posted';
 
+    public const StatusCancelled = 'cancelled';
+
     public const StatusReversed = 'reversed';
 
     protected $fillable = [

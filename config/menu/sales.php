@@ -152,6 +152,8 @@ return [
                 'permission' => 'customer_invoices.view',
                 'actions' => [
                     'delete' => 'customer_invoices.delete',
+                    'view_trashed' => 'customer_invoices.view_trashed',
+                    'restore' => 'customer_invoices.restore',
                     'credit_allocate' => 'customer_credits.allocate',
                     'credit_reverse_allocation' => 'customer_credits.reverse_allocation',
                     'credit_refund' => 'customer_credits.refund',

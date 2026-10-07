@@ -637,7 +637,7 @@
     }
     if (resetQuantities) {
       document.querySelectorAll('[data-planned-remaining]').forEach(function (input) {
-        input.value = additional.checked ? '' : input.dataset.plannedRemaining;
+        input.value = '';
       });
     }
   }

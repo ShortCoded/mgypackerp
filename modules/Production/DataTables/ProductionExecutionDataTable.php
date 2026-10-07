@@ -2,6 +2,7 @@
 
 namespace Modules\Production\DataTables;
 
+use App\Services\DocumentCancellationReviewService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
@@ -494,6 +495,10 @@ class ProductionExecutionDataTable
         }
 
         $actions = ['<a class="dropdown-item" href="'.e(route('admin.production.quality.show', $row->getKey())).'">'.e(__('production_execution.actions.view')).'</a>'];
+        $ownerAction = app(DocumentCancellationReviewService::class)->navigation($row, $request);
+        if ($ownerAction !== null) {
+            $actions[] = '<a class="dropdown-item" href="'.e($ownerAction['url']).'">'.e($ownerAction['label']).'</a>';
+        }
 
         if ($row->status === ProductionQualityInspection::StatusDraft && $request->user()?->can('production.quality.edit')) {
             $actions[] = '<a class="dropdown-item" href="'.e(route('admin.production.quality.edit', $row->getKey())).'">'.e(__('common.actions.edit')).'</a>';

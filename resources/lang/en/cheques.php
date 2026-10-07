@@ -62,6 +62,7 @@ return [
         'received' => 'Received',
         'deposited' => 'Deposited',
         'collected' => 'Collected',
+        'collection_reversed' => 'Collection reversed through original receipt',
         'draft' => 'Draft',
         'issued' => 'Issued',
         'delivered' => 'Delivered',

@@ -98,22 +98,25 @@ test('a sales order cannot be cancelled after a linked production order was canc
         ->and(fn () => $orders->cancel($reopened, 'Cancellation remains forbidden.'))->toThrow(DomainException::class);
 });
 
-test('an approved sales order remains locked against cancellation before downstream conversion', function (): void {
+test('an approved unused sales order can be cancelled while preserving its approval and source rows', function (): void {
     $fixture = salesCycleFixture();
     Permission::findOrCreate('sales_orders.cancel', 'web');
     $fixture['user']->givePermissionTo('sales_orders.cancel');
     $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
     $orders = app(SalesOrderService::class);
     $order = $orders->approve($orders->create(salesCycleOrderPayload($fixture)));
+    $original = $order->lines->map->getRawOriginal()->all();
+    $approved = $order->approved_at->toISOString();
 
+    $this->travel(2)->seconds();
     expect($order->status)->toBe(SalesOrder::StatusApproved)
-        ->and($order->canCancelSafely())->toBeFalse()
+        ->and($order->canCancelSafely())->toBeTrue()
         ->and($order->canReopenSafely())->toBeTrue();
-    expect(fn () => $orders->cancel($order->fresh(), 'Do not cancel an approved order.'))
-        ->toThrow(DomainException::class, __('The sales order cannot be cancelled from its current status.'));
-    $this->postJson(route('admin.sales.sales-orders.cancel', $order), ['reason' => 'Do not cancel an approved order.'])
-        ->assertUnprocessable();
-    expect($order->fresh()->status)->toBe(SalesOrder::StatusApproved);
+    $this->postJson(route('admin.sales.sales-orders.cancel', $order), ['reason' => 'SYNTHETIC approved order withdrawn.'])
+        ->assertOk();
+    expect($order->fresh()->status)->toBe(SalesOrder::StatusCancelled)
+        ->and($order->fresh()->approved_at->toISOString())->toBe($approved)
+        ->and($order->fresh()->lines->map->getRawOriginal()->all())->toBe($original);
 });
 
 test('approved sales requests require reopen permission before amendment and must be reapproved', function (): void {
@@ -1066,7 +1069,7 @@ test('fully paid invoice credit remains a customer credit and conserves every re
             'quantity' => '10000',
             'unit_price' => '0.1',
             'discount_amount' => 0,
-            'tax_amount' => '140',
+            'tax_rate' => '14',
         ]],
         'payment_schedules' => [[
             'title' => 'Paid in full',
@@ -1448,7 +1451,7 @@ test('service-only direct sale invoices and collects without inventory reservati
             'quantity' => '2',
             'unit_price' => '500',
             'discount_amount' => 0,
-            'tax_amount' => '140',
+            'tax_rate' => '14',
         ]],
         'payment_schedules' => [[
             'title' => 'Service settlement',

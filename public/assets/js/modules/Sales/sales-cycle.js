@@ -217,38 +217,56 @@
 
   window.AppSalesPricing = {suggest: suggestPrice};
 
-  function calculateLineTotal(row) {
-    if (row.closest('form')?.hasAttribute?.('data-sales-discount-inputs')) {
-      calculateDocumentSummary(row.closest('form'));
-      return;
+  function taxContract(row, form) {
+    const n = window.AppNumbers;
+    const rateInput = row.querySelector('.js-sales-tax-rate');
+    const legacyInput = row.querySelector('.js-sales-tax');
+    const normalized = input => n.normalize(String(input ?? '0')) || '0';
+    let amount = normalized(row.dataset.bookedTax ?? legacyInput?.value ?? '0');
+    if (row.dataset.invoiceBookedQuantity) {
+      const ratio = n.divide(normalized(row.querySelector('.js-sales-quantity')?.value), row.dataset.invoiceBookedQuantity, 12) || '0';
+      amount = n.divide(n.multiply(row.dataset.invoiceBookedTax || '0', ratio), '1', 4) || '0';
+      if (legacyInput) legacyInput.value = amount;
     }
-    const decimal = (selector) => window.AppNumbers.normalize(row.querySelector(selector)?.value || '0') || '0';
-    const gross = window.AppNumbers.multiply(decimal('.js-sales-quantity'), decimal('.js-sales-price'), 4) || '0';
-    const total = window.AppNumbers.add(
-      window.AppNumbers.subtract(gross, decimal('.js-sales-discount')) || '0',
-      decimal('.js-sales-tax')
-    ) || '0';
-    const output = row.querySelector('[data-sales-line-total]');
-    if (output) output.textContent = window.AppNumbers.format(total);
+    const rate = !rateInput || !rateInput.value.trim() ? null : (n.normalize(rateInput.value) ?? rateInput.value);
+    let unchanged = false;
+    if (row.dataset.taxTerms) {
+      const terms = JSON.parse(row.dataset.taxTerms);
+      unchanged = (rate === null ? terms.rate === null : terms.rate !== null && n.compare(rate, terms.rate) === 0)
+        && (row.querySelector('[name$="[product_doc_num]"]')?.value || '') === terms.product
+        && (row.querySelector('[name$="[unit_doc_num]"]')?.value || '') === terms.unit
+        && n.compare(normalized(row.querySelector('.js-sales-quantity')?.value), terms.quantity) === 0
+        && n.compare(normalized(row.querySelector('.js-sales-price')?.value), terms.unit_price) === 0
+        && (row.querySelector('.js-sales-discount-type')?.value || 'fixed') === terms.discount_type
+        && n.compare(normalized(row.querySelector('.js-sales-discount-value')?.value), terms.discount_value) === 0
+        && (form?.querySelector('.js-sales-header-discount-type')?.value || null) === terms.header_type
+        && n.compare(normalized(form?.querySelector('.js-sales-header-discount-value')?.value), terms.header_value) === 0;
+    }
+    const preserve = row.dataset.taxBasis === 'source_allocation' && unchanged;
+    return {tax_amount:amount, tax_rate:rate, tax_calculation_basis:rate === null ? 'legacy_amount' : (preserve ? 'source_allocation' : 'rate'),
+      preserve_booked_terms:unchanged && row.dataset.bookedGross !== undefined,
+      booked_gross:row.dataset.bookedGross, booked_header_discount:row.dataset.bookedHeaderDiscount, booked_own_discount:row.dataset.bookedOwnDiscount};
+  }
+
+  function calculateLineTotal(row) {
     calculateDocumentSummary(row.closest('form'));
   }
 
   function calculateDocumentSummary(form) {
     if (!form?.matches('[data-sales-document-summary], [data-sales-request-form]')) return;
     const rows = Array.from(form.querySelectorAll('[data-sales-lines] [data-sales-line]'));
-    rows.forEach(row => {
-      if (!row.dataset.invoiceBookedQuantity) return;
-      const ratio = window.AppNumbers.divide(window.AppNumbers.normalize(row.querySelector('.js-sales-quantity')?.value || '0') || '0', row.dataset.invoiceBookedQuantity, 12) || '0';
-      const taxInput = row.querySelector('.js-sales-tax');
-      if (taxInput) taxInput.value = window.AppNumbers.divide(window.AppNumbers.multiply(row.dataset.invoiceBookedTax || '0', ratio) || '0', '1', 4) || '0';
-    });
+    const contracts = rows.map(row => taxContract(row, form));
+    const preserveBookedDocument = contracts.length > 0 && contracts.every(contract => contract.preserve_booked_terms);
+    const hasBookedSource = contracts.some(contract => contract.booked_gross !== undefined);
     const typedDiscounts = form.hasAttribute?.('data-sales-discount-inputs') && window.AppSalesDiscounts
-      ? window.AppSalesDiscounts.calculate(rows.map(row => ({
+      ? window.AppSalesDiscounts.calculate(rows.map((row, index) => ({
         quantity: window.AppNumbers.normalize(row.querySelector('.js-sales-quantity')?.value || '0') || '0',
         unit_price: window.AppNumbers.normalize(row.querySelector('.js-sales-price')?.value || '0') || '0',
         discount_type: row.querySelector('.js-sales-discount-type')?.value || 'fixed',
         discount_value: window.AppNumbers.normalize(row.querySelector('.js-sales-discount-value')?.value || '0') || '0',
-        tax_amount: window.AppNumbers.normalize(row.querySelector('.js-sales-tax')?.value || '0') || '0',
+        tax_amount:contracts[index].tax_amount, tax_rate:contracts[index].tax_rate,
+        tax_calculation_basis:hasBookedSource && !preserveBookedDocument && contracts[index].tax_rate !== null ? 'rate' : contracts[index].tax_calculation_basis,
+        ...(preserveBookedDocument ? {booked_gross:contracts[index].booked_gross,booked_header_discount:contracts[index].booked_header_discount,booked_own_discount:contracts[index].booked_own_discount} : {}),
       })), form.querySelector('.js-sales-header-discount-type')?.value || null,
       window.AppNumbers.normalize(form.querySelector('.js-sales-header-discount-value')?.value || '0') || '0') : null;
     const products = new Set();
@@ -262,8 +280,13 @@
       const rowQuantity = window.AppNumbers.normalize(row.querySelector('.js-sales-quantity')?.value || '0') || '0';
       const rowPrice = window.AppNumbers.normalize(row.querySelector('.js-sales-price')?.value || '0') || '0';
       const rowDiscount = typedDiscounts?.lines[index].discount_amount ?? (window.AppNumbers.normalize(row.querySelector('.js-sales-discount')?.value || '0') || '0');
-      const rowTax = window.AppNumbers.normalize(row.querySelector('.js-sales-tax')?.value || '0') || '0';
-      const rowSubtotal = typedDiscounts?.lines[index].gross ?? (window.AppNumbers.multiply(rowQuantity, rowPrice, 4) || '0');
+      const contract = taxContract(row, form);
+      const rowTax = typedDiscounts?.lines[index].tax_amount ?? (contract.tax_calculation_basis === 'rate'
+        ? window.AppNumbers.round(window.AppNumbers.divide(window.AppNumbers.multiply(window.AppNumbers.subtract(window.AppNumbers.multiply(rowQuantity, rowPrice, 4), rowDiscount), contract.tax_rate), '100', 12), 4) : contract.tax_amount);
+      const taxOutput = row.querySelector('[data-sales-line-tax-amount]');
+      if (taxOutput) taxOutput.textContent = window.AppNumbers.format(rowTax);
+      const rowSubtotal = typedDiscounts?.lines[index].gross ?? (contract.preserve_booked_terms
+        ? contract.booked_gross : (window.AppNumbers.multiply(rowQuantity, rowPrice, 4) || '0'));
       if (typedDiscounts) {
         const hidden = row.querySelector('.js-sales-discount');
         if (hidden) hidden.value = rowDiscount;
@@ -370,7 +393,7 @@
     });
     document.addEventListener('input', (event) => {
       if (event.target.matches('.js-sales-header-discount-value, .js-sales-withholding-rate')) calculateDocumentSummary(event.target.closest('form'));
-      if (event.target.matches('.js-sales-quantity, .js-sales-price, .js-sales-discount, .js-sales-discount-value, .js-sales-tax')) {
+      if (event.target.matches('.js-sales-quantity, .js-sales-price, .js-sales-discount, .js-sales-discount-value, .js-sales-tax-rate')) {
         calculateLineTotal(event.target.closest('tr'));
         if (event.target.matches('.js-sales-quantity')) suggestPrice(event.target.closest('tr'));
       }

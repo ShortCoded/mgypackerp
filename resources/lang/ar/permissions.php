@@ -343,6 +343,22 @@ $inventoryPermissionLabels['inventory.unpriced_inventory_receipts.document_numbe
 $inventoryPermissionLabels['inventory.unpriced_inventory_receipts.document_number_settings.update'] = 'تحديث إعدادات رقم مستند توريد مخزني بدون أسعار';
 
 return [
+    'customer_invoices.view_trashed' => 'عرض فواتير البيع المؤرشفة',
+    'customer_invoices.restore' => 'استعادة سجل فاتورة البيع المؤرشفة',
+    'production.handovers.view' => 'عرض أذون تسليم الإنتاج للمخزن',
+    'production.handovers.create' => 'إعداد إذن تسليم إنتاج للمخزن',
+    'production.handovers.approve' => 'اعتماد إذن تسليم إنتاج للمخزن',
+    'production.handovers.cancel' => 'إلغاء إذن تسليم إنتاج غير مستلم',
+    'inventory.production_receipts.view' => 'عرض الاستلامات المخزنية من الإنتاج',
+    'inventory.production_receipts.create' => 'تسجيل استلام مخزني فعلي من الإنتاج',
+    'inventory.production_receipts.approve' => 'اعتماد استلام مخزني من الإنتاج',
+    'inventory.production_receipts.cancel' => 'إلغاء مسودة استلام مخزني من الإنتاج',
+    'inventory.production_receipts.correct_prepare' => 'إعداد مراجعة عكس استلام مخزني مرحّل من الإنتاج',
+    'inventory.production_receipts.correct_approve' => 'اعتماد مستقل لعكس استلام مخزني مرحّل من الإنتاج',
+    'purchases.request_for_quotations.cancel' => 'إلغاء طلب عروض أسعار الموردين',
+    'purchases.supplier_quotation_entry.cancel' => 'إلغاء عرض سعر المورد',
+    'purchases.supplier_selection.cancel' => 'إلغاء اختيار المورد بعد تسوية التبعيات',
+    'purchases.purchase_returns.cancel' => 'إلغاء مسودة مرتجع شراء',
     'production.runs.correct' => 'تصحيح تشغيلة مكتملة',
     'production.runs.correct_approve' => 'اعتماد أو رفض تصحيح التشغيلة',
     'production.runs.correct_later_period' => 'تصحيح وإعادة استلام التشغيلة في فترة لاحقة مع حفظ الفترة الأصلية',

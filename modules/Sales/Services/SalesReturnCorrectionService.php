@@ -6,6 +6,7 @@ use DomainException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Modules\Accounting\Models\JournalEntry;
+use Modules\Accounting\Services\JournalEntryService;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\FinancialPeriodService;
@@ -239,31 +240,13 @@ final class SalesReturnCorrectionService
 
     public function assertInverse(JournalEntry $source, JournalEntry $inverse, int $periodId, string $date): void
     {
-        $source->refresh()->load('lines');
-        $inverse->refresh()->load('lines');
-        if ($source->trashed() || $inverse->trashed() || ! $source->is_posted || ! $inverse->is_posted
-            || $source->status !== JournalEntry::StatusPosted || $inverse->status !== JournalEntry::StatusPosted
-            || (int) $source->reversed_entry_id !== (int) $inverse->id || $inverse->reversed_entry_id !== null
-            || (int) $inverse->financial_period_id !== $periodId || $inverse->entry_date->toDateString() !== $date
-            || (int) $source->company_id !== (int) $inverse->company_id || (int) $source->branch_id !== (int) $inverse->branch_id
-            || (int) $source->currency_id !== (int) $inverse->currency_id
-            || bccomp((string) $source->exchange_rate, (string) $inverse->exchange_rate, 6) !== 0
-            || $source->lines->count() !== $inverse->lines->count()
-            || $source->lines->pluck('line_no')->unique()->count() !== $source->lines->count()
-            || $inverse->lines->pluck('line_no')->unique()->count() !== $inverse->lines->count()) {
+        try {
+            app(JournalEntryService::class)->assertPostedReversal($source, $inverse);
+        } catch (DomainException) {
             throw new DomainException(__('sales_return_plan.source_invalid'));
         }
-        foreach ($source->lines as $line) {
-            $opposite = $inverse->lines->firstWhere('line_no', $line->line_no);
-            foreach (['account_id', 'customer_id', 'supplier_id', 'employee_id', 'bank_account_id', 'cost_center_id', 'department_id', 'branch_id'] as $field) {
-                if ($opposite === null || $line->{$field} !== $opposite->{$field}) {
-                    throw new DomainException(__('sales_return_plan.source_invalid'));
-                }
-            }
-            if (bccomp((string) $line->debit_amount, (string) $opposite->credit_amount, 4) !== 0
-                || bccomp((string) $line->credit_amount, (string) $opposite->debit_amount, 4) !== 0) {
-                throw new DomainException(__('sales_return_plan.source_invalid'));
-            }
+        if ((int) $inverse->financial_period_id !== $periodId || $inverse->entry_date->toDateString() !== $date) {
+            throw new DomainException(__('sales_return_plan.source_invalid'));
         }
     }
 

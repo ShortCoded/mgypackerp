@@ -3,6 +3,7 @@
 namespace Modules\Purchases\Models;
 
 use App\Models\User;
+use App\Services\DocumentOwnerEffectProofService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -80,6 +81,21 @@ class PurchaseRequisition extends Model
         }
 
         return ! $this->hasDownstreamDocuments();
+    }
+
+    public function canCancelSafely(): bool
+    {
+        return ! $this->trashed() && in_array($this->status, [self::StatusDraft, self::StatusSubmitted, self::StatusRejected,
+            self::StatusApproved, self::StatusClosed, self::StatusPartiallyConverted, self::StatusFullyConverted], true)
+            && ! app(DocumentOwnerEffectProofService::class)->requisitionHasUnsettledEffects($this);
+    }
+
+    public function hasReopenEvidence(): bool
+    {
+        return $this->status === self::StatusDraft && DB::table('activity_log')->where('company_id', $this->company_id)
+            ->where('subject_type', self::class)->where('subject_id', $this->id)->where('event', 'purchase_requisition.reopened')
+            ->when($this->approved_at, fn ($query) => $query->where('created_at', '>=', $this->approved_at))
+            ->when($this->closed_at, fn ($query) => $query->where('created_at', '>=', $this->closed_at))->exists();
     }
 
     public function hasDownstreamDocuments(): bool
