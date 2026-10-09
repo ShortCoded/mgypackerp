@@ -53,7 +53,7 @@ return [
     'withholding_help' => 'Calculated on the grand total including VAT after commercial discounts. VAT is unchanged.',
     'net_payable' => 'Net payable after withholding',
     'withholding_invalid' => 'Enter a withholding percentage from 0 to 100 with up to four decimal places.',
-    'withholding_posting_pending' => 'Save as draft. Posting with withholding requires the receivable account and recognition policy to be configured.',
+    'withholding_posting_pending' => 'The legacy withholding basis on this draft does not support posting. Review the basis before approving the invoice. A commercial preview posts the full amount; actual tax withholding requires a separate certificate settlement.',
     'withholding_recalculated' => 'The amount is recalculated from the saved invoice quantities.',
     'discount_invalid' => 'Choose a discount type and a non-negative value; percentages cannot exceed 100.',
     'discount_exceeds_base' => 'The discount cannot exceed the amount before tax.',

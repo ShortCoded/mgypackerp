@@ -1,6 +1,9 @@
 <?php
 
+use App\Services\PostingAccountResolver;
 use Illuminate\Support\Facades\DB;
+use Modules\Accounting\Models\Account;
+use Modules\Accounting\Models\AccountClassification;
 use Modules\Sales\Services\CustomerInvoiceService;
 use Modules\Sales\Services\SalesOrderService;
 use Modules\Sales\Services\SalesWithholdingService;
@@ -33,8 +36,17 @@ test('withholding defaults to zero preserves prices and rejects invalid rates', 
     }
 });
 
-test('direct draft invoices persist the withholding input and posting is blocked atomically until the accounting policy exists', function (): void {
+test('legacy gross withholding drafts remain blocked atomically even with an eligible tax receivable account', function (): void {
     $f = salesCycleFixture(isolatedCompany: DB::getDriverName() === 'pgsql');
+    $classification = AccountClassification::query()->where('code', 'withholding_tax_receivable')->sole();
+    $account = $f['customer']->account->replicate();
+    $account->fill(['doc_number' => (int) Account::withTrashed()->max('doc_number') + 1,
+        'doc_num' => 'SYNTHETIC-LEGACY-WHT-ACCOUNT', 'account_code' => '1124-99102',
+        'name' => 'SYNTHETIC legacy withholding guard', 'account_classification_id' => $classification->id]);
+    $account->save();
+    $withholdingAccount = app(PostingAccountResolver::class)->resolve($f['company']->id, 'withholding_tax_receivable', 'Sales invoice');
+    expect($withholdingAccount->company_id)->toBe($f['company']->id)
+        ->and($withholdingAccount->fresh()->isEligibleForDirectPosting())->toBeTrue();
     foreach (['customer_invoices.create', 'customer_invoices.edit', 'customer_invoices.view', 'customer_invoices.view_prices', 'customer_invoices.print', 'customer_invoices.post'] as $ability) {
         Permission::findOrCreate($ability, 'web');
         $f['user']->givePermissionTo($ability);
