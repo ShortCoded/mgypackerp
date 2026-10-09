@@ -114,9 +114,16 @@ class InventoryGrniService
             }
 
             $inventoryAccount = $this->accounts->inventoryForProduct((int) $return->company_id, $receiptLine->product, __('Purchase Return'));
+            $postingValue = $value;
+            if (app(PurchaseReceiptCostAllocationService::class)->hasHistory((int) $return->company_id, (int) $receiptLine->id)) {
+                $movement = InventoryTransaction::query()->where('company_id', $return->company_id)
+                    ->where('posting_key', 'purchase-return:'.$returnLine->id)->lockForUpdate()->sole();
+                $postingValue = $movement->completedTotalCost()
+                    ?? throw new DomainException(__('purchase_invoices.messages.cost_lineage_missing'));
+            }
             $key = (string) $inventoryAccount->getKey();
-            $posting[$key] = bcadd($posting[$key] ?? '0.0000', $value, 4);
-            $total = bcadd($total, $value, 4);
+            $posting[$key] = bcadd($posting[$key] ?? '0.0000', $postingValue, 8);
+            $total = bcadd($total, $postingValue, 8);
             $receiptLine->forceFill([
                 'grni_returned_quantity' => bcadd((string) $receiptLine->grni_returned_quantity, (string) $returnLine->quantity, 8),
                 'grni_returned_value' => bcadd((string) $receiptLine->grni_returned_value, $value, 4),

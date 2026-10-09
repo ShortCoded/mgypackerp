@@ -4,13 +4,10 @@ namespace Modules\Purchases\Services;
 
 use App\Services\PostingAccountResolver;
 use DomainException;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Modules\Core\Services\FinancialPeriodService;
-use Modules\Inventory\Models\InventoryReceiptLayer;
-use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\InventoryValueAdjustment;
-use Modules\Inventory\Models\UnpricedInventoryReceipt;
-use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Inventory\Services\InventoryReceiptCostCompletionService;
 use Modules\Inventory\Services\InventoryReceiptCostProposalService;
 use Modules\Inventory\Services\InventoryValueAdjustmentService;
@@ -24,9 +21,9 @@ class PurchaseInvoiceCostAdjustmentService
 
     public function __construct(
         private readonly PostingAccountResolver $accounts,
-        private readonly PurchaseInvoiceCalculationService $calculator,
         private readonly InventoryReceiptCostCompletionService $completion,
         private readonly InventoryValueAdjustmentService $adjustments,
+        private readonly PurchaseReceiptCostAllocationService $allocation,
     ) {}
 
     public function notice(int $companyId): ?string
@@ -68,51 +65,34 @@ class PurchaseInvoiceCostAdjustmentService
     /** @return array<string, mixed>|null */
     public function plan(PurchaseInvoice $invoice): ?array
     {
-        $netAmounts = $this->calculator->netAmountsByLine($invoice);
-        $variances = [];
-        foreach ($invoice->lines as $line) {
-            if ($line->receipt_line_id === null || $line->product?->isService() || ! $line->product?->cost_as_inventory) {
-                continue;
-            }
-            $receipt = UnpricedInventoryReceiptLine::query()->where('company_id', $invoice->company_id)->lockForUpdate()->findOrFail($line->receipt_line_id);
-            $provisional = bcmul((string) $receipt->provisional_unit_value, (string) $line->quantity, 4);
-            $variance = bcsub((string) $netAmounts[$line->id], bcdiv($provisional, (string) $invoice->exchange_rate, 4), 4);
-            if (bccomp($variance, '0', 4) !== 0) {
-                $variances[] = [$receipt, bcmul($variance, (string) $invoice->exchange_rate, 4)];
-            }
-        }
-        if ($variances === [] || $this->accounts->resolveOptional((int) $invoice->company_id, PostingAccountResolver::PurchasePriceVariance, __('Purchase Invoice')) !== null) {
+        $this->allocation->lockCompany((int) $invoice->company_id);
+        $basis = $this->allocation->describeInvoice($invoice, true);
+        $variances = collect($basis['lines'])->where('treatment', 'capitalized');
+        if ($variances->isEmpty() || $this->accounts->resolveOptional((int) $invoice->company_id, PostingAccountResolver::PurchasePriceVariance, __('Purchase Invoice')) !== null) {
             return null;
         }
-        $deltas = [];
         $branchVariances = [];
-        foreach ($variances as [$receiptLine, $variance]) {
-            $root = InventoryTransaction::query()->where('company_id', $invoice->company_id)
-                ->where('posting_key', 'purchase-receipt:'.$receiptLine->id)->lockForUpdate()->first();
-            $receiptLine->loadMissing('receipt');
-            $factor = $receiptLine->product_snapshot['stock_conversion_factor'] ?? null;
-            $eligible = bcsub((string) $receiptLine->accepted_quantity, (string) $receiptLine->grni_returned_quantity, 8);
-            if ($root === null || $factor === null || $root->source_type !== UnpricedInventoryReceipt::class
-                || (int) $root->source_id !== (int) $receiptLine->receipt_id
-                || $root->source_line_type !== UnpricedInventoryReceiptLine::class || (int) $root->source_line_id !== (int) $receiptLine->id
-                || (int) $root->product_id !== (int) $receiptLine->product_id || (int) $root->branch_id !== (int) $receiptLine->branch_id
-                || ! $receiptLine->receipt?->approved || $receiptLine->receipt?->posting_status !== 'posted'
-                || bccomp($eligible, '0', 8) <= 0
-                || bccomp((string) $root->quantity_in, bcmul((string) $receiptLine->accepted_quantity, (string) $factor, 8), 8) !== 0
-                || $root->total_cost === null || bccomp((string) $root->total_cost, (string) $receiptLine->provisional_total_value, 4) !== 0
-                || bccomp((string) InventoryReceiptLayer::query()->where('receipt_transaction_id', $root->id)->sum('original_quantity'), (string) $root->quantity_in, 8) !== 0) {
-                throw new DomainException(__('purchase_invoices.messages.cost_lineage_missing'));
-            }
-            $delta = bcdiv(bcmul($variance, (string) $receiptLine->accepted_quantity, 16), $eligible, 8);
-            $deltas[$root->id] = bcadd($deltas[$root->id] ?? '0', $delta, 8);
-            $branchVariances[$receiptLine->branch_id] = bcadd($branchVariances[$receiptLine->branch_id] ?? '0', $variance, 4);
+        foreach ($variances as $line) {
+            $branchVariances[$line['branch_id']] = bcadd($branchVariances[$line['branch_id']] ?? '0', $line['variance_base'], 4);
         }
+        $events = $this->allocation->targets((int) $invoice->company_id, $variances->pluck('receipt_line_id')->unique()->values()->all(), $basis);
 
-        return $this->preparePlan($invoice, $deltas, $invoice->invoice_date->toDateString(), (int) $invoice->financial_period_id, $branchVariances);
+        return [...$this->preparePlan($invoice, $events['root_deltas'], $invoice->invoice_date->toDateString(), (int) $invoice->financial_period_id, $branchVariances),
+            'cost_events' => $events['cost_events']];
     }
 
     /** @param array<string, mixed> $plan */
     public function post(PurchaseInvoice $invoice, array $plan, bool $reverse = false): InventoryValueAdjustment
+    {
+        return DB::transaction(function () use ($invoice, $plan, $reverse): InventoryValueAdjustment {
+            $this->allocation->lockCompany((int) $invoice->company_id);
+
+            return $this->postLocked($invoice, $plan, $reverse);
+        }, 3);
+    }
+
+    /** @param array<string, mixed> $plan */
+    private function postLocked(PurchaseInvoice $invoice, array $plan, bool $reverse): InventoryValueAdjustment
     {
         Gate::authorize($reverse ? 'purchase_invoices.reverse' : 'purchase_invoices.approve');
         $sourceType = $reverse ? self::ReversalSource : PurchaseInvoice::class;
@@ -125,7 +105,7 @@ class PurchaseInvoiceCostAdjustmentService
 
             return $existing;
         }
-        $fresh = $this->preparePlan($invoice, $plan['root_deltas'], $plan['posting_date'], (int) $plan['posting_period_id'], $plan['invoice_variance_by_branch']);
+        $fresh = $reverse ? $this->reversalPlan($invoice, $plan['posting_date'], (int) $plan['posting_period_id']) : $this->plan($invoice);
         if ($fresh !== $plan) {
             throw new DomainException(__('inventory.movements.messages.receipt_pricing_source_changed'));
         }
@@ -144,10 +124,22 @@ class PurchaseInvoiceCostAdjustmentService
         if ($original === null) {
             return;
         }
-        $deltas = array_map(fn (string $delta): string => bcmul($delta, '-1', 8), $original->source_snapshot['root_deltas']);
-        $branches = array_map(fn (string $delta): string => bcmul($delta, '-1', 4), $original->source_snapshot['invoice_variance_by_branch']);
-        $plan = $this->preparePlan($invoice, $deltas, $postingDate, $postingPeriodId, $branches);
+        $plan = $this->reversalPlan($invoice, $postingDate, $postingPeriodId);
         $this->post($invoice, $plan, reverse: true);
+    }
+
+    /** @return array<string, mixed> */
+    private function reversalPlan(PurchaseInvoice $invoice, string $date, int $periodId): array
+    {
+        $basis = $this->allocation->invoiceBasis($invoice);
+        $lines = collect($basis['lines'])->where('treatment', 'capitalized');
+        $branches = [];
+        foreach ($lines as $line) {
+            $branches[$line['branch_id']] = bcsub($branches[$line['branch_id']] ?? '0', $line['variance_base'], 4);
+        }
+        $events = $this->allocation->targets((int) $invoice->company_id, $lines->pluck('receipt_line_id')->unique()->values()->all(), excludeInvoiceId: (int) $invoice->id);
+
+        return [...$this->preparePlan($invoice, $events['root_deltas'], $date, $periodId, $branches), 'cost_events' => $events['cost_events']];
     }
 
     /** @param array<int, string> $deltas @param array<int, string> $branches @return array<string, mixed> */
@@ -160,7 +152,7 @@ class PurchaseInvoiceCostAdjustmentService
             ->reduce(fn (string $sum, array $effect): string => bcadd($sum, $effect['amount'], 8), '0');
         $actual = bcsub($plan['source_total'], $counterpartEffects, 8);
         $expected = array_reduce($branches, fn (string $sum, string $amount): string => bcadd($sum, $amount, 4), '0.0000');
-        if (bccomp($actual, $expected, 4) !== 0) {
+        if (bccomp(bcround($actual, 4), $expected, 4) !== 0) {
             throw new DomainException(__('purchase_invoices.messages.cost_lineage_unbalanced'));
         }
 

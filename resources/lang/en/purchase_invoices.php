@@ -23,6 +23,7 @@ return [
         'payment_schedule' => 'Payment Schedule',
         'totals' => 'Totals',
         'matching' => 'Purchase Order, Receipt, and Invoice Matching',
+        'return_cost_adjustment' => 'Purchase Return Cost Adjustment',
         'cost_adjustment' => 'Purchase Cost Adjustment',
     ],
     'attributes' => [
@@ -208,6 +209,7 @@ return [
         'cost_reversed' => 'The purchase cost adjustment was reversed with the invoice. Adjustment journals, reversal journals and original movements remain available for review.',
         'cost_standard_settlement_pending' => 'The material difference was recorded in work in process. The finished product standard cost is unchanged. Complete the standard cost settlement with independent approval.',
         'cost_lineage_unbalanced' => 'The invoice price difference does not match the cost traced through receipts and returns. Review linked quantities and costs before approval.',
+        'cost_history_missing' => 'The original cost allocation or price variance account evidence is incomplete. Complete that evidence before posting; balances were not changed.',
         'source_discount_allocation_invalid' => 'The source discount allocation is inconsistent; refresh the source invoice quantities.',
         'created' => 'Purchase invoice created successfully.',
         'updated' => 'Purchase invoice updated successfully.',

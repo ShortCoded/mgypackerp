@@ -19,7 +19,9 @@ use Modules\Inventory\Models\InventoryValueAdjustment;
 use Modules\Inventory\Models\InventoryValueAdjustmentLine;
 use Modules\Inventory\Models\OpeningStockCostCorrection;
 use Modules\Purchases\Models\PurchaseInvoice;
+use Modules\Purchases\Models\PurchaseReturn;
 use Modules\Purchases\Services\PurchaseInvoiceCostAdjustmentService;
+use Modules\Purchases\Services\PurchaseReturnCostAdjustmentService;
 
 class InventoryValueAdjustmentService
 {
@@ -55,22 +57,32 @@ class InventoryValueAdjustmentService
         return $this->postPlan($invoice, $plan, $request, false, purchaseReverse: $reverse);
     }
 
-    private function postPlan(InventoryReceiptCostProposal|InventoryPeriodicCostClose|InventoryStandardCostSettlement|OpeningStockCostCorrection|PurchaseInvoice $proposal,
+    /** @param array<string, mixed> $plan */
+    public function postPurchaseReturn(PurchaseReturn $return, array $plan, Request $request, bool $reverse = false): InventoryValueAdjustment
+    {
+        return $this->postPlan($return, $plan, $request, false, purchaseReverse: $reverse);
+    }
+
+    private function postPlan(InventoryReceiptCostProposal|InventoryPeriodicCostClose|InventoryStandardCostSettlement|OpeningStockCostCorrection|PurchaseInvoice|PurchaseReturn $proposal,
         array $plan, Request $request, bool $periodic, bool $standard = false, bool $opening = false, bool $purchaseReverse = false): InventoryValueAdjustment
     {
         return DB::transaction(function () use ($proposal, $plan, $request, $periodic, $standard, $opening, $purchaseReverse): InventoryValueAdjustment {
             Company::query()->whereKey($proposal->company_id)->lockForUpdate()->firstOrFail();
             $locked = $proposal::query()->lockForUpdate()->findOrFail($proposal->id);
-            $purchase = $locked instanceof PurchaseInvoice;
-            $sourceType = $purchaseReverse ? PurchaseInvoiceCostAdjustmentService::ReversalSource : $locked::class;
+            $return = $locked instanceof PurchaseReturn;
+            $purchase = $locked instanceof PurchaseInvoice || $return;
+            $sourceType = $purchaseReverse ? ($return ? PurchaseReturnCostAdjustmentService::ReversalSource : PurchaseInvoiceCostAdjustmentService::ReversalSource) : $locked::class;
             $postingDate = $purchase ? $plan['posting_date'] : $locked->posting_date;
             $postingPeriodId = (int) ($purchase ? $plan['posting_period_id'] : $locked->posting_period_id);
             $counterpartId = $purchase ? $plan['counterpart_account_id'] : $locked->counterpart_account_id;
-            $permission = $purchase ? ($purchaseReverse ? 'purchase_invoices.reverse' : 'purchase_invoices.approve') : ($opening ? 'inventory.opening_stock_cost_corrections.approve'
+            $permission = $purchase ? ($return ? ($purchaseReverse ? 'purchases.purchase_returns.reverse' : 'purchases.purchase_returns.post')
+                : ($purchaseReverse ? 'purchase_invoices.reverse' : 'purchase_invoices.approve')) : ($opening ? 'inventory.opening_stock_cost_corrections.approve'
                 : ($standard ? 'inventory.cost_policies.standard.approve' : ($periodic ? 'inventory.cost_policies.periodic.approve' : 'inventory.documents.approve_receipt_cost')));
             $validSource = $purchase
-                ? (in_array($locked->status, $purchaseReverse ? [PurchaseInvoice::StatusApproved, PurchaseInvoice::StatusClosed] : [PurchaseInvoice::StatusDraft], true)
-                    && PurchaseInvoiceCostAdjustmentService::snapshot($locked) === $plan['invoice_snapshot'])
+                ? ($return ? ($locked->status === ($purchaseReverse ? PurchaseReturn::StatusReversed : PurchaseReturn::StatusPosted)
+                    && PurchaseReturnCostAdjustmentService::snapshot($locked) === $plan['return_snapshot'])
+                    : (in_array($locked->status, $purchaseReverse ? [PurchaseInvoice::StatusApproved, PurchaseInvoice::StatusClosed] : [PurchaseInvoice::StatusDraft], true)
+                        && PurchaseInvoiceCostAdjustmentService::snapshot($locked) === $plan['invoice_snapshot']))
                 : ($locked->status === ($periodic || $standard ? InventoryPeriodicCostClose::StatusPrepared : InventoryReceiptCostProposal::StatusPending)
                     && (int) $locked->prepared_by !== (int) $request->user()?->id
                     && ($opening ? $locked->plan === $plan : $locked->impact_sha256 === hash('sha256', json_encode($plan, JSON_THROW_ON_ERROR))));
@@ -78,7 +90,7 @@ class InventoryValueAdjustmentService
                 || ! $validSource) {
                 throw new DomainException(__('inventory.movements.messages.receipt_pricing_source_changed'));
             }
-            $existing = InventoryValueAdjustment::query()->where('source_type', $sourceType)
+            $existing = InventoryValueAdjustment::query()->where('company_id', $locked->company_id)->where('source_type', $sourceType)
                 ->where('source_id', $locked->id)->lockForUpdate()->first();
             if ($existing) {
                 if ($existing->source_snapshot !== $plan) {
@@ -149,7 +161,8 @@ class InventoryValueAdjustmentService
                         'source_type' => InventoryValueAdjustment::class, 'source_id' => $adjustment->id,
                         'source_doc_num' => $adjustment->source_doc_num, 'created_by' => $request->user()->id,
                         'cost_method' => $source->cost_method, 'cost_policy_id' => $source->cost_policy_id,
-                        'cost_basis' => $purchase ? ($purchaseReverse ? 'purchase_invoice_cost_reversal' : 'purchase_invoice_cost_adjustment') : ($opening ? 'approved_opening_stock_cost_correction'
+                        'cost_basis' => $purchase ? ($return ? ($purchaseReverse ? 'purchase_return_cost_reversal' : 'purchase_return_cost_adjustment')
+                            : ($purchaseReverse ? 'purchase_invoice_cost_reversal' : 'purchase_invoice_cost_adjustment')) : ($opening ? 'approved_opening_stock_cost_correction'
                             : ($standard ? 'approved_standard_cost_settlement' : ($periodic ? 'approved_periodic_cost_finalization' : 'approved_receipt_cost_completion'))),
                         'is_reversal' => false,
                     ]);
@@ -174,7 +187,7 @@ class InventoryValueAdjustmentService
             }
             $journalLines = [];
             $roundedTotals = [];
-            $description = __($purchase ? 'purchase_invoices.sections.cost_adjustment' : ($opening ? 'opening_stock_cost_correction.title' : ($standard ? 'inventory_standard_cost.settlements'
+            $description = __($purchase ? ($return ? 'purchase_invoices.sections.return_cost_adjustment' : 'purchase_invoices.sections.cost_adjustment') : ($opening ? 'opening_stock_cost_correction.title' : ($standard ? 'inventory_standard_cost.settlements'
                 : ($periodic ? 'inventory_periodic_cost.title' : 'inventory.movements.receipt_completion_title'))));
             $purchaseRounds = $purchase ? $this->purchaseRoundedGroups($grouped, $plan, $adjustment) : [];
             foreach ($grouped as $key => $group) {

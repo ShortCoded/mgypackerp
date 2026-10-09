@@ -162,6 +162,7 @@ class PurchaseInvoiceService
                 'updated_by' => auth()->id(),
             ])->save();
 
+            app(PurchaseReceiptCostAllocationService::class)->captureInvoice($locked, $costPlan !== null);
             $locked->refreshPaymentTotals();
 
             return $this->load($locked->refresh());

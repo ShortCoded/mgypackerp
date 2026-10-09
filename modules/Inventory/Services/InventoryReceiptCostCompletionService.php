@@ -28,6 +28,7 @@ use Modules\Production\Models\ProductionRun;
 use Modules\Production\Services\ProductionStageTransferService;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseReturn;
+use Modules\Purchases\Services\PurchaseReceiptCostAllocationService;
 
 class InventoryReceiptCostCompletionService
 {
@@ -146,7 +147,7 @@ class InventoryReceiptCostCompletionService
     }
 
     /** @param array<int, string> $rootDeltas @return array<string, mixed> */
-    public function planPurchaseVariance(PurchaseInvoice $invoice, array $rootDeltas, string $postingDate, int $postingPeriodId): array
+    public function planPurchaseVariance(PurchaseInvoice|PurchaseReturn $invoice, array $rootDeltas, string $postingDate, int $postingPeriodId): array
     {
         $this->periods->resolveOpenForPostingDate((int) $invoice->company_id, $postingDate, $postingPeriodId, lockForUpdate: true);
         $roots = InventoryTransaction::query()->where('company_id', $invoice->company_id)->whereIn('id', array_keys($rootDeltas))
@@ -171,10 +172,11 @@ class InventoryReceiptCostCompletionService
             'root_branches' => $roots->mapWithKeys(fn ($root): array => [$root->id => (int) $root->branch_id])->all()];
     }
 
-    private function planTargets(InventoryDocument|InventoryPeriodicCostClose|InventoryStandardCostSettlement|OpeningStock|PurchaseInvoice $document, array $roots, array $productIds,
+    private function planTargets(InventoryDocument|InventoryPeriodicCostClose|InventoryStandardCostSettlement|OpeningStock|PurchaseInvoice|PurchaseReturn $document, array $roots, array $productIds,
         string $sourceDate, string $postingDate, int $postingPeriodId, Account $counterpart, ?array $periodic = null): array
     {
         $sourcePeriod = FinancialPeriod::query()->findOrFail($document->financial_period_id);
+        $purchase = $document instanceof PurchaseInvoice || $document instanceof PurchaseReturn;
 
         do {
             $previous = count($productIds);
@@ -189,7 +191,7 @@ class InventoryReceiptCostCompletionService
         $transactions = InventoryTransaction::query()->where('company_id', $document->company_id)->whereIn('product_id', $productIds)
             ->where('transaction_type', '!=', InventoryTransaction::TypeValueAdjustment)
             ->with('product')->orderBy('transaction_date')->orderBy('id')->lockForUpdate()->get();
-        $scopeStoreIds = $periodic['store_ids'] ?? ($document instanceof InventoryStandardCostSettlement || $document instanceof PurchaseInvoice
+        $scopeStoreIds = $periodic['store_ids'] ?? ($document instanceof InventoryStandardCostSettlement || $purchase
             ? $transactions->whereIn('id', array_keys($roots))->pluck('branch_store_id')->unique()->all() : null);
         if ($scopeStoreIds !== null) {
             $transactions = $this->causalPeriodicTransactions($transactions, $scopeStoreIds);
@@ -218,7 +220,7 @@ class InventoryReceiptCostCompletionService
         foreach ($runs as $run) {
             app(ProductionStageTransferService::class)->assertCostMutationAllowed($run);
         }
-        $fixedStandardRunIds = $document instanceof PurchaseInvoice
+        $fixedStandardRunIds = $purchase
             ? InventoryStandardCostSettlement::query()->where('company_id', $document->company_id)
                 ->where('status', InventoryStandardCostSettlement::StatusFinalized)
                 ->whereIn('production_run_id', $runs->modelKeys())->lockForUpdate()->get()
@@ -311,7 +313,7 @@ class InventoryReceiptCostCompletionService
                 'unvalued_quantity_delta' => $original === null ? bcmul(bcsub((string) $transaction->quantity_in, (string) $transaction->quantity_out, 8), '-1', 8) : '0.00000000'];
             if (bccomp($delta, '0', 8) !== 0 || $original === null) {
                 $effects[] = $base;
-                $terminal = $this->terminalAccount($transaction, $transactions, (int) $document->company_id, $document instanceof PurchaseInvoice);
+                $terminal = $this->terminalAccount($transaction, $transactions, (int) $document->company_id, $purchase);
                 if ($terminal !== null) {
                     $effects[] = [...$base, 'effect' => $terminal['effect'], 'account_id' => $terminal['account_id'],
                         'amount' => bcmul($base['amount'], '-1', 8), 'unvalued_quantity_delta' => '0.00000000',
@@ -324,7 +326,7 @@ class InventoryReceiptCostCompletionService
         }
         $standardSettlementRunIds = array_values(array_intersect($fixedStandardRunIds, collect($effects)
             ->filter(fn (array $effect): bool => bccomp($effect['amount'], '0', 8) !== 0)->pluck('production_run_id')->filter()->unique()->all()));
-        if (! $document instanceof PurchaseInvoice && collect($effects)->contains(fn (array $effect): bool => (int) $effect['account_id'] === (int) $counterpart->id)) {
+        if (! $purchase && collect($effects)->contains(fn (array $effect): bool => (int) $effect['account_id'] === (int) $counterpart->id)) {
             throw new DomainException(__('inventory.movements.messages.receipt_completion_counterpart_invalid'));
         }
         $sum = collect($effects)->reduce(fn (string $sum, array $effect): string => bcadd($sum, $effect['amount'], 8), '0');
@@ -357,7 +359,7 @@ class InventoryReceiptCostCompletionService
                     'original_book_value', 'remaining_quantity', 'remaining_book_value']))->values()->all(),
             ])->all(),
             'runs' => $runs->map(fn ($row) => $row->only(['id', 'status', 'good_base_quantity', 'received_base_quantity', 'cost_center_id', 'correction_sequence']))->values()->all()];
-        if ($document instanceof PurchaseInvoice) {
+        if ($purchase) {
             $inputSnapshot['fixed_standard_run_ids'] = $fixedStandardRunIds;
         }
 
@@ -369,7 +371,7 @@ class InventoryReceiptCostCompletionService
             'source_total' => $sourceTotal, 'input_sha256' => hash('sha256', json_encode($inputSnapshot, JSON_THROW_ON_ERROR)),
             'allocation_high_watermark' => (int) ($allocations->keys()->max() ?? 0),
             'effects' => $effects, 'layers' => $replay['layer_bases'], 'allocations' => $replay['allocation_bases'],
-            ...($document instanceof PurchaseInvoice ? ['standard_settlement_run_ids' => $standardSettlementRunIds] : [])];
+            ...($purchase ? ['standard_settlement_run_ids' => $standardSettlementRunIds] : [])];
     }
 
     /** @param array<int, int> $storeIds */
@@ -652,10 +654,12 @@ class InventoryReceiptCostCompletionService
             $return = PurchaseReturn::query()->where('company_id', $companyId)->find($transaction->source_id);
             if ($transaction->source_type !== PurchaseReturn::class || $return === null
                 || ($return->purchase_invoice_id !== null
-                    ? $return->status !== PurchaseReturn::StatusReversed || $return->reversal_journal_entry_id === null
+                    ? $return->journal_entry_id === null || ! in_array($return->status, [PurchaseReturn::StatusPosted, PurchaseReturn::StatusReversed], true)
+                        || ($return->status === PurchaseReturn::StatusReversed && $return->reversal_journal_entry_id === null)
                     : $return->grni_reversal_journal_entry_id === null)) {
                 throw new DomainException(__('purchase_invoices.messages.cost_return_requires_review'));
             }
+            app(PurchaseReceiptCostAllocationService::class)->returnBasis($return);
 
             return ['effect' => InventoryValueAdjustmentLine::EffectCounterpart,
                 'account_id' => (int) $this->accounts->resolve($companyId, PostingAccountResolver::GoodsReceivedNotInvoiced, __('Purchase Return'))->id];

@@ -24,12 +24,15 @@ use Modules\Production\Models\ProductionMachine;
 use Modules\Production\Models\ProductionMold;
 use Modules\Production\Services\ProductionCostService;
 use Modules\Purchases\Models\PurchaseInvoice;
+use Modules\Purchases\Models\PurchaseReturn;
 use Modules\Purchases\Services\ProcurementReceivingService;
 use Modules\Purchases\Services\ProcurementSettlementService;
 use Modules\Purchases\Services\PurchaseInvoiceCalculationService;
 use Modules\Purchases\Services\PurchaseInvoiceCostAdjustmentService;
 use Modules\Purchases\Services\PurchaseInvoiceService;
 use Modules\Purchases\Services\PurchaseOrderService;
+use Modules\Purchases\Services\PurchaseReceiptCostAllocationService;
+use Modules\Purchases\Services\PurchaseReturnCostAdjustmentService;
 use Spatie\Permission\Models\Permission;
 
 require_once __DIR__.'/../ProcurementSupport.php';
@@ -41,7 +44,7 @@ function purchaseCostFixture(string $method = 'moving_average'): array
     $fixture = procurementFixture();
     $supplierAccount = procurementPostingAccount($fixture['company'], '2111', '2111099', 'SYNTHETIC PPV Supplier');
     $fixture['firstSupplier']->update(['account_id' => $supplierAccount->id]);
-    foreach (['purchase_invoices.approve', 'purchase_invoices.reverse'] as $permission) {
+    foreach (['purchase_invoices.approve', 'purchase_invoices.reverse', 'purchases.purchase_returns.post', 'purchases.purchase_returns.reverse'] as $permission) {
         $fixture['user']->givePermissionTo(Permission::findOrCreate($permission, 'web'));
     }
     $accountQuery = Account::query()->forCompany($fixture['company']->id)
@@ -280,7 +283,7 @@ test('fully invoiced cost adjusted goods can be returned and restored at their a
         ->and($movement->fresh()->completedTotalCost())->toBe('200.00000000');
 });
 
-test('returns with a remaining unmatched cost split stop atomically for review instead of using an arbitrary expense account', function (bool $billed): void {
+test('returns from a partially invoiced receipt redistribute its cost and preserve provisional GRNI', function (bool $billed): void {
     $fixture = purchaseCostFixture();
     $posted = app(PurchaseInvoiceService::class)->approve(purchaseCostInvoice($fixture, '50', '12'));
     $settlement = app(ProcurementSettlementService::class);
@@ -290,10 +293,26 @@ test('returns with a remaining unmatched cost split stop atomically for review i
         'return_date' => now()->toDateString(), 'reason_code' => 'latent_defect',
         'lines' => [['receipt_line_public_id' => $fixture['receiptLine']->public_id, 'quantity' => '20', 'from_quarantine' => false]],
     ]);
-    $before = [JournalEntry::query()->count(), InventoryTransaction::query()->count(), $fixture['receiptLine']->fresh()->getRawOriginal()];
-    expect(fn () => $settlement->approvePurchaseReturn($return))->toThrow(DomainException::class, __('purchase_invoices.messages.cost_return_requires_review'));
-    expect($return->fresh()->status)->toBe('draft')
-        ->and([JournalEntry::query()->count(), InventoryTransaction::query()->count(), $fixture['receiptLine']->fresh()->getRawOriginal()])->toBe($before);
+    $rootOriginal = $fixture['movement']->getRawOriginal();
+    $return = $settlement->approvePurchaseReturn($return);
+    $grni = app(PostingAccountResolver::class)->resolve($fixture['company']->id, PostingAccountResolver::GoodsReceivedNotInvoiced, 'SYNTHETIC');
+    $returned = InventoryTransaction::query()->where('posting_key', 'purchase-return:'.$return->lines->sole()->id)->sole();
+    expect($return->status)->toBe('posted')
+        ->and($fixture['movement']->fresh()->completedTotalCost())->toBe($billed ? '1075.00000000' : '1125.00000000')
+        ->and($returned->fresh()->completedTotalCost())->toBe($billed ? '215.00000000' : '225.00000000')
+        ->and(purchaseCostAccountBalance($grni->id))->toBe($billed ? '-500.0000' : '-300.0000')
+        ->and(purchaseCostAccountBalance(app(PostingAccountResolver::class)->inventoryForProduct($fixture['company']->id, $fixture['raw'], 'SYNTHETIC')->id))->toBe($billed ? '860.0000' : '900.0000')
+        ->and(purchaseCostAccountBalance($fixture['supplierAccount']->id))->toBe($billed ? '-360.0000' : '-600.0000')
+        ->and($fixture['receiptLine']->fresh()->grni_cleared_quantity)->toBe('50.00000000')
+        ->and($fixture['receiptLine']->fresh()->grni_returned_value)->toBe($billed ? '0.0000' : '200.0000')
+        ->and($fixture['movement']->fresh()->getRawOriginal())->toBe($rootOriginal);
+    $counts = [JournalEntry::query()->count(), InventoryTransaction::query()->count(), InventoryValueAdjustment::query()->count()];
+    $settlement->approvePurchaseReturn($return);
+    app(PurchaseReturnCostAdjustmentService::class)->settle($return);
+    expect([JournalEntry::query()->count(), InventoryTransaction::query()->count(), InventoryValueAdjustment::query()->count()])->toBe($counts);
+    $settlement->reversePurchaseReturn($return, 'SYNTHETIC restore partial receipt return');
+    expect($fixture['movement']->fresh()->completedTotalCost())->toBe('1100.00000000')
+        ->and(purchaseCostAccountBalance($grni->id))->toBe('-500.0000');
 })->with(['billed split' => [true], 'unbilled split' => [false]]);
 
 test('localized draft warnings preserve save access and disappear when an eligible PPV account is configured', function (string $locale): void {
@@ -326,11 +345,14 @@ test('closed posting periods and missing approval authority prevent cost and inv
         ->and([JournalEntry::query()->count(), InventoryTransaction::query()->count()])->toBe($before);
 })->with(['closed period' => [true], 'approval denied' => [false]]);
 
-function purchaseCostAccountBalance(int $accountId, ?int $branchId = null): string
+function purchaseCostAccountBalance(int $accountId, ?int $branchId = null, bool $baseCurrency = false): string
 {
-    return JournalEntryLine::query()->where('account_id', $accountId)
+    $balance = JournalEntryLine::query()->where('account_id', $accountId)->with('journalEntry')
         ->when($branchId !== null, fn ($query) => $query->where('branch_id', $branchId))->get()
-        ->reduce(fn (string $sum, $line): string => bcadd($sum, bcsub($line->debit_amount, $line->credit_amount, 4), 4), '0.0000');
+        ->reduce(fn (string $sum, $line): string => bcadd($sum, bcmul(bcsub($line->debit_amount, $line->credit_amount, 4),
+            $baseCurrency ? (string) $line->journalEntry->exchange_rate : '1', 8), 8), '0.00000000');
+
+    return bcround($balance, 4);
 }
 
 test('documented legacy production cost follows raw material into WIP finished stock and later issued output', function (bool $receiveOutput, bool $standardCosts = false, string $price = '12'): void {
@@ -530,4 +552,224 @@ test('new issues use the completed cost and invoice reversal follows their curre
     $service->reverse($posted, 'SYNTHETIC later issue cost reversal');
     expect($issue->fresh()->completedTotalCost())->toBe('300.00000000')->and($issue->fresh()->getRawOriginal())->toBe($original)
         ->and(InventoryValueAdjustment::query()->count())->toBe(2);
+});
+
+/** @param array<string, mixed> $fixture */
+function purchaseCostReturn(array $fixture, string $quantity, ?PurchaseInvoice $invoice = null): PurchaseReturn
+{
+    return app(ProcurementSettlementService::class)->createPurchaseReturn([
+        'purchase_order_doc_num' => $fixture['order']->doc_num,
+        ...($invoice !== null ? ['purchase_invoice_doc_num' => $invoice->doc_num] : []),
+        'return_date' => now()->toDateString(), 'reason_code' => 'latent_defect',
+        'lines' => [['receipt_line_public_id' => $fixture['receiptLine']->public_id, 'quantity' => $quantity, 'from_quarantine' => false]],
+    ]);
+}
+
+test('later invoices and return reversals recompute partial receipt cost from effective events', function (bool $billed): void {
+    $fixture = purchaseCostFixture();
+    $invoices = app(PurchaseInvoiceService::class);
+    $settlement = app(ProcurementSettlementService::class);
+    $first = $invoices->approve(purchaseCostInvoice($fixture, '50', '12'));
+    $return = $settlement->approvePurchaseReturn(purchaseCostReturn($fixture, '20', $billed ? $first : null));
+    $returned = InventoryTransaction::query()->where('posting_key', 'purchase-return:'.$return->lines->sole()->id)->sole();
+    $original = $returned->getRawOriginal();
+    $later = $invoices->approve(purchaseCostInvoice($fixture, $billed ? '50' : '30', '14', 9852));
+    $grni = app(PostingAccountResolver::class)->resolve($fixture['company']->id, PostingAccountResolver::GoodsReceivedNotInvoiced, 'SYNTHETIC');
+    expect($fixture['movement']->fresh()->completedTotalCost())->toBe($billed ? '1325.00000000' : '1275.00000000')
+        ->and($returned->fresh()->completedTotalCost())->toBe($billed ? '265.00000000' : '255.00000000')
+        ->and(purchaseCostAccountBalance($grni->id))->toBe('0.0000')
+        ->and(purchaseCostAccountBalance(app(PostingAccountResolver::class)->inventoryForProduct($fixture['company']->id, $fixture['raw'], 'SYNTHETIC')->id))->toBe($billed ? '1060.0000' : '1020.0000')
+        ->and(purchaseCostAccountBalance($fixture['supplierAccount']->id))->toBe($billed ? '-1060.0000' : '-1020.0000');
+    $originalAdjustment = InventoryValueAdjustment::query()->where('source_type', $return::class)->where('source_id', $return->id)->sole()->getRawOriginal();
+    $settlement->reversePurchaseReturn($return, 'SYNTHETIC later invoice return reversal');
+    expect($fixture['movement']->fresh()->completedTotalCost())->toBe($billed ? '1300.00000000' : '1220.00000000')
+        ->and(purchaseCostAccountBalance($grni->id))->toBe($billed ? '0.0000' : '-200.0000')
+        ->and($returned->fresh()->getRawOriginal())->toBe($original)
+        ->and(InventoryValueAdjustment::query()->where('source_type', $return::class)->where('source_id', $return->id)->sole()->getRawOriginal())->toBe($originalAdjustment);
+    $invoices->reverse($later, 'SYNTHETIC later invoice reversal');
+    expect($fixture['movement']->fresh()->completedTotalCost())->toBe('1100.00000000')
+        ->and(purchaseCostAccountBalance($grni->id))->toBe('-500.0000');
+    $invoices->reverse($first->fresh(), 'SYNTHETIC first invoice reversal');
+    expect($fixture['movement']->fresh()->completedTotalCost())->toBe('1000.00000000')
+        ->and(purchaseCostAccountBalance($grni->id))->toBe('-1000.0000');
+})->with(['billed' => [true], 'unbilled' => [false]]);
+
+test('invoice reversal with an effective unbilled return preserves actual cost and provisional counters', function (): void {
+    $fixture = purchaseCostFixture();
+    $invoices = app(PurchaseInvoiceService::class);
+    $posted = $invoices->approve(purchaseCostInvoice($fixture, '50', '12'));
+    $settlement = app(ProcurementSettlementService::class);
+    $return = $settlement->approvePurchaseReturn(purchaseCostReturn($fixture, '20'));
+    $invoices->reverse($posted, 'SYNTHETIC invoice before return reversal');
+    $returned = InventoryTransaction::query()->where('posting_key', 'purchase-return:'.$return->lines->sole()->id)->sole();
+    $grni = app(PostingAccountResolver::class)->resolve($fixture['company']->id, PostingAccountResolver::GoodsReceivedNotInvoiced, 'SYNTHETIC');
+    expect($fixture['movement']->fresh()->completedTotalCost())->toBe('1000.00000000')
+        ->and($returned->fresh()->completedTotalCost())->toBe('200.00000000')
+        ->and(purchaseCostAccountBalance($grni->id))->toBe('-800.0000')
+        ->and($fixture['receiptLine']->fresh()->grni_returned_value)->toBe('200.0000');
+    $settlement->reversePurchaseReturn($return, 'SYNTHETIC restore after invoice reversal');
+    expect($fixture['movement']->fresh()->completedTotalCost())->toBe('1000.00000000')
+        ->and(purchaseCostAccountBalance($grni->id))->toBe('-1000.0000');
+});
+
+test('negative partial invoice variance survives billed returns later invoicing and reversal', function (): void {
+    $fixture = purchaseCostFixture();
+    $invoices = app(PurchaseInvoiceService::class);
+    $first = $invoices->approve(purchaseCostInvoice($fixture, '50', '8'));
+    $settlement = app(ProcurementSettlementService::class);
+    $return = $settlement->approvePurchaseReturn(purchaseCostReturn($fixture, '20', $first));
+    $returned = InventoryTransaction::query()->where('posting_key', 'purchase-return:'.$return->lines->sole()->id)->sole();
+    expect($fixture['movement']->fresh()->completedTotalCost())->toBe('925.00000000')
+        ->and($returned->fresh()->completedTotalCost())->toBe('185.00000000');
+    $invoices->approve(purchaseCostInvoice($fixture, '50', '8', 9852));
+    expect($fixture['movement']->fresh()->completedTotalCost())->toBe('800.00000000')
+        ->and($returned->fresh()->completedTotalCost())->toBe('160.00000000');
+    $settlement->reversePurchaseReturn($return, 'SYNTHETIC negative variance restore');
+    expect($fixture['movement']->fresh()->completedTotalCost())->toBe('800.00000000')
+        ->and(purchaseCostAccountBalance($fixture['supplierAccount']->id))->toBe('-800.0000');
+});
+
+test('fully returning the accepted receipt clears its variance without dividing by zero', function (): void {
+    $fixture = purchaseCostFixture();
+    $posted = app(PurchaseInvoiceService::class)->approve(purchaseCostInvoice($fixture, '50', '12'));
+    $settlement = app(ProcurementSettlementService::class);
+    $billed = $settlement->approvePurchaseReturn(purchaseCostReturn($fixture, '50', $posted));
+    $unbilled = $settlement->approvePurchaseReturn(purchaseCostReturn($fixture, '50'));
+    $grni = app(PostingAccountResolver::class)->resolve($fixture['company']->id, PostingAccountResolver::GoodsReceivedNotInvoiced, 'SYNTHETIC');
+    expect($fixture['movement']->fresh()->completedTotalCost())->toBe('1000.00000000')
+        ->and(purchaseCostAccountBalance($grni->id))->toBe('0.0000')
+        ->and(purchaseCostAccountBalance($fixture['supplierAccount']->id))->toBe('0.0000');
+    $settlement->reversePurchaseReturn($unbilled, 'SYNTHETIC restore unbilled half');
+    $settlement->reversePurchaseReturn($billed, 'SYNTHETIC restore billed half');
+    expect($fixture['movement']->fresh()->completedTotalCost())->toBe('1100.00000000')
+        ->and(purchaseCostAccountBalance($grni->id))->toBe('-500.0000');
+});
+
+test('configuring PPV later never changes a capitalized invoice return treatment', function (): void {
+    $fixture = purchaseCostFixture();
+    $posted = app(PurchaseInvoiceService::class)->approve(purchaseCostInvoice($fixture, '50', '12'));
+    $ppv = Account::withTrashed()->forCompany($fixture['company']->id)
+        ->whereHas('classification', fn ($query) => $query->where('code', PostingAccountResolver::PurchasePriceVariance))->sole();
+    $ppv->restore();
+    app(ProcurementSettlementService::class)->approvePurchaseReturn(purchaseCostReturn($fixture, '20', $posted));
+    expect($fixture['movement']->fresh()->completedTotalCost())->toBe('1075.00000000')
+        ->and(purchaseCostAccountBalance($ppv->id))->toBe('0.0000');
+});
+
+test('historical PPV returns use their original account and allocate the final rounding remainder exactly', function (): void {
+    $fixture = purchaseCostFixture();
+    $ppv = Account::withTrashed()->forCompany($fixture['company']->id)
+        ->whereHas('classification', fn ($query) => $query->where('code', PostingAccountResolver::PurchasePriceVariance))->sole();
+    $ppv->restore();
+    $invoices = app(PurchaseInvoiceService::class);
+    $first = $invoices->approve(purchaseCostInvoice($fixture, '50', '12.000002'));
+    expect(purchaseCostAccountBalance($ppv->id))->toBe('100.0001');
+    $ppv->delete();
+    $invoices->approve(purchaseCostInvoice($fixture, '50', '14', 9852));
+    $settlement = app(ProcurementSettlementService::class);
+    foreach (['1', '19', '30'] as $quantity) {
+        $settlement->approvePurchaseReturn(purchaseCostReturn($fixture, $quantity, $first));
+    }
+    expect($fixture['movement']->fresh()->completedTotalCost())->toBe('1400.00000000')
+        ->and(purchaseCostAccountBalance($ppv->id))->toBe('0.0000')
+        ->and(purchaseCostAccountBalance($fixture['supplierAccount']->id))->toBe('-700.0000');
+    $refunds = DB::table('activity_log')->where('event', PurchaseReceiptCostAllocationService::ReturnBasisEvent)->get()->map(fn ($row) => json_decode($row->properties, true)['basis']['lines']);
+    expect($refunds->flatten(1)->pluck('ppv_currency')->all())->toBe(['2.0000', '38.0000', '60.0001']);
+});
+
+test('missing or corrupted PPV attribution blocks returns and rolls back all their effects', function (bool $corrupt): void {
+    $fixture = purchaseCostFixture();
+    $ppv = Account::withTrashed()->forCompany($fixture['company']->id)
+        ->whereHas('classification', fn ($query) => $query->where('code', PostingAccountResolver::PurchasePriceVariance))->sole();
+    $ppv->restore();
+    $posted = app(PurchaseInvoiceService::class)->approve(purchaseCostInvoice($fixture, '50', '12'));
+    $history = DB::table('activity_log')->where('event', PurchaseReceiptCostAllocationService::InvoiceBasisEvent);
+    if ($corrupt) {
+        $data = json_decode($history->value('properties'), true);
+        $otherExpense = app(PostingAccountResolver::class)->resolve($fixture['company']->id, PostingAccountResolver::CostOfGoodsSold, 'SYNTHETIC');
+        foreach ($data['basis']['lines'] as &$line) {
+            $line['ppv_account_id'] = $otherExpense->id;
+        }
+        unset($line);
+        $data['basis_sha256'] = hash('sha256', json_encode($data['basis'], JSON_THROW_ON_ERROR));
+        $history->update(['properties' => json_encode($data, JSON_THROW_ON_ERROR)]);
+    } else {
+        $history->delete();
+    }
+    $return = purchaseCostReturn($fixture, '20', $posted);
+    $before = [JournalEntry::query()->count(), InventoryTransaction::query()->count(), InventoryValueAdjustment::query()->count()];
+    expect(fn () => app(ProcurementSettlementService::class)->approvePurchaseReturn($return))
+        ->toThrow(DomainException::class, __('purchase_invoices.messages.cost_history_missing'))
+        ->and($return->fresh()->status)->toBe('draft')
+        ->and([JournalEntry::query()->count(), InventoryTransaction::query()->count(), InventoryValueAdjustment::query()->count()])->toBe($before)
+        ->and($fixture['receiptLine']->fresh()->grni_returned_quantity)->toBe('0.00000000');
+})->with(['missing' => [false], 'corrupted' => [true]]);
+
+test('foreign currency partial returns preserve exact cost and explicitly reconcile native journal precision', function (): void {
+    $fixture = purchaseCostFixture();
+    $invoice = purchaseCostInvoice($fixture, '50', '8.000002');
+    $invoice->update(['exchange_rate' => '1.5']);
+    $posted = app(PurchaseInvoiceService::class)->approve($invoice);
+    $return = app(ProcurementSettlementService::class)->approvePurchaseReturn(purchaseCostReturn($fixture, '17', $posted));
+    $grni = app(PostingAccountResolver::class)->resolve($fixture['company']->id, PostingAccountResolver::GoodsReceivedNotInvoiced, 'SYNTHETIC');
+    $adjustment = InventoryValueAdjustment::query()->where('source_type', $return::class)->where('source_id', $return->id)->with('lines', 'journalEntry.lines')->sole();
+    expect(purchaseCostAccountBalance($grni->id, baseCurrency: true))->toBe('-500.0000')
+        ->and(purchaseCostAccountBalance(app(PostingAccountResolver::class)->inventoryForProduct($fixture['company']->id, $fixture['raw'], 'SYNTHETIC')->id, baseCurrency: true))->toBe('896.0001')
+        ->and($adjustment->source_snapshot['source_gl_precision'])->not->toBe('0.00000000')
+        ->and($adjustment->lines->where('effect', 'gl_precision')->count())->toBeGreaterThanOrEqual(2)
+        ->and($adjustment->journalEntry->lines->reduce(fn (string $sum, $line): string => bcadd($sum, bcsub($line->debit_amount, $line->credit_amount, 4), 4), '0.0000'))->toBe('0.0000');
+    app(ProcurementSettlementService::class)->reversePurchaseReturn($return, 'SYNTHETIC foreign return reversal');
+    expect($fixture['movement']->fresh()->completedTotalCost())->toBe('1100.00010000');
+});
+
+test('return cost allocation preserves existing permission and closed period rollback guards', function (bool $closed): void {
+    $fixture = purchaseCostFixture();
+    $posted = app(PurchaseInvoiceService::class)->approve(purchaseCostInvoice($fixture, '50', '12'));
+    $return = purchaseCostReturn($fixture, '20', $posted);
+    if ($closed) {
+        $fixture['period']->update(['is_closed' => true]);
+    } else {
+        $fixture['user']->revokePermissionTo('purchases.purchase_returns.post');
+    }
+    $before = [JournalEntry::query()->count(), InventoryTransaction::query()->count(), InventoryValueAdjustment::query()->count()];
+    expect(fn () => app(ProcurementSettlementService::class)->approvePurchaseReturn($return))->toThrow($closed ? DomainException::class : AuthorizationException::class)
+        ->and($return->fresh()->status)->toBe('draft')
+        ->and([JournalEntry::query()->count(), InventoryTransaction::query()->count(), InventoryValueAdjustment::query()->count()])->toBe($before)
+        ->and($fixture['movement']->fresh()->completedTotalCost())->toBe('1100.00000000');
+})->with(['closed' => [true], 'permission denied' => [false]]);
+
+test('a receipt return invalidates a previously calculated invoice cost plan before posting', function (): void {
+    $fixture = purchaseCostFixture();
+    $invoice = purchaseCostInvoice($fixture, '50', '12');
+    $costs = app(PurchaseInvoiceCostAdjustmentService::class);
+    $stale = $costs->plan($invoice);
+    app(ProcurementSettlementService::class)->approvePurchaseReturn(purchaseCostReturn($fixture, '20'));
+    $before = [JournalEntry::query()->count(), InventoryTransaction::query()->count(), InventoryValueAdjustment::query()->count()];
+    expect(fn () => $costs->post($invoice, $stale))->toThrow(DomainException::class, __('inventory.movements.messages.receipt_pricing_source_changed'))
+        ->and([JournalEntry::query()->count(), InventoryTransaction::query()->count(), InventoryValueAdjustment::query()->count()])->toBe($before)
+        ->and($invoice->fresh()->status)->toBe(PurchaseInvoice::StatusDraft);
+});
+
+test('FIFO partial receipt returns retain their allocation lineage through later issues and invoicing', function (): void {
+    $fixture = purchaseCostFixture('fifo');
+    $invoices = app(PurchaseInvoiceService::class);
+    $invoices->approve(purchaseCostInvoice($fixture, '50', '12'));
+    $settlement = app(ProcurementSettlementService::class);
+    $return = $settlement->approvePurchaseReturn(purchaseCostReturn($fixture, '20'));
+    $issue = purchaseCostIssue($fixture, '10')->transactions->sole();
+    $original = $issue->getRawOriginal();
+    expect($issue->completedTotalCost())->toBe('112.50000000');
+    $invoices->approve(purchaseCostInvoice($fixture, '30', '14', 9852));
+    $inventory = app(PostingAccountResolver::class)->inventoryForProduct($fixture['company']->id, $fixture['raw'], 'SYNTHETIC');
+    $grni = app(PostingAccountResolver::class)->resolve($fixture['company']->id, PostingAccountResolver::GoodsReceivedNotInvoiced, 'SYNTHETIC');
+    expect($fixture['movement']->fresh()->completedTotalCost())->toBe('1275.00000000')
+        ->and($issue->fresh()->completedTotalCost())->toBe('127.50000000')
+        ->and(purchaseCostAccountBalance($inventory->id))->toBe('892.5000')
+        ->and(purchaseCostAccountBalance($grni->id))->toBe('0.0000');
+    $settlement->reversePurchaseReturn($return, 'SYNTHETIC FIFO return restoration after later issue');
+    expect($fixture['movement']->fresh()->completedTotalCost())->toBe('1220.00000000')
+        ->and($issue->fresh()->completedTotalCost())->toBe('122.00000000')
+        ->and(purchaseCostAccountBalance($inventory->id))->toBe('1098.0000')
+        ->and(purchaseCostAccountBalance($grni->id))->toBe('-200.0000')
+        ->and($issue->fresh()->getRawOriginal())->toBe($original);
 });

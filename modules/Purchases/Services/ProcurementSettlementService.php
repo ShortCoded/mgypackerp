@@ -480,11 +480,7 @@ class ProcurementSettlementService
                 }
                 if (! $line->from_quarantine) {
                     $sourceMovement = InventoryTransaction::query()->where('posting_key', "purchase-receipt:{$receiptLine->getKey()}")->firstOrFail();
-                    $costAdjustments = app(PurchaseInvoiceCostAdjustmentService::class);
-                    $adjustedInvoice = $return->purchaseInvoice !== null && $costAdjustments->hasAdjustment($return->purchaseInvoice);
-                    if ($return->purchase_invoice_id === null && $costAdjustments->receiptHasActiveAdjustment((int) $return->company_id, (int) $receiptLine->id)) {
-                        throw new DomainException(__('purchase_invoices.messages.cost_return_requires_review'));
-                    }
+                    $adjustedInvoice = app(PurchaseReceiptCostAllocationService::class)->hasHistory((int) $return->company_id, (int) $receiptLine->id);
                     $factor = bcdiv((string) $sourceMovement->quantity_in, (string) $receiptLine->accepted_quantity, 8);
                     $stockQuantity = bcmul((string) $line->quantity, $factor, 8);
                     Product::query()->lockForUpdate()->findOrFail($line->product_id);
@@ -565,6 +561,7 @@ class ProcurementSettlementService
                 'grni_reversal_journal_entry_id' => $grniJournalEntry?->getKey(),
                 'updated_by' => auth()->id(),
             ])->save();
+            app(PurchaseReturnCostAdjustmentService::class)->settle($return);
             app(ProcurementReceivingService::class)->refreshOrderReceiptTotals($return->purchaseOrder);
             $return->purchaseInvoice?->refreshPaymentTotals();
             $this->audit->record($return, 'purchase_return.posted', [
@@ -719,6 +716,7 @@ class ProcurementSettlementService
                 'reversal_reason' => $reason,
                 'updated_by' => auth()->id(),
             ])->save();
+            app(PurchaseReturnCostAdjustmentService::class)->settle($return, reverse: true);
             app(ProcurementReceivingService::class)->refreshOrderReceiptTotals($return->purchaseOrder);
             $return->purchaseInvoice?->refreshPaymentTotals();
             $this->audit->record($return, 'purchase_return.reversed', [
