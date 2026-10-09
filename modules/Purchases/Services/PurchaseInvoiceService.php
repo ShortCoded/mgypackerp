@@ -142,10 +142,15 @@ class PurchaseInvoiceService
             $this->assertApprovable($locked);
             $this->fixedAssetPurchases->assertDraftInvoiceAssetsValid($locked);
             $this->matching->matchForPosting($locked);
+            $costAdjustments = app(PurchaseInvoiceCostAdjustmentService::class);
+            $costPlan = $costAdjustments->plan($locked);
             $journalEntry = $this->journalEntries->createPostedFromSource(
                 $this->postingHeader($locked),
-                $this->postingLines($locked),
+                $this->postingLines($locked, $costPlan !== null),
             );
+            if ($costPlan !== null) {
+                $costAdjustments->post($locked, $costPlan);
+            }
             $this->applyInventoryValuation($locked);
             $this->fixedAssetPurchases->recognize($locked, $journalEntry);
 
@@ -278,6 +283,7 @@ class PurchaseInvoiceService
                 'source_id' => $locked->getKey(),
                 'source_doc_num' => $locked->doc_num,
             ]);
+            app(PurchaseInvoiceCostAdjustmentService::class)->reverse($locked, now()->toDateString(), (int) $postingPeriod->id);
             $this->applyInventoryValuation($locked, reverse: true);
             $this->fixedAssetPurchases->reverseRecognitions($locked, $reversal, $reason);
 
@@ -1048,7 +1054,7 @@ class PurchaseInvoiceService
     }
 
     /** @return list<array<string, mixed>> */
-    private function postingLines(PurchaseInvoice $record): array
+    private function postingLines(PurchaseInvoice $record, bool $capitalizeVariance = false): array
     {
         $record->loadMissing('lines.product');
         $posting = [];
@@ -1095,7 +1101,7 @@ class PurchaseInvoiceService
 
                 $variance = bcsub($finalAmount, $provisionalAmount, 4);
                 if (bccomp($variance, '0', 4) !== 0) {
-                    $varianceAccount = $this->accounts->resolve(
+                    $varianceAccount = $capitalizeVariance ? $grniAccount : $this->accounts->resolve(
                         (int) $record->company_id,
                         PostingAccountResolver::PurchasePriceVariance,
                         __('Purchase Invoice'),

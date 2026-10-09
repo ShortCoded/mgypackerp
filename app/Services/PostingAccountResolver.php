@@ -160,6 +160,19 @@ class PostingAccountResolver
         return $accounts->firstOrFail();
     }
 
+    public function resolveOptional(int $companyId, string $classificationCode, string $event): ?Account
+    {
+        $classification = AccountClassification::query()->active()->where('code', $classificationCode)->first();
+        if (! $classification instanceof AccountClassification) {
+            return $this->resolve($companyId, $classificationCode, $event);
+        }
+        if (! Account::query()->forCompany($companyId)->where('account_classification_id', $classification->id)->exists()) {
+            return null;
+        }
+
+        return $this->resolve($companyId, $classificationCode, $event);
+    }
+
     public function inventoryForProduct(int $companyId, Product $product, string $event): Account
     {
         return $this->resolve($companyId, $this->inventoryClassificationForProduct($product, $event), $event);

@@ -23,6 +23,7 @@ use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\Reports\ReportPdfService;
 use Modules\FixedAssets\Services\FixedAssetPurchaseIntegrationService;
+use Modules\Inventory\Models\InventoryValueAdjustment;
 use Modules\Inventory\Models\UnpricedInventoryReceipt;
 use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Purchases\DataTables\PurchaseInvoicesDataTable;
@@ -37,6 +38,7 @@ use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseInvoiceLine;
 use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Services\PurchaseDiscountSourceService;
+use Modules\Purchases\Services\PurchaseInvoiceCostAdjustmentService;
 use Modules\Purchases\Services\PurchaseInvoiceMatchingService;
 use Modules\Purchases\Services\PurchaseInvoiceService;
 
@@ -274,7 +276,8 @@ class PurchaseInvoiceController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => __('purchase_invoices.messages.approved'),
+            'message' => __('purchase_invoices.messages.approved').(app(PurchaseInvoiceCostAdjustmentService::class)->hasAdjustment($record)
+                    ? ' '.__('purchase_invoices.messages.cost_adjusted') : ''),
             'data' => ['doc_num' => $record->doc_num, 'urls' => $this->urls($record)],
         ]);
     }
@@ -415,6 +418,7 @@ class PurchaseInvoiceController extends Controller
         $context = $this->operatingContext->snapshot(request());
         $companyId = (int) ($context['company_id'] ?? 0);
         $documentBranchId = (int) ($record?->branch_id ?? $context['branch_id']);
+        $isNewDocument = in_array($mode, ['create', 'clone'], true);
         $purchaseOrders = PurchaseOrder::query()->forCompany($companyId)->where('doc_num', old('purchase_order_doc_num', $record?->purchaseOrder?->doc_num ?? ''))
             ->where('branch_id', $documentBranchId)
             ->whereIn('status', [PurchaseOrder::StatusApproved, PurchaseOrder::StatusClosed])
@@ -459,6 +463,11 @@ class PurchaseInvoiceController extends Controller
             'canManageInCurrentBranch' => $this->isAdministrativeBranch(request()) && (! $record instanceof PurchaseInvoice || ((int) $record->company_id === $companyId && (int) $record->financial_period_id === (int) $context['financial_period_id'])),
             'procurementPurchaseOrders' => $purchaseOrders,
             'eligibleReceiptLines' => $eligibleReceiptLines,
+            'costAdjustmentNotice' => $isNewDocument || $record?->status === PurchaseInvoice::StatusDraft
+                ? app(PurchaseInvoiceCostAdjustmentService::class)->notice($companyId) : null,
+            'hasCostAdjustment' => ! $isNewDocument && $record !== null && app(PurchaseInvoiceCostAdjustmentService::class)->hasAdjustment($record),
+            'hasCostReversal' => ! $isNewDocument && $record !== null && InventoryValueAdjustment::query()
+                ->where('company_id', $companyId)->where('source_type', PurchaseInvoiceCostAdjustmentService::ReversalSource)->where('source_id', $record->id)->exists(),
         ]);
     }
 

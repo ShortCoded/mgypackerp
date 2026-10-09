@@ -23,6 +23,7 @@ return [
         'payment_schedule' => 'Payment Schedule',
         'totals' => 'Totals',
         'matching' => 'Purchase Order, Receipt, and Invoice Matching',
+        'cost_adjustment' => 'Purchase Cost Adjustment',
     ],
     'attributes' => [
         'doc_number' => 'Document Sequence',
@@ -200,6 +201,13 @@ return [
         'updated_successfully' => 'Purchase invoice document number settings updated successfully.',
     ],
     'messages' => [
+        'cost_fallback_warning' => 'No purchase price variance account is configured. You can save the draft. On approval, the price difference adjusts inventory cost and follows issued quantities to their actual destination using recorded movements. If that history is incomplete, the invoice stays in draft for review.',
+        'cost_adjusted' => 'The purchase price difference adjusted inventory cost and the destination of issued quantities through a separate adjustment record. Original movement values were preserved.',
+        'cost_lineage_missing' => 'You can save the draft, but receipt cost and movement records must be complete before approving without a purchase price variance account.',
+        'cost_return_requires_review' => 'The cost split between this return and its linked invoices needs an additional cost settlement before posting. You can save the draft; balances were not changed.',
+        'cost_reversed' => 'The purchase cost adjustment was reversed with the invoice. Adjustment journals, reversal journals and original movements remain available for review.',
+        'cost_standard_settlement_required' => 'These quantities are linked to an approved standard cost settlement. The price difference needs a standard cost settlement before posting without a purchase price variance account. You can save the draft.',
+        'cost_lineage_unbalanced' => 'The invoice price difference does not match the cost traced through receipts and returns. Review linked quantities and costs before approval.',
         'source_discount_allocation_invalid' => 'The source discount allocation is inconsistent; refresh the source invoice quantities.',
         'created' => 'Purchase invoice created successfully.',
         'updated' => 'Purchase invoice updated successfully.',

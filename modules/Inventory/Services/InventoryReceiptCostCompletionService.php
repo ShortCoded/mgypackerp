@@ -26,6 +26,8 @@ use Modules\Inventory\Models\InventoryValueAdjustmentLine;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Services\ProductionStageTransferService;
+use Modules\Purchases\Models\PurchaseInvoice;
+use Modules\Purchases\Models\PurchaseReturn;
 
 class InventoryReceiptCostCompletionService
 {
@@ -143,7 +145,33 @@ class InventoryReceiptCostCompletionService
             $openingStock->document_date->toDateString(), $postingDate, $postingPeriodId, $counterpart);
     }
 
-    private function planTargets(InventoryDocument|InventoryPeriodicCostClose|InventoryStandardCostSettlement|OpeningStock $document, array $roots, array $productIds,
+    /** @param array<int, string> $rootDeltas @return array<string, mixed> */
+    public function planPurchaseVariance(PurchaseInvoice $invoice, array $rootDeltas, string $postingDate, int $postingPeriodId): array
+    {
+        $this->periods->resolveOpenForPostingDate((int) $invoice->company_id, $postingDate, $postingPeriodId, lockForUpdate: true);
+        $roots = InventoryTransaction::query()->where('company_id', $invoice->company_id)->whereIn('id', array_keys($rootDeltas))
+            ->orderBy('id')->lockForUpdate()->get();
+        if ($roots->count() !== count($rootDeltas) || $roots->isEmpty()) {
+            throw new DomainException(__('purchase_invoices.messages.cost_lineage_missing'));
+        }
+        $targets = [];
+        foreach ($roots as $root) {
+            $cost = $root->completedTotalCost();
+            if ($root->is_reversal || $root->transaction_type !== 'purchase_receipt' || $cost === null
+                || bccomp((string) $root->quantity_in, '0', 8) <= 0) {
+                throw new DomainException(__('purchase_invoices.messages.cost_lineage_missing'));
+            }
+            $targets[$root->id] = bcadd($cost, $rootDeltas[$root->id], 8);
+        }
+        $counterpart = $this->accounts->resolve((int) $invoice->company_id, PostingAccountResolver::GoodsReceivedNotInvoiced, __('Purchase Invoice'));
+        $plan = $this->planTargets($invoice, $targets, $roots->pluck('product_id')->unique()->all(),
+            $roots->min('transaction_date')->toDateString(), $postingDate, $postingPeriodId, $counterpart);
+
+        return [...$plan, 'root_deltas' => $rootDeltas,
+            'root_branches' => $roots->mapWithKeys(fn ($root): array => [$root->id => (int) $root->branch_id])->all()];
+    }
+
+    private function planTargets(InventoryDocument|InventoryPeriodicCostClose|InventoryStandardCostSettlement|OpeningStock|PurchaseInvoice $document, array $roots, array $productIds,
         string $sourceDate, string $postingDate, int $postingPeriodId, Account $counterpart, ?array $periodic = null): array
     {
         $sourcePeriod = FinancialPeriod::query()->findOrFail($document->financial_period_id);
@@ -161,7 +189,7 @@ class InventoryReceiptCostCompletionService
         $transactions = InventoryTransaction::query()->where('company_id', $document->company_id)->whereIn('product_id', $productIds)
             ->where('transaction_type', '!=', InventoryTransaction::TypeValueAdjustment)
             ->with('product')->orderBy('transaction_date')->orderBy('id')->lockForUpdate()->get();
-        $scopeStoreIds = $periodic['store_ids'] ?? ($document instanceof InventoryStandardCostSettlement
+        $scopeStoreIds = $periodic['store_ids'] ?? ($document instanceof InventoryStandardCostSettlement || $document instanceof PurchaseInvoice
             ? $transactions->whereIn('id', array_keys($roots))->pluck('branch_store_id')->unique()->all() : null);
         if ($scopeStoreIds !== null) {
             $transactions = $this->causalPeriodicTransactions($transactions, $scopeStoreIds);
@@ -277,7 +305,7 @@ class InventoryReceiptCostCompletionService
                 'unvalued_quantity_delta' => $original === null ? bcmul(bcsub((string) $transaction->quantity_in, (string) $transaction->quantity_out, 8), '-1', 8) : '0.00000000'];
             if (bccomp($delta, '0', 8) !== 0 || $original === null) {
                 $effects[] = $base;
-                $terminal = $this->terminalAccount($transaction, $transactions, (int) $document->company_id);
+                $terminal = $this->terminalAccount($transaction, $transactions, (int) $document->company_id, $document instanceof PurchaseInvoice);
                 if ($terminal !== null) {
                     $effects[] = [...$base, 'effect' => $terminal['effect'], 'account_id' => $terminal['account_id'],
                         'amount' => bcmul($base['amount'], '-1', 8), 'unvalued_quantity_delta' => '0.00000000',
@@ -288,7 +316,13 @@ class InventoryReceiptCostCompletionService
         if ($periodic !== null) {
             $effects = [...$effects, ...app(InventoryGlPrecisionCorrectionService::class)->plan($transactions)];
         }
-        if (collect($effects)->contains(fn (array $effect): bool => (int) $effect['account_id'] === (int) $counterpart->id)) {
+        if ($document instanceof PurchaseInvoice && InventoryStandardCostSettlement::query()->where('company_id', $document->company_id)
+            ->where('status', InventoryStandardCostSettlement::StatusFinalized)
+            ->whereIn('production_run_id', collect($effects)->filter(fn (array $effect): bool => bccomp($effect['amount'], '0', 8) !== 0)->pluck('production_run_id')->filter()->unique())
+            ->exists()) {
+            throw new DomainException(__('purchase_invoices.messages.cost_standard_settlement_required'));
+        }
+        if (! $document instanceof PurchaseInvoice && collect($effects)->contains(fn (array $effect): bool => (int) $effect['account_id'] === (int) $counterpart->id)) {
             throw new DomainException(__('inventory.movements.messages.receipt_completion_counterpart_invalid'));
         }
         $sum = collect($effects)->reduce(fn (string $sum, array $effect): string => bcadd($sum, $effect['amount'], 8), '0');
@@ -603,10 +637,22 @@ class InventoryReceiptCostCompletionService
     }
 
     /** @return array{effect: string, account_id: int}|null */
-    private function terminalAccount(InventoryTransaction $transaction, Collection $transactions, int $companyId): ?array
+    private function terminalAccount(InventoryTransaction $transaction, Collection $transactions, int $companyId, bool $purchase = false): ?array
     {
         $inbound = bccomp((string) $transaction->quantity_in, '0', 8) > 0;
         $type = $transaction->transaction_type;
+        if ($purchase && in_array($type, ['purchase_return', 'purchase_return_reversal'], true)) {
+            $return = PurchaseReturn::query()->where('company_id', $companyId)->find($transaction->source_id);
+            if ($transaction->source_type !== PurchaseReturn::class || $return === null
+                || ($return->purchase_invoice_id !== null
+                    ? $return->status !== PurchaseReturn::StatusReversed || $return->reversal_journal_entry_id === null
+                    : $return->grni_reversal_journal_entry_id === null)) {
+                throw new DomainException(__('purchase_invoices.messages.cost_return_requires_review'));
+            }
+
+            return ['effect' => InventoryValueAdjustmentLine::EffectCounterpart,
+                'account_id' => (int) $this->accounts->resolve($companyId, PostingAccountResolver::GoodsReceivedNotInvoiced, __('Purchase Return'))->id];
+        }
         if (in_array($type, [InventoryDocument::TypeTransfer, InventoryDocument::TypeMaterialIssue,
             InventoryDocument::TypeAdditionalMaterialIssue, InventoryDocument::TypeMaterialReturn, InventoryDocument::TypeDamage], true)) {
             return null;

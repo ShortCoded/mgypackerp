@@ -480,6 +480,11 @@ class ProcurementSettlementService
                 }
                 if (! $line->from_quarantine) {
                     $sourceMovement = InventoryTransaction::query()->where('posting_key', "purchase-receipt:{$receiptLine->getKey()}")->firstOrFail();
+                    $costAdjustments = app(PurchaseInvoiceCostAdjustmentService::class);
+                    $adjustedInvoice = $return->purchaseInvoice !== null && $costAdjustments->hasAdjustment($return->purchaseInvoice);
+                    if ($return->purchase_invoice_id === null && $costAdjustments->receiptHasActiveAdjustment((int) $return->company_id, (int) $receiptLine->id)) {
+                        throw new DomainException(__('purchase_invoices.messages.cost_return_requires_review'));
+                    }
                     $factor = bcdiv((string) $sourceMovement->quantity_in, (string) $receiptLine->accepted_quantity, 8);
                     $stockQuantity = bcmul((string) $line->quantity, $factor, 8);
                     Product::query()->lockForUpdate()->findOrFail($line->product_id);
@@ -499,6 +504,13 @@ class ProcurementSettlementService
                     }
 
                     $inventoryUnitCost = bcmul((string) $sourceMovement->unit_cost, $factor, 8);
+                    if ($adjustedInvoice) {
+                        $completedCost = $sourceMovement->completedTotalCost();
+                        if ($completedCost === null) {
+                            throw new DomainException(__('purchase_invoices.messages.cost_lineage_missing'));
+                        }
+                        $inventoryUnitCost = bcdiv($completedCost, (string) $receiptLine->accepted_quantity, 8);
+                    }
                     $movement = InventoryTransaction::query()->firstOrCreate([
                         'posting_key' => "purchase-return:{$line->getKey()}",
                     ], [
@@ -532,7 +544,7 @@ class ProcurementSettlementService
                     ]);
                     $sourceMovement = InventoryTransaction::query()->where('posting_key', "purchase-receipt:{$receiptLine->getKey()}")->firstOrFail();
                     $this->layers->allocateIssue($movement, $sourceMovement->getKey(), selectedSerialLayerIds: $line->serial_receipt_layer_ids ?? []);
-                    if ($receiptLine->product?->tracks_serials && InventoryCostPolicy::usesReceiptLayers($movement->cost_method)) {
+                    if (($adjustedInvoice || $receiptLine->product?->tracks_serials) && InventoryCostPolicy::usesReceiptLayers($movement->cost_method)) {
                         $movement->forceFill($this->layers->allocatedIssueCost($movement))->save();
                     }
                 }

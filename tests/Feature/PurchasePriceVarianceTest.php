@@ -13,7 +13,7 @@ use Modules\Purchases\Services\PurchaseOrderService;
 
 require_once __DIR__.'/../ProcurementSupport.php';
 
-test('PPV is required only for an actual variance and never changes receipt inventory or duplicates posting', function (bool $hasAccount, string $price, string $variance): void {
+test('configured PPV is required to be valid only for an actual variance and preserves original receipt posting', function (bool $hasAccount, string $price, string $variance): void {
     expect(DB::getDriverName())->toBe('sqlite')
         ->and(DB::connection()->getDatabaseName())->toBe(':memory:')
         ->and(collect(DB::select('PRAGMA database_list'))->firstWhere('name', 'main')->file)->toBe('');
@@ -107,9 +107,9 @@ test('PPV is required only for an actual variance and never changes receipt inve
         $invoiceLine->fresh()->getRawOriginal(), InventoryTransaction::query()->count()])->toBe($after);
 })->with([
     'present zero' => [true, '10', '0.0000'],
-    'absent zero' => [false, '10', '0.0000'],
+    'invalid zero' => [false, '10', '0.0000'],
     'present positive' => [true, '12', '200.0000'],
     'present negative' => [true, '8', '-200.0000'],
-    'absent positive' => [false, '12', '200.0000'],
-    'absent negative' => [false, '8', '-200.0000'],
+    'invalid positive' => [false, '12', '200.0000'],
+    'invalid negative' => [false, '8', '-200.0000'],
 ]);

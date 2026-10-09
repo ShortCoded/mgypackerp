@@ -12,8 +12,10 @@ use Modules\Core\Models\Company;
 use Modules\Core\Services\DocumentNumberService;
 use Modules\Core\Services\FinancialPeriodService;
 use Modules\Finance\Models\OpeningBalance;
+use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseReturn;
+use Modules\Purchases\Services\PurchaseInvoiceCostAdjustmentService;
 
 class JournalEntryService
 {
@@ -169,6 +171,7 @@ class JournalEntryService
         }
 
         $credits = [];
+        $adjustedInvoice = app(PurchaseInvoiceCostAdjustmentService::class)->hasAdjustment($invoice);
         foreach ($purchaseReturn->lines as $returnLine) {
             $receiptLine = $returnLine->receiptLine;
             if ($receiptLine === null || $returnLine->from_quarantine) {
@@ -180,16 +183,26 @@ class JournalEntryService
                 (string) $invoice->exchange_rate,
                 4,
             );
+            if ($adjustedInvoice) {
+                $movement = InventoryTransaction::query()->where('company_id', $purchaseReturn->company_id)
+                    ->where('posting_key', 'purchase-return:'.$returnLine->id)->lockForUpdate()->sole();
+                $inventoryValue = bcdiv((string) $movement->completedTotalCost(), (string) $invoice->exchange_rate, 4);
+            }
             $key = (string) $account->getKey();
             $credits[$key] ??= ['account_id' => $account->getKey(), 'amount' => '0.0000'];
             $credits[$key]['amount'] = bcadd($credits[$key]['amount'], $inventoryValue, 4);
             $variance = $this->purchaseReturnPriceVariance((string) $returnLine->unit_price, (string) $returnLine->quantity, $inventoryValue);
             if (bccomp($variance, '0', 4) !== 0) {
-                $varianceAccount = $this->accounts->resolve(
+                $varianceAccount = $adjustedInvoice ? $this->accounts->resolveOptional(
+                    (int) $purchaseReturn->company_id, PostingAccountResolver::PurchasePriceVariance, __('Purchase Return'),
+                ) : $this->accounts->resolve(
                     (int) $purchaseReturn->company_id,
                     PostingAccountResolver::PurchasePriceVariance,
                     __('Purchase Return'),
                 );
+                if ($varianceAccount === null) {
+                    throw new DomainException(__('purchase_invoices.messages.cost_return_requires_review'));
+                }
                 $key = (string) $varianceAccount->getKey();
                 $credits[$key] ??= ['account_id' => $varianceAccount->getKey(), 'amount' => '0.0000'];
                 $credits[$key]['amount'] = bcadd($credits[$key]['amount'], $variance, 4);

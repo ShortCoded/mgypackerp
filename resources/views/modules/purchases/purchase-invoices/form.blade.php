@@ -255,6 +255,12 @@
             <div class="alert d-none js-form-alert">
                 <div class="js-form-alert-message"></div>
             </div>
+            @if($costAdjustmentNotice)
+                <div class="alert alert-warning" role="status">{{ $costAdjustmentNotice }}</div>
+            @endif
+            @if($hasCostAdjustment)
+                <div class="alert alert-info" role="status">{{ __($hasCostReversal ? 'purchase_invoices.messages.cost_reversed' : 'purchase_invoices.messages.cost_adjusted') }}</div>
+            @endif
 
             @if(! $isCreateLike && $record?->isLockedForEditing() && ! $isView)
                 <div class="alert alert-warning">{{ __('purchase_invoices.messages.document_locked') }}</div>
