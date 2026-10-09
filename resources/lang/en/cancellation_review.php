@@ -1,10 +1,10 @@
 <?php
 
 return [
-    'report_help' => 'Cancel or correct a report record through its owning document using Actions and its permissions. Aggregate summaries are not deletable documents and do not reopen financial periods.',
+    'report_help' => 'Cancel or correct a report record from its original document screen using the Actions menu and its permissions. Aggregate summaries are not deletable documents and do not reopen financial periods.',
     'archive_restore_ineligible' => 'Restore requires a native archive record and either a settled cancelled invoice or an unused draft. Source-linked drafts must reserve their original quantities through the authorized source owner.',
     'archive_restore_source_changed' => 'The original source is unavailable, ineligible or changed. Restore requires the same customer, currency, product, unit and supported original allocation.',
-    'archive_restore_source_reconcile' => 'The source counters do not match their active invoice ownership. Reconcile the owning documents before restoration; no counter is reset automatically.',
+    'archive_restore_source_reconcile' => 'The invoiced or converted quantities recorded on the source document are inconsistent. Reconcile them with the linked documents before restoration; these quantities are not adjusted automatically.',
     'archive_restore_release_unproven' => 'The quantity release for this archived invoice is missing or ambiguous. Review the original conversion evidence before restoration.',
     'withdraw_expense_approval' => 'Withdraw approval of unpaid expense',
     'expense_withdraw_ineligible' => 'Approval can be withdrawn only for an approved unpaid production expense without payment, journal or absorbed-cost effects. Paid expenses require their native reversal.',
