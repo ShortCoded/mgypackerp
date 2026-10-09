@@ -926,8 +926,8 @@ test('local opening final readback reconciles every accepted mutation and preser
         'company_id' => $company->id, 'company_doc_num' => $company->doc_num,
         ...app(PostingAccountConfigurationAudit::class)->forCompany($company->id)])->all();
     $audit = $manifest['prospective_account_audit'][0];
-    expect($audit['ok'])->toBeFalse()->and($audit['missing_count'])->toBe(1)->and($audit['incompatible_count'])->toBe(2)
-        ->and(collect($audit['rows'])->where('status', 'account_missing')->pluck('code')->all())->toBe([PostingAccountResolver::PurchasePriceVariance]);
+    expect($audit['ok'])->toBeTrue()->and($audit['missing_count'])->toBe(0)->and($audit['incompatible_count'])->toBe(2)
+        ->and(collect($audit['rows'])->where('status', 'account_missing')->pluck('code')->all())->toBe([]);
     expect(Account::where('company_id', 1)->whereHas('classification', fn ($q) => $q->where('code', PostingAccountResolver::PurchasePriceVariance))->count())->toBe(0);
     $config = config('database.connections.pgsql');
     config(['database.connections.local_opening_original' => [...$config, 'database' => 'mgypack_local_opening_recovery_20261004']]);

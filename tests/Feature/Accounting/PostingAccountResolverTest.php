@@ -30,6 +30,20 @@ test('default chart provides one eligible posting account for every required cla
         )->account_code)->toBe('1134');
 });
 
+test('missing optional purchase price variance account does not block general readiness', function (): void {
+    $company = Company::query()->active()->firstOrFail();
+    Account::query()->forCompany($company->id)
+        ->whereHas('classification', fn ($query) => $query->where('code', PostingAccountResolver::PurchasePriceVariance))
+        ->update(['is_postable' => false]);
+
+    $audit = app(PostingAccountConfigurationAudit::class)->forCompany($company->id);
+
+    expect($audit['ok'])->toBeTrue()->and($audit['missing_count'])->toBe(0)
+        ->and(PostingAccountResolver::requiredClassificationCodes())->not->toContain(PostingAccountResolver::PurchasePriceVariance);
+    expect(fn () => app(PostingAccountResolver::class)->resolve($company->id, PostingAccountResolver::PurchasePriceVariance, 'Purchase invoice variance'))
+        ->toThrow(DomainException::class, PostingAccountResolver::PurchasePriceVariance);
+});
+
 test('missing classification assignment names the chart classification instead of a hardcoded account code', function (): void {
     $company = Company::query()->active()->firstOrFail();
     $classification = AccountClassification::query()

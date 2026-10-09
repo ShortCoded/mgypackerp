@@ -79,7 +79,6 @@ class PostingAccountResolver
             self::RawMaterialPurchases,
             self::OperatingSuppliesPurchases,
             self::OtherPurchases,
-            self::PurchasePriceVariance,
             self::AbnormalWasteLoss,
             self::WarehouseDamageLoss,
             self::InventoryAdjustmentGain,
