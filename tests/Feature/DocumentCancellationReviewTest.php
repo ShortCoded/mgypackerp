@@ -21,6 +21,7 @@ use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Production\Models\ProductionExpenseRequest;
 use Modules\Production\Models\ProductionMaterialRequest;
 use Modules\Production\Models\ProductionOrder;
+use Modules\Production\Services\ProductionCancellationOwnerService;
 use Modules\Production\Services\ProductionMaterialDemandService;
 use Modules\Production\Services\ProductionMaterialRequestService;
 use Modules\Production\Services\SalesProductionDemandService;
@@ -65,6 +66,36 @@ test('material cancellation review is localized read only and hides execution fr
     ])->assertForbidden();
     expect($record->fresh()->status)->toBe(ProductionMaterialRequest::StatusSubmitted);
 })->with(['ar', 'en']);
+
+test('production cancellation owner refuses issued unsettled material without changing stock or accounting', function (): void {
+    expect(DB::getDriverName())->toBe('sqlite')->and(DB::connection()->getDatabaseName())->toBe(':memory:');
+    $f = anyStageMaterialFixture();
+    grantCancellationPermissions($f);
+    $materials = app(ProductionMaterialRequestService::class);
+    $request = $materials->approve($materials->create($f['runs'][1], $f['store']->id,
+        quantitiesByComponentId: [$f['componentId'] => '20']));
+    $materials->issue($request, [$request->lines->sole()->id => '1']);
+    $run = $request->run;
+    $state = fn (): array => [$run->fresh()->getRawOriginal(),
+        $run->requirements()->orderBy('id')->get()->map->getRawOriginal()->all(),
+        InventoryTransaction::query()->count(), JournalEntry::query()->count(),
+        DB::table('production_cancellation_owners')->count()];
+    $before = $state();
+    foreach (['ar', 'en'] as $locale) {
+        app()->setLocale($locale);
+        $this->withSession(['locale' => $locale]);
+        $preview = app(ProductionCancellationOwnerService::class)->preview($run);
+        expect($preview['blockers']['document_error'])->toBe(__('production_cancellation_owner.recover_first'));
+        $this->get(route('admin.production.runs.cancellation-owner', $run))->assertOk()
+            ->assertSee(__('production_cancellation_owner.title'))->assertSee(__('production_cancellation_owner.recover_first'))
+            ->assertDontSee(route('admin.production.runs.cancellation-owners.prepare', $run), false);
+        $this->postJson(route('admin.production.runs.cancellation-owners.prepare', $run), [
+            'treatment' => 'document_error', 'confirmed' => true, 'fingerprint' => $preview['fingerprint'],
+            'reason' => 'SYNTHETIC unsettled issue', 'evidence' => 'SYNTHETIC no measured return or consumption',
+        ])->assertUnprocessable()->assertJsonValidationErrors('owner');
+        expect($state())->toBe($before);
+    }
+});
 
 test('unissued cancellation releases reservations and shared demand once while preserving approvals and audited reason', function (): void {
     $f = anyStageMaterialFixture();
