@@ -9,7 +9,9 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Validation\ValidationException;
+use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\DateFormatService;
+use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingCompanyContextService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\OperatingScopeAccessService;
@@ -19,12 +21,13 @@ use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\CustomerReceipt;
 use Modules\Sales\Models\CustomerWithholdingSettlement;
 use Modules\Sales\Services\CustomerWithholdingSettlementService;
+use Yajra\DataTables\Facades\DataTables;
 
 final class CustomerWithholdingSettlementController
 {
     public function __construct(private readonly CustomerWithholdingSettlementService $settlements) {}
 
-    public function index(Request $request): View
+    public function index(Request $request): View|JsonResponse
     {
         $company = app(OperatingCompanyContextService::class)->currentCompany();
         $context = app(OperatingContextService::class)->snapshot($request);
@@ -37,10 +40,37 @@ final class CustomerWithholdingSettlementController
         }
         $periods = app(OperatingScopeAccessService::class)->allowedFinancialPeriodQuery($request->user(), [$company?->doc_num])
             ->select('financial_periods.id');
-        $history = CustomerWithholdingSettlement::query()->with('invoice.customer')
+        $history = CustomerWithholdingSettlement::query()->with(['invoice.customer', 'invoice.currency', 'preparer', 'approver', 'certificate'])
             ->where('company_id', $context['company_id'] ?? 0)->where('branch_id', $context['branch_id'] ?? 0)
-            ->whereHas('invoice', fn ($query) => $query->whereIn('financial_period_id', $periods))
-            ->latest('id')->paginate(20);
+            ->whereHas('invoice', fn ($query) => $query->whereIn('financial_period_id', $periods));
+        if ($request->expectsJson()) {
+            return DataTables::eloquent($history)
+                ->filter(function ($query) use ($request): void {
+                    $search = app(DataTableSearchService::class);
+                    $terms = $search->terms(is_string($request->input('search.value')) ? $request->input('search.value') : null);
+                    if ($terms !== []) {
+                        $search->applyMultiTermSearch($query, $terms, [
+                            'text' => ['customer_withholding_settlements.certificate_reference', 'customer_withholding_settlements.status'],
+                            'dates' => ['customer_withholding_settlements.certificate_date'],
+                            'exists' => [['table' => 'customer_invoices', 'first' => 'customer_invoices.id', 'second' => 'customer_withholding_settlements.customer_invoice_id',
+                                'join' => ['table' => 'customers', 'first' => 'customers.id', 'operator' => '=', 'second' => 'customer_invoices.customer_id'],
+                                'columns' => ['customer_invoices.doc_num', 'customers.name']]],
+                        ]);
+                    }
+                })
+                ->addColumn('invoice_number', fn (CustomerWithholdingSettlement $record): string => e($record->invoice?->doc_num ?? '—'))
+                ->addColumn('customer', fn (CustomerWithholdingSettlement $record): string => e($record->invoice?->customer?->name ?? '—'))
+                ->editColumn('certificate_reference', fn (CustomerWithholdingSettlement $record): string => '<a class="fw-semibold dt-code-value" data-row-primary-link href="'.e(route('admin.sales.sales-invoices.withholding.index', $record->invoice)).'">'.e($record->certificate_reference).'</a>')
+                ->editColumn('certificate_date', fn (CustomerWithholdingSettlement $record): string => e(app(DateFormatService::class)->formatDate($record->certificate_date)))
+                ->editColumn('amount', fn (CustomerWithholdingSettlement $record): string => e(app(NumericFormatService::class)->format($record->amount).' '.$record->invoice?->currency?->code))
+                ->editColumn('status', fn (CustomerWithholdingSettlement $record): string => '<span class="badge rounded-pill badge-subtle-'.match ($record->status) {
+                    'approved' => 'success', 'reversed' => 'danger', default => 'warning',
+                }.'">'.e(__('sales_ui.wht.'.$record->status)).'</span>')
+                ->addColumn('actions', fn (CustomerWithholdingSettlement $record): string => view('modules.sales.cycle.partials.withholding-index-actions', ['settlement' => $record])->render())
+                ->rawColumns(['certificate_reference', 'status', 'actions'])
+                ->only(['certificate_reference', 'invoice_number', 'customer', 'certificate_date', 'amount', 'status', 'actions'])->toJson();
+        }
+        $history = $history->latest('id')->paginate(20);
 
         return view('modules.sales.cycle.withholding-settlements', ['invoice' => null, 'history' => $history, 'source' => null, 'receipts' => collect()]);
     }

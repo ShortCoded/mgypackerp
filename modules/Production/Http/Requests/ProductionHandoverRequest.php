@@ -4,6 +4,7 @@ namespace Modules\Production\Http\Requests;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
+use Modules\Core\Services\DateFormatService;
 
 class ProductionHandoverRequest extends FormRequest
 {
@@ -16,6 +17,8 @@ class ProductionHandoverRequest extends FormRequest
 
     protected function prepareForValidation(): void
     {
+        $date = $this->input('document_date');
+        $this->merge(['document_date' => is_string($date) ? app(DateFormatService::class)->normalizeForStorage($date) : null]);
         $this->normalizeNumericInput(['lines.*.quantity']);
         $this->merge(['lines' => collect($this->input('lines', []))->filter(fn (mixed $line): bool => ! is_array($line)
             || (filled($line['quantity'] ?? null) && (! is_numeric($line['quantity']) || bccomp((string) $line['quantity'], '0', 8) !== 0)))->values()->all()]);
@@ -26,7 +29,8 @@ class ProductionHandoverRequest extends FormRequest
     {
         $warehouse = $this->routeIs('admin.inventory.*');
 
-        return ['document_date' => ['required', 'date_format:Y-m-d', 'before_or_equal:today'],
+        return ['submit_action' => ['nullable', 'in:save,save_view,save_back'],
+            'document_date' => ['required', 'date_format:Y-m-d', 'before_or_equal:today'],
             'branch_store_id' => [$warehouse ? 'prohibited' : 'required', 'integer'], 'notes' => ['nullable', 'string', 'max:2000'],
             'lines' => ['required', 'array', 'min:1', 'max:100'], 'lines.*.quantity' => ['required', 'numeric', 'gt:0', 'decimal:0,8'],
             'lines.*.'.($warehouse ? 'line_public_id' : 'run_public_id') => ['required', 'uuid', 'distinct'],

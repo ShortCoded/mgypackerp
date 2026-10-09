@@ -89,7 +89,10 @@ test('withholding certificate HTTP workflow renders both locales and enforces pe
     $url = route('admin.sales.sales-invoices.withholding.index', $f['invoice']);
     $selection = ['payment_schedule_id' => $f['schedule']->id, 'customer_receipt_id' => $f['receipt']->id];
     $this->get($url.'?'.http_build_query($selection))->assertOk()->assertSee(__('sales_ui.wht.title'))
-        ->assertSee('source_fingerprint', false)->assertSee('data-picker-max="1"', false)->assertDontSee('sales_ui.wht.');
+        ->assertSee('source_fingerprint', false)->assertSee('data-picker-max="1"', false)
+        ->assertSee('crud-index-toolbar', false)->assertSee('js-select2-local', false)->assertSee('js-date-picker', false)
+        ->assertSee(__('sales_ui.wht.certificate_amount'))->assertSee(__('sales_ui.wht.help'))
+        ->assertDontSee('sales_ui.wht.');
     $payload = withholdingPayload($f);
     $store = route('admin.sales.sales-invoices.withholding.store', $f['invoice']);
     $this->postJson($store, [...$payload, '_submission_token' => (string) Str::uuid(), 'attachment_doc_nums' => [$f['certificate']->doc_num, $f['certificate']->doc_num]])->assertUnprocessable();
@@ -102,7 +105,14 @@ test('withholding certificate HTTP workflow renders both locales and enforces pe
     $this->get($url)->assertOk()->assertSee(__('sales_ui.wht.actual'))->assertSee(app(NumericFormatService::class)->format('1130'), false)->assertDontSee('sales_ui.wht.');
     $pdf = $this->get(route('admin.sales.sales-invoices.withholding.print', [$f['invoice'], $record->id]))->assertOk()->assertHeader('content-type', 'application/pdf');
     expect(substr($pdf->getContent(), 0, 5))->toBe('%PDF-');
-    $this->get(route('admin.sales.customer-withholding-settlements.index'))->assertOk()->assertSee('SYNTHETIC-CERT-1');
+    $this->get(route('admin.sales.customer-withholding-settlements.index'))->assertOk()
+        ->assertSee('crud-index-toolbar', false)->assertSee('data-withholding-settlements-table', false)->assertSee(__('sales_ui.wht.certificate_amount'));
+    $list = $this->getJson(route('admin.sales.customer-withholding-settlements.index', ['draw' => 1, 'search' => ['value' => 'SYNTHETIC-CERT-1']]))
+        ->assertOk()->assertJsonMissingPath('error')->assertJsonPath('recordsFiltered', 1)->json('data.0');
+    expect($list['certificate_reference'])->toContain('SYNTHETIC-CERT-1')
+        ->and(array_keys($list))->toEqualCanonicalizing(['certificate_reference', 'invoice_number', 'customer', 'certificate_date', 'amount', 'status', 'actions']);
+    $this->getJson(route('admin.sales.customer-withholding-settlements.index', ['draw' => 2, 'search' => ['value' => $f['customer']->name]]))
+        ->assertOk()->assertJsonMissingPath('error')->assertJsonPath('recordsFiltered', 1);
     $f['approver']->revokePermissionTo('customer_withholding_settlements.view');
     $this->get($url)->assertForbidden();
     $this->withSession(['current_branch_id' => 999999])->postJson($approve, ['_submission_token' => (string) Str::uuid(), 'approval_reason' => 'Wrong branch'])->assertNotFound();

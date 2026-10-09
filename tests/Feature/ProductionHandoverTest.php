@@ -2,9 +2,11 @@
 
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Modules\Accounting\Models\JournalEntry;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Core\Services\SettingService;
 use Modules\Inventory\Models\InventoryDocument;
 use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Services\InventoryAvailabilityService;
@@ -17,6 +19,69 @@ use Spatie\Permission\Models\Permission;
 
 require_once __DIR__.'/../ProductionHandoverSupport.php';
 require_once __DIR__.'/../InventoryStandardCostSupport.php';
+
+test('production handover CRUD uses shared controls and saves localized dates without posting stock', function (string $locale): void {
+    $f = productionHandoverFixture();
+    $this->withSession(['locale' => $locale]);
+    app()->setLocale($locale);
+    app(SettingService::class)->set('date_format', 'd/m/Y');
+    $run = $f['runs']->first();
+    $index = route('admin.production.handovers.index');
+    $this->get($index)->assertOk()->assertSee('crud-index-toolbar', false)
+        ->assertSee('data-server-table', false)->assertSee(__('production_handover.list_help'));
+    $form = $this->get(route('admin.production.handovers.create', $run))->assertOk()
+        ->assertSee('data-line-card-editor', false)->assertSee('js-date-picker', false)
+        ->assertSee('js-select2-local', false)->assertSee('data-submit-action="save_back"', false)
+        ->assertSee(__('common.actions.save_and_view'))->assertDontSee('data-submit-action="save_edit"', false);
+    expect(substr_count($form->getContent(), 'name="_submission_token"'))->toBe(1);
+    foreach ($f['runs'] as $item) {
+        $form->assertSee($item->product->name)->assertSee($item->unit->name);
+    }
+    $before = [InventoryTransaction::count(), JournalEntry::count()];
+    $this->post(route('admin.production.handovers.store', $run), [
+        '_submission_token' => (string) Str::uuid(), 'submit_action' => 'save_back',
+        'branch_store_id' => $f['store']->id, 'document_date' => '29/09/2026',
+        'lines' => [['run_public_id' => $run->public_id, 'quantity' => '4.12345678']],
+        'notes' => 'SYNTHETIC shared CRUD notes',
+    ])->assertRedirect($index)->assertSessionHasNoErrors();
+    $handover = InventoryDocument::query()->where('document_type', InventoryDocument::TypeProductionHandover)->sole();
+    expect($handover->document_date->toDateString())->toBe('2026-09-29')
+        ->and($handover->lines->sole()->transaction_quantity)->toBe('4.12345678')
+        ->and([InventoryTransaction::count(), JournalEntry::count()])->toBe($before);
+    $this->get(route('admin.production.handovers.show', $handover))->assertOk()
+        ->assertSee('SYNTHETIC shared CRUD notes')->assertSee(__('production_handover.approve'));
+    $data = $this->getJson($index.'?'.http_build_query(['draw' => 1, 'length' => 10, 'search' => ['value' => $handover->doc_num]]))
+        ->assertOk()->assertJsonMissingPath('error')->assertJsonPath('recordsFiltered', 1)->json('data.0');
+    expect(array_keys($data))->toEqualCanonicalizing(['doc_num', 'document_date', 'source_doc_num', 'store', 'status', 'actions'])
+        ->and($data['actions'])->toContain(__('common.actions.view'));
+    $this->getJson($index.'?'.http_build_query(['draw' => 2, 'search' => ['value' => 'SYNTHETIC no match']]))
+        ->assertOk()->assertJsonPath('recordsFiltered', 0);
+    $this->withSession(['current_branch_id' => 999999])->getJson($index.'?draw=3')->assertUnprocessable()->assertJsonMissingPath('data');
+})->with(['ar', 'en']);
+
+test('warehouse receipt CRUD retains partial item quantities and independent approval actions', function (): void {
+    $f = productionHandoverFixture();
+    $service = app(ProductionHandoverService::class);
+    $run = $f['runs']->first();
+    $handover = $service->approveHandover($service->createHandover($run, $f['store']->id, now()->toDateString(),
+        [['run_public_id' => $run->public_id, 'quantity' => '10']]));
+    productionHandoverActor($f, $f['warehouse']);
+    $this->get(route('admin.inventory.production-receipts.create', $handover))->assertOk()
+        ->assertSee('data-line-card-editor', false)->assertSee('js-date-picker', false)
+        ->assertSee('data-submit-action="save_back"', false)->assertSee(__('production_handover.actual_quantity'));
+    $before = [InventoryTransaction::count(), JournalEntry::count()];
+    $receipt = $service->createWarehouseReceipt($handover, now()->toDateString(),
+        [['line_public_id' => $handover->lines->sole()->public_id, 'quantity' => '3']]);
+    $this->get(route('admin.inventory.production-receipts.show', $receipt))->assertOk()
+        ->assertSee(__('production_handover.approve_receipt'))->assertDontSee('form.edit', false);
+    $this->getJson(route('admin.inventory.production-receipts.index', ['draw' => 1]))->assertOk()->assertJsonMissingPath('error')->assertJsonPath('recordsTotal', 1)->assertJsonPath('recordsFiltered', 1);
+    expect([InventoryTransaction::count(), JournalEntry::count()])->toBe($before)
+        ->and($receipt->lines->sole()->transaction_quantity)->toBe('3.00000000');
+    $f['warehouse']->revokePermissionTo('inventory.production_receipts.approve');
+    $this->get(route('admin.inventory.production-receipts.show', $receipt))->assertOk()->assertDontSee(__('production_handover.approve_receipt'));
+    $f['warehouse']->revokePermissionTo('inventory.production_receipts.view');
+    $this->getJson(route('admin.inventory.production-receipts.index', ['draw' => 2]))->assertForbidden();
+});
 
 test('three item handover has no stock or GL and separate warehouse approval receives actual partial quantities once', function (): void {
     $f = productionHandoverFixture();

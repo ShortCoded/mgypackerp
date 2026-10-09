@@ -2,6 +2,7 @@
 
 return [
     'title' => 'Production Handover to Warehouse',
+    'list_help' => 'Start the handover from the run that recorded the output. Warehouse staff review and approve the received quantities on the warehouse receipt screen.',
     'create' => 'Prepare production handover',
     'warehouse_title' => 'Warehouse Receipt from Production',
     'warehouse_create' => 'Record actual received quantities',
