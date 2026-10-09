@@ -206,7 +206,7 @@ return [
         'cost_lineage_missing' => 'You can save the draft, but receipt cost and movement records must be complete before approving without a purchase price variance account.',
         'cost_return_requires_review' => 'The cost split between this return and its linked invoices needs an additional cost settlement before posting. You can save the draft; balances were not changed.',
         'cost_reversed' => 'The purchase cost adjustment was reversed with the invoice. Adjustment journals, reversal journals and original movements remain available for review.',
-        'cost_standard_settlement_required' => 'These quantities are linked to an approved standard cost settlement. The price difference needs a standard cost settlement before posting without a purchase price variance account. You can save the draft.',
+        'cost_standard_settlement_pending' => 'The material difference was recorded in work in process. The finished product standard cost is unchanged. Complete the standard cost settlement with independent approval.',
         'cost_lineage_unbalanced' => 'The invoice price difference does not match the cost traced through receipts and returns. Review linked quantities and costs before approval.',
         'source_discount_allocation_invalid' => 'The source discount allocation is inconsistent; refresh the source invoice quantities.',
         'created' => 'Purchase invoice created successfully.',

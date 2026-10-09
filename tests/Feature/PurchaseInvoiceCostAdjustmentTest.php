@@ -333,7 +333,7 @@ function purchaseCostAccountBalance(int $accountId, ?int $branchId = null): stri
         ->reduce(fn (string $sum, $line): string => bcadd($sum, bcsub($line->debit_amount, $line->credit_amount, 4), 4), '0.0000');
 }
 
-test('documented legacy production cost follows raw material into WIP finished stock and later issued output', function (bool $receiveOutput, bool $standardCosts = false): void {
+test('documented legacy production cost follows raw material into WIP finished stock and later issued output', function (bool $receiveOutput, bool $standardCosts = false, string $price = '12'): void {
     require_once __DIR__.'/../ManufacturingInventorySupport.php';
     $fixture = purchaseCostFixture();
     foreach (['production.orders.edit', 'production.orders.release', 'production.runs.account_materials', 'production.runs.setup', 'production.runs.progress'] as $permission) {
@@ -387,12 +387,55 @@ test('documented legacy production cost follows raw material into WIP finished s
             standardCostActor($fixture['approver']);
             $standardService->approveSettlement($settlement, $fixture['approver']->id, 'SYNTHETIC independent standard approval');
             standardCostActor($fixture['preparer']);
-            $invoice = purchaseCostInvoice($fixture, '100', '12');
-            $count = [JournalEntry::query()->count(), InventoryTransaction::query()->count()];
-            expect(fn () => app(PurchaseInvoiceService::class)->approve($invoice))->toThrow(DomainException::class, __('purchase_invoices.messages.cost_standard_settlement_required'))
-                ->and($invoice->fresh()->status)->toBe(PurchaseInvoice::StatusDraft)
-                ->and([JournalEntry::query()->count(), InventoryTransaction::query()->count()])->toBe($count)
-                ->and($fixture['movement']->fresh()->completedTotalCost())->toBe('1000.00000000');
+            $issuedOutput = purchaseCostIssue([...$fixture, 'raw' => $fixture['finished']], '5', ['batch_lot' => $run->batch_lot], InventoryDocument::TypeSalesDelivery)->transactions->sole();
+            $originalIssuedOutput = $issuedOutput->getRawOriginal();
+            $invoice = purchaseCostInvoice($fixture, '100', $price);
+            $materialDifference = bcmul(bcsub($price, '10', 8), '20', 8);
+            $originalSettlement = $settlement->fresh()->getRawOriginal();
+            $originalOutput = $output->getRawOriginal();
+            $invoices = app(PurchaseInvoiceService::class);
+            $costs = app(PurchaseInvoiceCostAdjustmentService::class);
+            $posted = $invoices->approve($invoice);
+            expect($posted->status)->toBe(PurchaseInvoice::StatusApproved)
+                ->and($fixture['movement']->fresh()->completedTotalCost())->toBe(bcmul($price, '100', 8))
+                ->and($output->fresh()->completedTotalCost())->toBe('35.00000000')
+                ->and($issuedOutput->fresh()->completedTotalCost())->toBe('17.50000000')
+                ->and(app(ProductionCostService::class)->runPosition($run->fresh())['wip'])->toBe($materialDifference)
+                ->and($costs->standardSettlementNotice($posted))->toBe(__('purchase_invoices.messages.cost_standard_settlement_pending'));
+            $fixture['preparer']->givePermissionTo(Permission::findOrCreate('purchase_invoices.view', 'web'));
+            $fixture['preparer']->givePermissionTo(Permission::findOrCreate('purchases.prices.view', 'web'));
+            foreach (['ar', 'en'] as $locale) {
+                app()->setLocale($locale);
+                $this->get(route('admin.purchases.purchase-invoices.show', $posted->doc_num))
+                    ->assertOk()->assertSee(__('purchase_invoices.messages.cost_standard_settlement_pending'));
+            }
+            app()->setLocale('ar');
+            $revision = $standardService->prepareSettlement($run->fresh(), now()->toDateString(), 'SYNTHETIC invoice material variance revision', $fixture['preparer']->id);
+            expect(fn () => $standardService->approveSettlement($revision, $fixture['preparer']->id, 'SYNTHETIC self approval'))
+                ->toThrow(DomainException::class, __('inventory_standard_cost.errors.approval'));
+            standardCostActor($fixture['approver']);
+            $standardService->approveSettlement($revision, $fixture['approver']->id, 'SYNTHETIC independent material variance approval');
+            standardCostActor($fixture['preparer']);
+            expect(app(ProductionCostService::class)->runPosition($run->fresh())['wip'])->toBe('0.00000000')
+                ->and($output->fresh()->completedTotalCost())->toBe('35.00000000')
+                ->and(purchaseCostAccountBalance($fixture['materials_account']->id))->toBe(bcsub(bcmul($price, '20', 4), '32', 4))
+                ->and($costs->standardSettlementNotice($posted))->toBeNull();
+            $invoices->reverse($posted, 'SYNTHETIC standard invoice reversal');
+            expect($fixture['movement']->fresh()->completedTotalCost())->toBe('1000.00000000')
+                ->and($output->fresh()->completedTotalCost())->toBe('35.00000000')
+                ->and(app(ProductionCostService::class)->runPosition($run->fresh())['wip'])->toBe(bcmul($materialDifference, '-1', 8))
+                ->and($costs->standardSettlementNotice($posted))->toBe(__('purchase_invoices.messages.cost_standard_settlement_pending'));
+            $inverseRevision = $standardService->prepareSettlement($run->fresh(), now()->toDateString(), 'SYNTHETIC reversed material variance revision', $fixture['preparer']->id);
+            standardCostActor($fixture['approver']);
+            $standardService->approveSettlement($inverseRevision, $fixture['approver']->id, 'SYNTHETIC independent reversal variance approval');
+            standardCostActor($fixture['preparer']);
+            expect(app(ProductionCostService::class)->runPosition($run->fresh())['wip'])->toBe('0.00000000')
+                ->and(purchaseCostAccountBalance($fixture['materials_account']->id))->toBe('168.0000')
+                ->and($costs->standardSettlementNotice($posted))->toBeNull()
+                ->and($output->fresh()->getRawOriginal())->toBe($originalOutput)
+                ->and($issuedOutput->fresh()->getRawOriginal())->toBe($originalIssuedOutput)
+                ->and($issuedOutput->fresh()->completedTotalCost())->toBe('17.50000000')
+                ->and($settlement->fresh()->getRawOriginal())->toBe($originalSettlement);
 
             return;
         }
@@ -415,7 +458,7 @@ test('documented legacy production cost follows raw material into WIP finished s
         expect($output->fresh()->completedTotalCost())->toBe('200.00000000')
             ->and($issuedOutput->fresh()->completedTotalCost())->toBe('100.00000000');
     }
-})->with(['WIP' => [false], 'received output' => [true], 'standard cost settlement preserved' => [true, true]]);
+})->with(['WIP' => [false], 'received output' => [true], 'standard cost settlement preserved' => [true, true], 'negative standard cost difference' => [true, true, '8']]);
 
 test('a missing PPV account does not prevent saving a receipt linked invoice draft', function (): void {
     $fixture = purchaseCostFixture();

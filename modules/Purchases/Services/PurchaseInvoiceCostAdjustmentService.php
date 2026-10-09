@@ -14,6 +14,8 @@ use Modules\Inventory\Models\UnpricedInventoryReceiptLine;
 use Modules\Inventory\Services\InventoryReceiptCostCompletionService;
 use Modules\Inventory\Services\InventoryReceiptCostProposalService;
 use Modules\Inventory\Services\InventoryValueAdjustmentService;
+use Modules\Production\Models\ProductionRun;
+use Modules\Production\Services\ProductionCostService;
 use Modules\Purchases\Models\PurchaseInvoice;
 
 class PurchaseInvoiceCostAdjustmentService
@@ -41,6 +43,18 @@ class PurchaseInvoiceCostAdjustmentService
     {
         return InventoryValueAdjustment::query()->where('company_id', $invoice->company_id)
             ->where('source_type', PurchaseInvoice::class)->where('source_id', $invoice->id)->exists();
+    }
+
+    public function standardSettlementNotice(PurchaseInvoice $invoice): ?string
+    {
+        $runIds = InventoryValueAdjustment::query()->where('company_id', $invoice->company_id)
+            ->whereIn('source_type', [PurchaseInvoice::class, self::ReversalSource])->where('source_id', $invoice->id)
+            ->get(['source_snapshot'])->flatMap(fn ($adjustment): array => $adjustment->source_snapshot['standard_settlement_run_ids'] ?? [])->unique();
+        $runs = ProductionRun::query()->where('company_id', $invoice->company_id)->whereIn('id', $runIds)->get();
+        $positions = app(ProductionCostService::class)->positions($runs);
+
+        return $positions->contains(fn (array $position): bool => bccomp($position['wip'], '0', 8) !== 0)
+            ? __('purchase_invoices.messages.cost_standard_settlement_pending') : null;
     }
 
     public function receiptHasActiveAdjustment(int $companyId, int $receiptLineId): bool

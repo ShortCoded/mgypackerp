@@ -277,7 +277,8 @@ class PurchaseInvoiceController extends Controller
         return response()->json([
             'success' => true,
             'message' => __('purchase_invoices.messages.approved').(app(PurchaseInvoiceCostAdjustmentService::class)->hasAdjustment($record)
-                    ? ' '.__('purchase_invoices.messages.cost_adjusted') : ''),
+                    ? ' '.__('purchase_invoices.messages.cost_adjusted') : '')
+                .(($notice = app(PurchaseInvoiceCostAdjustmentService::class)->standardSettlementNotice($record)) !== null ? ' '.$notice : ''),
             'data' => ['doc_num' => $record->doc_num, 'urls' => $this->urls($record)],
         ]);
     }
@@ -466,6 +467,8 @@ class PurchaseInvoiceController extends Controller
             'costAdjustmentNotice' => $isNewDocument || $record?->status === PurchaseInvoice::StatusDraft
                 ? app(PurchaseInvoiceCostAdjustmentService::class)->notice($companyId) : null,
             'hasCostAdjustment' => ! $isNewDocument && $record !== null && app(PurchaseInvoiceCostAdjustmentService::class)->hasAdjustment($record),
+            'standardSettlementNotice' => ! $isNewDocument && $record !== null
+                ? app(PurchaseInvoiceCostAdjustmentService::class)->standardSettlementNotice($record) : null,
             'hasCostReversal' => ! $isNewDocument && $record !== null && InventoryValueAdjustment::query()
                 ->where('company_id', $companyId)->where('source_type', PurchaseInvoiceCostAdjustmentService::ReversalSource)->where('source_id', $record->id)->exists(),
         ]);

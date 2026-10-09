@@ -258,6 +258,9 @@
             @if($costAdjustmentNotice)
                 <div class="alert alert-warning" role="status">{{ $costAdjustmentNotice }}</div>
             @endif
+            @if($standardSettlementNotice)
+                <div class="alert alert-warning" role="status">{{ $standardSettlementNotice }}</div>
+            @endif
             @if($hasCostAdjustment)
                 <div class="alert alert-info" role="status">{{ __($hasCostReversal ? 'purchase_invoices.messages.cost_reversed' : 'purchase_invoices.messages.cost_adjusted') }}</div>
             @endif
