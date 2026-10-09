@@ -7,6 +7,7 @@ use Modules\Auth\Services\PermissionRegistryService;
 use Modules\Core\Http\Controllers\PostedInvoiceLineCorrectionController;
 use Modules\Purchases\Http\Controllers\ProcurementWorkflowController;
 use Modules\Purchases\Http\Controllers\PurchaseInvoiceController;
+use Modules\Purchases\Http\Controllers\PurchaseInvoiceStageCostController;
 use Modules\Purchases\Http\Controllers\PurchaseOrderController;
 use Modules\Purchases\Http\Controllers\SupplierController;
 use Modules\Purchases\Http\Controllers\SupplierDataReportController;
@@ -176,6 +177,10 @@ Route::middleware('auth')
             Route::post('/', 'store')->middleware(IdempotentDocumentSubmission::class)->name('store');
             Route::delete('/bulk-delete', 'bulkDelete')->middleware('can:purchase_invoices.delete')->name('bulk-delete');
             Route::put('/document-number-settings', 'updateDocumentNumberSettings')->middleware('can:purchase_invoices.document_number_settings.update')->name('document-number-settings.update');
+            Route::get('/{purchaseInvoice}/stage-cost', [PurchaseInvoiceStageCostController::class, 'index'])->middleware('can:purchase_invoices.view')->name('stage-cost.index');
+            Route::post('/{purchaseInvoice}/stage-cost', [PurchaseInvoiceStageCostController::class, 'store'])->middleware(['can:purchase_invoices.view', 'can:production.runs.correct'])->name('stage-cost.store');
+            Route::post('/{purchaseInvoice}/stage-cost/{correction}/approve', [PurchaseInvoiceStageCostController::class, 'approve'])->middleware(['can:purchase_invoices.view', 'can:production.runs.correct_approve'])->name('stage-cost.approve');
+            Route::post('/{purchaseInvoice}/stage-cost/{correction}/reject', [PurchaseInvoiceStageCostController::class, 'reject'])->middleware(['can:purchase_invoices.view', 'can:production.runs.correct_approve'])->name('stage-cost.reject');
             Route::post('/{purchaseInvoice}/approve', 'approve')->middleware('can:purchase_invoices.approve')->name('approve');
             Route::post('/{purchaseInvoice}/close', 'close')->middleware('can:purchase_invoices.close')->name('close');
             Route::post('/{purchaseInvoice}/cancel', 'cancel')->middleware('can:purchase_invoices.cancel')->name('cancel');

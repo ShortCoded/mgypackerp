@@ -18,6 +18,7 @@ use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\InventoryValueAdjustment;
 use Modules\Inventory\Models\InventoryValueAdjustmentLine;
 use Modules\Inventory\Models\OpeningStockCostCorrection;
+use Modules\Production\Services\ProductionInvoiceCostCorrectionService;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseReturn;
 use Modules\Purchases\Services\PurchaseInvoiceCostAdjustmentService;
@@ -89,6 +90,18 @@ class InventoryValueAdjustmentService
             if (! $request->user()?->can($permission)
                 || ! $validSource) {
                 throw new DomainException(__('inventory.movements.messages.receipt_pricing_source_changed'));
+            }
+            if ($locked instanceof PurchaseInvoice) {
+                if (($plan['stage_cost_graph']['runs'] ?? []) !== []) {
+                    app(ProductionInvoiceCostCorrectionService::class)->assertPostingAuthorization($locked, $plan, $purchaseReverse);
+                } else {
+                    $costs = app(PurchaseInvoiceCostAdjustmentService::class);
+                    $fresh = $purchaseReverse ? (app(ProductionInvoiceCostCorrectionService::class)->authorizedPlan($locked, reverse: true)
+                        ?? $costs->planStageReversal($locked, $plan['posting_date'], (int) $plan['posting_period_id'], stageCorrection: false)) : $costs->plan($locked);
+                    if ($fresh !== $plan) {
+                        throw new DomainException(__('inventory.movements.messages.receipt_pricing_source_changed'));
+                    }
+                }
             }
             $existing = InventoryValueAdjustment::query()->where('company_id', $locked->company_id)->where('source_type', $sourceType)
                 ->where('source_id', $locked->id)->lockForUpdate()->first();

@@ -13,6 +13,7 @@ use Modules\Inventory\Services\InventoryReceiptCostProposalService;
 use Modules\Inventory\Services\InventoryValueAdjustmentService;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Services\ProductionCostService;
+use Modules\Production\Services\ProductionInvoiceCostCorrectionService;
 use Modules\Purchases\Models\PurchaseInvoice;
 
 class PurchaseInvoiceCostAdjustmentService
@@ -63,9 +64,12 @@ class PurchaseInvoiceCostAdjustmentService
     }
 
     /** @return array<string, mixed>|null */
-    public function plan(PurchaseInvoice $invoice): ?array
+    public function plan(PurchaseInvoice $invoice, bool $stageCorrection = false): ?array
     {
         $this->allocation->lockCompany((int) $invoice->company_id);
+        if (! $stageCorrection && ($approved = app(ProductionInvoiceCostCorrectionService::class)->authorizedPlan($invoice)) !== null) {
+            return $approved;
+        }
         $basis = $this->allocation->describeInvoice($invoice, true);
         $variances = collect($basis['lines'])->where('treatment', 'capitalized');
         if ($variances->isEmpty() || $this->accounts->resolveOptional((int) $invoice->company_id, PostingAccountResolver::PurchasePriceVariance, __('Purchase Invoice')) !== null) {
@@ -77,7 +81,7 @@ class PurchaseInvoiceCostAdjustmentService
         }
         $events = $this->allocation->targets((int) $invoice->company_id, $variances->pluck('receipt_line_id')->unique()->values()->all(), $basis);
 
-        return [...$this->preparePlan($invoice, $events['root_deltas'], $invoice->invoice_date->toDateString(), (int) $invoice->financial_period_id, $branchVariances),
+        return [...$this->preparePlan($invoice, $events['root_deltas'], $invoice->invoice_date->toDateString(), (int) $invoice->financial_period_id, $branchVariances, $stageCorrection),
             'cost_events' => $events['cost_events']];
     }
 
@@ -111,6 +115,7 @@ class PurchaseInvoiceCostAdjustmentService
         }
         $adjustment = $this->adjustments->postPurchaseVariance($invoice, $plan, request(), $reverse);
         $this->completion->persistBases($adjustment, $plan);
+        app(ProductionInvoiceCostCorrectionService::class)->consume($invoice, $adjustment, $reverse);
         app(ProcurementAuditService::class)->record($invoice, $reverse ? 'purchase_invoice.cost_reversed' : 'purchase_invoice.cost_adjusted',
             ['inventory_value_adjustment_id' => $adjustment->id, 'input_sha256' => $plan['input_sha256']]);
 
@@ -131,6 +136,16 @@ class PurchaseInvoiceCostAdjustmentService
     /** @return array<string, mixed> */
     private function reversalPlan(PurchaseInvoice $invoice, string $date, int $periodId): array
     {
+        if (($approved = app(ProductionInvoiceCostCorrectionService::class)->authorizedPlan($invoice, reverse: true)) !== null) {
+            return $approved;
+        }
+
+        return $this->planStageReversal($invoice, $date, $periodId, stageCorrection: false);
+    }
+
+    /** @return array<string, mixed> */
+    public function planStageReversal(PurchaseInvoice $invoice, string $date, int $periodId, bool $stageCorrection = true): array
+    {
         $basis = $this->allocation->invoiceBasis($invoice);
         $lines = collect($basis['lines'])->where('treatment', 'capitalized');
         $branches = [];
@@ -139,14 +154,14 @@ class PurchaseInvoiceCostAdjustmentService
         }
         $events = $this->allocation->targets((int) $invoice->company_id, $lines->pluck('receipt_line_id')->unique()->values()->all(), excludeInvoiceId: (int) $invoice->id);
 
-        return [...$this->preparePlan($invoice, $events['root_deltas'], $date, $periodId, $branches), 'cost_events' => $events['cost_events']];
+        return [...$this->preparePlan($invoice, $events['root_deltas'], $date, $periodId, $branches, $stageCorrection), 'cost_events' => $events['cost_events']];
     }
 
     /** @param array<int, string> $deltas @param array<int, string> $branches @return array<string, mixed> */
-    private function preparePlan(PurchaseInvoice $invoice, array $deltas, string $date, int $periodId, array $branches): array
+    private function preparePlan(PurchaseInvoice $invoice, array $deltas, string $date, int $periodId, array $branches, bool $stageCorrection = false): array
     {
         app(FinancialPeriodService::class)->resolveOpenForPostingDate((int) $invoice->company_id, $date, $periodId, lockForUpdate: true);
-        $plan = $this->completion->planPurchaseVariance($invoice, $deltas, $date, $periodId);
+        $plan = $this->completion->planPurchaseVariance($invoice, $deltas, $date, $periodId, $stageCorrection);
         app(InventoryReceiptCostProposalService::class)->assertImpactBranchAccess(request(), $plan);
         $counterpartEffects = collect($plan['effects'])->where('account_id', $plan['counterpart_account_id'])
             ->reduce(fn (string $sum, array $effect): string => bcadd($sum, $effect['amount'], 8), '0');

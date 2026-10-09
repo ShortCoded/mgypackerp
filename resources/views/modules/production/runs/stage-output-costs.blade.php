@@ -72,10 +72,10 @@
     @endif
     @foreach($owners ?? [] as $owner)
     <div class="card mb-3"><div class="card-header">{{ __('production_stage_transfer.owner_'.$owner->kind) }} — {{ $owner->public_id }} <span class="badge bg-secondary">{{ __('production_stage_transfer.status_'.$owner->status) }}</span></div>
-        <div class="card-body"><div>{{ __('production_stage_transfer.quantity') }}: {{ $numbers->format($owner->base_quantity) }} — {{ __('production_stage_transfer.cost') }}: {{ $numbers->format($owner->total_cost) }}</div>
+        <div class="card-body"><div>{{ __('production_stage_transfer.quantity') }}: {{ $numbers->format($owner->base_quantity) }} — {{ __('production_invoice_cost.original_cost') }}: {{ $numbers->format($owner->total_cost) }}</div>
             @foreach($owner->posting_snapshot['components'] as $kind => $amount)<span class="d-inline-block me-3">{{ __('production_stage_transfer.component_'.$kind) }}: {{ $numbers->format($amount) }}</span>@endforeach
             @if($owner->kind === 'allocation')<div>{{ __('production_stage_transfer.scrap_treatment') }}: {{ __('production_stage_transfer.scrap_'.$owner->posting_snapshot['scrap_treatment']) }}</div>
-            @foreach($owner->posting_snapshot['allocations'] as $kind => $allocation)<div>{{ __('production_stage_transfer.output_'.$kind) }}: {{ $numbers->format($allocation['quantity']) }} — {{ __('production_stage_transfer.cost') }}: {{ $numbers->format($allocation['total_cost']) }}</div>@endforeach
+            @foreach($owner->posting_snapshot['allocations'] as $kind => $allocation)<div>{{ __('production_stage_transfer.output_'.$kind) }}: {{ $numbers->format($allocation['quantity']) }} — {{ __('production_invoice_cost.original_cost') }}: {{ $numbers->format($allocation['total_cost']) }}</div>@endforeach
             @endif
             @if($owner->kind === 'allocation')<div>{{ __('production_stage_transfer.booked_amount') }}: {{ $numbers->format($owner->booked_loss_amount) }} · {{ __('production_stage_transfer.rounding_difference') }}: {{ $numbers->formatWithMinimumDecimals($owner->posting_snapshot['rounding_difference'] ?? '0', 8) }}</div>@endif
             <div>{{ $owner->reason }}</div><div>{{ $owner->evidence }}</div>

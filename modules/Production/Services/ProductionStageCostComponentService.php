@@ -279,7 +279,7 @@ final class ProductionStageCostComponentService
                 if ($line->total_cost === null || (int) $line->production_run_id !== (int) $run->id) {
                     throw new DomainException(__('production_stage_transfer.unvalued'));
                 }
-                $pool['material'] = bcadd($pool['material'], (string) $line->total_cost, 8);
+                $pool['material'] = bcadd($pool['material'], app(ProductionStageValueCorrectionService::class)->materialCost($line), 8);
             }
         }
 

@@ -26,6 +26,7 @@ use Modules\Inventory\Models\InventoryValueAdjustmentLine;
 use Modules\Inventory\Models\OpeningStock;
 use Modules\Production\Models\ProductionRun;
 use Modules\Production\Services\ProductionStageTransferService;
+use Modules\Production\Services\ProductionStageValueCorrectionService;
 use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Purchases\Models\PurchaseReturn;
 use Modules\Purchases\Services\PurchaseReceiptCostAllocationService;
@@ -147,7 +148,7 @@ class InventoryReceiptCostCompletionService
     }
 
     /** @param array<int, string> $rootDeltas @return array<string, mixed> */
-    public function planPurchaseVariance(PurchaseInvoice|PurchaseReturn $invoice, array $rootDeltas, string $postingDate, int $postingPeriodId): array
+    public function planPurchaseVariance(PurchaseInvoice|PurchaseReturn $invoice, array $rootDeltas, string $postingDate, int $postingPeriodId, bool $stageCorrection = false): array
     {
         $this->periods->resolveOpenForPostingDate((int) $invoice->company_id, $postingDate, $postingPeriodId, lockForUpdate: true);
         $roots = InventoryTransaction::query()->where('company_id', $invoice->company_id)->whereIn('id', array_keys($rootDeltas))
@@ -166,33 +167,52 @@ class InventoryReceiptCostCompletionService
         }
         $counterpart = $this->accounts->resolve((int) $invoice->company_id, PostingAccountResolver::GoodsReceivedNotInvoiced, __('Purchase Invoice'));
         $plan = $this->planTargets($invoice, $targets, $roots->pluck('product_id')->unique()->all(),
-            $roots->min('transaction_date')->toDateString(), $postingDate, $postingPeriodId, $counterpart);
+            $roots->min('transaction_date')->toDateString(), $postingDate, $postingPeriodId, $counterpart, stageCorrection: $stageCorrection);
 
         return [...$plan, 'root_deltas' => $rootDeltas,
             'root_branches' => $roots->mapWithKeys(fn ($root): array => [$root->id => (int) $root->branch_id])->all()];
     }
 
     private function planTargets(InventoryDocument|InventoryPeriodicCostClose|InventoryStandardCostSettlement|OpeningStock|PurchaseInvoice|PurchaseReturn $document, array $roots, array $productIds,
-        string $sourceDate, string $postingDate, int $postingPeriodId, Account $counterpart, ?array $periodic = null): array
+        string $sourceDate, string $postingDate, int $postingPeriodId, Account $counterpart, ?array $periodic = null, bool $stageCorrection = false): array
     {
         $sourcePeriod = FinancialPeriod::query()->findOrFail($document->financial_period_id);
         $purchase = $document instanceof PurchaseInvoice || $document instanceof PurchaseReturn;
 
+        $stageStoreIds = $stageCorrection ? InventoryTransaction::query()->where('company_id', $document->company_id)->whereIn('id', array_keys($roots))
+            ->distinct()->pluck('branch_store_id')->map(fn ($id): int => (int) $id)->all() : [];
+        $stageRunIds = [];
         do {
             $previous = count($productIds);
+            $previousStage = [$stageStoreIds, $stageRunIds];
             $runIds = InventoryTransaction::query()->where('company_id', $document->company_id)->whereIn('product_id', $productIds)
                 ->whereDate('transaction_date', '>=', $sourceDate)->whereNotNull('production_run_id')
                 ->distinct()->pluck('production_run_id');
+            if ($stageCorrection) {
+                $candidates = InventoryTransaction::query()->where('company_id', $document->company_id)->whereIn('product_id', $productIds)
+                    ->where('transaction_type', '!=', InventoryTransaction::TypeValueAdjustment)->orderBy('id')->get();
+                $seeds = $this->causalPeriodicTransactions($candidates, $stageStoreIds)->filter(fn ($row): bool => $row->production_run_id !== null
+                    && $row->transaction_date->toDateString() >= $sourceDate)->pluck('production_run_id')->map(fn ($id): int => (int) $id)->all();
+                $stageRunIds = app(ProductionStageValueCorrectionService::class)->runIds((int) $document->company_id, [...$stageRunIds, ...$seeds]);
+                $runIds = collect($stageRunIds);
+                $stageStoreIds = array_values(array_unique([...$stageStoreIds, ...InventoryTransaction::query()->where('company_id', $document->company_id)
+                    ->whereIn('production_run_id', $stageRunIds)->distinct()->pluck('branch_store_id')->map(fn ($id): int => (int) $id)->all()]));
+                sort($stageStoreIds);
+                $productIds = array_values(array_unique([...$productIds, ...InventoryTransaction::query()->where('company_id', $document->company_id)->whereIn('production_run_id', $runIds)->distinct()->pluck('product_id')->all()]));
+            }
             $outputs = InventoryTransaction::query()->where('company_id', $document->company_id)->whereIn('production_run_id', $runIds)
                 ->where('transaction_type', InventoryDocument::TypeProductionReceipt)->distinct()->pluck('product_id');
             $productIds = array_values(array_unique([...$productIds, ...$outputs->all()]));
-        } while (count($productIds) !== $previous);
+        } while (count($productIds) !== $previous || ($stageCorrection && [$stageStoreIds, $stageRunIds] !== $previousStage));
         sort($productIds);
         $transactions = InventoryTransaction::query()->where('company_id', $document->company_id)->whereIn('product_id', $productIds)
             ->where('transaction_type', '!=', InventoryTransaction::TypeValueAdjustment)
             ->with('product')->orderBy('transaction_date')->orderBy('id')->lockForUpdate()->get();
         $scopeStoreIds = $periodic['store_ids'] ?? ($document instanceof InventoryStandardCostSettlement || $purchase
             ? $transactions->whereIn('id', array_keys($roots))->pluck('branch_store_id')->unique()->all() : null);
+        if ($stageCorrection) {
+            $scopeStoreIds = array_values(array_unique([...$scopeStoreIds, ...$stageStoreIds]));
+        }
         if ($scopeStoreIds !== null) {
             $transactions = $this->causalPeriodicTransactions($transactions, $scopeStoreIds);
         }
@@ -215,10 +235,20 @@ class InventoryReceiptCostCompletionService
         $documentLines = InventoryDocumentLine::query()->whereIn('inventory_document_id', $transactions
             ->where('source_type', InventoryDocument::class)->pluck('source_id')->unique())
             ->with('document')->orderBy('id')->lockForUpdate()->get()->keyBy(fn (InventoryDocumentLine $line): string => $line->inventory_document_id.':'.$line->id);
-        $runs = ProductionRun::query()->where('company_id', $document->company_id)->whereIn('id', $transactions->pluck('production_run_id')->filter()->unique())
+        $runIds = $transactions->pluck('production_run_id')->filter()->unique()->all();
+        if ($stageCorrection) {
+            $runIds = array_values(array_unique([...$runIds, ...$stageRunIds]));
+        }
+        $runs = ProductionRun::query()->where('company_id', $document->company_id)->whereIn('id', $runIds)
             ->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+        $stageGraph = $stageCorrection ? app(ProductionStageValueCorrectionService::class)->graph($runs) : ['runs' => [], 'transfers' => []];
         foreach ($runs as $run) {
-            app(ProductionStageTransferService::class)->assertCostMutationAllowed($run);
+            if ($document instanceof InventoryStandardCostSettlement && (int) $run->id === (int) $document->production_run_id
+                && app(ProductionStageTransferService::class)->isManaged($run)) {
+                app(ProductionStageTransferService::class)->assertFinalReceipt($run);
+            } elseif (! isset($stageGraph['runs'][$run->id])) {
+                app(ProductionStageTransferService::class)->assertCostMutationAllowed($run);
+            }
         }
         $fixedStandardRunIds = $purchase
             ? InventoryStandardCostSettlement::query()->where('company_id', $document->company_id)
@@ -269,6 +299,10 @@ class InventoryReceiptCostCompletionService
                 $delta = bcsub($replay['costs'][$transaction->id], (string) ($originalCosts[$transaction->id] ?? '0'), 8);
                 $nextProductionDeltas[$transaction->production_run_id] = bcadd($nextProductionDeltas[$transaction->production_run_id] ?? '0',
                     $role === 'issued' ? $delta : bcmul($delta, '-1', 8), 8);
+            }
+            if ($stageCorrection) {
+                $stagePrices = app(ProductionStageValueCorrectionService::class)->price($stageGraph, $transactions, $replay['costs'], $originalCosts);
+                $nextProductionDeltas = array_replace($nextProductionDeltas, $stagePrices['output_deltas']);
             }
             ksort($nextProductionDeltas);
             $hash = hash('sha256', json_encode([$nextProductionDeltas, $roots], JSON_THROW_ON_ERROR));
@@ -321,6 +355,9 @@ class InventoryReceiptCostCompletionService
                 }
             }
         }
+        if ($stageCorrection) {
+            $effects = [...$effects, ...$stagePrices['effects']];
+        }
         if ($periodic !== null) {
             $effects = [...$effects, ...app(InventoryGlPrecisionCorrectionService::class)->plan($transactions)];
         }
@@ -359,6 +396,9 @@ class InventoryReceiptCostCompletionService
                     'original_book_value', 'remaining_quantity', 'remaining_book_value']))->values()->all(),
             ])->all(),
             'runs' => $runs->map(fn ($row) => $row->only(['id', 'status', 'good_base_quantity', 'received_base_quantity', 'cost_center_id', 'correction_sequence']))->values()->all()];
+        if ($stageCorrection) {
+            $inputSnapshot['stage_cost_graph'] = $stageGraph;
+        }
         if ($purchase) {
             $inputSnapshot['fixed_standard_run_ids'] = $fixedStandardRunIds;
         }
@@ -371,7 +411,8 @@ class InventoryReceiptCostCompletionService
             'source_total' => $sourceTotal, 'input_sha256' => hash('sha256', json_encode($inputSnapshot, JSON_THROW_ON_ERROR)),
             'allocation_high_watermark' => (int) ($allocations->keys()->max() ?? 0),
             'effects' => $effects, 'layers' => $replay['layer_bases'], 'allocations' => $replay['allocation_bases'],
-            ...($purchase ? ['standard_settlement_run_ids' => $standardSettlementRunIds] : [])];
+            ...($purchase ? ['standard_settlement_run_ids' => $standardSettlementRunIds] : []),
+            ...($stageCorrection ? ['stage_cost_graph' => $stageGraph] : [])];
     }
 
     /** @param array<int, int> $storeIds */

@@ -188,7 +188,9 @@ class ProductionCostService
             if ((clone $consumption)->whereNull('line.total_cost')->exists()) {
                 throw new DomainException(__('production_execution.messages.unvalued_material_cost'));
             }
-            $consumedCost = (string) BigDecimal::of((string) $consumption->sum('line.total_cost'))->toScale(8, RoundingMode::HalfUp);
+            $consumedCost = app(ProductionStageTransferService::class)->isManaged($run)
+                ? $consumption->select('line.*')->orderBy('line.id')->get()->reduce(fn (string $sum, object $line): string => bcadd($sum, app(ProductionStageValueCorrectionService::class)->materialCost($line), 8), '0.00000000')
+                : (string) BigDecimal::of((string) $consumption->sum('line.total_cost'))->toScale(8, RoundingMode::HalfUp);
             $eligible = bcadd(bcadd(bcadd($consumedCost, $position['other_direct_cost'], 8), $position['direct_labor_cost'], 8), $position['allocated_overhead'], 8);
             $eligible = bcadd($eligible, $stage['used_cost'], 8);
             if (app(ProductionStageTransferService::class)->isManaged($run)) {

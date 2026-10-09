@@ -50,9 +50,13 @@ final class ProductionStageInputAdjustmentService
                 $result['cost'] = bcadd($result['cost'], (string) $row->total_cost, 8);
             }
         }
+        $prices = app(ProductionStageValueCorrectionService::class);
+        $delta = $prices->delta((int) $owner->company_id, 'input', (int) $owner->id, $entryId);
+        $result['cost'] = bcadd($result['cost'], $delta, 8);
+        $result['components']['material'] = bcadd($result['components']['material'], $delta, 8);
         $result['components'] = $components->normalize($result['components']);
         if (bccomp($result['quantity'], '0', 8) < 0 || bccomp($result['cost'], '0', 8) < 0
-            || bccomp($result['quantity'], (string) $owner->base_quantity, 8) > 0 || bccomp($result['cost'], (string) $owner->total_cost, 8) > 0
+            || bccomp($result['quantity'], (string) $owner->base_quantity, 8) > 0 || bccomp($result['cost'], $prices->transferCost($owner), 8) > 0
             || bccomp($components->sum($result['components']), $result['cost'], 8) !== 0) {
             throw new DomainException(__('production_stage_transfer.invalid'));
         }
@@ -83,8 +87,7 @@ final class ProductionStageInputAdjustmentService
             if (bccomp($whole, '0', 8) <= 0 || bccomp($remaining, '0', 8) <= 0) {
                 continue;
             }
-            $pool = $negative ? $used['components'] : $components->subtract($owner->posting_snapshot['cost_components']
-                ?? [...$components->zero(), 'material' => (string) $owner->total_cost], $used['components']);
+            $pool = $negative ? $used['components'] : $components->subtract(app(ProductionStageValueCorrectionService::class)->transferComponents($owner), $used['components']);
             $quantity = bccomp($remaining, $whole, 8) <= 0 ? $remaining : $whole;
             $share = $components->share($pool, $quantity, $whole);
             $cost = $components->sum($share);

@@ -83,7 +83,14 @@
 @foreach($corrections as $correction)
 @php($original = json_decode($correction->source_snapshot, true, 512, JSON_THROW_ON_ERROR))
 @php($corrected = json_decode($correction->corrected_output, true, 512, JSON_THROW_ON_ERROR))
-<div class="border rounded p-3 mb-3"><h6>#{{ $correction->id }} — {{ __('production_run_correction.'.$correction->status) }}</h6><p>{{ $correction->reason }} — {{ $dates->formatDateTime($correction->created_at) }}</p>
+<div class="border rounded p-3 mb-3"><h6>#{{ $correction->id }} — {{ __(($corrected['kind'] ?? null) === 'purchase_invoice_stage_cost' ? 'production_invoice_cost.'.$correction->status : 'production_run_correction.'.$correction->status) }}</h6><p>{{ $correction->reason }} — {{ $dates->formatDateTime($correction->created_at) }}</p>
+@if(($corrected['kind'] ?? null) === 'purchase_invoice_stage_cost')
+<p>{{ __('production_invoice_cost.title') }} — {{ $corrected['plan']['source_doc_num'] }}</p>
+<p>{{ __('production_invoice_cost.price_evidence') }}: {{ $corrected['price_evidence'] }}</p>
+@can('purchase_invoices.view')@can('purchases.prices.view')
+<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.purchase-invoices.stage-cost.index', ['purchaseInvoice' => $corrected['plan']['source_doc_num'], 'reverse' => (int) $corrected['reverse']]) }}">{{ __('production_invoice_cost.review') }}</a>
+@endcan @endcan
+@else
 @if(($corrected['kind'] ?? null) === 'receipt_cancellation')<p>{{ __('production_receipt_cancellation.title') }} — {{ __('production_receipt_cancellation.retained') }}</p>@endif
 <p>{{ __('production_run_correction.posting_date') }}: {{ $dates->formatDate($correction->posting_date) }} — {{ __('production_run_correction.'.($correction->correction_mode ?? 'original_period')) }}</p>
 @if($correction->receipt_date_basis !== null)
@@ -105,6 +112,7 @@
 <form method="post" action="{{ route('admin.production.runs.corrections.reject', [$record,$correction->id]) }}" novalidate>@csrf<button class="btn btn-falcon-default">{{ __('production_run_correction.reject') }}</button></form>
 </div>@endif
 @endcan
+@endif
 </div>
 @endforeach
 </div></div>

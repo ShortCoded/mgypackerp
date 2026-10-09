@@ -220,6 +220,13 @@ final class ProductionStageOutputCostService
                 return $owner;
             }
             $this->assertOwner($owner);
+            if ($owner->kind === 'allocation') {
+                foreach (['rejected', 'rework', 'scrap'] as $kind) {
+                    if (bccomp(app(ProductionStageValueCorrectionService::class)->delta((int) $owner->company_id, $kind, (int) $owner->id), '0', 8) !== 0) {
+                        throw new DomainException(__('production_invoice_cost.reverse_price_first'));
+                    }
+                }
+            }
             $this->assertUnabsorbed($run);
             $reversalPeriod = app(ProductionCorrectionContextService::class)->ownerPostingPeriod($run, now()->toDateString());
             if ($owner->kind === 'allocation' && ProductionStageOutputCostOwner::query()->where('parent_owner_id', $owner->id)->where('status', 'posted')->exists()) {
@@ -258,6 +265,8 @@ final class ProductionStageOutputCostService
         $result['owner_seal'] = $owner->proposal_seal;
         foreach (['rejected', 'rework'] as $kind) {
             $result['held_components'][$kind] = $owner->posting_snapshot['allocations'][$kind]['components'];
+            $result['held_components'][$kind]['material'] = bcadd($result['held_components'][$kind]['material'],
+                app(ProductionStageValueCorrectionService::class)->delta((int) $run->company_id, $kind, (int) $owner->id), 8);
             $result['held_quantities'][$kind] = $owner->posting_snapshot['quantities'][$kind];
         }
         $expected = $owner->posting_snapshot['quantities'];
@@ -269,7 +278,9 @@ final class ProductionStageOutputCostService
             }
             $kind = $recovery->output_kind;
             $result['held_quantities'][$kind] = bcsub($result['held_quantities'][$kind], (string) $recovery->base_quantity, 8);
-            $result['held_components'][$kind] = $components->subtract($result['held_components'][$kind], $recovery->posting_snapshot['components']);
+            $recovered = $recovery->posting_snapshot['components'];
+            $recovered['material'] = bcadd($recovered['material'], app(ProductionStageValueCorrectionService::class)->delta((int) $run->company_id, 'recovery', (int) $recovery->id), 8);
+            $result['held_components'][$kind] = $components->subtract($result['held_components'][$kind], $recovered);
             $expected['good'] = bcadd($expected['good'], (string) $recovery->base_quantity, 8);
             $expected[$kind] = bcsub($expected[$kind], (string) $recovery->base_quantity, 8);
         }
@@ -279,6 +290,7 @@ final class ProductionStageOutputCostService
         $excluded = $components->add($result['held_components']['rejected'], $result['held_components']['rework']);
         if ($owner->posting_snapshot['scrap_treatment'] === 'abnormal') {
             $scrap = $owner->posting_snapshot['allocations']['scrap']['components'];
+            $scrap['material'] = bcadd($scrap['material'], app(ProductionStageValueCorrectionService::class)->delta((int) $run->company_id, 'scrap', (int) $owner->id), 8);
             $result['expensed_cost'] = $components->sum($scrap);
             $excluded = $components->add($excluded, $scrap);
         }
@@ -341,7 +353,7 @@ final class ProductionStageOutputCostService
             }
         }
 
-        return $amount;
+        return bcadd($amount, app(ProductionStageValueCorrectionService::class)->lossValue($companyId, $periodId, $branchId), 8);
     }
 
     public function lossRoundingDifference(int $companyId, ?int $periodId, ?int $branchId): string
@@ -362,7 +374,9 @@ final class ProductionStageOutputCostService
             }
         }
 
-        return $difference;
+        $prices = app(ProductionStageValueCorrectionService::class);
+
+        return bcadd($difference, bcsub($prices->lossValue($companyId, $periodId, $branchId), $prices->lossValue($companyId, $periodId, $branchId, booked: true), 8), 8);
     }
 
     /** @return list<int> */
@@ -373,7 +387,7 @@ final class ProductionStageOutputCostService
         }
         $expression = DB::getDriverName() === 'pgsql' ? "(posting_snapshot #>> '{loss_account_id}')::bigint" : "cast(json_extract(posting_snapshot, '$.loss_account_id') as integer)";
 
-        return DB::table('production_stage_output_cost_owners')->where('company_id', $companyId)->whereNotNull('journal_entry_id')
+        return DB::table('production_stage_output_cost_owners')->where('company_id', $companyId)->whereIn('status', ['posted', 'reversed'])
             ->selectRaw('distinct '.$expression.' as account_id')->pluck('account_id')->filter()->map(fn ($id): int => (int) $id)->values()->all();
     }
 
@@ -834,6 +848,7 @@ final class ProductionStageOutputCostService
     /** @param array<string, mixed> $properties */
     private function assertAudit(ProductionStageOutputCostOwner $owner, string $event, array $properties): void
     {
+        $properties = array_filter($properties, fn (mixed $value): bool => $value !== null);
         $audit = DB::table('activity_log')->where('company_id', $owner->company_id)->where('subject_type', $owner::class)->where('subject_id', $owner->id)
             ->where('event', 'production.stage_output_cost.'.$event)->latest('id')->first();
         if ($audit === null || (int) $audit->causer_id !== (int) ($event === 'posted' ? $owner->approved_by : $owner->reversed_by)

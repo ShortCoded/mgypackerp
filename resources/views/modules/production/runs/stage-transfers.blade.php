@@ -57,9 +57,12 @@
     @endcan
     @endif
     @foreach($transfers ?? [] as $owner)
+    @php($effectiveCost = $owner->status === 'posted' ? app(\Modules\Production\Services\ProductionStageValueCorrectionService::class)->transferCost($owner) : (string) $owner->total_cost)
+    @php($effectiveComponents = $owner->status === 'posted' ? app(\Modules\Production\Services\ProductionStageValueCorrectionService::class)->transferComponents($owner) : ($owner->posting_snapshot['cost_components'] ?? []))
     <div class="card mb-3"><div class="card-header">{{ $owner->sourceRun?->run_number }} → {{ $owner->targetRun?->run_number }} <span class="badge bg-secondary">{{ __('production_stage_transfer.status_'.$owner->status) }}</span></div>
-        <div class="card-body"><div>{{ __('production_stage_transfer.quantity') }}: {{ $numbers->format($owner->base_quantity) }} — {{ __('production_stage_transfer.cost') }}: {{ $numbers->format($owner->total_cost) }}</div>
-            @foreach($owner->posting_snapshot['cost_components'] ?? [] as $kind => $amount)<span class="d-inline-block me-3">{{ __('production_stage_transfer.component_'.$kind) }}: {{ $numbers->format($amount) }}</span>@endforeach
+        <div class="card-body"><div>{{ __('production_stage_transfer.quantity') }}: {{ $numbers->format($owner->base_quantity) }} — {{ __('production_invoice_cost.effective_cost') }}: {{ $numbers->formatWithMinimumDecimals($effectiveCost, 8) }}</div>
+            @if(bccomp($effectiveCost, (string) $owner->total_cost, 8) !== 0)<div>{{ __('production_invoice_cost.original_cost') }}: {{ $numbers->formatWithMinimumDecimals($owner->total_cost, 8) }}</div>@endif
+            @foreach($effectiveComponents as $kind => $amount)<span class="d-inline-block me-3">{{ __('production_stage_transfer.component_'.$kind) }}: {{ $numbers->format($amount) }}</span>@endforeach
             <div>{{ __('production_stage_transfer.booked_amount') }}: {{ $numbers->format($owner->booked_amount) }} · {{ __('production_stage_transfer.rounding_difference') }}: {{ $numbers->formatWithMinimumDecimals($owner->posting_snapshot['rounding_difference'] ?? '0', 8) }}</div>
             <div>{{ $owner->reason }}</div><div>{{ $owner->evidence }}</div></div>
         @can('production.runs.correct_approve')

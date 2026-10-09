@@ -21,6 +21,7 @@ use Modules\Production\Models\ProductionOrder;
 use Modules\Production\Models\ProductionOrderLine;
 use Modules\Production\Models\ProductionOrderStageSnapshot;
 use Modules\Production\Models\ProductionRun;
+use Modules\Purchases\Models\PurchaseInvoice;
 use Modules\Sales\Models\SalesOrderLine;
 
 final class ProductionRunCorrectionService
@@ -108,6 +109,11 @@ final class ProductionRunCorrectionService
             Company::query()->whereKey($this->companies->requireCompanyId())->lockForUpdate()->firstOrFail();
             $run = $this->scopedRun($run, true);
             $proposal = $this->proposal($run, $correctionId);
+            $definition = json_decode($proposal->corrected_output, true, flags: JSON_THROW_ON_ERROR);
+            if (($definition['kind'] ?? null) === ProductionInvoiceCostCorrectionService::Kind) {
+                return app(ProductionInvoiceCostCorrectionService::class)->approve(
+                    PurchaseInvoice::query()->where('company_id', $run->company_id)->findOrFail($definition['invoice_id']), $correctionId);
+            }
             if (data_get(json_decode($proposal->corrected_output, true, 512, JSON_THROW_ON_ERROR), 'kind') === ProductionPieceOutputApprovalService::WithdrawalKind) {
                 return app(ProductionPieceOutputApprovalService::class)->approveWithdrawal($run, $correctionId);
             }
@@ -209,6 +215,13 @@ final class ProductionRunCorrectionService
             Company::query()->whereKey($this->companies->requireCompanyId())->lockForUpdate()->firstOrFail();
             $run = $this->scopedRun($run, true);
             $proposal = $this->proposal($run, $correctionId);
+            $definition = json_decode($proposal->corrected_output, true, flags: JSON_THROW_ON_ERROR);
+            if (($definition['kind'] ?? null) === ProductionInvoiceCostCorrectionService::Kind) {
+                app(ProductionInvoiceCostCorrectionService::class)->reject(
+                    PurchaseInvoice::query()->where('company_id', $run->company_id)->findOrFail($definition['invoice_id']), $correctionId);
+
+                return;
+            }
             if ($proposal->status !== 'prepared') {
                 throw new DomainException(__('production_run_correction.invalid_state'));
             }

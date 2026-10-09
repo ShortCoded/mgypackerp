@@ -18,7 +18,7 @@ use Spatie\Permission\Models\Permission;
 
 require_once __DIR__.'/ManufacturingInventorySupport.php';
 
-function physicalStageFixture(string $rawCost = '10', string $startAt = '2026-09-29 12:00:00'): array
+function physicalStageFixture(string $rawCost = '10', string $startAt = '2026-09-29 12:00:00', ?Closure $firstReceipt = null): array
 {
     test()->travelTo(Carbon::parse($startAt));
     $f = manufacturingInventoryFixture('-PHYSICAL-'.Str::random(6), isolatedCompany: true);
@@ -39,7 +39,13 @@ function physicalStageFixture(string $rawCost = '10', string $startAt = '2026-09
             'calculation_method' => ProductComponent::CalculationDirect, 'quantity' => '1']);
     }
     ProductComponent::query()->where('product_id', $f['finished']->id)->where('component_product_id', $f['raw']->id)->update(['production_stage_id' => $stages[0]->id]);
+    if ($firstReceipt !== null) {
+        $f = $firstReceipt($f);
+    }
     foreach ([$rawCost, '5', '2'] as $i => $cost) {
+        if ($i === 0 && $firstReceipt !== null) {
+            continue;
+        }
         app(InventoryMovementService::class)->createAndPost(['company_id' => $f['company']->id, 'branch_id' => $f['branch']->id,
             'financial_period_id' => $f['period']->id, 'branch_store_id' => $f['store']->id, 'document_date' => now()->toDateString(),
             'document_type' => InventoryDocument::TypeAdjustmentIn], [['product_id' => $materials[$i]->id, 'quantity' => $i === 0 ? '20' : '10', 'unit_cost' => $cost]]);

@@ -23,7 +23,13 @@ use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\InventoryValueAdjustmentLine;
 use Modules\Production\Models\ProductionExpenseRequest;
 use Modules\Production\Models\ProductionRun;
+use Modules\Production\Models\ProductionStageOutputCostOwner;
+use Modules\Production\Models\ProductionStageTransfer;
 use Modules\Production\Services\ProductionCostService;
+use Modules\Production\Services\ProductionStageCostComponentService;
+use Modules\Production\Services\ProductionStageOutputCostService;
+use Modules\Production\Services\ProductionStageTransferService;
+use Modules\Production\Services\ProductionStageValueCorrectionService;
 
 class InventoryStandardCostService
 {
@@ -208,6 +214,11 @@ class InventoryStandardCostService
         }
         $actual = ['materials' => $position['direct_material_cost'], 'labor' => $position['direct_labor_cost'],
             'overhead' => bcadd($position['other_direct_cost'], $position['allocated_overhead'], 8)];
+        if (app(ProductionStageTransferService::class)->isManaged($run)) {
+            $stageComponents = app(ProductionStageCostComponentService::class);
+            $pool = $stageComponents->subtract($stageComponents->outputPool($run), app(ProductionStageOutputCostService::class)->position($run)['excluded_components']);
+            $actual = ['materials' => $pool['material'], 'labor' => $pool['direct_labor'], 'overhead' => bcadd($pool['other_direct'], $pool['overhead'], 8)];
+        }
         $targets = $components = [];
         $unitCost = '0.00000000';
         $previousVariances = InventoryValueAdjustmentLine::query()->where('effect', InventoryValueAdjustmentLine::EffectStandardVariance)
@@ -394,6 +405,23 @@ class InventoryStandardCostService
                 }
                 $add((int) $accounting['debit_account_id'], (string) $line->total_cost);
                 $add((int) $accounting['credit_account_id'], bcmul((string) $line->total_cost, '-1', 8));
+            }
+        }
+        if (app(ProductionStageTransferService::class)->isManaged($run)) {
+            $prices = app(ProductionStageValueCorrectionService::class);
+            foreach (ProductionStageTransfer::query()->where('company_id', $run->company_id)->where('status', 'posted')
+                ->where(fn ($query) => $query->where('source_run_id', $run->id)->orWhere('target_run_id', $run->id))->orderBy('id')->lockForUpdate()->get() as $owner) {
+                $incoming = (int) $owner->target_run_id === (int) $run->id;
+                $add((int) $owner->posting_snapshot[$incoming ? 'target_account_id' : 'source_account_id'], bcmul($prices->transferCost($owner), $incoming ? '1' : '-1', 8));
+                $documents[] = ['stage_transfer' => $owner->getRawOriginal(), 'effective_cost' => $prices->transferCost($owner),
+                    'price_corrections' => $prices->values((int) $run->company_id, 'transfer', (int) $owner->id)];
+            }
+            $loss = app(ProductionStageOutputCostService::class)->position($run);
+            if ($loss['owner_id'] !== null) {
+                $owner = ProductionStageOutputCostOwner::query()->findOrFail($loss['owner_id']);
+                $add((int) $owner->posting_snapshot['source_account_id'], bcmul($loss['expensed_cost'], '-1', 8));
+                $documents[] = ['stage_output_cost' => $owner->getRawOriginal(), 'effective_loss' => $loss['expensed_cost'],
+                    'price_corrections' => $prices->values((int) $run->company_id, 'scrap', (int) $owner->id)];
             }
         }
         $corrections = InventoryValueAdjustmentLine::where('production_run_id', $run->id)->whereIn('account_id', $accountIds)

@@ -214,6 +214,11 @@ final class ProductionStageTransferService
                 return $transfer;
             }
             $this->assertPosted($transfer);
+            $prices = app(ProductionStageValueCorrectionService::class);
+            if (bccomp($prices->delta((int) $transfer->company_id, 'transfer', (int) $transfer->id), '0', 8) !== 0
+                || bccomp($prices->delta((int) $transfer->company_id, 'transfer', (int) $transfer->id, booked: true), '0', 4) !== 0) {
+                throw new DomainException(__('production_invoice_cost.reverse_price_first'));
+            }
             $this->open($source);
             $this->open($target);
             $reversalPeriod = app(ProductionCorrectionContextService::class)->ownerPostingPeriod($source, now()->toDateString());
@@ -265,8 +270,9 @@ final class ProductionStageTransferService
             }
             $this->assertPosted($owner);
             $direction = (int) $owner->source_run_id === (int) $run->id ? 'outgoing' : 'incoming';
-            $result[$direction] = bcadd($result[$direction], (string) $owner->total_cost, 8);
-            $parts = $owner->posting_snapshot['cost_components'] ?? ['material' => (string) $owner->total_cost, 'other_direct' => '0.00000000', 'direct_labor' => '0.00000000', 'overhead' => '0.00000000'];
+            $prices = app(ProductionStageValueCorrectionService::class);
+            $result[$direction] = bcadd($result[$direction], $prices->transferCost($owner), 8);
+            $parts = $prices->transferComponents($owner);
             $result[$direction.'_components'] = $components->add($result[$direction.'_components'], $parts);
             $result[$direction.'_quantity'] = bcadd($result[$direction.'_quantity'], (string) $owner->base_quantity, 8);
             if ($direction === 'incoming') {
@@ -341,9 +347,10 @@ final class ProductionStageTransferService
             }
             $quantity = bccomp($remaining, $available, 8) <= 0 ? $remaining : $available;
             $usedCost = $effective['cost'];
-            $cost = bccomp($quantity, $available, 8) === 0 ? bcsub((string) $owner->total_cost, $usedCost, 8)
-                : bcdiv(bcmul((string) $owner->total_cost, $quantity, 16), (string) $owner->base_quantity, 8);
-            $parts = $owner->posting_snapshot['cost_components'] ?? ['material' => (string) $owner->total_cost, 'other_direct' => '0.00000000', 'direct_labor' => '0.00000000', 'overhead' => '0.00000000'];
+            $prices = app(ProductionStageValueCorrectionService::class);
+            $cost = bccomp($quantity, $available, 8) === 0 ? bcsub($prices->transferCost($owner), $usedCost, 8)
+                : bcdiv(bcmul($prices->transferCost($owner), $quantity, 16), (string) $owner->base_quantity, 8);
+            $parts = $prices->transferComponents($owner);
             $usedParts = $effective['components'];
             $parts = bccomp($quantity, $available, 8) === 0 ? $components->subtract($parts, $usedParts)
                 : $components->share($parts, $quantity, (string) $owner->base_quantity, $cost);
@@ -560,8 +567,10 @@ final class ProductionStageTransferService
 
         $parts = app(ProductionStageCostComponentService::class)->transferComponents($source, $quantity);
         $exactCost = app(ProductionStageCostComponentService::class)->sum($parts);
-        $priorBooked = bcadd((string) ProductionStageTransfer::query()->where('company_id', $source->company_id)
-            ->where('source_run_id', $source->id)->where('status', 'posted')->sum('booked_amount'), '0', 4);
+        $priorBooked = ProductionStageTransfer::query()->where('company_id', $source->company_id)
+            ->where('source_run_id', $source->id)->where('status', 'posted')->orderBy('id')->get()
+            ->reduce(fn (string $sum, ProductionStageTransfer $owner): string => bcadd($sum, bcadd((string) $owner->booked_amount,
+                app(ProductionStageValueCorrectionService::class)->delta((int) $owner->company_id, 'transfer', (int) $owner->id, booked: true), 4), 4), '0.0000');
         $cumulative = bcadd($position['outgoing'], $exactCost, 8);
         $booked = bcsub(bcround($cumulative, 4), $priorBooked, 4);
         if (bccomp($booked, '0', 4) < 0) {
@@ -865,6 +874,7 @@ final class ProductionStageTransferService
     /** @param array<string, mixed> $properties */
     private function assertAudit(ProductionStageTransfer $owner, string $event, array $properties): void
     {
+        $properties = array_filter($properties, fn (mixed $value): bool => $value !== null);
         $audit = DB::table('activity_log')->where('company_id', $owner->company_id)->where('subject_type', $owner::class)->where('subject_id', $owner->id)
             ->where('event', 'production.stage_transfer.'.$event)->latest('id')->first();
         $actor = $event === 'posted' ? $owner->approved_by : $owner->reversed_by;

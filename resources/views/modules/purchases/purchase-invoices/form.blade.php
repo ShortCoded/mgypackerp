@@ -258,6 +258,11 @@
             @if($costAdjustmentNotice)
                 <div class="alert alert-warning" role="status">{{ $costAdjustmentNotice }}</div>
             @endif
+            @if($record?->exists && in_array($record->status, [\Modules\Purchases\Models\PurchaseInvoice::StatusDraft, \Modules\Purchases\Models\PurchaseInvoice::StatusApproved, \Modules\Purchases\Models\PurchaseInvoice::StatusClosed], true) && $record->lines->contains(fn ($line) => $line->receipt_line_id !== null))
+                @can('purchase_invoices.view') @can('production.runs.view')
+                <a class="btn btn-falcon-default btn-sm mb-3" href="{{ route('admin.purchases.purchase-invoices.stage-cost.index', $record) }}">{{ __('production_invoice_cost.title') }}</a>
+                @endcan @endcan
+            @endif
             @if($standardSettlementNotice)
                 <div class="alert alert-warning" role="status">{{ $standardSettlementNotice }}</div>
             @endif

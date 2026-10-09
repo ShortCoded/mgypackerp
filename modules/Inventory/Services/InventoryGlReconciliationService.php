@@ -13,6 +13,7 @@ use Modules\Inventory\Models\InventoryTransaction;
 use Modules\Inventory\Models\InventoryValueAdjustment;
 use Modules\Inventory\Models\InventoryValueAdjustmentLine;
 use Modules\Production\Services\ProductionStageOutputCostService;
+use Modules\Production\Services\ProductionStageValueCorrectionService;
 
 class InventoryGlReconciliationService
 {
@@ -196,7 +197,8 @@ class InventoryGlReconciliationService
             ->when($branchId !== null, fn ($query) => $query->whereRaw('coalesce(line.branch_id, entry.branch_id) = ?', [$branchId]))
             ->selectRaw('coalesce(sum((line.debit_amount-line.credit_amount)*entry.exchange_rate), 0) as amount')->value('amount');
 
-        return (new NumericFormatService)->normalizeScientificNotation((string) $value) ?? '0.00000000';
+        return bcadd((new NumericFormatService)->normalizeScientificNotation((string) $value) ?? '0.00000000',
+            app(ProductionStageValueCorrectionService::class)->lossValue($companyId, $periodId, $branchId, booked: true), 8);
     }
 
     private function capitalizedProductionCosts(int $companyId, ?int $periodId, ?int $branchId): string
