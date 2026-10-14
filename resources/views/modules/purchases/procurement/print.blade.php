@@ -96,6 +96,7 @@
                 <tr><td><strong>{{ __('procurement.fields.payment_date') }}</strong></td><td dir="ltr">{{ $dates->formatDate($record->payment_date, '—') }}</td></tr>
                 <tr><td><strong>{{ __('procurement.fields.payment_method') }}</strong></td><td>{{ __('procurement.statuses.'.$record->payment_method) }}</td></tr>
                 <tr><td><strong>{{ __('procurement.fields.amount') }}</strong></td><td dir="ltr">{{ $numbers->format($record->amount) }} {{ $record->currency?->code }}</td></tr>
+                @if(filled($record->reference_no))<tr><td><strong>{{ __('procurement.fields.bank_reference') }}</strong></td><td dir="ltr">{{ $record->reference_no }}</td></tr>@endif
                 @if($record->bankAccount)
                     <tr><td><strong>{{ __('procurement.fields.bank_account') }}</strong></td><td>{{ $record->bankAccount->bank?->name ?? $record->bankAccount->bank?->name_en }} / {{ $record->bankAccount->bank_branch_name ?: '—' }} / <span dir="ltr">{{ $record->bankAccount->account_number }}</span></td></tr>
                 @endif

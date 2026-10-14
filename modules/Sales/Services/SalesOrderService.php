@@ -141,6 +141,8 @@ class SalesOrderService
                 'technical_notes_snapshot' => $this->termSnapshot($revision->technical_notes_snapshot),
                 'delivery_terms_snapshot' => $this->termSnapshot($revision->delivery_terms_snapshot),
                 'discount_type' => $revision->discount_type,
+                'withholding_rate' => $revision->withholding_rate,
+                'withholding_basis' => $revision->withholding_basis,
                 'discount_value' => $revision->discount_type === 'fixed' ? $this->amounts->sum(array_column($convertedLines, 'header_discount_amount')) : $revision->discount_value,
                 'header_discount_amount' => $this->amounts->sum(array_column($convertedLines, 'header_discount_amount')),
                 'lines' => $convertedLines,

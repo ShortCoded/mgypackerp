@@ -1,0 +1,74 @@
+diff --git a/modules/Core/Models/ProductComponentAlternative.php b/modules/Core/Models/ProductComponentAlternative.php
+new file mode 100755
+index 00000000..49df7f1a
+--- /dev/null
++++ b/modules/Core/Models/ProductComponentAlternative.php
+@@ -0,0 +1,68 @@
++<?php
++
++namespace Modules\Core\Models;
++
++use App\Models\User;
++use Illuminate\Database\Eloquent\Model;
++use Illuminate\Database\Eloquent\Relations\BelongsTo;
++use Illuminate\Database\Eloquent\SoftDeletes;
++use Illuminate\Support\Str;
++
++class ProductComponentAlternative extends Model
++{
++    use SoftDeletes;
++
++    protected $fillable = [
++        'public_id',
++        'company_id',
++        'product_component_id',
++        'alternative_product_id',
++        'conversion_factor',
++        'notes',
++        'created_by',
++        'updated_by',
++        'deleted_by',
++    ];
++
++    protected static function booted(): void
++    {
++        static::creating(function (self $alternative): void {
++            $alternative->public_id ??= (string) Str::uuid();
++        });
++    }
++
++    protected function casts(): array
++    {
++        return [
++            'conversion_factor' => 'decimal:8',
++            'created_at' => 'datetime',
++            'updated_at' => 'datetime',
++            'deleted_at' => 'datetime',
++        ];
++    }
++
++    public function component(): BelongsTo
++    {
++        return $this->belongsTo(ProductComponent::class, 'product_component_id')->withTrashed();
++    }
++
++    public function alternativeProduct(): BelongsTo
++    {
++        return $this->belongsTo(Product::class, 'alternative_product_id')->withTrashed();
++    }
++
++    public function createdBy(): BelongsTo
++    {
++        return $this->belongsTo(User::class, 'created_by');
++    }
++
++    public function updatedBy(): BelongsTo
++    {
++        return $this->belongsTo(User::class, 'updated_by');
++    }
++
++    public function deletedBy(): BelongsTo
++    {
++        return $this->belongsTo(User::class, 'deleted_by');
++    }
++}

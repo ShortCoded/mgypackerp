@@ -120,6 +120,41 @@
                 @if($isView && $record->salesOrders->isNotEmpty())
                     <div class="mb-3"><h6>{{ __('Document Chain') }}</h6>@can('sales_orders.view')@foreach($record->salesOrders as $order)<a class="btn btn-falcon-default btn-sm me-2" href="{{ route('admin.sales.sales-orders.show', $order) }}">{{ $order->doc_num }}</a>@endforeach @endcan</div>
                 @endif
+                <div class="card mb-3 border" data-quotation-financial-summary>
+                    <div class="card-header"><h6 class="mb-0">{{ __('sales_ui.financial_summary') }}</h6></div>
+                        <div class="card-body">
+                            <div class="row g-2 align-items-center">
+                                <label class="col-5 col-form-label">{{ __('sales_ui.document_discount') }}</label>
+                                <div class="col-7">
+                                    @if ($isReadonly)
+                                        <div class="form-control-plaintext" dir="ltr">{{ $currentRevision?->discount_type ? __('quotations.discount_types.'.$currentRevision->discount_type).' '.$numbers->format($currentRevision->discount_value) : __('common.empty_value') }}</div>
+                                    @else
+                                        <div class="input-group input-group-sm">
+                                            <x-forms.select class="form-select js-quotation-calc" name="discount_type">
+                                                <option value="">{{ __('quotations.discount_types.none') }}</option>
+                                                <option value="fixed" @selected($discountType === 'fixed')>{{ __('quotations.discount_types.fixed') }}</option>
+                                                <option value="percentage" @selected($discountType === 'percentage')>{{ __('quotations.discount_types.percentage') }}</option>
+                                            </x-forms.select>
+                                            <x-forms.numeric-input class="text-center js-quotation-calc" name="discount_value" :value="old('discount_value', $currentRevision?->discount_value ?? 0)" :scale="4" min="0" step="0.0001" :disabled="blank($discountType)" />
+                                        </div>
+                                        <div class="invalid-feedback d-block" data-error-for="discount_value"></div>
+                                    @endif
+                                </div>
+                                <div class="col-5 text-700">{{ __('sales_ui.document_discount') }}</div>
+                                <div class="col-7 text-end" data-sales-header-discount-amount dir="ltr">{{ $numbers->formatWithMinimumDecimals(bcsub((string) ($currentRevision?->discount_amount ?? 0), app(\Modules\Sales\Services\SalesAmountService::class)->sum($currentRevision?->lines->pluck('discount_amount')->all() ?? []), 4), 2) }}</div>
+                                <div class="col-5 text-700">{{ __('quotations.attributes.subtotal') }}</div>
+                                <div class="col-7 text-end js-quotation-subtotal" dir="ltr">{{ $numbers->formatWithMinimumDecimals($currentRevision?->subtotal ?? 0, 2) }}</div>
+                                <div class="col-5 text-700">{{ __('quotations.attributes.discount_amount') }}</div>
+                                <div class="col-7 text-end js-quotation-discount" dir="ltr">{{ $numbers->formatWithMinimumDecimals($currentRevision?->discount_amount ?? 0, 2) }}</div>
+                                <div class="col-5 text-700">{{ __('quotations.attributes.tax_amount') }}</div>
+                                <div class="col-7 text-end js-quotation-tax" dir="ltr">{{ $numbers->formatWithMinimumDecimals($currentRevision?->tax_amount ?? 0, 2) }}</div>
+                                <div class="col-5 fw-bold">{{ __('quotations.attributes.total') }}</div>
+                                <div class="col-7 text-end fw-bold js-quotation-total" dir="ltr">{{ $numbers->formatWithMinimumDecimals($currentRevision?->total ?? 0, 2) }}</div>
+                            </div>
+                        </div>
+                    @include('modules.sales.cycle.partials.withholding-inputs', ['record' => $currentRevision, 'withholdingReadonly' => $isReadonly])
+                </div>
+
                 <ul class="nav nav-tabs" id="quotation-form-tabs" role="tablist">
                     @foreach (['basic', 'lines', 'payments', 'execution', 'terms', 'attachments', 'revisions'] as $tab)
                         <li class="nav-item @if($tab === 'execution' && ! $isProjectQuotation) d-none @endif" role="presentation" @if($tab === 'execution') data-quotation-project-only @endif>
@@ -466,34 +501,6 @@
                         </div>
                             @unless($isReadonly)<div class="card-footer"><button class="btn btn-falcon-default btn-sm js-quotation-add-line" type="button"><span class="fas fa-plus me-1"></span>{{ __('Add line') }}</button></div>@endunless
                         <div class="invalid-feedback d-block" data-error-for="lines"></div>
-                        <div class="col-12 col-lg-5 mt-3 ms-auto card card-body bg-light border-0">
-                            <div class="row g-2 align-items-center">
-                                <label class="col-5 col-form-label">{{ __('quotations.attributes.revision_discount') }}</label>
-                                <div class="col-7">
-                                    @if ($isReadonly)
-                                        <div class="form-control-plaintext" dir="ltr">{{ $currentRevision?->discount_type ? __('quotations.discount_types.'.$currentRevision->discount_type).' '.$numbers->format($currentRevision->discount_value) : __('common.empty_value') }}</div>
-                                    @else
-                                        <div class="input-group input-group-sm">
-                                            <x-forms.select class="form-select js-quotation-calc" name="discount_type">
-                                                <option value="">{{ __('quotations.discount_types.none') }}</option>
-                                                <option value="fixed" @selected($discountType === 'fixed')>{{ __('quotations.discount_types.fixed') }}</option>
-                                                <option value="percentage" @selected($discountType === 'percentage')>{{ __('quotations.discount_types.percentage') }}</option>
-                                            </x-forms.select>
-                                            <x-forms.numeric-input class="text-center js-quotation-calc" name="discount_value" :value="old('discount_value', $currentRevision?->discount_value ?? 0)" :scale="4" min="0" step="0.0001" :disabled="blank($discountType)" />
-                                        </div>
-                                        <div class="invalid-feedback d-block" data-error-for="discount_value"></div>
-                                    @endif
-                                </div>
-                                <div class="col-5 text-700">{{ __('quotations.attributes.subtotal') }}</div>
-                                <div class="col-7 text-end js-quotation-subtotal" dir="ltr">{{ $numbers->formatWithMinimumDecimals($currentRevision?->subtotal ?? 0, 2) }}</div>
-                                <div class="col-5 text-700">{{ __('quotations.attributes.discount_amount') }}</div>
-                                <div class="col-7 text-end js-quotation-discount" dir="ltr">{{ $numbers->formatWithMinimumDecimals($currentRevision?->discount_amount ?? 0, 2) }}</div>
-                                <div class="col-5 text-700">{{ __('quotations.attributes.tax_amount') }}</div>
-                                <div class="col-7 text-end js-quotation-tax" dir="ltr">{{ $numbers->formatWithMinimumDecimals($currentRevision?->tax_amount ?? 0, 2) }}</div>
-                                <div class="col-5 fw-bold">{{ __('quotations.attributes.total') }}</div>
-                                <div class="col-7 text-end fw-bold js-quotation-total" dir="ltr">{{ $numbers->formatWithMinimumDecimals($currentRevision?->total ?? 0, 2) }}</div>
-                            </div>
-                        </div>
                     </div>
 
                     <div class="tab-pane fade" id="quotation-payments" role="tabpanel" aria-labelledby="quotation-payments-tab">

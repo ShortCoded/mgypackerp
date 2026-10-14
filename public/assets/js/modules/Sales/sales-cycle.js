@@ -217,6 +217,55 @@
 
   window.AppSalesPricing = {suggest: suggestPrice};
 
+  function resetLinePresentation(row) {
+    ['[data-sales-line-color]', '[data-sales-piece-count]', '[data-sales-packing-factor]'].forEach((selector) => {
+      const output = row?.querySelector(selector);
+      if (output) output.textContent = '—';
+    });
+  }
+
+  async function refreshLinePresentation(row) {
+    if (!row?.querySelector('[data-sales-piece-count]') || !messages.linePresentationUrl) return;
+    const product = row.querySelector('[name$="[product_doc_num]"]')?.value || '';
+    const unit = row.querySelector('[name$="[unit_doc_num]"]')?.value || '';
+    const quantity = window.AppNumbers.normalize(row.querySelector('.js-sales-quantity')?.value || '') || '';
+    if (!product || !unit || !quantity || window.AppNumbers.compare(quantity, '0') <= 0) {
+      delete row.dataset.linePresentationLookup;
+      resetLinePresentation(row);
+      return;
+    }
+
+    const key = new URLSearchParams({product_doc_num: product, unit_doc_num: unit, quantity}).toString();
+    if (row.dataset.linePresentationLookup === key) return;
+    row.dataset.linePresentationLookup = key;
+
+    try {
+      const response = await fetch(messages.linePresentationUrl + '?' + key, {
+        headers: {Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest'}
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (row.dataset.linePresentationLookup !== key) return;
+      if (!response.ok || !payload.data) {
+        resetLinePresentation(row);
+        return;
+      }
+      const color = row.querySelector('[data-sales-line-color]');
+      const pieces = row.querySelector('[data-sales-piece-count]');
+      const packing = row.querySelector('[data-sales-packing-factor]');
+      if (color) color.textContent = payload.data.color || '—';
+      if (pieces) pieces.textContent = payload.data.piece_count == null ? '—' : window.AppNumbers.format(payload.data.piece_count);
+      if (packing) packing.textContent = payload.data.packing_factor == null ? '—' : window.AppNumbers.format(payload.data.packing_factor);
+    } catch (_) {
+      if (row.dataset.linePresentationLookup === key) resetLinePresentation(row);
+    }
+  }
+
+  function queueLinePresentation(row) {
+    if (!row?.querySelector('[data-sales-piece-count]')) return;
+    window.clearTimeout(row._salesLinePresentationTimer);
+    row._salesLinePresentationTimer = window.setTimeout(() => refreshLinePresentation(row), 150);
+  }
+
   function taxContract(row, form) {
     const n = window.AppNumbers;
     const rateInput = row.querySelector('.js-sales-tax-rate');
@@ -339,6 +388,7 @@
       const row = window.AppLineItemCards.append(lines, document.querySelector('#sales-order-line-template'), 'lines');
       initializeWidgets(row);
       calculateLineTotal(row);
+      queueLinePresentation(row);
     }));
     document.querySelector('[data-sales-add-schedule]')?.addEventListener('click', () => {
       const index = schedules.querySelectorAll('tr').length;
@@ -355,8 +405,16 @@
         let details = row.querySelector('[data-sales-product-details]');
         if (!details) {details = document.createElement('small'); details.dataset.salesProductDetails = ''; details.className = 'text-600'; this.parentElement.append(details);}
         details.textContent = [data.productData?.color, data.productData?.model, data.productData?.size].filter(Boolean).join(' · ');
-        suggestPrice(row); calculateLineTotal(row);
+        suggestPrice(row); calculateLineTotal(row); queueLinePresentation(row);
       });
+      $(document)
+        .off('select2:select.salesUnit select2:clear.salesUnit', '.js-sales-unit')
+        .on('select2:select.salesUnit select2:clear.salesUnit', '.js-sales-unit', function () {
+          const row = this.closest('tr');
+          syncIdentityPrice(row);
+          suggestPrice(row);
+          queueLinePresentation(row);
+        });
     }
     document.addEventListener('change', (event) => {
       if (event.target.matches('.js-sales-header-discount-type') && !event.target.value) {
@@ -367,6 +425,7 @@
       if (event.target.matches('.js-sales-unit, .js-sales-product')) {
         const row = event.target.closest('tr');
         syncIdentityPrice(row);
+        queueLinePresentation(row);
       }
       if (event.target.matches('.js-sales-product') && !event.target.matches('.js-select2-ajax')) populateUnits(event.target.closest('tr'));
       if (event.target.matches('.js-sales-unit, .js-sales-product:not(.js-select2-ajax)')) suggestPrice(event.target.closest('tr'));
@@ -395,7 +454,10 @@
       if (event.target.matches('.js-sales-header-discount-value, .js-sales-withholding-rate')) calculateDocumentSummary(event.target.closest('form'));
       if (event.target.matches('.js-sales-quantity, .js-sales-price, .js-sales-discount, .js-sales-discount-value, .js-sales-tax-rate')) {
         calculateLineTotal(event.target.closest('tr'));
-        if (event.target.matches('.js-sales-quantity')) suggestPrice(event.target.closest('tr'));
+        if (event.target.matches('.js-sales-quantity')) {
+          suggestPrice(event.target.closest('tr'));
+          queueLinePresentation(event.target.closest('tr'));
+        }
       }
     });
     document.addEventListener('click', (event) => {
@@ -405,6 +467,7 @@
         const row = window.AppLineItemCards.append(lines, document.querySelector('#sales-order-line-template'), 'lines', source);
         initializeWidgets(row);
         calculateLineTotal(row);
+        queueLinePresentation(row);
         return;
       }
       const button = event.target.closest('[data-sales-remove-row]');
@@ -419,6 +482,7 @@
     lines?.querySelectorAll('[data-sales-line]').forEach((row) => {
       calculateLineTotal(row);
       suggestPrice(row);
+      queueLinePresentation(row);
     });
     calculateDocumentSummary(lines?.closest('form'));
   }

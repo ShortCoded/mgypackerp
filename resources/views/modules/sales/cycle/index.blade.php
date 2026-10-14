@@ -25,7 +25,7 @@
 <div class="card erp-datatable-card">
     <x-admin.crud-index-toolbar :title="$titles[$kind]" :add-route="$canCreate ? route($prefix.'.create') : null" :add-permission="$kind.'.create'" :show-trash-filter="in_array($kind, ['sales_requests', 'sales_orders', 'customer_invoices']) && auth()->user()?->can($kind.'.view_trashed')" />
     <div class="card-body p-0"><div class="falcon-data-table"><div class="erp-datatable-wrapper"><div class="erp-datatable-scroll">
-        <table id="sales-cycle-table" class="table table-sm table-hover mb-0 data-table erp-datatable align-middle" data-url="{{ route($prefix.'.index') }}">
+        <table id="sales-cycle-table" class="table table-sm table-hover mb-0 data-table erp-datatable align-middle" data-url="{{ route($prefix.'.index') }}" data-state-key="{{ $salesIndexStateKey }}">
             <thead class="bg-100 text-900"><tr><th class="all no-colvis">{{ __('Document') }}</th><th>{{ __('Date') }}</th><th>{{ __('Customer') }}</th><th>{{ __('Status') }}</th><th>{{ __('Amount') }}</th><th class="all no-colvis dt-actions">{{ __('common.fields.actions') }}</th></tr></thead>
         </table>
     </div></div></div></div>

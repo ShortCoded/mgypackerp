@@ -9,6 +9,7 @@ use Modules\Core\Http\Requests\Concerns\NormalizesNumericInput;
 use Modules\Core\Models\Product;
 use Modules\Core\Services\DateFormatService;
 use Modules\Core\Services\OperatingContextService;
+use Modules\Purchases\Models\PurchaseRequisition;
 use Modules\Purchases\Models\SupplierPaymentContext;
 use Modules\Purchases\Services\SupplierQuotationDiscountService;
 
@@ -74,6 +75,7 @@ class ProcurementWorkflowRequest extends FormRequest
         }
         if ($route === 'admin.purchases.supplier-payments.store') {
             $data['payment_method'] = trim((string) ($data['payment_method'] ?? SupplierPaymentContext::MethodCash));
+            $data['reference_no'] = filled($data['reference_no'] ?? null) ? trim((string) $data['reference_no']) : null;
             $data['cashbox_doc_num'] = trim((string) ($data['cashbox_doc_num'] ?? '')) ?: null;
             $data['bank_account_doc_num'] = trim((string) ($data['bank_account_doc_num'] ?? '')) ?: null;
             $data['cheque_number'] = trim((string) ($data['cheque_number'] ?? '')) ?: null;
@@ -110,7 +112,7 @@ class ProcurementWorkflowRequest extends FormRequest
             'admin.purchases.goods-receipt-notes.cancel' => [
                 'cancel_reason' => ['required', 'string', 'max:2000'],
             ],
-            'admin.purchases.goods-receipt-inspection.store' => $this->inspectionRules(),
+            'admin.purchases.goods-receipt-inspection.store', 'admin.purchases.goods-receipt-inspection.update' => $this->inspectionRules(),
             'admin.purchases.purchase-order-change-requests.store' => $this->changeRequestRules(),
             'admin.purchases.purchase-returns.store', 'admin.purchases.purchase-returns.update' => $this->returnRules(),
             'admin.purchases.purchase-returns.reverse' => [
@@ -167,7 +169,7 @@ class ProcurementWorkflowRequest extends FormRequest
                 }
             }
 
-            if ($this->routeIs('admin.purchases.goods-receipt-inspection.store')) {
+            if ($this->routeIs('admin.purchases.goods-receipt-inspection.store', 'admin.purchases.goods-receipt-inspection.update')) {
                 foreach ($this->input('lines', []) as $index => $line) {
                     if (is_array($line)
                         && blank($line['receipt_line_public_id'] ?? null)
@@ -183,10 +185,13 @@ class ProcurementWorkflowRequest extends FormRequest
     private function requisitionRules(): array
     {
         $companyId = $this->companyId();
+        $existing = $this->route('purchaseRequisition');
+        $existingEmployeeId = $existing instanceof PurchaseRequisition ? $existing->requester_employee_id : null;
+        $legacyWithoutRequester = $existing instanceof PurchaseRequisition && $existingEmployeeId === null;
 
         return [
             ...$this->attachmentRules(),
-            'requester_employee_id' => ['required', 'integer', Rule::exists('hr_employees', 'id')->where(fn ($query) => $query->where('company_id', $companyId)->whereNull('deleted_at'))],
+            'requester_employee_id' => [Rule::requiredIf(! $legacyWithoutRequester), 'nullable', 'integer', Rule::exists('hr_employees', 'id')->where(fn ($query) => $query->where('company_id', $companyId)->where(fn ($employees) => $employees->whereNull('deleted_at')->when($existingEmployeeId !== null, fn ($preserved) => $preserved->orWhere('id', $existingEmployeeId))))],
             'request_date' => ['required', 'date'],
             'required_by_date' => ['nullable', 'date', 'after_or_equal:request_date'],
             'branch_store_uuid' => ['required', 'uuid'],
@@ -317,11 +322,13 @@ class ProcurementWorkflowRequest extends FormRequest
             ...$this->attachmentRules(),
             'source_type' => ['required', Rule::in(['purchase_order', 'purchase_invoice'])],
             'source_doc_num' => ['required', 'string', 'max:100'],
+            'branch_store_uuid' => ['nullable', 'uuid'],
             'issue_date' => ['required', 'date'],
             'expected_delivery_date' => ['nullable', 'date', 'after_or_equal:issue_date'],
             'notes' => ['nullable', 'string'],
             'lines' => ['required', 'array', 'min:1'],
-            'lines.*.purchase_order_line_public_id' => ['required', 'uuid', 'distinct'],
+            'lines.*.purchase_order_line_public_id' => ['nullable', 'required_without:lines.*.purchase_invoice_line_public_id', 'uuid', 'distinct'],
+            'lines.*.purchase_invoice_line_public_id' => ['nullable', 'required_without:lines.*.purchase_order_line_public_id', 'uuid', 'distinct'],
             'lines.*.ordered_quantity' => ['required', 'numeric', 'decimal:0,8', 'gt:0'],
             'lines.*.notes' => ['nullable', 'string'],
         ];
@@ -331,6 +338,7 @@ class ProcurementWorkflowRequest extends FormRequest
     {
         return [
             'inspection_at' => ['nullable', 'date'],
+            'correction_reason' => [Rule::requiredIf($this->routeIs('admin.purchases.goods-receipt-inspection.update')), 'nullable', 'string', 'max:2000'],
             'observations' => ['nullable', 'string'],
             'attachment_file_doc_nums' => ['nullable', Rule::prohibitedIf(fn (): bool => ! $this->user()?->can('file_manager.view')), 'array', 'max:20'],
             'attachment_file_doc_nums.*' => ['string', 'max:100', 'distinct'],
@@ -373,7 +381,7 @@ class ProcurementWorkflowRequest extends FormRequest
             'requested_values.lines.*.product_doc_num' => [Rule::requiredIf($replaceLines), 'string', Rule::exists('products', 'doc_num')->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at'))],
             'requested_values.lines.*.unit_doc_num' => [Rule::requiredIf($replaceLines), 'string'],
             'requested_values.lines.*.ordered_quantity' => [Rule::requiredIf($replaceLines), 'nullable', 'numeric', 'decimal:0,8', 'gt:0'],
-            'requested_values.lines.*.unit_price' => [Rule::requiredIf($replaceLines), 'nullable', 'numeric', 'decimal:0,8', 'regex:/^\d{1,14}(?:\.\d{1,8})?$/D', 'min:0'],
+            'requested_values.lines.*.unit_price' => [Rule::requiredIf($replaceLines), 'nullable', 'numeric', 'decimal:0,15', 'regex:/^\d{1,14}(?:\.\d{1,15})?$/D', 'min:0'],
             'requested_values.lines.*.required_delivery_date' => ['nullable', 'date'],
         ];
     }
@@ -409,10 +417,11 @@ class ProcurementWorkflowRequest extends FormRequest
             'payment_method' => ['required', Rule::in(SupplierPaymentContext::methods())],
             'payment_date' => ['required', 'date'],
             'cashbox_doc_num' => ['nullable', 'required_if:payment_method,cash', 'string', Rule::exists('cashboxes', 'doc_num')->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at'))],
-            'bank_account_doc_num' => ['nullable', 'required_if:payment_method,bank,cheque', 'string', Rule::exists('bank_accounts', 'doc_num')->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at'))],
+            'bank_account_doc_num' => ['nullable', 'required_if:payment_method,bank,bank_deposit,transfer,cheque', 'string', Rule::exists('bank_accounts', 'doc_num')->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at'))],
             'currency_doc_num' => ['required', 'string', Rule::exists('currencies', 'doc_num')->where(fn ($query) => $query->where('company_id', $companyId)->where('status', 'active')->whereNull('deleted_at'))],
             'exchange_rate' => ['nullable', 'numeric', 'decimal:0,6', 'gt:0'],
             'amount' => ['required', 'numeric', 'decimal:0,4', 'gt:0'],
+            'reference_no' => ['nullable', 'string', 'max:100'],
             'cheque_number' => ['nullable', 'required_if:payment_method,cheque', 'string', 'max:100'],
             'cheque_date' => ['nullable', 'required_if:payment_method,cheque', 'date'],
             'cheque_due_date' => ['nullable', 'required_if:payment_method,cheque', 'date', 'after_or_equal:cheque_date'],
@@ -430,9 +439,11 @@ class ProcurementWorkflowRequest extends FormRequest
     public function attributes(): array
     {
         return [
+            'requester_employee_id' => __('procurement.ui.requester_employee'),
             'supplier_doc_num' => __('Supplier'),
             'purchase_order_doc_num' => __('Related PO (advance)'),
             'payment_method' => __('Payment method'),
+            'reference_no' => __('procurement.fields.bank_reference'),
             'payment_date' => __('Payment date'),
             'cashbox_doc_num' => __('Cashbox'),
             'bank_account_doc_num' => __('Bank account'),

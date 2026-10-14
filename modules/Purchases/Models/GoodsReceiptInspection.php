@@ -55,11 +55,39 @@ class GoodsReceiptInspection extends Model
 
     public function hasReceiptableQuantity(): bool
     {
+        if ($this->trashed() || $this->status !== 'finalized') {
+            return false;
+        }
+
         $this->loadMissing('lines.receiptLines.receipt');
 
         return $this->lines->contains(
             fn (GoodsReceiptInspectionLine $line): bool => $line->remainingReceiptQuantity() > 0.00000001,
         );
+    }
+
+    public function hasReceiptEvidence(): bool
+    {
+        return $this->receipt_id !== null
+            || $this->receipts()->withTrashed()->exists()
+            || $this->lines()->whereNotNull('receipt_line_id')->exists()
+            || UnpricedInventoryReceipt::withTrashed()->whereHas('lines', fn ($query) => $query->withTrashed()
+                ->whereIn('goods_receipt_inspection_line_id', $this->lines()->select('id')))->exists();
+    }
+
+    public function canCancelSafely(): bool
+    {
+        return ! $this->trashed() && in_array($this->status, ['draft', 'finalized'], true) && ! $this->hasReceiptEvidence();
+    }
+
+    public function canEditSafely(): bool
+    {
+        return $this->canCancelSafely() && in_array($this->source_type, ['purchase_order', 'supply_order'], true);
+    }
+
+    public function canDeleteDraft(): bool
+    {
+        return ! $this->trashed() && $this->status === 'draft' && $this->finalized_at === null && $this->finalized_by === null && ! $this->hasReceiptEvidence();
     }
 
     public function branch(): BelongsTo

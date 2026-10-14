@@ -67,6 +67,79 @@ class LedgerQueryService
      *     from_date: string,
      *     to_date: string,
      *     all_periods?: bool,
+     *     branch_id?: int|null,
+     *     cost_center_id?: int|null
+     * }  $filters
+     * @param  list<int>  $accountIds
+     * @return array<string, mixed>
+     */
+    public function accountBalanceSummary(array $filters, array $accountIds): array
+    {
+        $accountIds = collect($accountIds)
+            ->map(fn (mixed $accountId): int => (int) $accountId)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+        $openingSigned = array_fill_keys($accountIds, '0.0000');
+        $endingSigned = array_fill_keys($accountIds, '0.0000');
+        $periodDebit = '0.0000';
+        $periodCredit = '0.0000';
+
+        if ($accountIds !== []) {
+            $rows = $this->baseQuery($filters)
+                ->whereIn('journal_entry_lines.account_id', $accountIds)
+                ->whereDate('journal_entries.entry_date', '<=', $filters['to_date'])
+                ->select([
+                    'journal_entries.entry_date',
+                    'journal_entries.exchange_rate',
+                    'journal_entry_lines.account_id',
+                    'journal_entry_lines.debit_amount',
+                    'journal_entry_lines.credit_amount',
+                ])
+                ->cursor();
+
+            foreach ($rows as $row) {
+                $accountId = (int) $row->account_id;
+                $debit = $this->baseAmount($row->debit_amount, $row->exchange_rate);
+                $credit = $this->baseAmount($row->credit_amount, $row->exchange_rate);
+                $movement = bcsub($debit, $credit, 4);
+                $endingSigned[$accountId] = bcadd($endingSigned[$accountId], $movement, 4);
+
+                if (CarbonImmutable::parse($row->entry_date)->toDateString() < $filters['from_date']) {
+                    $openingSigned[$accountId] = bcadd($openingSigned[$accountId], $movement, 4);
+
+                    continue;
+                }
+
+                $periodDebit = bcadd($periodDebit, $debit, 4);
+                $periodCredit = bcadd($periodCredit, $credit, 4);
+            }
+        }
+
+        [$openingDebit, $openingCredit] = $this->sumBalanceSides($openingSigned);
+        [$endingDebit, $endingCredit] = $this->sumBalanceSides($endingSigned);
+
+        return [
+            'currency' => Currency::query()
+                ->forCompany($filters['company_id'])
+                ->active()
+                ->where('is_main', true)
+                ->first(['doc_num', 'code', 'name'])?->only(['doc_num', 'code', 'name']),
+            'filters' => $filters,
+            'opening' => ['debit' => $openingDebit, 'credit' => $openingCredit],
+            'period' => ['debit' => $periodDebit, 'credit' => $periodCredit],
+            'ending' => ['debit' => $endingDebit, 'credit' => $endingCredit],
+        ];
+    }
+
+    /**
+     * @param  array{
+     *     company_id: int,
+     *     financial_period_id: int,
+     *     from_date: string,
+     *     to_date: string,
+     *     all_periods?: bool,
      *     account_id?: int|null,
      *     branch_id?: int|null,
      *     cost_center_id?: int|null
@@ -336,6 +409,24 @@ class LedgerQueryService
         return bccomp($amount, '0', 4) >= 0
             ? [$amount, '0.0000']
             : ['0.0000', bcmul($amount, '-1', 4)];
+    }
+
+    /**
+     * @param  array<int, string>  $signedBalances
+     * @return array{0: string, 1: string}
+     */
+    private function sumBalanceSides(array $signedBalances): array
+    {
+        $debit = '0.0000';
+        $credit = '0.0000';
+
+        foreach ($signedBalances as $signedBalance) {
+            [$accountDebit, $accountCredit] = $this->splitSigned($signedBalance);
+            $debit = bcadd($debit, $accountDebit, 4);
+            $credit = bcadd($credit, $accountCredit, 4);
+        }
+
+        return [$debit, $credit];
     }
 
     private function scale(mixed $amount): string

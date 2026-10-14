@@ -158,13 +158,15 @@ class ProductionReportController extends Controller
     public function showControlRun(Request $request, ProductionRun $productionRun): View
     {
         $this->assertControlRunVisible($request, $productionRun, 'view');
+        $record = $productionRun->load([
+            'order.branch', 'order.salesOrder', 'orderLine.stageSnapshots', 'product', 'fixedAsset', 'stageSnapshot',
+            'requirements.product', 'requirements.unit', 'requirements.originalProduct', 'requirements.originalUnit', 'progressEntries', 'inspections.results',
+            'inventoryDocuments.journalEntry', 'materialRequests', 'expenseRequests',
+        ]);
+        $this->reports->projectMaterialAllocationPlans($record->requirements);
 
         return view('modules.production.runs.show', [
-            'record' => $productionRun->load([
-                'order.branch', 'order.salesOrder', 'orderLine.stageSnapshots', 'product', 'fixedAsset', 'stageSnapshot',
-                'requirements.product', 'requirements.unit', 'progressEntries', 'inspections.results',
-                'inventoryDocuments.journalEntry', 'materialRequests', 'expenseRequests',
-            ]),
+            'record' => $record,
             'stores' => collect(),
             'workers' => collect(),
             'readOnlyReport' => true,
@@ -177,8 +179,10 @@ class ProductionReportController extends Controller
         $record = $productionRun->load([
             'order.company', 'order.salesOrder', 'orderLine.product.unit', 'orderLine.product.equivalentUnit',
             'product', 'fixedAsset', 'stageSnapshot', 'shift', 'requirements.product', 'requirements.unit',
+            'requirements.originalProduct', 'requirements.originalUnit',
             'progressEntries', 'inspections.results',
         ]);
+        $this->reports->projectMaterialAllocationPlans($record->requirements);
 
         return $this->pdf->stream('reports.production.run-sheet', [
             'title' => __('Print traveler'),

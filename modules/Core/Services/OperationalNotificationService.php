@@ -78,11 +78,19 @@ class OperationalNotificationService
         }
     }
 
+    /** @return Collection<int, User> */
+    public function recipientsForScope(string $permission, int $companyId, int $branchId, int $financialPeriodId): Collection
+    {
+        return $this->recipients($permission, $permission, [], $companyId, $branchId, 0, false)['users']
+            ->filter(fn (User $user): bool => $this->operatingScope->allowedFinancialPeriodQuery($user)->whereKey($financialPeriodId)->exists())
+            ->values();
+    }
+
     /**
      * @param  list<int|null>  $explicitUserIds
      * @return array{users: Collection<int, User>, fallback_user_ids: Collection<int, int>}
      */
-    private function recipients(?string $permission, ?string $viewPermission, array $explicitUserIds, ?int $companyId, ?int $branchId, int $actorId): array
+    private function recipients(?string $permission, ?string $viewPermission, array $explicitUserIds, ?int $companyId, ?int $branchId, int $actorId, bool $allowAdministratorFallback = true): array
     {
         $ids = collect($explicitUserIds)
             ->filter(fn (mixed $id): bool => is_numeric($id) && (int) $id > 0)
@@ -119,7 +127,7 @@ class OperationalNotificationService
         $hasActionRecipient = $permissionExists
             && $users->contains(fn (User $user): bool => $user->can($permission));
 
-        if (! $hasActionRecipient && is_string($permission) && $permission !== '') {
+        if ($allowAdministratorFallback && ! $hasActionRecipient && is_string($permission) && $permission !== '') {
             $fallbackUsers = User::query()
                 ->where('status', 'active')
                 ->whereNull('deleted_at')

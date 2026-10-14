@@ -2,6 +2,7 @@
 
 namespace Modules\Purchases\Models;
 
+use App\Casts\PurchaseUnitPriceCast;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
@@ -27,7 +28,7 @@ class PurchaseReturnLine extends Model
     protected function casts(): array
     {
         return [
-            'quantity' => 'decimal:8', 'from_quarantine' => 'boolean', 'unit_price' => 'decimal:8', 'serial_receipt_layer_ids' => 'array',
+            'quantity' => 'decimal:8', 'from_quarantine' => 'boolean', 'unit_price' => PurchaseUnitPriceCast::class, 'serial_receipt_layer_ids' => 'array',
             'tax_amount' => 'decimal:4', 'line_total' => 'decimal:4', 'grni_reversed_value' => 'decimal:4',
         ];
     }

@@ -142,8 +142,8 @@ class ProcurementSettlementService
                     ->normalizeToScale($lineValues['ordered_quantity'] ?? $line->ordered_quantity, 8)
                     ?? throw new DomainException(__('Requested purchase order line values are invalid.'));
                 $price = app(NumericFormatService::class)
-                    ->normalizeToScale($lineValues['unit_price'] ?? $line->unit_price, 8);
-                if (bccomp($quantity, '0', 8) <= 0 || bccomp($quantity, (string) $line->received_quantity, 8) < 0 || bccomp($price, '0', 8) < 0) {
+                    ->normalizeToScale($lineValues['unit_price'] ?? $line->unit_price, 15);
+                if (bccomp($quantity, '0', 8) <= 0 || bccomp($quantity, (string) $line->received_quantity, 8) < 0 || $price === null || bccomp($price, '0', 15) < 0) {
                     throw new DomainException(__('Requested purchase order line values are invalid.'));
                 }
                 $this->assertChangedQuantityWithinSource($line, $quantity);
@@ -360,14 +360,14 @@ class ProcurementSettlementService
                 }
                 $unitPrice = $invoiceLine instanceof PurchaseInvoiceLine && bccomp((string) $invoiceLine->quantity, '0', 8) > 0
                     ? $this->invoiceLineNetUnitValue($invoice, $invoiceLine)
-                    : bcdiv((string) $orderLine->total_before_tax, (string) $orderLine->ordered_quantity, 8);
+                    : bcdiv((string) $orderLine->total_before_tax, (string) $orderLine->ordered_quantity, 15);
                 $taxPerUnit = $invoiceLine instanceof PurchaseInvoiceLine && bccomp((string) $invoiceLine->quantity, '0', 8) > 0
                     ? bcdiv((string) $invoiceLine->tax_amount, (string) $invoiceLine->quantity, 16)
                     : '0';
                 $tax = bcround(bcmul($taxPerUnit, $quantityDecimal, 16), 4);
                 $storedUnitPrice = $unitPrice;
                 $storedTax = $tax;
-                $lineTotal = bcround(bcadd(bcmul($storedUnitPrice, $quantityDecimal, 16), $storedTax, 16), 4);
+                $lineTotal = bcround(bcadd(bcmul($storedUnitPrice, $quantityDecimal, 23), $storedTax, 16), 4);
 
                 $returnLine = $return->lines()->where('receipt_line_id', $receiptLine->getKey())->where('from_quarantine', $fromQuarantine)->first() ?? new PurchaseReturnLine;
                 $returnLine->fill([
@@ -754,7 +754,7 @@ class ProcurementSettlementService
             $method = (string) ($data['payment_method'] ?? SupplierPaymentContext::MethodCash);
             $currency = Currency::query()->active()->forCompany($context['company_id'])
                 ->where('doc_num', $data['currency_doc_num'])->firstOrFail();
-            $bankAccount = in_array($method, [SupplierPaymentContext::MethodBank, SupplierPaymentContext::MethodCheque], true)
+            $bankAccount = in_array($method, [SupplierPaymentContext::MethodBank, SupplierPaymentContext::MethodBankDeposit, SupplierPaymentContext::MethodBankTransfer, SupplierPaymentContext::MethodCheque], true)
                 ? BankAccount::query()->with(['account', 'bank', 'currency'])->active()->forCompany($context['company_id'])
                     ->where('doc_num', $data['bank_account_doc_num'])->firstOrFail()
                 : null;
@@ -824,6 +824,7 @@ class ProcurementSettlementService
                 'currency_id' => $currency->getKey(),
                 'exchange_rate' => $data['exchange_rate'] ?? 1,
                 'bank_account_id' => $bankAccount?->getKey(),
+                'reference_no' => in_array($method, [SupplierPaymentContext::MethodBank, SupplierPaymentContext::MethodBankDeposit, SupplierPaymentContext::MethodBankTransfer], true) ? ($data['reference_no'] ?? null) : null,
                 'cheque_id' => $cheque?->getKey(),
                 'status' => SupplierPaymentContext::StatusDraft,
                 'is_advance' => $isAdvance,
@@ -962,7 +963,7 @@ class ProcurementSettlementService
 
             match ($locked->payment_method) {
                 SupplierPaymentContext::MethodCash => $this->approveCashPayment($locked),
-                SupplierPaymentContext::MethodBank => $this->approveBankPayment($locked),
+                SupplierPaymentContext::MethodBank, SupplierPaymentContext::MethodBankDeposit, SupplierPaymentContext::MethodBankTransfer => $this->approveBankPayment($locked),
                 SupplierPaymentContext::MethodCheque => $this->approveChequePayment($locked),
                 default => throw new DomainException(__('Unsupported Supplier payment method.')),
             };
@@ -1033,7 +1034,7 @@ class ProcurementSettlementService
 
             match ($locked->payment_method) {
                 SupplierPaymentContext::MethodCash => $this->cancelCashPayment($locked, $reason),
-                SupplierPaymentContext::MethodBank => $this->supplierPaymentPostings->reverse($locked, $reason),
+                SupplierPaymentContext::MethodBank, SupplierPaymentContext::MethodBankDeposit, SupplierPaymentContext::MethodBankTransfer => $this->supplierPaymentPostings->reverse($locked, $reason),
                 SupplierPaymentContext::MethodCheque => $this->cancelChequePayment($locked, $reason),
                 default => throw new DomainException(__('Unsupported Supplier payment method.')),
             };
@@ -1136,7 +1137,7 @@ class ProcurementSettlementService
         $netAmounts = app(PurchaseInvoiceCalculationService::class)->netAmountsByLine($invoice);
         $net = $netAmounts[$line->getKey()] ?? '0.0000';
 
-        return bcdiv($net, (string) $line->quantity, 8);
+        return bcdiv($net, (string) $line->quantity, 15);
     }
 
     private function assertChangedQuantityWithinSource(PurchaseOrderLine $line, string $quantity): void

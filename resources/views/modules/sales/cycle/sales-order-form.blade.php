@@ -129,6 +129,13 @@
         </div>
     </div>
 
+    <div class="card mb-3" data-sales-financial-summary>
+        <div class="card-header"><h6 class="mb-0">{{ __('sales_ui.financial_summary') }}</h6></div>
+        @include('modules.sales.cycle.partials.document-discount-inputs', ['discountReadonly' => ! $discountInputsEnabled])
+        @include('modules.sales.cycle.partials.withholding-inputs', ['withholdingReadonly' => ! $discountInputsEnabled])
+        <x-forms.document-summary />
+    </div>
+
     <div class="card mb-3">
         <div class="card-header d-flex justify-content-between align-items-center">
             <h6 class="mb-0">{{ __('Sales lines') }}</h6>
@@ -136,23 +143,15 @@
         </div>
         <div class="table-responsive">
             <table class="table table-sm table-bordered align-middle sales-order-grid mb-0">
-                <thead class="bg-100"><tr><th>#</th><th class="product-column">{{ __('Product') }}</th><th>{{ __('Unit') }}</th><th>{{ __('Quantity') }}</th><th>{{ __('Unit price') }}</th><th>{{ __('Discount') }}</th><th>{{ __('sales_ui.tax_rate') }}</th><th>{{ __('Line total') }}</th><th></th></tr></thead>
+                <thead class="bg-100"><tr><th>#</th><th class="product-column">{{ __('Product') }}</th><th>{{ __('Color') }}</th><th class="text-end">{{ __('Number in pieces') }}</th><th>{{ __('Unit') }}</th><th class="text-end">{{ __('Packing') }}</th><th>{{ __('Quantity') }}</th><th>{{ __('Unit price') }}</th><th>{{ __('Discount') }}</th><th>{{ __('sales_ui.tax_rate') }}</th><th>{{ __('Line total') }}</th><th></th></tr></thead>
                 <tbody data-sales-lines>
                     @foreach($lineRows as $index => $line)
-                        @include('modules.sales.cycle.partials.sales-order-line', ['index' => $index, 'line' => $line, 'products' => $products, 'productUnits' => $productUnits, 'showRequestedDate' => false])
+                        @include('modules.sales.cycle.partials.sales-order-line', ['index' => $index, 'line' => $line, 'products' => $products, 'productUnits' => $productUnits, 'showRequestedDate' => false, 'showPackingFields' => true])
                     @endforeach
                 </tbody>
             </table>
         </div>
-        @if($discountInputsEnabled)
-        <div class="card-body border-top"><div class="row g-2 align-items-end">
-            <div class="col-md-3"><x-forms.label for="order-discount-type" :label="__('sales_ui.header_discount')" /><x-forms.select id="order-discount-type" name="discount_type" class="form-select js-sales-header-discount-type"><option value="">{{ __('None') }}</option>@foreach(['fixed', 'percentage'] as $type)<option value="{{ $type }}" @selected(old('discount_type', $record?->discount_type) === $type)>{{ __('quotations.discount_types.'.$type) }}</option>@endforeach</x-forms.select></div>
-            <div class="col-md-3"><x-forms.label for="order-discount-value" :label="__('quotations.attributes.discount_value')" /><x-forms.input id="order-discount-value" name="discount_value" class="form-control text-end js-sales-header-discount-value" value="{{ old('discount_value', $record?->discount_value ?? 0) }}" inputmode="decimal" /></div>
-            <div class="col-md-6"><small class="text-muted">{{ __('sales_ui.header_discount_help') }}</small><div>{{ __('sales_ui.header_discount') }}: <strong data-sales-header-discount-amount dir="ltr">0.00</strong></div></div>
-        </div></div>
-        @endif
-        @if($discountInputsEnabled) @include('modules.sales.cycle.partials.withholding-inputs') @endif
-        <x-forms.document-summary />
+
     </div>
 
     <div class="card mb-3">
@@ -167,7 +166,7 @@
 </form>
 
 <template id="sales-order-line-template">
-    @include('modules.sales.cycle.partials.sales-order-line', ['index' => '__INDEX__', 'line' => [], 'products' => $products, 'productUnits' => $productUnits, 'showRequestedDate' => false])
+    @include('modules.sales.cycle.partials.sales-order-line', ['index' => '__INDEX__', 'line' => [], 'products' => $products, 'productUnits' => $productUnits, 'showRequestedDate' => false, 'showPackingFields' => true])
 </template>
 <template id="sales-schedule-template"><tr><td data-row-number></td><td><x-forms.input class="form-control form-control-sm" name="payment_schedules[__INDEX__][title]" /></td><td><x-forms.date-input class="form-control form-control-sm js-date-picker" name="payment_schedules[__INDEX__][due_date]" /></td><td><x-forms.input class="form-control form-control-sm text-end" name="payment_schedules[__INDEX__][amount]" inputmode="decimal" /></td><td><button class="btn btn-link text-danger p-1" type="button" data-sales-remove-row>&times;</button></td></tr></template>
 @endsection

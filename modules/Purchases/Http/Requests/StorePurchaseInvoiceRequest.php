@@ -169,7 +169,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
                     ->whereNull('deleted_at')),
             ],
             'lines.*.quantity' => ['required', 'numeric', 'decimal:0,8', 'regex:/^\d{1,14}(?:\.\d{1,8})?$/D', 'gt:0'],
-            'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,8', 'regex:/^\d{1,14}(?:\.\d{1,8})?$/D', 'min:0'],
+            'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,15', 'regex:/^\d{1,14}(?:\.\d{1,15})?$/D', 'min:0'],
             'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
             'lines.*.discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,4}(?:\.\d{1,4})?$/D', 'min:0', 'max:100'],
@@ -268,7 +268,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
 
             foreach ([
                 ['quantity', 8, __('purchase_invoices.attributes.quantity')],
-                ['unit_price', 8, __('purchase_invoices.attributes.unit_price')],
+                ['unit_price', 15, __('purchase_invoices.attributes.unit_price')],
                 ['discount_value', 4, __('purchase_invoices.attributes.line_discount_value')],
                 ['tax_rate', 4, __('purchase_invoices.attributes.tax_rate')],
             ] as [$field, $scale, $label]) {
@@ -363,7 +363,7 @@ class StorePurchaseInvoiceRequest extends FormRequest
             }
 
             $quantity = $this->validatedLineNumber($validator, $line, $index, 'quantity', 8);
-            $unitPrice = $this->validatedLineNumber($validator, $line, $index, 'unit_price', 8);
+            $unitPrice = $this->validatedLineNumber($validator, $line, $index, 'unit_price', 15);
             $discountValue = $this->validatedLineNumber($validator, $line, $index, 'discount_value', 4);
 
             if ($quantity === null || $unitPrice === null || $discountValue === null) {
@@ -520,8 +520,8 @@ class StorePurchaseInvoiceRequest extends FormRequest
             return;
         }
         foreach ($calculation['lines'] as $index => $line) {
-            $subtotal = $sourceCalculation['inherited'] ? $line['subtotal_amount'] : bcmul($line['quantity'], $line['unit_price'], 16);
-            if (($line['discount_type'] ?? null) === 'fixed' && bccomp($line['discount_value'], $subtotal, 16) > 0) {
+            $subtotal = $sourceCalculation['inherited'] ? $line['subtotal_amount'] : bcmul($line['quantity'], $line['unit_price'], 23);
+            if (($line['discount_type'] ?? null) === 'fixed' && bccomp($line['discount_value'], $subtotal, 23) > 0) {
                 $validator->errors()->add("lines.{$index}.discount_value", __('purchase_invoices.messages.line_discount_exceeds_subtotal'));
             }
         }

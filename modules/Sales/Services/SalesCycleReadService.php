@@ -6,13 +6,70 @@ use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Modules\Core\Models\ItemUnit;
+use Modules\Core\Models\Product;
 use Modules\Core\Services\NumericFormatService;
+use Modules\Core\Services\ProductComponentUnitConversionService;
+use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Modules\Inventory\Models\InventoryReservation;
 use Modules\Sales\Models\CustomerInvoice;
 use Modules\Sales\Models\SalesOrderLine;
 
 class SalesCycleReadService
 {
+    /**
+     * @return array{color: string|null, sales_unit: string, packing_factor: string|null, piece_count: string|null}
+     */
+    public function salesOrderLinePresentation(Product $product, ItemUnit $salesUnit, mixed $quantity): array
+    {
+        $product->loadMissing(['unit', 'equivalentUnit', 'color']);
+
+        if ((int) $salesUnit->company_id !== (int) $product->company_id
+            || ! in_array($salesUnit->getKey(), app(ProductComponentUnitOptionsService::class)->validUnitIds($product), true)
+        ) {
+            throw new \DomainException(__('The selected unit is not configured for this product.'));
+        }
+
+        $salesUnitLabel = trim(implode(' / ', array_filter([$salesUnit->doc_num, $salesUnit->name])));
+
+        if ($product->isService()) {
+            return [
+                'color' => $product->color?->name,
+                'sales_unit' => $salesUnitLabel,
+                'packing_factor' => null,
+                'piece_count' => null,
+            ];
+        }
+
+        $otherUnit = (int) $salesUnit->getKey() === (int) $product->item_unit_id
+            ? $product->equivalentUnit
+            : $product->unit;
+        $factor = $otherUnit instanceof ItemUnit
+            ? app(ProductComponentUnitConversionService::class)->convert(
+                '1',
+                $product,
+                $salesUnit,
+                $product,
+                $otherUnit,
+                8,
+            )
+            : '1.00000000';
+
+        if ($factor === null || bccomp($factor, '0', 8) <= 0) {
+            throw new \DomainException(__('The selected product unit has no unambiguous conversion to the base unit.'));
+        }
+
+        $packingFactor = bccomp($factor, '1', 8) > 0 ? $factor : '1.00000000';
+        $normalizedQuantity = $this->reportQuantity($quantity);
+
+        return [
+            'color' => $product->color?->name,
+            'sales_unit' => $salesUnitLabel,
+            'packing_factor' => $packingFactor,
+            'piece_count' => bcmul($normalizedQuantity, $packingFactor, 8),
+        ];
+    }
+
     /** @return array{ordered: string, declined: string, effective: string, invoiced: string, credited: string, net_invoiced: string, delivered: string, remaining: string} */
     public function fulfillmentQuantities(object $order): array
     {

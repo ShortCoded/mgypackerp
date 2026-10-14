@@ -13,13 +13,6 @@ return [
         ],
         'children' => [
             [
-                'label' => 'production_handovers', 'title' => 'production_handover.title', 'icon' => 'dolly',
-                'route' => 'admin.production.handovers.index', 'permission' => 'production.handovers.view',
-                'actions' => ['view' => 'production.handovers.view', 'create' => 'production.handovers.create',
-                    'approve' => 'production.handovers.approve', 'cancel' => 'production.handovers.cancel'],
-                'active' => ['admin.production.handovers.*'], 'children' => [],
-            ],
-            [
                 'label' => 'production_stages',
                 'title' => 'Production Stages',
                 'icon' => 'list-ol',
@@ -132,6 +125,13 @@ return [
                 ],
                 'active' => ['admin.production.material-requests.*'],
                 'children' => [],
+            ],
+            [
+                'label' => 'production_handovers', 'title' => 'production_handover.title', 'icon' => 'dolly',
+                'route' => 'admin.production.handovers.index', 'permission' => 'production.handovers.view',
+                'actions' => ['view' => 'production.handovers.view', 'create' => 'production.handovers.create',
+                    'approve' => 'production.handovers.approve', 'cancel' => 'production.handovers.cancel'],
+                'active' => ['admin.production.handovers.*'], 'children' => [],
             ],
             [
                 'label' => 'production_expenses',

@@ -32,7 +32,7 @@ class PurchaseOrderCalculationService
             $receivedQuantity = $this->nonNegative($this->formatQuantity($receivedQuantityInput), 8);
             $remainingQuantity = $this->nonNegative(bcsub($orderedQuantity, $receivedQuantity, 8), 8);
             $unitPrice = $this->formatUnitPrice($unitPriceInput);
-            $subtotal = bcround(bcmul($orderedQuantity, $unitPrice, 16), 4);
+            $subtotal = bcround(bcmul($orderedQuantity, $unitPrice, 23), 4);
             $discountType = in_array($line['discount_type'] ?? null, ['fixed', 'percentage'], true)
                 ? $line['discount_type']
                 : 'fixed';
@@ -120,7 +120,7 @@ class PurchaseOrderCalculationService
 
     public function formatUnitPrice(mixed $value): string
     {
-        $this->numbers->normalizeToScale($value ?? 0, 8);
+        $this->numbers->normalizeToScale($value ?? 0, 15);
 
         return $this->numbers->normalize($value ?? 0) ?? '0';
     }

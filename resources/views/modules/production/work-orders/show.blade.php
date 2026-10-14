@@ -125,7 +125,14 @@
                                         @foreach($line->bom_snapshot['components'] as $component)
                                             @php $requiredComponentQuantity = bcmul((string) ($component['base_quantity_per_output'] ?? '0'), (string) $equivalentQuantity, 8); @endphp
                                             <tr>
-                                                <td>{{ $component['product_doc_num'] ?? '' }} — {{ $component['product_name'] ?? '' }}</td>
+                                                <td>{{ $component['product_doc_num'] ?? '' }} — {{ $component['product_name'] ?? '' }}
+                                                    @if(filled($component['alternatives'] ?? null))
+                                                        <div class="small text-muted mt-1">{{ __('production_execution.orders.approved_alternatives') }}:</div>
+                                                        @foreach($component['alternatives'] as $alternative)
+                                                            <div class="small">{{ $alternative['product_doc_num'] }} — {{ $alternative['product_name'] }} · {{ __('production_execution.orders.conversion_ratio', ['factor' => $numbers->format($alternative['conversion_factor']), 'alternative_unit' => $alternative['base_unit_name'] ?? '', 'primary_unit' => $component['base_unit_name'] ?? '']) }}</div>
+                                                        @endforeach
+                                                    @endif
+                                                </td>
                                                 <td dir="ltr">{{ $numbers->format($component['base_quantity_per_output'] ?? '0') }} {{ $component['base_unit_name'] ?? '' }}</td>
                                                 <td dir="ltr" class="fw-semibold">{{ $numbers->format($requiredComponentQuantity) }} {{ $component['base_unit_name'] ?? '' }}<div class="small text-muted">{{ $numbers->format($equivalentQuantity) }} × {{ $numbers->format($component['base_quantity_per_output'] ?? '0') }} = {{ $numbers->format($requiredComponentQuantity) }}</div></td>
                                             </tr>

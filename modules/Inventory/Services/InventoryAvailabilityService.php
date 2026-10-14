@@ -46,16 +46,20 @@ class InventoryAvailabilityService
             ->where('stock_status', $stockStatus)
             ->when(
                 $warehouseLocationId !== null,
-                fn ($query) => $query->where(function ($reservationQuery) use ($warehouseLocationId): void {
-                    $reservationQuery->where('warehouse_location_id', $warehouseLocationId)->orWhereNull('warehouse_location_id');
-                }),
+                fn ($query) => $exactDimensions
+                    ? $query->where('warehouse_location_id', $warehouseLocationId)
+                    : $query->where(function ($reservationQuery) use ($warehouseLocationId): void {
+                        $reservationQuery->where('warehouse_location_id', $warehouseLocationId)->orWhereNull('warehouse_location_id');
+                    }),
                 fn ($query) => $exactDimensions ? $query->whereNull('warehouse_location_id') : $query,
             )
             ->when(
                 $batchLot !== null,
-                fn ($query) => $query->where(function ($reservationQuery) use ($batchLot): void {
-                    $reservationQuery->where('batch_lot', $batchLot)->orWhereNull('batch_lot');
-                }),
+                fn ($query) => $exactDimensions
+                    ? $query->where('batch_lot', $batchLot)
+                    : $query->where(function ($reservationQuery) use ($batchLot): void {
+                        $reservationQuery->where('batch_lot', $batchLot)->orWhereNull('batch_lot');
+                    }),
                 fn ($query) => $exactDimensions ? $query->whereNull('batch_lot') : $query,
             )
             ->where('status', InventoryReservation::StatusActive);

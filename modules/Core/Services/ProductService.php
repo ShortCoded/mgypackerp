@@ -688,7 +688,7 @@ class ProductService
         return ProductComponent::query()
             ->where('company_id', $record->company_id)
             ->where('product_id', $record->getKey())
-            ->with(['componentProduct', 'unit', 'referenceComponent'])
+            ->with(['componentProduct', 'unit', 'referenceComponent', 'alternatives.alternativeProduct'])
             ->orderBy('created_at')
             ->orderBy('id')
             ->get()
@@ -703,6 +703,12 @@ class ProductService
                     : $this->normalizeDecimal($component->percentage),
                 'reference_component' => $component->referenceComponent?->public_id,
                 'notes' => $component->notes,
+                'alternatives' => $component->alternatives->map(fn ($alternative): array => [
+                    'public_id' => $alternative->public_id,
+                    'raw_material' => $this->productChangeLabel($alternative->alternativeProduct),
+                    'conversion_factor' => $this->normalizeDecimal($alternative->conversion_factor),
+                    'notes' => $alternative->notes,
+                ])->values()->all(),
             ])
             ->values()
             ->all();

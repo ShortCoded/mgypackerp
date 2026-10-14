@@ -43,6 +43,9 @@
 <div class="border rounded p-3 mb-3">
     <h6>#{{ $proposal->id }} — {{ __('production_material_substitution.'.$proposal->status) }}</h6>
     <p>{{ $originalProduct?->doc_num }} — {{ $originalProduct?->name }} → {{ $target['product']['doc_num'] }} — {{ $target['product']['name'] }} — {{ $numbers->format($proposal->quantity) }} {{ $record->requirements->firstWhere('id', $proposal->original_requirement_id)?->unit?->name }}</p>
+    @if($proposal->replacement_quantity !== null)
+        <p>{{ __('production_material_substitution.conversion_factor') }}: {{ $numbers->format($proposal->conversion_factor) }} · {{ __('production_material_substitution.converted_quantity') }}: {{ $numbers->format($proposal->replacement_quantity) }}</p>
+    @endif
     <p>{{ $proposal->reason }} — {{ $dates->formatDateTime($proposal->created_at) }}</p>
     @if($proposal->execution_snapshot !== null)
         @php($execution = json_decode($proposal->execution_snapshot, true, 512, JSON_THROW_ON_ERROR))

@@ -14,7 +14,7 @@
         @if(filled($line['unit_doc_num'] ?? null) && ! collect($unitOptions)->contains('id', $line['unit_doc_num']))<option selected value="{{ $line['unit_doc_num'] }}">{{ $line['unit_text'] ?? $line['unit_doc_num'] }}</option>@endif
     </x-forms.select></td>
     <td><x-forms.numeric-input name="requested_values[lines][{{ $index }}][ordered_quantity]" :scale="8" min="0.00000001" step="0.00000001" :value="$line['ordered_quantity'] ?? ''" required /></td>
-    <td><x-forms.numeric-input name="requested_values[lines][{{ $index }}][unit_price]" :scale="8" min="0" step="0.00000001" :value="$line['unit_price'] ?? ''" required /></td>
+    <td><x-forms.numeric-input name="requested_values[lines][{{ $index }}][unit_price]" :scale="15" min="0" step="0.000000000000001" :value="$line['unit_price'] ?? ''" required /></td>
     <td><x-forms.date-input name="requested_values[lines][{{ $index }}][required_delivery_date]" :value="$line['required_delivery_date'] ?? null" /></td>
     <td><button class="btn btn-link text-danger" type="button" data-remove-procurement-line aria-label="{{ __('Remove line') }}">&times;</button></td>
 </tr>

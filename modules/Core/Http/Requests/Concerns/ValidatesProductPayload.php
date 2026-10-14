@@ -88,6 +88,12 @@ trait ValidatesProductPayload
             'components.*.input_source' => ['nullable', 'string', Rule::in(ProductComponent::inputSources())],
             'components.*.notes' => ['nullable', 'string'],
             'components.*._delete' => ['nullable', 'boolean'],
+            'components.*.alternatives' => ['nullable', 'array'],
+            'components.*.alternatives.*.public_id' => ['nullable', 'uuid'],
+            'components.*.alternatives.*.alternative_product_doc_num' => ['nullable', 'string'],
+            'components.*.alternatives.*.conversion_factor' => ['nullable', 'numeric', 'gt:0', 'decimal:0,8'],
+            'components.*.alternatives.*.notes' => ['nullable', 'string', 'max:2000'],
+            'components.*.alternatives.*._delete' => ['nullable', 'boolean'],
         ];
 
         if ($this->productContext() === Product::ContextPackagingMaterials) {
@@ -184,6 +190,7 @@ trait ValidatesProductPayload
                 );
                 $referenceComponentKey = $this->trimComponentInputValue($component['reference_component_key'] ?? '');
                 $inputSource = $this->trimComponentInputValue($component['input_source'] ?? '');
+                $alternatives = $this->preparedComponentAlternatives($component['alternatives'] ?? []);
 
                 $component = [
                     'public_id' => $publicId === '' ? null : $publicId,
@@ -198,6 +205,7 @@ trait ValidatesProductPayload
                     'reference_component_key' => $referenceComponentKey === '' ? null : $referenceComponentKey,
                     'input_source' => $inputSource === '' ? null : $inputSource,
                     'notes' => $this->trimComponentInputValue($component['notes'] ?? ''),
+                    'alternatives' => $alternatives,
                     '_delete' => filter_var($component['_delete'] ?? false, FILTER_VALIDATE_BOOL),
                 ];
 
@@ -340,6 +348,8 @@ trait ValidatesProductPayload
             } elseif ($unitDocNum !== '' && ! $this->componentUnitIsValidForProduct($componentProduct, $unitDocNum)) {
                 $validator->errors()->add("components.{$index}.unit_doc_num", __('products.components.invalid_unit'));
             }
+
+            $this->validateComponentAlternatives($validator, $index, $component, $componentProduct);
         }
     }
 
@@ -642,6 +652,9 @@ trait ValidatesProductPayload
             'components.*.percentage.numeric' => __('products.components.percentage_gt_zero'),
             'components.*.percentage.gt' => __('products.components.percentage_gt_zero'),
             'components.*.percentage.regex' => __('products.components.percentage_precision'),
+            'components.*.alternatives.*.conversion_factor.numeric' => __('products.components.alternatives.invalid_factor'),
+            'components.*.alternatives.*.conversion_factor.gt' => __('products.components.alternatives.invalid_factor'),
+            'components.*.alternatives.*.conversion_factor.decimal' => __('products.components.alternatives.invalid_factor'),
         ];
     }
 
@@ -921,6 +934,7 @@ trait ValidatesProductPayload
                     : null,
                 'input_source' => $inputSource,
                 'notes' => $this->blankToNull($component['notes'] ?? null),
+                'alternatives' => $this->normalizedComponentAlternatives($component['alternatives'] ?? []),
                 '_delete' => $delete,
             ];
         }
@@ -943,6 +957,124 @@ trait ValidatesProductPayload
             ->componentItems()
             ->where('doc_num', $docNum)
             ->first();
+    }
+
+    private function componentAlternativeProductRecord(string $docNum): ?Product
+    {
+        $docNum = trim($docNum);
+
+        if ($docNum === '') {
+            return null;
+        }
+
+        return Product::query()
+            ->forCompany($this->companyId())
+            ->active()
+            ->with('unit')
+            ->rawMaterials()
+            ->whereHas('unit', fn ($units) => $units->where('status', 'active'))
+            ->where('doc_num', $docNum)
+            ->first();
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function preparedComponentAlternatives(mixed $alternatives): array
+    {
+        if (! is_array($alternatives)) {
+            return [];
+        }
+
+        return collect($alternatives)
+            ->filter(fn (mixed $row): bool => is_array($row))
+            ->map(function (array $row): array {
+                return [
+                    'public_id' => $this->blankToNull($row['public_id'] ?? null),
+                    'alternative_product_doc_num' => $this->blankToNull($row['alternative_product_doc_num'] ?? null),
+                    'conversion_factor' => $this->trimComponentInputValue($row['conversion_factor'] ?? ''),
+                    'notes' => $this->blankToNull($row['notes'] ?? null),
+                    '_delete' => filter_var($row['_delete'] ?? false, FILTER_VALIDATE_BOOL),
+                ];
+            })
+            ->reject(fn (array $row): bool => $row['public_id'] === null
+                && $row['alternative_product_doc_num'] === null
+                && blank($row['conversion_factor'])
+                && $row['notes'] === null)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * @param  array<string, mixed>  $component
+     */
+    private function validateComponentAlternatives(
+        Validator $validator,
+        int|string $componentIndex,
+        array $component,
+        Product $primaryProduct,
+    ): void {
+        $seen = [];
+
+        foreach ($component['alternatives'] ?? [] as $alternativeIndex => $alternative) {
+            if (! is_array($alternative) || filter_var($alternative['_delete'] ?? false, FILTER_VALIDATE_BOOL)) {
+                continue;
+            }
+
+            $docNum = trim((string) ($alternative['alternative_product_doc_num'] ?? ''));
+            $field = "components.{$componentIndex}.alternatives.{$alternativeIndex}.alternative_product_doc_num";
+            $factorField = "components.{$componentIndex}.alternatives.{$alternativeIndex}.conversion_factor";
+
+            if ($docNum === '') {
+                $validator->errors()->add($field, __('products.components.alternatives.product_required'));
+
+                continue;
+            }
+
+            $product = $this->componentAlternativeProductRecord($docNum);
+            if (! $product instanceof Product || (int) $product->getKey() === (int) $primaryProduct->getKey()) {
+                $validator->errors()->add($field, __('products.components.alternatives.invalid_product'));
+
+                continue;
+            }
+
+            if (isset($seen[$product->getKey()])) {
+                $validator->errors()->add($field, __('products.components.alternatives.duplicate_product'));
+            }
+            $seen[$product->getKey()] = true;
+
+            $factor = trim((string) ($alternative['conversion_factor'] ?? ''));
+            if (! preg_match('/^(?:\d{1,12}|\d{0,12}\.\d{1,8})$/D', $factor)
+                || bccomp($factor, '0', 8) <= 0
+            ) {
+                $validator->errors()->add($factorField, __('products.components.alternatives.invalid_factor'));
+            }
+        }
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function normalizedComponentAlternatives(mixed $alternatives): array
+    {
+        if (! is_array($alternatives)) {
+            return [];
+        }
+
+        return collect($alternatives)
+            ->filter(fn (mixed $row): bool => is_array($row) && ! filter_var($row['_delete'] ?? false, FILTER_VALIDATE_BOOL))
+            ->map(function (array $row): array {
+                $product = $this->componentAlternativeProductRecord((string) ($row['alternative_product_doc_num'] ?? ''));
+
+                return [
+                    'public_id' => $this->blankToNull($row['public_id'] ?? null),
+                    'alternative_product_id' => $product?->getKey(),
+                    'conversion_factor' => app(NumericFormatService::class)->normalizeToScale($row['conversion_factor'] ?? null, 8),
+                    'notes' => $this->blankToNull($row['notes'] ?? null),
+                ];
+            })
+            ->values()
+            ->all();
     }
 
     private function componentUnitRecord(Product $componentProduct, mixed $unitDocNum): ?ItemUnit
@@ -1070,6 +1202,7 @@ trait ValidatesProductPayload
             && blank($component['percentage'] ?? null)
             && blank($component['reference_component_key'] ?? null)
             && blank($component['notes'] ?? null)
+            && blank($component['alternatives'] ?? null)
             && is_string($calculationMethod)
             && in_array(trim($calculationMethod), ['', ProductComponent::CalculationDirect], true)
             && ($inputSource === null

@@ -28,6 +28,8 @@ class ProductionMaterialRequest extends Model
 
     public const StatusIssued = 'issued';
 
+    public const StatusReallocated = 'reallocated';
+
     public const StatusShortage = 'shortage';
 
     public const StatusRejected = 'rejected';
@@ -94,6 +96,14 @@ class ProductionMaterialRequest extends Model
         return ! DB::table('inventory_documents')->where('production_material_request_id', $this->getKey())->exists()
             && ! DB::table('inventory_document_lines')
                 ->whereIn('production_material_request_line_id', $this->lines()->select('id'))->exists();
+    }
+
+    public function hasMaterialReallocationEvidence(): bool
+    {
+        return DB::table('production_material_request_reallocations')
+            ->where('source_material_request_id', $this->getKey())
+            ->orWhere('target_material_request_id', $this->getKey())
+            ->exists();
     }
 
     public function resolveRouteBinding($value, $field = null): ?self

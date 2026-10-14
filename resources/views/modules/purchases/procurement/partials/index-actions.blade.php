@@ -38,6 +38,8 @@
         @if($isOwnBranch) @can($permission.'.cancel')<button type="button" class="dropdown-item text-danger" data-procurement-action="{{ route($prefix.'.cancel', $record->doc_num) }}" data-reason-field="cancel_reason">{{ __('Cancel') }}</button>@endcan @endif
     @endif
 @endif
+@if($screen === 'goods_receipt_inspections' && ! $draft && $isOwnBranch && ! ($isAdministrativeBranch ?? false) && $record->canEditSafely()) @can($permission.'.edit')<a class="dropdown-item" href="{{ route($prefix.'.edit', $record) }}">{{ __('Edit') }}</a>@endcan @endif
+@if($screen === 'goods_receipt_inspections' && $isOwnBranch && ! ($isAdministrativeBranch ?? false) && $record->canCancelSafely()) @can($permission.'.cancel')<button type="button" class="dropdown-item text-danger" data-procurement-action="{{ route($prefix.'.cancel', $record->doc_num) }}" data-reason-field="cancel_reason">{{ __('Cancel') }}</button>@endcan @endif
 @if($screen === 'goods_receipt_inspections' && $isOwnBranch && $record->hasReceiptableQuantity() && in_array($record->result, ['accepted', 'partially_accepted'], true))
     @can('purchases.goods_receipt_notes.create')<a class="dropdown-item" href="{{ route('admin.purchases.goods-receipt-notes.create', $record->doc_num) }}">{{ __('Create Goods Receipt') }}</a>@endcan
 @endif
@@ -47,7 +49,7 @@
 @endif
 @if($screen === 'purchase_returns' && $draft && $isOwnBranch) @can($permission.'.approve')<button type="button" class="dropdown-item" data-procurement-action="{{ route($prefix.'.approve', $record->doc_num) }}">{{ __('Post') }}</button>@endcan @endif
 @can($permission.'.print')<a class="dropdown-item" target="_blank" href="{{ route('admin.purchases.procurement.print', [$definition['type'], $record->doc_num]) }}">{{ __('Print') }}</a>@endcan
-@if($editableDraft && Route::has($prefix.'.destroy') && $isOwnBranch) @can($permission.'.delete')<button type="button" class="dropdown-item text-danger" data-procurement-action="{{ route($prefix.'.destroy', $record->doc_num) }}" data-method="DELETE">{{ __('common.actions.delete') }}</button>@endcan @endif
+@if($editableDraft && Route::has($prefix.'.destroy') && $isOwnBranch && ($screen !== 'goods_receipt_inspections' || $record->canDeleteDraft())) @can($permission.'.delete')<button type="button" class="dropdown-item text-danger" data-procurement-action="{{ route($prefix.'.destroy', $record->doc_num) }}" data-method="DELETE">{{ __('common.actions.delete') }}</button>@endcan @endif
 @else
 @can($permission.'.restore')<button type="button" class="dropdown-item text-success" data-procurement-action="{{ route('admin.purchases.procurement.restore', [$screen, $record->doc_num]) }}" data-method="PATCH">{{ __('common.actions.restore') }}</button>@endcan
 @endif

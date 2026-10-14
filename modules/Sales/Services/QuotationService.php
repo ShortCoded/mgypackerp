@@ -127,6 +127,11 @@ class QuotationService
                     'discount_amount',
                     'tax_amount',
                     'total',
+                    'withholding_basis',
+                    'withholding_rate',
+                    'withholding_basis_amount',
+                    'withholding_amount',
+                    'net_payable_amount',
                     'notes_snapshot',
                     'terms_snapshot',
                     'payment_terms_snapshot',
@@ -411,6 +416,7 @@ class QuotationService
 
     private function updateRevisionFromData(QuotationRevision $revision, array $data): QuotationRevision
     {
+        $data = [...$revision->only(['withholding_rate', 'withholding_basis']), ...$data];
         $record = $revision->quotation()->firstOrFail();
         $revision->forceFill($this->revisionValues($record, $data, (int) $revision->revision_number, (string) $revision->status))->save();
         $this->syncRevisionChildren($record, $revision->refresh(), $data);
@@ -423,7 +429,7 @@ class QuotationService
      */
     private function revisionValues(Quotation $record, array $data, int $revisionNumber, string $status): array
     {
-        $calculation = $this->calculator->calculate($data['lines'] ?? [], $data['discount_type'] ?? null, $data['discount_value'] ?? 0);
+        $calculation = $this->calculator->calculate($data['lines'] ?? [], $data['discount_type'] ?? null, $data['discount_value'] ?? 0, $data['withholding_rate'] ?? '0', $data['withholding_basis'] ?? null);
 
         return [
             'revision_number' => $revisionNumber,

@@ -14,7 +14,7 @@
             : route('admin.purchases.goods-receipt-notes.store', $sourceDocument);
     @endphp
 
-    <form method="POST" action="{{ $formAction }}">
+    <form method="POST" action="{{ $formAction }}" data-procurement-form>
         @csrf
         <x-forms.line-item-cards />
         @if($draft)
@@ -190,3 +190,7 @@
         @include('modules.purchases.procurement.attachments', ['attachmentRecord' => $draft ?? null, 'attachmentsReadonly' => false])
     </form>
 @endsection
+
+@push('scripts')
+    <script src="{{ app(\Modules\Core\Services\AssetVersionService::class)->url('assets/js/modules/Purchases/procurement-cycle.js') }}"></script>
+@endpush

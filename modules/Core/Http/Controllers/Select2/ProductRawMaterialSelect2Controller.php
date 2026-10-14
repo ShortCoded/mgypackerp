@@ -40,7 +40,11 @@ class ProductRawMaterialSelect2Controller extends Controller
             ->forCompany($companyId);
 
         if ($request->routeIs('admin.select2.component-products')) {
-            $query->componentItems();
+            if ($request->boolean('alternative_raw_only')) {
+                $query->rawMaterials()->whereHas('unit', fn ($units) => $units->where('status', 'active'));
+            } else {
+                $query->componentItems();
+            }
 
             if ($request->user() instanceof User) {
                 $query = $this->visibility->applyAnyScreenToEloquent($query, $request->user(), [

@@ -10,6 +10,17 @@ class SalesWithholdingService
 
     public const EtaNetExcludingTax = 'eta_t4_net_excluding_tax';
 
+    public const CommercialGrossPreview = 'commercial_gross_preview';
+
+    public static function labelKey(?string $basis): string
+    {
+        return match ($basis) {
+            self::CommercialGrossPreview => 'sales_ui.wht.commercial',
+            self::EtaNetExcludingTax => 'sales_ui.wht.eta',
+            default => 'sales_ui.wht.legacy',
+        };
+    }
+
     public function __construct(private readonly SalesAmountService $amounts) {}
 
     /** @return array{withholding_basis: string, withholding_rate: string, withholding_basis_amount: string, withholding_amount: string, net_payable_amount: string} */
@@ -18,7 +29,7 @@ class SalesWithholdingService
         $basis ??= self::GrossIncludingTax;
         $basisAmount = $basis === self::EtaNetExcludingTax ? $netExcludingTax : $grossIncludingTax;
         $rate ??= '0';
-        if (! in_array($basis, [self::GrossIncludingTax, self::EtaNetExcludingTax], true) || $basisAmount === null
+        if (! in_array($basis, [self::GrossIncludingTax, self::EtaNetExcludingTax, self::CommercialGrossPreview], true) || $basisAmount === null
             || ! is_scalar($rate) || ! preg_match('/^\d{1,3}(?:\.\d{1,4})?$/D', (string) $rate) || bccomp((string) $rate, '100', 4) > 0
             || bccomp($grossIncludingTax, '0', 4) < 0 || bccomp($basisAmount, '0', 4) < 0 || bccomp($basisAmount, $grossIncludingTax, 4) > 0) {
             throw new DomainException(__('sales_ui.withholding_invalid'));

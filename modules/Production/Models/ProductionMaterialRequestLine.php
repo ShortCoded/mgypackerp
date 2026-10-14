@@ -24,11 +24,38 @@ class ProductionMaterialRequestLine extends Model
         return [
             'planned_quantity' => 'decimal:8',
             'requested_quantity' => 'decimal:8',
+            'original_requested_quantity' => 'decimal:8',
+            'material_conversion_factor' => 'decimal:8',
             'approved_quantity' => 'decimal:8',
             'reserved_quantity' => 'decimal:8',
             'issued_quantity' => 'decimal:8',
+            'reallocated_quantity' => 'decimal:8',
+            'reallocated_original_quantity' => 'decimal:8',
+            'reallocated_reserved_quantity' => 'decimal:8',
             'shortage_quantity' => 'decimal:8',
         ];
+    }
+
+    public function remainingReservedQuantity(): string
+    {
+        $remaining = bcsub(
+            bcsub((string) $this->reserved_quantity, (string) $this->issued_quantity, 8),
+            (string) $this->reallocated_reserved_quantity,
+            8,
+        );
+
+        return bccomp($remaining, '0', 8) > 0 ? $remaining : '0.00000000';
+    }
+
+    public function reallocatableQuantity(): string
+    {
+        $remaining = bcsub(
+            bcsub((string) $this->approved_quantity, (string) $this->issued_quantity, 8),
+            (string) $this->reallocated_quantity,
+            8,
+        );
+
+        return bccomp($remaining, '0', 8) > 0 ? $remaining : '0.00000000';
     }
 
     public function request(): BelongsTo
@@ -46,9 +73,19 @@ class ProductionMaterialRequestLine extends Model
         return $this->belongsTo(Product::class)->withTrashed();
     }
 
+    public function originalProduct(): BelongsTo
+    {
+        return $this->belongsTo(Product::class, 'original_product_id')->withTrashed();
+    }
+
     public function unit(): BelongsTo
     {
         return $this->belongsTo(ItemUnit::class)->withTrashed();
+    }
+
+    public function originalUnit(): BelongsTo
+    {
+        return $this->belongsTo(ItemUnit::class, 'original_unit_id')->withTrashed();
     }
 
     public function reservations(): HasMany

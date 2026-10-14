@@ -664,7 +664,7 @@
                                                 </div>
                                             </td>
                                         </tr>
-                                        <tr class="js-product-component-details-row product-component-details-row d-none" data-component-details-index="__INDEX__">
+                                        <tr class="js-product-component-details-row product-component-details-row" data-component-details-index="__INDEX__">
                                             <td colspan="7" class="product-component-details-cell">
                                                 <div class="product-component-details-layout">
                                                     <div class="product-component-reference-control">
@@ -677,6 +677,18 @@
                                                     <div class="product-component-explanation-control">
                                                         <span class="form-label small fw-semi-bold mb-1 d-block">{{ __('products.components.calculation') }}</span>
                                                         <div class="small text-600 product-component-calculation-explanation js-product-component-calculation-explanation"></div>
+                                                    </div>
+                                                    <div class="product-component-alternatives-control">
+                                                        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+                                                            <div>
+                                                                <span class="form-label small fw-semi-bold mb-0 d-block">{{ __('products.components.alternatives.title') }}</span>
+                                                                <span class="small text-600">{{ __('products.components.alternatives.help') }}</span>
+                                                            </div>
+                                                            <button class="btn btn-falcon-default btn-sm js-product-component-alternative-add" type="button">
+                                                                <span class="fas fa-plus me-1"></span>{{ __('products.components.alternatives.add') }}
+                                                            </button>
+                                                        </div>
+                                                        <div class="js-product-component-alternatives"></div>
                                                     </div>
                                                 </div>
                                             </td>
@@ -789,6 +801,12 @@
         'componentTotalUnavailable' => __('products.components.total_unavailable'),
         'componentClientValidationFailed' => __('products.components.client_validation_failed'),
         'componentUnknownReference' => __('products.components.unknown_reference'),
+        'componentAlternativeProduct' => __('products.components.alternatives.product'),
+        'componentAlternativeFactor' => __('products.components.alternatives.conversion_factor'),
+        'componentAlternativeFactorHelp' => __('products.components.alternatives.factor_help'),
+        'componentAlternativeNotes' => __('products.components.alternatives.notes'),
+        'componentAlternativeRemove' => __('products.components.alternatives.remove'),
+        'componentAlternativeEmpty' => __('products.components.alternatives.empty'),
     ];
 @endphp
 @push('scripts')

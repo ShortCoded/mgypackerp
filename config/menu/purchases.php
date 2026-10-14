@@ -118,7 +118,12 @@ return [
                 'actions' => [
                     'view' => 'purchases.goods_receipt_inspection.view',
                     'create' => 'purchases.goods_receipt_inspection.create',
+                    'edit' => 'purchases.goods_receipt_inspection.edit',
                     'print' => 'purchases.goods_receipt_inspection.print',
+                    'cancel' => 'purchases.goods_receipt_inspection.cancel',
+                    'delete' => 'purchases.goods_receipt_inspection.delete',
+                    'restore' => 'purchases.goods_receipt_inspection.restore',
+                    'view_trashed' => 'purchases.goods_receipt_inspection.view_trashed',
                 ],
                 'active' => ['admin.purchases.goods-receipt-inspection.*'], 'children' => [],
             ],

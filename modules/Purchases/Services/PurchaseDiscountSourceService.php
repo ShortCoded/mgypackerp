@@ -91,7 +91,7 @@ class PurchaseDiscountSourceService
             $inherited = $inherited && $line instanceof PurchaseOrderLine
                 && ($input['discount_type'] ?? 'fixed') === $expected['discount_type']
                 && bccomp((string) ($input['discount_value'] ?? 0), (string) $expected['discount_value'], 4) === 0
-                && bccomp((string) ($input['unit_price'] ?? 0), (string) $line->unit_price, 8) === 0
+                && bccomp((string) ($input['unit_price'] ?? 0), (string) $line->unit_price, 15) === 0
                 && bccomp((string) ($input['tax_rate'] ?? 0), (string) $line->tax_rate, 4) === 0;
         }
         $headerType = $data['header_discount_type'] ?? null;

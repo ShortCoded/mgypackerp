@@ -47,6 +47,11 @@ trait ValidatesProductComponentPayload
             'reference_component_key' => ['nullable', 'uuid'],
             'input_source' => ['nullable', 'string', Rule::in(ProductComponent::inputSources())],
             'notes' => ['nullable', 'string'],
+            'alternatives' => ['nullable', 'array'],
+            'alternatives.*.public_id' => ['nullable', 'uuid'],
+            'alternatives.*.alternative_product_doc_num' => ['required', 'string'],
+            'alternatives.*.conversion_factor' => ['required', 'numeric', 'gt:0', 'decimal:0,8'],
+            'alternatives.*.notes' => ['nullable', 'string', 'max:2000'],
         ];
     }
 
@@ -59,6 +64,19 @@ trait ValidatesProductComponentPayload
                 $value = $this->input($field);
                 $this->merge([$field => is_string($value) ? trim($value) : $value]);
             }
+        }
+
+        if ($this->has('alternatives') && is_array($this->input('alternatives'))) {
+            $this->merge([
+                'alternatives' => collect($this->input('alternatives'))
+                    ->filter(fn (mixed $row): bool => is_array($row))
+                    ->map(fn (array $row): array => [
+                        'public_id' => $this->blankToNull($row['public_id'] ?? null),
+                        'alternative_product_doc_num' => $this->blankToNull($row['alternative_product_doc_num'] ?? null),
+                        'conversion_factor' => is_string($row['conversion_factor'] ?? null) ? trim($row['conversion_factor']) : ($row['conversion_factor'] ?? null),
+                        'notes' => $this->blankToNull($row['notes'] ?? null),
+                    ])->values()->all(),
+            ]);
         }
 
         if (! $this->filled('calculation_method')) {
@@ -131,6 +149,30 @@ trait ValidatesProductComponentPayload
                 $validator->errors()->add('input_source', __('products.components.input_source_required'));
             }
         }
+
+        $seenAlternatives = [];
+        foreach ($this->input('alternatives', []) as $index => $alternative) {
+            if (! is_array($alternative)) {
+                continue;
+            }
+
+            $docNum = trim((string) ($alternative['alternative_product_doc_num'] ?? ''));
+            $field = "alternatives.{$index}.alternative_product_doc_num";
+            $alternativeProduct = $this->componentAlternativeProductRecord($docNum);
+
+            if (! $alternativeProduct instanceof Product
+                || (int) $alternativeProduct->getKey() === (int) $componentProduct->getKey()
+            ) {
+                $validator->errors()->add($field, __('products.components.alternatives.invalid_product'));
+
+                continue;
+            }
+
+            if (isset($seenAlternatives[$alternativeProduct->getKey()])) {
+                $validator->errors()->add($field, __('products.components.alternatives.duplicate_product'));
+            }
+            $seenAlternatives[$alternativeProduct->getKey()] = true;
+        }
     }
 
     /**
@@ -167,6 +209,16 @@ trait ValidatesProductComponentPayload
             : null;
         $data['input_source'] = $inputSource;
         $data['notes'] = $this->blankToNull($data['notes'] ?? null);
+        $data['alternatives'] = collect($data['alternatives'] ?? [])->map(function (array $alternative): array {
+            $product = $this->componentAlternativeProductRecord((string) ($alternative['alternative_product_doc_num'] ?? ''));
+
+            return [
+                'public_id' => $this->blankToNull($alternative['public_id'] ?? null),
+                'alternative_product_id' => $product?->getKey(),
+                'conversion_factor' => app(NumericFormatService::class)->normalizeToScale($alternative['conversion_factor'] ?? null, 8),
+                'notes' => $this->blankToNull($alternative['notes'] ?? null),
+            ];
+        })->values()->all();
 
         unset($data['component_product_doc_num'], $data['unit_doc_num']);
 
@@ -186,6 +238,8 @@ trait ValidatesProductComponentPayload
             'percentage' => __('products.components.percentage'),
             'reference_component_key' => __('products.components.reference_component'),
             'notes' => __('products.components.notes'),
+            'alternatives.*.alternative_product_doc_num' => __('products.components.alternatives.product'),
+            'alternatives.*.conversion_factor' => __('products.components.alternatives.conversion_factor'),
         ];
     }
 
@@ -212,6 +266,9 @@ trait ValidatesProductComponentPayload
             'percentage.numeric' => __('products.components.percentage_gt_zero'),
             'percentage.gt' => __('products.components.percentage_gt_zero'),
             'percentage.regex' => __('products.components.percentage_precision'),
+            'alternatives.*.conversion_factor.numeric' => __('products.components.alternatives.invalid_factor'),
+            'alternatives.*.conversion_factor.gt' => __('products.components.alternatives.invalid_factor'),
+            'alternatives.*.conversion_factor.decimal' => __('products.components.alternatives.invalid_factor'),
         ];
     }
 
@@ -259,6 +316,23 @@ trait ValidatesProductComponentPayload
             ->active()
             ->with(['unit', 'equivalentUnit'])
             ->componentItems()
+            ->where('doc_num', $docNum)
+            ->first();
+    }
+
+    private function componentAlternativeProductRecord(string $docNum): ?Product
+    {
+        $docNum = trim($docNum);
+
+        if ($docNum === '') {
+            return null;
+        }
+
+        return Product::query()
+            ->forCompany($this->companyId())
+            ->active()
+            ->rawMaterials()
+            ->whereHas('unit', fn ($units) => $units->where('status', 'active'))
             ->where('doc_num', $docNum)
             ->first();
     }

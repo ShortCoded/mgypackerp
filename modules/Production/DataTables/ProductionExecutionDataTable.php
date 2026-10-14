@@ -7,6 +7,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Modules\Core\Models\Branch;
 use Modules\Core\Services\DataTableSearchService;
 use Modules\Core\Services\DateFormatService;
@@ -230,11 +231,19 @@ class ProductionExecutionDataTable
             ->withExists([
                 'lines as has_shortage' => fn ($query) => $query->where('shortage_quantity', '>', 0),
                 'inventoryDocuments as has_inventory_documents',
-            ]);
+            ])
+            ->selectSub(
+                DB::table('production_material_request_reallocations as reallocation_evidence')
+                    ->selectRaw('1')
+                    ->whereColumn('reallocation_evidence.source_material_request_id', 'production_material_requests.id')
+                    ->orWhereColumn('reallocation_evidence.target_material_request_id', 'production_material_requests.id')
+                    ->limit(1),
+                'has_reallocation_evidence',
+            );
 
         return DataTables::eloquent($query)
             ->filter(fn ($query) => $this->filter($query, $request, ['production_material_requests.doc_num', 'production_runs.run_number', 'branch_stores.name', 'purchase_requisitions.doc_num', 'production_material_requests.status', 'material_created_users.name', 'material_updated_users.name']))
-            ->addColumn('checkbox', fn (ProductionMaterialRequest $row): string => view('modules.production.material-requests.partials.checkbox', ['record' => $row, 'canChange' => $row->status === ProductionMaterialRequest::StatusSubmitted && ! $row->has_inventory_documents])->render())
+            ->addColumn('checkbox', fn (ProductionMaterialRequest $row): string => view('modules.production.material-requests.partials.checkbox', ['record' => $row, 'canChange' => $row->status === ProductionMaterialRequest::StatusSubmitted && ! $row->has_inventory_documents && ! $row->has_reallocation_evidence])->render())
             ->editColumn('doc_num', fn (ProductionMaterialRequest $row): string => $row->trashed()
                 ? e($row->doc_num)
                 : '<a class="fw-semibold" data-row-primary-link href="'.e(route('admin.production.material-requests.show', $row)).'">'.e($row->doc_num).'</a>')
@@ -471,7 +480,7 @@ class ProductionExecutionDataTable
     {
         return view('modules.production.material-requests.partials.actions', [
             'record' => $row,
-            'canChange' => $row->status === ProductionMaterialRequest::StatusSubmitted && ! $row->has_inventory_documents,
+            'canChange' => $row->status === ProductionMaterialRequest::StatusSubmitted && ! $row->has_inventory_documents && ! $row->has_reallocation_evidence,
             'hasShortage' => (bool) $row->has_shortage,
         ])->render();
     }

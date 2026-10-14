@@ -120,7 +120,7 @@ class UnpricedInventoryReceiptService
                 ->findOrFail($record->getKey());
             $this->assertInCurrentContext($locked, $this->currentContext());
 
-            if ($locked->purchase_order_id !== null || $locked->status === UnpricedInventoryReceipt::StatusReversed) {
+            if ($locked->purchase_order_id !== null || $locked->supply_order_id !== null || $locked->status === UnpricedInventoryReceipt::StatusReversed) {
                 throw new DomainException(__('Use the purchasing receipt workflow for purchase-linked documents.'));
             }
 
@@ -174,7 +174,7 @@ class UnpricedInventoryReceiptService
             $locked = UnpricedInventoryReceipt::query()->lockForUpdate()->findOrFail($record->getKey());
             $this->assertInCurrentContext($locked, $this->currentContext());
 
-            if ($locked->purchase_order_id !== null || $locked->status === UnpricedInventoryReceipt::StatusReversed) {
+            if ($locked->purchase_order_id !== null || $locked->supply_order_id !== null || $locked->status === UnpricedInventoryReceipt::StatusReversed) {
                 throw new DomainException(__('Use the purchasing receipt workflow for purchase-linked documents.'));
             }
 
@@ -213,7 +213,7 @@ class UnpricedInventoryReceiptService
             $locked = UnpricedInventoryReceipt::query()->with('lines')->lockForUpdate()->findOrFail($record->getKey());
             $this->assertInCurrentContext($locked, $this->currentContext());
 
-            if ($locked->purchase_order_id !== null || $locked->status === UnpricedInventoryReceipt::StatusReversed) {
+            if ($locked->purchase_order_id !== null || $locked->supply_order_id !== null || $locked->status === UnpricedInventoryReceipt::StatusReversed) {
                 throw new DomainException(__('Use the purchasing receipt workflow for purchase-linked documents.'));
             }
 
@@ -521,7 +521,7 @@ class UnpricedInventoryReceiptService
 
     private function assertEditable(UnpricedInventoryReceipt $record): void
     {
-        if ($record->purchase_order_id !== null || $record->status === UnpricedInventoryReceipt::StatusReversed) {
+        if ($record->purchase_order_id !== null || $record->supply_order_id !== null || $record->status === UnpricedInventoryReceipt::StatusReversed) {
             throw new DomainException(__('Use the purchasing receipt workflow for purchase-linked documents.'));
         }
         if ($record->isApproved() || $record->approved_at !== null
@@ -541,7 +541,7 @@ class UnpricedInventoryReceiptService
 
     private function assertDeletable(UnpricedInventoryReceipt $record): void
     {
-        if ($record->purchase_order_id !== null || $record->status === UnpricedInventoryReceipt::StatusReversed) {
+        if ($record->purchase_order_id !== null || $record->supply_order_id !== null || $record->status === UnpricedInventoryReceipt::StatusReversed) {
             throw new DomainException(__('Use the purchasing receipt workflow for purchase-linked documents.'));
         }
         if ($record->isApproved() || $record->approved_at !== null

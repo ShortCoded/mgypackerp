@@ -160,6 +160,15 @@ class ProductComponent extends Model
     }
 
     /**
+     * @return HasMany<ProductComponentAlternative, $this>
+     */
+    public function alternatives(): HasMany
+    {
+        return $this->hasMany(ProductComponentAlternative::class, 'product_component_id')
+            ->orderBy('id');
+    }
+
+    /**
      * @return BelongsTo<User, $this>
      */
     public function createdBy(): BelongsTo

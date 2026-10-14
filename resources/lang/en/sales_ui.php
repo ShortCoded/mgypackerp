@@ -1,6 +1,9 @@
 <?php
 
 return [
+    'document_discount' => 'Document discount',
+    'financial_summary' => 'Discounts and totals',
+
     'invoice_source_amount_exceeded' => 'Existing invoice allocations exceed the source amount. Review their correction evidence before invoicing again.',
     'invoice_source_tax_locked' => 'Linked invoice tax is preserved from its source document; a replacement rate cannot be entered.',
     'source_tax_help' => 'Tax is allocated from the source document; the rate is shown and booked source amounts are preserved.',
@@ -19,6 +22,7 @@ return [
         'remaining' => 'Remaining receivable',
         'basis' => 'Withholding preview basis',
         'eta' => 'Invoice net value excluding VAT',
+        'commercial' => 'Commercial preview on gross including VAT',
         'legacy' => 'Historical gross including VAT (draft preview)',
         'certificate_amount' => 'Certificate withholding amount',
         'workflow' => 'Record and review tax withholding',
@@ -43,7 +47,7 @@ return [
         'recovery_required' => 'Recover active certified withholding with a retained recovery document before reversing collection, returning or correcting this invoice.',
         'recovery_reference' => 'Certificate recovery reference',
         'recovery_help' => 'An exact inverse requires a retained correction or recovery document, a reason and an open posting period. Original cash is preserved.',
-        'policy' => 'Preview only: the invoice posts the full gross receivable. Actual tax is recognized only after certified collection evidence and independent approval. The applicable rate must be entered; no universal rate is assumed. Each partial invoice calculates its own preview from its saved net value.',
+        'policy' => 'Commercial preview only: the entered rate applies to each document\'s gross including VAT. The invoice posts the full gross receivable. This preview is neither collected tax nor a withholding certificate; actual withholding requires collection evidence, a certificate and independent approval on its statutory basis. No universal rate is assumed.',
     ],
     'cancel_direct_service_invoice' => 'Cancel direct service invoice',
     'direct_service_cancel_help' => 'For an uncollected direct service invoice in the current open period. Cancelling posts an exact reversal of the original journal and preserves the invoice and audit history.',

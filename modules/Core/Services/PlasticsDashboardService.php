@@ -10,6 +10,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Validation\ValidationException;
+use Modules\Accounting\Services\LedgerQueryService;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Currency;
@@ -24,7 +25,9 @@ use Modules\Maintenance\Models\MaintenancePlanDue;
 use Modules\Maintenance\Models\MaintenanceRequest;
 use Modules\Maintenance\Models\MaintenanceWorkOrder;
 use Modules\Production\Services\ProductionReportService;
+use Modules\Purchases\Models\Supplier;
 use Modules\Purchases\Services\Reports\ProcurementCycleReport;
+use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\SalesOrder;
 use Modules\Sales\Models\SalesRequest;
@@ -79,6 +82,7 @@ class PlasticsDashboardService
         private readonly InventoryReportService $inventoryReports,
         private readonly ProductionReportService $productionReports,
         private readonly ProcurementCycleReport $procurementReports,
+        private readonly LedgerQueryService $ledger,
         private readonly SalesCycleReadService $salesCycleReports,
         private readonly FinanceReportService $financeReports,
     ) {}
@@ -236,13 +240,72 @@ class PlasticsDashboardService
                 $query->whereHas('invoice', fn (Builder $invoice) => $invoice->where('currency_id', $currency->getKey()))
                     ->orWhereHas('order', fn (Builder $order) => $order->where('currency_id', $currency->getKey()));
             }));
+        $customerBalances = $this->ledger->accountBalanceSummary([
+            'company_id' => (int) $context['company_id'],
+            'financial_period_id' => (int) $context['financial_period_id'],
+            'all_periods' => true,
+            'from_date' => $filters['from'],
+            'to_date' => $filters['to'],
+            'branch_id' => (int) $context['branch_id'],
+            'cost_center_id' => null,
+        ], Customer::query()
+            ->forCompany((int) $context['company_id'])
+            ->whereNotNull('account_id')
+            ->pluck('account_id')
+            ->map(fn (mixed $accountId): int => (int) $accountId)
+            ->all());
 
         return [
             $this->summaryMetric('sales_orders', $orders),
             $this->summaryMetric('sales_invoices', (int) ($invoiceTotals?->invoice_count ?? 0)),
             $this->summaryMetric('sales_value', $currency ? (string) ($invoiceTotals?->invoiced_value ?? 0) : null, $currency),
             $this->summaryMetric('sales_returns', (clone $returns)->count(), $currency, $currency ? (string) (clone $returns)->sum('total_amount') : null),
-            $this->summaryMetric('sales_outstanding', $currency ? (string) ($invoiceTotals?->outstanding_value ?? 0) : null, $currency),
+            ...$this->customerBalanceMetrics($customerBalances, $period),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $balances
+     * @param  array<string, Carbon>  $period
+     * @return list<array<string, mixed>>
+     */
+    private function customerBalanceMetrics(array $balances, array $period): array
+    {
+        $currency = (string) ($balances['currency']['code'] ?? '');
+        $from = $this->dates->formatDate($period['from']);
+        $to = $this->dates->formatDate($period['to']);
+
+        return [
+            $this->customerBalanceMetric('customer_opening_receivable', $balances['opening'], __('dashboard.summaries.receivable_meta.opening', [
+                'credit' => $this->numbers->format($balances['opening']['credit']),
+                'currency' => $currency,
+                'date' => $from,
+            ])),
+            $this->customerBalanceMetric('customer_period_debit', $balances['period'], __('dashboard.summaries.receivable_meta.period', [
+                'credit' => $this->numbers->format($balances['period']['credit']),
+                'currency' => $currency,
+                'from' => $from,
+                'to' => $to,
+            ])),
+            $this->customerBalanceMetric('sales_outstanding', $balances['ending'], __('dashboard.summaries.receivable_meta.ending', [
+                'credit' => $this->numbers->format($balances['ending']['credit']),
+                'currency' => $currency,
+                'date' => $to,
+            ])),
+        ];
+    }
+
+    /** @param array{debit: string, credit: string} $balance */
+    private function customerBalanceMetric(string $key, array $balance, string $meta): array
+    {
+        return [
+            'key' => $key,
+            'title' => __('dashboard.summaries.metrics.'.$key),
+            'value' => $this->numbers->format($balance['debit']),
+            'meta' => $meta,
+            'icon' => 'money-bill-wave',
+            'color' => 'primary',
+            'url' => null,
         ];
     }
 
@@ -256,13 +319,72 @@ class PlasticsDashboardService
         $orders = $this->procurementReports->rows(ProcurementCycleReport::PurchaseOrderStatus, $filters, (int) $context['company_id'], (int) $context['financial_period_id']);
         $invoices = $this->procurementReports->rows(ProcurementCycleReport::PurchaseInvoices, $filters, (int) $context['company_id'], (int) $context['financial_period_id']);
         $returns = $this->procurementReports->rows(ProcurementCycleReport::Returns, $filters, (int) $context['company_id'], (int) $context['financial_period_id']);
+        $supplierBalances = $this->ledger->accountBalanceSummary([
+            'company_id' => (int) $context['company_id'],
+            'financial_period_id' => (int) $context['financial_period_id'],
+            'all_periods' => true,
+            'from_date' => $filters['date_from'],
+            'to_date' => $filters['date_to'],
+            'branch_id' => (int) $context['branch_id'],
+            'cost_center_id' => null,
+        ], Supplier::query()
+            ->forCompany((int) $context['company_id'])
+            ->whereNotNull('account_id')
+            ->pluck('account_id')
+            ->map(fn (mixed $accountId): int => (int) $accountId)
+            ->all());
 
         return [
             $this->summaryMetric('purchase_orders', $orders->pluck('document')->filter()->unique()->count()),
             $this->summaryMetric('purchase_invoices', $invoices->pluck('document')->filter()->unique()->count()),
             $this->summaryMetric('purchase_value', $currency ? (string) $invoices->sum('amount') : null, $currency),
             $this->summaryMetric('purchase_returns', $returns->pluck('document')->filter()->unique()->count(), $currency, $currency ? (string) $returns->sum('amount') : null),
-            $this->summaryMetric('purchase_outstanding', $currency ? (string) $invoices->sum('outstanding') : null, $currency),
+            ...$this->supplierBalanceMetrics($supplierBalances, $period),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $balances
+     * @param  array<string, Carbon>  $period
+     * @return list<array<string, mixed>>
+     */
+    private function supplierBalanceMetrics(array $balances, array $period): array
+    {
+        $currency = (string) ($balances['currency']['code'] ?? '');
+        $from = $this->dates->formatDate($period['from']);
+        $to = $this->dates->formatDate($period['to']);
+
+        return [
+            $this->supplierBalanceMetric('supplier_opening_payable', $balances['opening'], __('dashboard.summaries.balance_meta.opening', [
+                'debit' => $this->numbers->format($balances['opening']['debit']),
+                'currency' => $currency,
+                'date' => $from,
+            ])),
+            $this->supplierBalanceMetric('supplier_period_credit', $balances['period'], __('dashboard.summaries.balance_meta.period', [
+                'debit' => $this->numbers->format($balances['period']['debit']),
+                'currency' => $currency,
+                'from' => $from,
+                'to' => $to,
+            ])),
+            $this->supplierBalanceMetric('purchase_outstanding', $balances['ending'], __('dashboard.summaries.balance_meta.ending', [
+                'debit' => $this->numbers->format($balances['ending']['debit']),
+                'currency' => $currency,
+                'date' => $to,
+            ])),
+        ];
+    }
+
+    /** @param array{debit: string, credit: string} $balance */
+    private function supplierBalanceMetric(string $key, array $balance, string $meta): array
+    {
+        return [
+            'key' => $key,
+            'title' => __('dashboard.summaries.metrics.'.$key),
+            'value' => $this->numbers->format($balance['credit']),
+            'meta' => $meta,
+            'icon' => 'hand-holding-dollar',
+            'color' => 'primary',
+            'url' => null,
         ];
     }
 

@@ -133,6 +133,7 @@ class OperationalNotificationObserver
                 ProductionMaterialRequest::StatusShortage => ['production.material_requests.approve', true],
                 ProductionMaterialRequest::StatusPartiallyIssued => ['production.material_requests.issue', true],
                 ProductionMaterialRequest::StatusIssued => ['production.material_requests.view', false],
+                ProductionMaterialRequest::StatusReallocated => ['production.material_requests.view', false],
                 ProductionMaterialRequest::StatusRejected => ['production.material_requests.view', false],
                 ProductionMaterialRequest::StatusCancelled => ['production.material_requests.view', false],
             ]),

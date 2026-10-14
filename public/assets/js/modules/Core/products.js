@@ -1345,12 +1345,24 @@
     }
 
     function componentNameToErrorKey(name) {
+        var nestedMatch = String(name || '').match(/^components\[(\d+)\]\[alternatives\]\[(\d+)\]\[([^\]]+)\]$/);
+
+        if (nestedMatch) {
+            return 'components.' + nestedMatch[1] + '.alternatives.' + nestedMatch[2] + '.' + nestedMatch[3];
+        }
+
         var match = String(name || '').match(/^components\[(\d+)\]\[([^\]]+)\]$/);
 
         return match ? componentErrorKey(match[1], match[2]) : String(name || '');
     }
 
     function componentErrorToName(field) {
+        var nestedMatch = String(field || '').match(/^components\.(\d+)\.alternatives\.(\d+)\.([^.\]]+)$/);
+
+        if (nestedMatch) {
+            return 'components[' + nestedMatch[1] + '][alternatives][' + nestedMatch[2] + '][' + nestedMatch[3] + ']';
+        }
+
         var match = String(field || '').match(/^components\.(\d+)\.([^.\]]+)$/);
 
         return match ? componentFieldName(match[1], match[2]) : String(field || '');
@@ -1447,6 +1459,98 @@
         return String(template.innerHTML || '').replace(/__INDEX__/g, String(index));
     }
 
+    function componentAlternativeRows($row) {
+        return componentDetailsRow($row).find('.js-product-component-alternative-row');
+    }
+
+    function updateComponentAlternativeEmptyState($row) {
+        var $container = componentDetailsRow($row).find('.js-product-component-alternatives');
+
+        $container.find('.js-product-component-alternative-empty').remove();
+        if (componentAlternativeRows($row).length === 0) {
+            $container.append($('<div class="small text-600 js-product-component-alternative-empty"></div>').text(message('componentAlternativeEmpty')));
+        }
+    }
+
+    function addComponentAlternativeRow($row, values) {
+        var rowValues = values || {};
+        var $panel = $row.closest('.product-components-panel');
+        var $container = componentDetailsRow($row).find('.js-product-component-alternatives');
+        var $alternative = $('<div class="product-component-alternative-row js-product-component-alternative-row"></div>');
+        var $productGroup = $('<div></div>');
+        var $product = $('<select class="form-select js-select2-ajax js-product-component-alternative-product" data-alternative-field="alternative_product_doc_num" data-allow-clear="true" data-template="product-image"></select>')
+            .attr('data-url', (function () {
+                var url = String($panel.data('raw-material-url') || '');
+
+                return url + (url.indexOf('?') >= 0 ? '&' : '?') + 'alternative_raw_only=1';
+            })())
+            .attr('data-placeholder', message('componentAlternativeProduct'));
+        var productValue = String(rowValues.alternative_product_doc_num || '');
+        var productText = String(rowValues.raw_material || productValue);
+
+        if (productValue !== '') {
+            $product.append(new Option(productText, productValue, true, true)).val(productValue);
+        }
+
+        $productGroup.append($('<label class="form-label small mb-1"></label>').text(message('componentAlternativeProduct')))
+            .append($('<input type="hidden" data-alternative-field="public_id">').val(rowValues.public_id || ''))
+            .append($product)
+            .append('<div class="invalid-feedback d-block" data-alternative-error="alternative_product_doc_num"></div>');
+
+        var $factorGroup = $('<div></div>')
+            .append($('<label class="form-label small mb-1"></label>').text(message('componentAlternativeFactor')))
+            .append($('<input type="text" class="form-control text-end" min="0.00000001" step="0.00000001" inputmode="decimal" dir="ltr" data-numeric-input data-numeric-scale="8" data-numeric-min="0.00000001" data-alternative-field="conversion_factor">').val(rowValues.conversion_factor || ''))
+            .append($('<div class="form-text"></div>').text(message('componentAlternativeFactorHelp')))
+            .append('<div class="invalid-feedback d-block" data-alternative-error="conversion_factor"></div>');
+
+        var $notesGroup = $('<div></div>')
+            .append($('<label class="form-label small mb-1"></label>').text(message('componentAlternativeNotes')))
+            .append($('<input type="text" class="form-control" maxlength="2000" data-alternative-field="notes">').val(rowValues.notes || ''))
+            .append('<div class="invalid-feedback d-block" data-alternative-error="notes"></div>');
+        var $remove = $('<button type="button" class="btn btn-link text-danger px-2 mt-4 js-product-component-alternative-remove"></button>')
+            .attr('title', message('componentAlternativeRemove'))
+            .append('<span class="fas fa-trash-alt"></span><span class="visually-hidden">' + escapeHtml(message('componentAlternativeRemove')) + '</span>');
+
+        $alternative.append($productGroup, $factorGroup, $notesGroup, $remove);
+        $container.find('.js-product-component-alternative-empty').remove();
+        $container.append($alternative);
+        renumberComponentAlternatives($row);
+        initSelect2($alternative[0]);
+        refreshNumericInputs($alternative[0]);
+
+        return $alternative;
+    }
+
+    function renumberComponentAlternatives($row) {
+        var componentIndex = Number($row.attr('data-component-index') || 0);
+
+        componentAlternativeRows($row).each(function (alternativeIndex) {
+            var $alternative = $(this);
+
+            $alternative.find('[data-alternative-field]').each(function () {
+                var $field = $(this);
+                var field = String($field.data('alternative-field') || '');
+
+                $field.attr('name', 'components[' + componentIndex + '][alternatives][' + alternativeIndex + '][' + field + ']');
+            });
+            $alternative.find('[data-alternative-error]').each(function () {
+                var field = String($(this).data('alternative-error') || '');
+
+                $(this).attr('data-error-for', 'components.' + componentIndex + '.alternatives.' + alternativeIndex + '.' + field);
+            });
+        });
+    }
+
+    function renderComponentAlternatives($row, alternatives) {
+        var $container = componentDetailsRow($row).find('.js-product-component-alternatives');
+
+        $container.empty();
+        ($.isArray(alternatives) ? alternatives : []).forEach(function (alternative) {
+            addComponentAlternativeRow($row, alternative);
+        });
+        updateComponentAlternativeEmptyState($row);
+    }
+
     function editableComponentRow(index, values) {
         var rowValues = values || {};
         var $templateRows = $(componentTemplateHtml(index).trim());
@@ -1477,6 +1581,7 @@
         setComponentUnitOptions($row, rowValues.unit_options || fallbackComponentUnitOptions(rowValues), rowValues.unit_doc_num || '');
         $row.find('[data-component-field="quantity"]').val(componentInitialCalculationValue(rowValues, method));
         $row.find('[data-component-field="notes"]').val(rowValues.notes || '');
+        renderComponentAlternatives($row, rowValues.alternatives || []);
         updateComponentMethodUi($row);
 
         if (rawMaterialValue !== '') {
@@ -1558,7 +1663,10 @@
             }
         }
 
-        $row.append('<td class="dt-text dt-ellipsis product-component-item-column"><span class="dt-ellipsis-content" title="' + escapeHtml(rowValues.raw_material || '') + '">' + escapeHtml(rowValues.raw_material || '') + '</span></td>');
+        var alternativeSummary = ($.isArray(rowValues.alternatives) ? rowValues.alternatives : []).map(function (alternative) {
+            return String(alternative.raw_material || alternative.alternative_product_doc_num || '') + ' × ' + String(alternative.conversion_factor || '');
+        }).filter(Boolean).join('; ');
+        $row.append('<td class="dt-text product-component-item-column"><span class="dt-ellipsis-content" title="' + escapeHtml(rowValues.raw_material || '') + '">' + escapeHtml(rowValues.raw_material || '') + '</span>' + (alternativeSummary ? '<div class="small text-600 mt-1">' + escapeHtml(message('componentAlternativeProduct')) + ': ' + escapeHtml(alternativeSummary) + '</div>' : '') + '</td>');
         $row.append('<td class="dt-text dt-ellipsis product-component-unit-column"><span class="dt-ellipsis-content" title="' + escapeHtml(rowValues.unit || '') + '">' + escapeHtml(rowValues.unit || '') + '</span></td>');
         $row.append('<td class="dt-text white-space-nowrap product-component-method-column">' + escapeHtml(methodText) + '</td>');
         $row.append('<td class="dt-number text-center white-space-nowrap product-component-value-column"><span dir="ltr">' + escapeHtml(calculationValue) + (method === 'percentage' && calculationValue !== '' ? ' %' : '') + '</span></td>');
@@ -1641,8 +1749,9 @@
         var $details = componentDetailsRow($row);
         var $reference = componentReferenceField($row);
 
-        $details.toggleClass('d-none', !isPercentage);
-        $row.toggleClass('product-component-has-details', isPercentage);
+        $details.removeClass('d-none');
+        $row.addClass('product-component-has-details');
+        $details.find('.product-component-reference-control, .product-component-explanation-control').toggleClass('d-none', !isPercentage);
         $row.find('.js-product-component-percentage-addon').toggleClass('d-none', !isPercentage);
         $reference.prop('disabled', !isPercentage);
         $value
@@ -1654,7 +1763,7 @@
 
         setComponentInputSource($row, isPercentage ? 'percentage' : 'weight');
 
-        if (isPercentage && $details.length && $details[0].isConnected) {
+        if ($details.length && $details[0].isConnected) {
             initSelect2($details[0]);
         }
     }
@@ -1943,6 +2052,7 @@
             reference_component_key: componentReferenceKey($row),
             input_source: componentInputSource($row),
             notes: $row.find('[data-component-field="notes"]').val() || '',
+            alternatives: [],
             _delete: false
         };
     }
@@ -2641,6 +2751,7 @@
                     $error.attr('data-error-for', componentErrorKey(index, field));
                 }
             });
+            renumberComponentAlternatives($row);
         });
 
         rebuildComponentReferenceOptions($panel);
@@ -2648,9 +2759,7 @@
         $panel.find('.js-product-component-row').each(function () {
             var $row = $(this);
 
-            if (componentCalculationMethod($row) === 'percentage') {
-                initSelect2(componentDetailsRow($row)[0]);
-            }
+            initSelect2(componentDetailsRow($row)[0]);
         });
     }
 
@@ -2682,7 +2791,7 @@
 
         initSelect2($row[0]);
 
-        if ($details.length && componentCalculationMethod($row) === 'percentage') {
+        if ($details.length) {
             initSelect2($details[0]);
         }
     }
@@ -3528,9 +3637,23 @@
 
             recalculateComponentGraph($panel);
         })
-        .off('input.coreProductsComponentsValidation change.coreProductsComponentsValidation', '.product-components-panel [data-component-field]')
-        .on('input.coreProductsComponentsValidation change.coreProductsComponentsValidation', '.product-components-panel [data-component-field]', function () {
+        .off('input.coreProductsComponentsValidation change.coreProductsComponentsValidation', '.product-components-panel [data-component-field], .product-components-panel [data-alternative-field]')
+        .on('input.coreProductsComponentsValidation change.coreProductsComponentsValidation', '.product-components-panel [data-component-field], .product-components-panel [data-alternative-field]', function () {
             clearComponentFieldValidation($(this));
+        })
+        .off('click.coreProductsComponentAlternativeAdd', '.js-product-component-alternative-add')
+        .on('click.coreProductsComponentAlternativeAdd', '.js-product-component-alternative-add', function () {
+            addComponentAlternativeRow(componentMainRow($(this)), {});
+        })
+        .off('click.coreProductsComponentAlternativeRemove', '.js-product-component-alternative-remove')
+        .on('click.coreProductsComponentAlternativeRemove', '.js-product-component-alternative-remove', function () {
+            var $alternative = $(this).closest('.js-product-component-alternative-row');
+            var $row = componentMainRow($alternative);
+
+            destroyComponentSelect2($alternative);
+            $alternative.remove();
+            renumberComponentAlternatives($row);
+            updateComponentAlternativeEmptyState($row);
         })
         .off('click.coreProductsComponentsAdd', '.js-product-component-add-row')
         .on('click.coreProductsComponentsAdd', '.js-product-component-add-row', function () {

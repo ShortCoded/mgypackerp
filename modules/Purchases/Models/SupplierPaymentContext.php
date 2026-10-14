@@ -22,6 +22,10 @@ class SupplierPaymentContext extends Model
 
     public const MethodBank = 'bank';
 
+    public const MethodBankDeposit = 'bank_deposit';
+
+    public const MethodBankTransfer = 'transfer';
+
     public const MethodCheque = 'cheque';
 
     public const StatusDraft = 'draft';
@@ -33,7 +37,7 @@ class SupplierPaymentContext extends Model
     protected $fillable = [
         'doc_number', 'doc_num', 'cash_voucher_id', 'company_id', 'financial_period_id', 'branch_id', 'supplier_id',
         'purchase_order_id', 'journal_entry_id', 'payment_method', 'payment_date', 'amount', 'currency_id',
-        'exchange_rate', 'bank_account_id', 'cheque_id', 'status', 'is_advance', 'allocated_amount', 'reason',
+        'reference_no', 'exchange_rate', 'bank_account_id', 'cheque_id', 'status', 'is_advance', 'allocated_amount', 'reason',
         'notes', 'approved_by', 'approved_at', 'cancelled_by', 'cancelled_at', 'cancel_reason',
     ];
 
@@ -58,7 +62,7 @@ class SupplierPaymentContext extends Model
 
     public static function methods(): array
     {
-        return [self::MethodCash, self::MethodBank, self::MethodCheque];
+        return [self::MethodCash, self::MethodBank, self::MethodBankDeposit, self::MethodBankTransfer, self::MethodCheque];
     }
 
     public function getRouteKeyName(): string

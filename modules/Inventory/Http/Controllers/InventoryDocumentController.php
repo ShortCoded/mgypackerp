@@ -780,7 +780,7 @@ class InventoryDocumentController extends Controller
                 ProductionMaterialRequest::StatusPartiallyIssued,
             ])
             ->whereHas('lines', fn (Builder $lines): Builder => $lines
-                ->whereColumn('reserved_quantity', '>', 'issued_quantity'));
+                ->whereRaw('reserved_quantity > issued_quantity + reallocated_reserved_quantity'));
     }
 
     private function authorizeProductionMaterialIssue(Request $request): void

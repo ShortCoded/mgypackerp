@@ -70,6 +70,7 @@ use Modules\Sales\Services\CustomerReceiptService;
 use Modules\Sales\Services\CustomerReceiptSettlementService;
 use Modules\Sales\Services\ElectronicInvoiceService;
 use Modules\Sales\Services\PriceListPricingService;
+use Modules\Sales\Services\SalesCycleReadService;
 use Modules\Sales\Services\SalesFulfillmentService;
 use Modules\Sales\Services\SalesIssueOrderService;
 use Modules\Sales\Services\SalesOrderRemainderClosureService;
@@ -807,6 +808,37 @@ class SalesCycleController extends Controller
         return response()->json(['data' => [...$price, 'source' => $price['price_list_doc_num'], 'scope' => $price['source']]]);
     }
 
+    public function salesOrderLinePresentation(Request $request, SalesCycleReadService $salesCycle): JsonResponse
+    {
+        abort_unless($request->user()?->canAny(['sales_orders.create', 'sales_orders.edit']), 403);
+        $context = $this->requiredContext($request);
+        $data = $request->validate([
+            'product_doc_num' => ['required', 'string'],
+            'unit_doc_num' => ['required', 'string'],
+            'quantity' => ['required', 'numeric', 'gt:0'],
+        ]);
+        $product = Product::query()
+            ->forCompany($context['company_id'])
+            ->active()
+            ->salesEligible()
+            ->with(['unit', 'equivalentUnit', 'color'])
+            ->where('doc_num', $data['product_doc_num'])
+            ->firstOrFail();
+        $unit = ItemUnit::query()
+            ->forCompany($context['company_id'])
+            ->active()
+            ->where('doc_num', $data['unit_doc_num'])
+            ->firstOrFail();
+
+        try {
+            $presentation = $salesCycle->salesOrderLinePresentation($product, $unit, $data['quantity']);
+        } catch (DomainException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
+        return response()->json(['data' => $presentation]);
+    }
+
     public function reverseReceipt(Request $request, CustomerReceipt $customerReceipt): JsonResponse
     {
         $this->assertReceiptScope($customerReceipt);
@@ -1047,7 +1079,18 @@ class SalesCycleController extends Controller
             return app(SalesCycleDataTable::class)->json($request, $query, $kind, $dateColumn);
         }
 
-        return view('modules.sales.cycle.index', ['kind' => $kind]);
+        $stateScope = implode('|', [
+            $request->user()?->getAuthIdentifier(),
+            $kind,
+            $context['company_id'],
+            $context['branch_id'],
+            $context['financial_period_id'],
+        ]);
+
+        return view('modules.sales.cycle.index', [
+            'kind' => $kind,
+            'salesIndexStateKey' => 'mgypack:datatable:sales-cycle:'.hash_hmac('sha256', $stateScope, (string) config('app.key')),
+        ]);
     }
 
     /** @return array<string, mixed> */

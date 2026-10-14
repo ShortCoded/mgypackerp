@@ -73,6 +73,7 @@ Route::middleware('auth')
         Route::controller(SalesCycleController::class)->group(function (): void {
             Route::get('/sales-orders', 'orders')->middleware('can:sales_orders.view')->name('sales-orders.index');
             Route::get('/sales-orders/create', 'createOrder')->middleware('can:sales_orders.create')->name('sales-orders.create');
+            Route::get('/sales-orders/line-presentation', 'salesOrderLinePresentation')->name('sales-orders.line-presentation');
             Route::post('/sales-orders', 'storeOrder')->middleware('can:sales_orders.create')->middleware(IdempotentDocumentSubmission::class)->name('sales-orders.store');
             Route::patch('/sales-orders/{document}/restore', 'restoreOrder')->middleware('can:sales_orders.restore')->name('sales-orders.restore');
             Route::delete('/sales-orders/{salesOrder}', 'destroyOrder')->middleware('can:sales_orders.delete')->name('sales-orders.destroy');

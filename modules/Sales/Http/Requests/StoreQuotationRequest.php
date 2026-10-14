@@ -17,6 +17,7 @@ use Modules\Sales\Models\Customer;
 use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\QuotationPaymentMilestone;
 use Modules\Sales\Services\SalesUnitConversionService;
+use Modules\Sales\Services\SalesWithholdingService;
 use Throwable;
 
 class StoreQuotationRequest extends FormRequest
@@ -32,6 +33,7 @@ class StoreQuotationRequest extends FormRequest
     {
         $this->normalizeNumericInput([
             'exchange_rate',
+            'withholding_rate',
             'discount_value',
             'lines.*.quantity',
             'lines.*.unit_price',
@@ -112,6 +114,8 @@ class StoreQuotationRequest extends FormRequest
             'change_reason' => ['nullable', 'string'],
             'customer_feedback' => ['nullable', 'string'],
             'discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
+            'withholding_basis' => ['nullable', Rule::in([SalesWithholdingService::GrossIncludingTax, SalesWithholdingService::EtaNetExcludingTax, SalesWithholdingService::CommercialGrossPreview])],
+            'withholding_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,3}(?:\.\d{1,4})?$/D', 'between:0,100'],
             'discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,14}(?:\.\d{1,4})?$/D', 'min:0'],
             'terms' => ['nullable', 'string'],
             'payment_terms' => ['nullable', 'string'],
@@ -190,6 +194,8 @@ class StoreQuotationRequest extends FormRequest
             'change_reason' => __('quotations.attributes.change_reason'),
             'customer_feedback' => __('quotations.attributes.customer_feedback'),
             'discount_type' => __('quotations.attributes.discount_type'),
+            'withholding_rate' => __('sales_ui.withholding_rate'),
+            'withholding_basis' => __('sales_ui.wht.basis'),
             'discount_value' => __('quotations.attributes.discount_value'),
             'terms' => __('quotations.attributes.terms'),
             'payment_terms' => __('quotations.attributes.payment_terms'),

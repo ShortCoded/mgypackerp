@@ -851,8 +851,6 @@ class QuotationController extends Controller
 
         return [
             ...$data,
-            'discount_type' => null,
-            'discount_value' => 0,
             'lines' => ! $resolvePrices ? $lines : ($samePricingContext
                 ? $this->priceLists->preserveStoredQuotationPrices(
                     $lines,

@@ -40,7 +40,18 @@ class SalesRequestController extends Controller
             return app(SalesCycleDataTable::class)->json($request, $records, 'sales_requests', 'request_date');
         }
 
-        return view('modules.sales.cycle.index', ['kind' => 'sales_requests']);
+        $stateScope = implode('|', [
+            $request->user()?->getAuthIdentifier(),
+            'sales_requests',
+            $context['company_id'],
+            $context['branch_id'],
+            $context['financial_period_id'],
+        ]);
+
+        return view('modules.sales.cycle.index', [
+            'kind' => 'sales_requests',
+            'salesIndexStateKey' => 'mgypack:datatable:sales-cycle:'.hash_hmac('sha256', $stateScope, (string) config('app.key')),
+        ]);
     }
 
     public function create(Request $request): View

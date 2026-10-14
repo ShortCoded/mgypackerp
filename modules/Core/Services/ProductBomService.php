@@ -8,6 +8,7 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
+use Modules\Core\Models\ProductComponentAlternative;
 
 final class ProductBomService
 {
@@ -65,6 +66,12 @@ final class ProductBomService
                         ? ProductComponent::InputPercentage
                         : ProductComponent::InputWeight,
                     'notes' => $component->notes,
+                    'alternatives' => $component->alternatives->map(fn (ProductComponentAlternative $alternative): array => [
+                        'public_id' => null,
+                        'alternative_product_id' => $alternative->alternative_product_id,
+                        'conversion_factor' => (string) $alternative->conversion_factor,
+                        'notes' => $alternative->notes,
+                    ])->all(),
                     '_delete' => false,
                 ])
                 ->all();
@@ -168,7 +175,7 @@ final class ProductBomService
         $components = ProductComponent::query()
             ->forCompany((int) $product->company_id)
             ->where('product_id', $product->getKey())
-            ->with('referenceComponent')
+            ->with(['referenceComponent', 'alternatives'])
             ->orderBy('created_at')
             ->orderBy('id')
             ->get();
@@ -197,6 +204,12 @@ final class ProductBomService
                     ? ProductComponent::InputPercentage
                     : ProductComponent::InputWeight,
                 'notes' => $component->notes,
+                'alternatives' => $component->alternatives->map(fn (ProductComponentAlternative $alternative): array => [
+                    'public_id' => (string) $alternative->public_id,
+                    'alternative_product_id' => $alternative->alternative_product_id,
+                    'conversion_factor' => (string) $alternative->conversion_factor,
+                    'notes' => $alternative->notes,
+                ])->all(),
                 '_delete' => false,
             ])
             ->all();
@@ -281,12 +294,18 @@ final class ProductBomService
                     ]);
                 }
             }
+
+            if (array_key_exists('alternatives', $row) && is_array($row['alternatives'])) {
+                $this->syncAlternatives($product, $component, $row['alternatives']);
+            }
         }
 
         $toDelete = $currentRows
             ->filter(fn (ProductComponent $component): bool => ! in_array((string) $component->public_id, $survivingPublicIds, true));
 
         foreach ($toDelete as $component) {
+            $component->alternatives()->lockForUpdate()->get()
+                ->each(fn (ProductComponentAlternative $alternative) => $this->crudAudit->softDelete($alternative));
             $this->crudAudit->softDelete($component);
         }
 
@@ -303,7 +322,7 @@ final class ProductBomService
         return ProductComponent::query()
             ->forCompany((int) $product->company_id)
             ->where('product_id', $product->getKey())
-            ->with('referenceComponent')
+            ->with(['referenceComponent', 'alternatives'])
             ->orderBy('created_at')
             ->orderBy('id')
             ->lockForUpdate()
@@ -368,6 +387,93 @@ final class ProductBomService
 
         if ($component->isDirty()) {
             $this->crudAudit->saveUpdate($component);
+        }
+    }
+
+    /**
+     * @param  array<int|string, mixed>  $submittedAlternatives
+     */
+    private function syncAlternatives(
+        Product $product,
+        ProductComponent $component,
+        array $submittedAlternatives,
+    ): void {
+        $current = $component->alternatives()->lockForUpdate()->get()->keyBy('public_id');
+        $survivingPublicIds = [];
+        $seenProducts = [];
+
+        foreach ($submittedAlternatives as $index => $row) {
+            if (! is_array($row) || filter_var($row['_delete'] ?? false, FILTER_VALIDATE_BOOL)) {
+                continue;
+            }
+
+            $publicId = trim((string) ($row['public_id'] ?? '')) ?: null;
+            $alternativeProductId = (int) ($row['alternative_product_id'] ?? 0);
+            $factor = trim((string) ($row['conversion_factor'] ?? ''));
+            $alternative = $publicId === null ? null : $current->get($publicId);
+
+            if ($publicId !== null && ! $alternative instanceof ProductComponentAlternative) {
+                throw ValidationException::withMessages([
+                    "alternatives.{$index}.public_id" => __('products.components.alternatives.not_available'),
+                ]);
+            }
+
+            if ($alternativeProductId <= 0
+                || $alternativeProductId === (int) $component->component_product_id
+                || isset($seenProducts[$alternativeProductId])
+                || ! Product::query()->forCompany((int) $product->company_id)->active()->rawMaterials()
+                    ->whereHas('unit', fn ($units) => $units->where('status', 'active'))
+                    ->whereKey($alternativeProductId)->exists()
+            ) {
+                throw ValidationException::withMessages([
+                    "alternatives.{$index}.alternative_product_doc_num" => __('products.components.alternatives.invalid_product'),
+                ]);
+            }
+
+            if (! preg_match('/^(?:\d{1,12}|\d{0,12}\.\d{1,8})$/D', $factor)
+                || bccomp($factor, '0', 8) <= 0
+            ) {
+                throw ValidationException::withMessages([
+                    "alternatives.{$index}.conversion_factor" => __('products.components.alternatives.invalid_factor'),
+                ]);
+            }
+
+            $seenProducts[$alternativeProductId] = true;
+            $values = [
+                'alternative_product_id' => $alternativeProductId,
+                'conversion_factor' => bcadd($factor, '0', 8),
+                'notes' => filled($row['notes'] ?? null) ? trim((string) $row['notes']) : null,
+            ];
+
+            if ($alternative instanceof ProductComponentAlternative) {
+                $this->saveAlternativeIfChanged($alternative, $values);
+            } else {
+                $alternative = ProductComponentAlternative::query()->create([
+                    'public_id' => (string) Str::uuid(),
+                    'company_id' => $product->company_id,
+                    'product_component_id' => $component->getKey(),
+                    ...$values,
+                    'created_by' => auth()->id(),
+                ]);
+                $this->crudAudit->clearCreationUpdateAudit($alternative);
+            }
+
+            $survivingPublicIds[] = (string) $alternative->public_id;
+        }
+
+        $current->reject(fn (ProductComponentAlternative $alternative): bool => in_array((string) $alternative->public_id, $survivingPublicIds, true))
+            ->each(fn (ProductComponentAlternative $alternative) => $this->crudAudit->softDelete($alternative));
+    }
+
+    /**
+     * @param  array<string, mixed>  $values
+     */
+    private function saveAlternativeIfChanged(ProductComponentAlternative $alternative, array $values): void
+    {
+        $alternative->forceFill($values);
+
+        if ($alternative->isDirty()) {
+            $this->crudAudit->saveUpdate($alternative);
         }
     }
 }

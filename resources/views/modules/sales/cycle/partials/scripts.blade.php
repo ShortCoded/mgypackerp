@@ -1,6 +1,7 @@
 @php
     $salesCycleMessages = [
         'priceUrl' => route('admin.sales.price-suggestion'),
+        'linePresentationUrl' => route('admin.sales.sales-orders.line-presentation'),
         'customerPriceList' => __('price_lists.customer_source'),
         'generalPriceList' => __('price_lists.general_source'),
         'emptyPrice' => __('price_lists.not_selected'),

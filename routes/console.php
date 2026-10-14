@@ -16,6 +16,10 @@ Schedule::command('notifications:dispatch-due')
     ->everyMinute()
     ->withoutOverlapping();
 
+Schedule::command('inventory:notify-reorder-shortages')
+    ->everyFiveMinutes()
+    ->withoutOverlapping();
+
 Schedule::command('hr:wages:project-current')
     ->dailyAt('00:15')
     ->withoutOverlapping();

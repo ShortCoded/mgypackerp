@@ -17,7 +17,7 @@ Route::middleware('auth')
     ->prefix('admin/purchases')
     ->as('admin.purchases.')
     ->group(function (): void {
-        foreach (['currency-rate' => ['purchase_orders.create', 'purchase_orders.edit'], 'employees' => ['purchases.purchase_requisitions.create', 'purchases.purchase_requisitions.edit'],
+        foreach (['currency-rate' => ['purchase_orders.create', 'purchase_orders.edit'], 'employees' => ['purchases.purchase_requisitions.create', 'purchases.purchase_requisitions.edit', 'purchases.purchase_order_change_requests.create'],
             'rfqs' => ['purchases.supplier_quotation_entry.create'], 'requisitions' => ['purchase_orders.create', 'purchase_orders.edit', 'purchases.request_for_quotations.create', 'purchases.supplier_quotation_entry.create'],
             'purchase-orders' => ['purchases.goods_receipt_inspection.create', 'purchases.supply_orders.create', 'purchases.supplier_quotation_entry.create', 'purchase_invoices.create', 'purchase_invoices.edit'],
             'supply-orders' => ['purchases.goods_receipt_inspection.create'],
@@ -326,7 +326,11 @@ Route::middleware('auth')
                 Route::get('/create', 'chooseSource')->defaults('screen', 'goods_receipt_inspections')->middleware('can:purchases.goods_receipt_inspection.create')->name('choose-source');
                 Route::get('/create/{sourceDocument}', 'createInspection')->middleware('can:purchases.goods_receipt_inspection.create')->name('create');
                 Route::post('/from/{sourceDocument}', 'storeInspection')->middleware('can:purchases.goods_receipt_inspection.create')->middleware(IdempotentDocumentSubmission::class)->name('store');
+                Route::get('/{goodsReceiptInspection}/edit', 'editInspection')->middleware('can:purchases.goods_receipt_inspection.edit')->name('edit');
+                Route::put('/{goodsReceiptInspection}', 'updateInspection')->middleware('can:purchases.goods_receipt_inspection.edit')->name('update');
                 Route::get('/{goodsReceiptInspection}', 'showInspection')->middleware('can:purchases.goods_receipt_inspection.view')->name('show');
+                Route::post('/{goodsReceiptInspection}/cancel', 'cancelInspection')->middleware('can:purchases.goods_receipt_inspection.cancel')->name('cancel');
+                Route::delete('/{goodsReceiptInspection}', 'destroyInspection')->middleware('can:purchases.goods_receipt_inspection.delete')->name('destroy');
             });
 
             Route::get('purchase-invoice-lines', 'inquiry')->defaults('procurement_screen', 'purchase_invoice_lines')->middleware('can:purchase_invoices.view')->name('purchase-invoice-lines.index');

@@ -13,9 +13,9 @@ class QuotationCalculationService
 
     /**
      * @param  list<array<string, mixed>>  $lines
-     * @return array{revision: array{subtotal: string, discount_type: string|null, discount_value: string, discount_amount: string, tax_amount: string, total: string}, lines: list<array<string, mixed>>}
+     * @return array{revision: array<string, string|null>, lines: list<array<string, mixed>>}
      */
-    public function calculate(array $lines, ?string $discountType, mixed $discountValue): array
+    public function calculate(array $lines, ?string $discountType, mixed $discountValue, mixed $withholdingRate = '0', ?string $withholdingBasis = null): array
     {
         $calculatedLines = [];
         $subtotal = '0.0000';
@@ -69,6 +69,7 @@ class QuotationCalculationService
                 'discount_amount' => $discountAmount,
                 'tax_amount' => $taxTotal,
                 'total' => $total,
+                ...app(SalesWithholdingService::class)->calculate($total, $withholdingRate, $withholdingBasis, $this->amounts->subtract($subtotal, $discountAmount)),
             ],
             'lines' => $calculatedLines,
         ];

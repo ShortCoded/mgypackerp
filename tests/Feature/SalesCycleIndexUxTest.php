@@ -1,5 +1,6 @@
 <?php
 
+use App\Models\User;
 use Dom\HTMLDocument;
 use Modules\Production\Models\ProductionOrder;
 use Modules\Sales\Models\CustomerInvoice;
@@ -159,6 +160,38 @@ test('sales index workflow binding remains active when the shared datatable init
         ->toContain("$(document).off('click.salesIndex', '.js-sales-index-action').on('click.salesIndex'")
         ->toContain("button.data('processing', true).prop('disabled', true)")
         ->not->toContain('if (!table.length || $.fn.DataTable.isDataTable(table[0])) return;');
+});
+
+test('sales datatable state is scoped by user table and operating context while retaining filters', function () {
+    $fixture = salesIndexFixture();
+    $this->actingAs($fixture['user'])->withSession(salesCycleSession($fixture));
+
+    $orderPage = $this->get(route('admin.sales.sales-orders.index'))->assertOk();
+    $requestPage = $this->get(route('admin.sales.customer-requests.index'))->assertOk();
+    preg_match('/data-state-key="([^"]+)"/', $orderPage->getContent(), $orderState);
+    preg_match('/data-state-key="([^"]+)"/', $requestPage->getContent(), $requestState);
+
+    $otherUser = User::factory()->create();
+    $otherUser->givePermissionTo('sales_orders.view');
+    $otherOrderPage = $this->actingAs($otherUser)
+        ->withSession(salesCycleSession($fixture))
+        ->get(route('admin.sales.sales-orders.index'))
+        ->assertOk();
+    preg_match('/data-state-key="([^"]+)"/', $otherOrderPage->getContent(), $otherUserState);
+
+    expect($orderState[1] ?? null)->not->toBeNull()
+        ->and($requestState[1] ?? null)->not->toBe($orderState[1] ?? null)
+        ->and($otherUserState[1] ?? null)->not->toBe($orderState[1] ?? null);
+
+    $script = file_get_contents(public_path('assets/js/modules/Sales/sales-index.js'));
+    expect($script)
+        ->toContain('stateSave: true')
+        ->toContain('stateLoadCallback')
+        ->toContain('stateSaveCallback')
+        ->toContain('stateLoadParams')
+        ->toContain('stateSaveParams')
+        ->toContain('salesFilters')
+        ->toContain('window.localStorage');
 });
 
 test('request create keeps its optional delivery date empty', function () {

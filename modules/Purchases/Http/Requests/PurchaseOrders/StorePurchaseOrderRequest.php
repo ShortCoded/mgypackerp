@@ -130,7 +130,7 @@ class StorePurchaseOrderRequest extends FormRequest
                     ->whereNull('deleted_at')),
             ],
             'lines.*.ordered_quantity' => ['required', 'numeric', 'decimal:0,8', 'regex:/^\d{1,12}(?:\.\d{1,8})?$/D', 'gt:0'],
-            'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,8', 'regex:/^\d{1,14}(?:\.\d{1,8})?$/D', 'min:0'],
+            'lines.*.unit_price' => ['required', 'numeric', 'decimal:0,15', 'regex:/^\d{1,14}(?:\.\d{1,15})?$/D', 'min:0'],
             'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
             'lines.*.discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'min:0'],
             'lines.*.tax_rate' => ['nullable', 'numeric', 'decimal:0,4', 'between:0,100'],
@@ -340,13 +340,13 @@ class StorePurchaseOrderRequest extends FormRequest
             $numbers = app(NumericFormatService::class);
             $subtotal = bcmul(
                 $numbers->normalizeToScale($line['ordered_quantity'] ?? 0, 8),
-                $numbers->normalizeToScale($line['unit_price'] ?? 0, 8),
-                16,
+                $numbers->normalizeToScale($line['unit_price'] ?? 0, 15),
+                23,
             );
             $discountValue = $numbers->normalizeToScale($line['discount_value'] ?? 0, 4);
             if (($line['discount_type'] ?? 'fixed') === 'percentage' && bccomp($discountValue, '100', 4) > 0) {
                 $validator->errors()->add("lines.{$index}.discount_value", __('purchase_orders.messages.discount_percentage_exceeds_max'));
-            } elseif (($line['discount_type'] ?? 'fixed') === 'fixed' && bccomp($discountValue, $subtotal, 16) > 0) {
+            } elseif (($line['discount_type'] ?? 'fixed') === 'fixed' && bccomp($discountValue, $subtotal, 23) > 0) {
                 $validator->errors()->add("lines.{$index}.discount_value", __('purchase_orders.messages.discount_fixed_exceeds_subtotal'));
             }
         }

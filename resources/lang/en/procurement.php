@@ -3,6 +3,7 @@
 return [
     'line_correction_help' => 'For an unexecuted order, replace products or units and add or remove lines below. Submit the complete corrected list for approval. Purchase request references must remain consistent with their approved source.',
     'ui' => [
+        'legacy_requester_help' => 'This historical request has no recorded requester. Select the requesting employee when known; its existing history is retained.',
         'inventory_context_required' => 'Purchase requests require a factory or warehouse context.',
         'administrative_context_required' => 'This purchasing action requires an administrative branch context.',
         'request_origin' => 'Request origin',
@@ -63,6 +64,14 @@ return [
         ],
     ],
     'messages' => [
+        'direct_invoice_receiving_ownership' => 'The approved invoice owns the accounting entry. Receipt after inspection adds stock quantity and its invoice value without another journal entry. Reverse receipts and cancel the supply order before reversing the invoice.',
+        'direct_invoice_source_unavailable' => 'The direct invoice is unavailable for receiving in the active company, branch and period.',
+        'direct_invoice_reversal_blocked' => 'Reverse receipts and cancel linked supply orders before reversing the direct invoice.',
+        'supply_invoice_source_help' => 'Choose an approved direct or purchase-order-linked supplier invoice with quantity available to supply.',
+        'direct_invoice_receiving_pending' => 'A supply order can be created and issued from a direct invoice. Inventory receiving for this source awaits a link that prevents duplicating the value already recorded by the invoice; do not record another receipt for the same materials.',
+        'inspection_correction_blocked' => 'This inspection has receipt evidence or is no longer eligible. Review the related goods receipt and use its native correction or reversal workflow; the inspection and its quality history are retained.',
+        'inspection_draft_delete_only' => 'Only an unreceived draft inspection can be moved to the trash. Finalized inspections use cancellation with a reason.',
+
         'commercial_discount_invalid' => 'The discount input is invalid or exceeds its discount base.',
         'line_correction_execution_blocked' => 'Item replacement or removal requires a request or order without downstream documents. Correct the dependent documents separately first.',
         'line_correction_stale' => 'The purchase order changed after this correction was requested. Submit a new correction using its current values.',
@@ -158,6 +167,7 @@ return [
         'supplier_delivery_note' => 'Supplier delivery note',
         'qc_status' => 'QC status',
         'payment_date' => 'Payment date',
+        'bank_reference' => 'Bank transaction reference',
         'payment_method' => 'Payment method',
         'amount' => 'Amount',
         'bank_account' => 'Bank / branch / account',
@@ -211,6 +221,8 @@ return [
         'quarantine_return' => 'Quarantine Return',
         'usable_stock_return' => 'Usable-stock Return',
         'cash' => 'Cash',
+        'transfer' => 'Bank transfer',
+        'bank_deposit' => 'Bank deposit',
         'bank' => 'Bank',
         'cheque' => 'Cheque',
         'deleted' => 'Deleted',

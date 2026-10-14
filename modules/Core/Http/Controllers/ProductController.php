@@ -292,6 +292,8 @@ class ProductController extends Controller
             $relationships[] = 'components.componentProduct.mainImageUsage.file';
             $relationships[] = 'components.unit';
             $relationships[] = 'components.referenceComponent';
+            $relationships[] = 'components.alternatives.alternativeProduct.unit';
+            $relationships[] = 'components.alternatives.alternativeProduct.mainImageUsage.file';
         }
 
         $record?->loadMissing($relationships);
@@ -397,6 +399,13 @@ class ProductController extends Controller
                 ? ProductComponent::InputPercentage
                 : ProductComponent::InputWeight,
             'notes' => $component->notes,
+            'alternatives' => $component->alternatives->map(fn ($alternative): array => [
+                'public_id' => $forClone ? '' : $alternative->public_id,
+                'alternative_product_doc_num' => $alternative->alternativeProduct?->doc_num,
+                'raw_material' => $this->componentProductLabel($alternative->alternativeProduct),
+                'conversion_factor' => (string) $alternative->conversion_factor,
+                'notes' => $alternative->notes,
+            ])->values()->all(),
         ];
     }
 

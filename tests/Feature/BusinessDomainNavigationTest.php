@@ -176,6 +176,27 @@ test('inventory and manufacturing navigation exposes canonical workflows without
     collect($requiredDestinations)->each(fn (string $routeName) => expect(Route::has($routeName))->toBeTrue());
 });
 
+test('finished goods receipt and production handover keep distinct canonical navigation', function (string $phaseMode): void {
+    config()->set('erp.phase_mode', $phaseMode);
+
+    $menu = app(MenuService::class)->structure();
+    $inventory = collect($menu)->firstWhere('label', 'inventory');
+    $production = collect($menu)->firstWhere('label', 'production');
+    $inventoryLeaves = collect(businessDomainMenuLeaves([$inventory]));
+    $productionLeaves = collect(businessDomainMenuLeaves([$production]));
+    $receipt = $inventoryLeaves->firstWhere('label', 'inventory_handovers');
+    $movement = $inventoryLeaves->firstWhere('label', 'inventory_movements');
+    $productionLabels = $productionLeaves->pluck('label')->values();
+
+    expect($receipt)->not->toBeNull()
+        ->and($receipt['route'])->toBe('admin.inventory.production-receipts.index')
+        ->and($receipt['permission'])->toBe('inventory.production_receipts.view')
+        ->and($movement['route'])->toBe('admin.inventory.documents.index')
+        ->and($productionLabels->search('production_handovers'))->toBeGreaterThan(
+            $productionLabels->search('production_material_requests'),
+        );
+})->with(['legacy', 'expanded']);
+
 test('menu uses the required business domain order and maps representative screens correctly', function (string $phaseMode): void {
     config()->set('erp.phase_mode', $phaseMode);
 

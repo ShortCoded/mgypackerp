@@ -27,7 +27,7 @@
             <div class="col-lg-6">
                 <form method="GET" action="{{ route('admin.purchases.supply-orders.create') }}" class="border rounded-3 p-3 h-100">
                     <h6>{{ __('From Purchase Invoice') }}</h6>
-                    <p class="text-600 fs-10">{{ __('Use an approved supplier invoice that is linked to its purchase order.') }}</p>
+                    <p class="text-600 fs-10">{{ __('procurement.messages.supply_invoice_source_help') }}</p>
                     <label class="form-label" for="supply_source_purchase_invoice">{{ __('Purchase Invoice') }}</label>
                     <x-forms.select class="form-select js-select2-ajax" id="supply_source_purchase_invoice" name="purchase_invoice" data-url="{{ route('admin.purchases.select2.invoices', ['purpose' => 'supply_order']) }}" data-placeholder="{{ __('Select') }}" required></x-forms.select>
                     <button class="btn btn-falcon-primary btn-sm mt-3" type="submit">{{ __('Load remaining lines') }}</button>

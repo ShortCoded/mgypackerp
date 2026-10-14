@@ -216,7 +216,7 @@ class ProductionRun extends Model
     public function lineInventoryDocuments(): BelongsToMany
     {
         return $this->belongsToMany(InventoryDocument::class, 'inventory_document_lines', 'production_run_id', 'inventory_document_id')
-            ->whereNull('inventory_document_lines.deleted_at')->distinct();
+            ->whereNull('inventory_document_lines.deleted_at')->distinct('inventory_documents.id');
     }
 
     public function reservations(): HasMany

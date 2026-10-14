@@ -169,6 +169,14 @@
     @isset($relatedDocuments)<x-related-documents :documents="$relatedDocuments" />@endisset
 
     @if($lines->isNotEmpty())
+        @if($kind === 'sales_order')
+            <div class="card mb-3" data-sales-financial-summary>
+                <div class="card-header"><h6 class="mb-0">{{ __('sales_ui.financial_summary') }}</h6></div>
+                @include('modules.sales.cycle.partials.document-discount-inputs', ['discountReadonly' => true])
+                @include('modules.sales.cycle.partials.withholding-inputs', ['withholdingReadonly' => true])
+            </div>
+        @endif
+
         <div class="card mb-3">
             <div class="card-header"><h6 class="mb-0">{{ __('Lines and source traceability') }}</h6></div>
             <div class="table-responsive">
@@ -203,10 +211,10 @@
                     @if(isset($record->subtotal_amount))<span>{{ __('Subtotal') }}: <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->subtotal_amount, 2) }}</strong></span>@endif
                     @if(isset($record->discount_amount))<span>{{ __('Discount') }}: <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->discount_amount, 2) }}</strong></span>@endif
                     @if(isset($record->tax_amount))<span>{{ __('Tax') }}: <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->tax_amount, 2) }}</strong></span>@endif
-                    @if(in_array($kind, ['sales_order', 'invoice'], true) && $record->discount_type)<span>{{ __($kind === 'invoice' ? 'sales_ui.invoice_discount' : 'sales_ui.header_discount') }} ({{ __('quotations.discount_types.'.$record->discount_type) }}: {{ $numbers->format($record->discount_value) }}{{ $record->discount_type === 'percentage' ? '%' : '' }}): <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->header_discount_amount, 2) }}</strong></span>@endif
+                    @if($kind === 'invoice' && $record->discount_type)<span>{{ __($kind === 'invoice' ? 'sales_ui.invoice_discount' : 'sales_ui.header_discount') }} ({{ __('quotations.discount_types.'.$record->discount_type) }}: {{ $numbers->format($record->discount_value) }}{{ $record->discount_type === 'percentage' ? '%' : '' }}): <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->header_discount_amount, 2) }}</strong></span>@endif
                     <span>{{ __('Grand total') }}: <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->total_amount, 2) }}</strong></span>
-                    @if(in_array($kind, ['sales_order', 'invoice'], true) && bccomp((string) ($record->withholding_rate ?? 0), '0', 4) > 0)
-                    <span>{{ __('sales_ui.withholding') }} / {{ __($record->withholding_basis === 'eta_t4_net_excluding_tax' ? 'sales_ui.wht.eta' : 'sales_ui.wht.legacy') }} ({{ $numbers->format($record->withholding_rate) }}%): <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->withholding_amount, 2) }}</strong></span>
+                    @if($kind === 'invoice' && bccomp((string) ($record->withholding_rate ?? 0), '0', 4) > 0)
+                    <span>{{ __('sales_ui.withholding') }} / {{ __(\Modules\Sales\Services\SalesWithholdingService::labelKey($record->withholding_basis)) }} ({{ $numbers->format($record->withholding_rate) }}%): <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->withholding_amount, 2) }}</strong></span>
                     <span>{{ __('sales_ui.net_payable') }}: <strong dir="ltr">{{ $numbers->formatWithMinimumDecimals($record->net_payable_amount, 2) }}</strong></span>
                     @endif
                     @if($kind === 'invoice' && bccomp((string) ($record->actual_withholding_amount ?? '0'), '0', 4) > 0)

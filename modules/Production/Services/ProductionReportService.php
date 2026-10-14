@@ -17,6 +17,82 @@ class ProductionReportService
 {
     public function __construct(private readonly ProductionCostService $costs) {}
 
+    /** @param SupportCollection<int, ProductionMaterialRequirement> $requirements */
+    public function projectMaterialAllocationPlans(SupportCollection $requirements): void
+    {
+        $requirements = $requirements
+            ->filter(fn (mixed $requirement): bool => $requirement instanceof ProductionMaterialRequirement)
+            ->values();
+        if ($requirements->isEmpty()) {
+            return;
+        }
+
+        $componentGroups = $requirements->groupBy(
+            fn (ProductionMaterialRequirement $requirement): string => $this->materialComponentKey($requirement),
+        );
+        $allocationGroups = $componentGroups->filter(
+            fn (SupportCollection $group): bool => $group->contains(
+                fn (ProductionMaterialRequirement $requirement): bool => $requirement->allocation_root_requirement_id !== null,
+            ),
+        );
+        $selectedByRequirement = $allocationGroups->isEmpty()
+            ? collect()
+            : ProductionMaterialRequestLine::query()
+                ->whereIn('production_material_requirement_id', $requirements->pluck('id')->all())
+                ->whereHas('request', fn ($query) => $query
+                    ->where('request_type', 'planned')
+                    ->whereNotIn('status', [ProductionMaterialRequest::StatusRejected, ProductionMaterialRequest::StatusCancelled]))
+                ->groupBy('production_material_requirement_id')
+                ->selectRaw(
+                    'production_material_requirement_id,
+                    coalesce(sum(case when requested_quantity > reallocated_quantity then requested_quantity - reallocated_quantity else 0 end), 0) as selected_quantity',
+                )
+                ->pluck('selected_quantity', 'production_material_requirement_id');
+
+        $componentGroups->each(function (SupportCollection $componentRequirements, string $componentKey) use ($allocationGroups, $selectedByRequirement): void {
+            $hasAllocationChildren = $allocationGroups->has($componentKey);
+            $hasPlannedAlternativeEvidence = $hasAllocationChildren && $componentRequirements
+                ->filter(fn (ProductionMaterialRequirement $requirement): bool => $requirement->allocation_root_requirement_id !== null)
+                ->contains(fn (ProductionMaterialRequirement $requirement): bool => bccomp(
+                    $this->greatestQuantity([
+                        (string) ($selectedByRequirement->get($requirement->getKey()) ?? 0),
+                        (string) $requirement->issued_quantity,
+                    ]),
+                    '0',
+                    8,
+                ) > 0);
+
+            $componentRequirements->each(function (ProductionMaterialRequirement $requirement) use ($hasPlannedAlternativeEvidence, $selectedByRequirement): void {
+                $planned = (string) $requirement->planned_quantity;
+                if ($hasPlannedAlternativeEvidence) {
+                    $planned = $this->greatestQuantity([
+                        (string) ($selectedByRequirement->get($requirement->getKey()) ?? 0),
+                        (string) $requirement->issued_quantity,
+                    ]);
+                } elseif ($requirement->allocation_root_requirement_id !== null) {
+                    $planned = '0.00000000';
+                }
+
+                $requirement->setAttribute('report_is_split_allocation', $hasPlannedAlternativeEvidence);
+                $requirement->setAttribute('report_planned_quantity', $planned);
+                $requirement->setAttribute('report_original_planned_quantity', $requirement->toOriginalQuantity($planned));
+            });
+
+            if ($hasAllocationChildren) {
+                $originalTotal = $componentRequirements->reduce(
+                    fn (string $total, ProductionMaterialRequirement $requirement): string => bcadd(
+                        $total,
+                        (string) $requirement->report_original_planned_quantity,
+                        8,
+                    ),
+                    '0.00000000',
+                );
+                $componentRequirements->each(fn (ProductionMaterialRequirement $requirement) => $requirement
+                    ->setAttribute('report_component_original_planned_quantity', $originalTotal));
+            }
+        });
+    }
+
     /**
      * @param  array<string, mixed>  $filters
      * @return array<string, array<string, string|int>|Collection|SupportCollection>
@@ -127,12 +203,16 @@ class ProductionReportService
             ->with([
                 'order.branch', 'order.salesOrder.customer', 'order.orderStageSnapshots', 'orderLine.stageSnapshots',
                 'product.unit', 'product.equivalentUnit', 'product.color', 'fixedAsset', 'machine', 'shift', 'progressEntries',
-                'stageSnapshot', 'mold', 'requirements.product.unit', 'inventoryDocuments.lines.product', 'inventoryDocuments.lines.unit',
+                'stageSnapshot', 'mold', 'requirements.product.unit', 'requirements.originalProduct', 'requirements.originalUnit', 'inventoryDocuments.lines.product', 'inventoryDocuments.lines.unit',
                 'inspections',
             ])
             ->orderByDesc('planned_start_at')
             ->orderByDesc('id')
             ->get();
+
+        $this->projectMaterialAllocationPlans($runs->flatMap(
+            fn (ProductionRun $run): Collection => $run->requirements,
+        ));
 
         $runs->each(function (ProductionRun $run) use ($filters, $hasDateFilter): void {
             $run->setRelation('inventoryDocuments', $run->inventoryDocuments->merge($run->lineInventoryDocuments)->unique('id'));
@@ -476,7 +556,7 @@ class ProductionReportService
                 'consumption_unit' => $first['line']->unit?->name && $first['run']->output_unit_name
                     ? $first['line']->unit->name.' / '.$first['run']->output_unit_name
                     : null,
-                'planned' => $this->controlArrayQuantitySum($group->map(fn (array $entry): array => ['quantity' => (string) $entry['line']->planned_quantity]), 'quantity'),
+                'planned' => $this->controlArrayQuantitySum($group->map(fn (array $entry): array => ['quantity' => (string) $entry['line']->report_planned_quantity]), 'quantity'),
                 'issued' => $hasMovement ? $issued : null,
                 'returned' => $hasMovement ? $returned : null,
                 'consumed' => $usageRecorded ? $consumed : null,
@@ -645,17 +725,21 @@ class ProductionReportService
     /** @param array<string, mixed> $filters */
     public function materialReconciliation(int $companyId, ?int $runId = null, array $filters = []): Collection
     {
-        return ProductionMaterialRequirement::query()
+        $materials = ProductionMaterialRequirement::query()
             ->whereHas('run', function ($query) use ($companyId, $filters): void {
                 $query->where('company_id', $companyId)
                     ->when($filters['financial_period_id'] ?? null, fn ($runQuery, $periodId) => $runQuery->where('financial_period_id', $periodId))
                     ->when($filters['branch_id'] ?? null, fn ($runQuery, $branchId) => $runQuery->where('branch_id', $branchId));
             })
             ->when($runId, fn ($query) => $query->where('production_run_id', $runId))
-            ->with(['run.order', 'product', 'unit'])
+            ->with(['run.order', 'product', 'unit', 'originalProduct', 'originalUnit'])
             ->orderBy('production_run_id')
             ->orderBy('line_number')
             ->get();
+
+        $this->projectMaterialAllocationPlans($materials);
+
+        return $materials;
     }
 
     /** @return array<string, string|int> */
@@ -731,16 +815,24 @@ class ProductionReportService
 
     private function applyMaterialMetrics(Collection $materials, bool $includeFinancial): void
     {
+        $requirementIds = $materials->modelKeys();
+        $requirementIdExpression = 'coalesce(inventory_reservations.production_material_requirement_id, inventory_document_lines.source_line_id)';
         $costs = $includeFinancial && $materials->isNotEmpty()
             ? DB::table('inventory_document_lines')
                 ->join('inventory_documents', 'inventory_documents.id', '=', 'inventory_document_lines.inventory_document_id')
-                ->join('inventory_reservations', 'inventory_reservations.id', '=', 'inventory_document_lines.inventory_reservation_id')
-                ->whereIn('inventory_reservations.production_material_requirement_id', $materials->modelKeys())
+                ->leftJoin('inventory_reservations', 'inventory_reservations.id', '=', 'inventory_document_lines.inventory_reservation_id')
+                ->where(function ($query) use ($requirementIds): void {
+                    $query->whereIn('inventory_reservations.production_material_requirement_id', $requirementIds)
+                        ->orWhere(function ($source) use ($requirementIds): void {
+                            $source->where('inventory_document_lines.source_line_type', ProductionMaterialRequirement::class)
+                                ->whereIn('inventory_document_lines.source_line_id', $requirementIds);
+                        });
+                })
                 ->where('inventory_documents.status', InventoryDocument::StatusPosted)
                 ->whereNull('inventory_document_lines.deleted_at')
-                ->groupBy('inventory_reservations.production_material_requirement_id')
+                ->groupByRaw($requirementIdExpression)
                 ->selectRaw(
-                    'inventory_reservations.production_material_requirement_id,
+                    $requirementIdExpression.' as production_material_requirement_id,
                     coalesce(sum(case when inventory_documents.document_type in (?, ?) then inventory_document_lines.total_cost else 0 end), 0) as issued_cost,
                     coalesce(sum(case when inventory_documents.document_type = ? then inventory_document_lines.total_cost else 0 end), 0) as returned_cost,
                     coalesce(sum(case when inventory_documents.document_type = ? then inventory_document_lines.total_cost else 0 end), 0) as waste_cost',
@@ -761,7 +853,7 @@ class ProductionReportService
             $actualUsed = bcadd((string) $line->consumed_quantity, (string) $line->waste_quantity, 8);
             $line->setAttribute('issued_total_quantity', $issued);
             $line->setAttribute('accountability_variance', bcsub($issued, $accounted, 8));
-            $line->setAttribute('quantity_variance', bcsub($actualUsed, (string) $line->planned_quantity, 8));
+            $line->setAttribute('quantity_variance', bcsub($actualUsed, (string) $line->report_planned_quantity, 8));
 
             if (! $includeFinancial) {
                 return;
@@ -772,12 +864,27 @@ class ProductionReportService
             $returnedCost = bcadd((string) ($cost->returned_cost ?? 0), '0', 8);
             $wasteCost = bcadd((string) ($cost->waste_cost ?? 0), '0', 8);
             $unitCost = bccomp($issued, '0', 8) > 0 ? bcdiv($issuedCost, $issued, 8) : '0.00000000';
-            $plannedCost = bcmul((string) $line->planned_quantity, $unitCost, 8);
+            $plannedCost = bcmul((string) $line->report_planned_quantity, $unitCost, 8);
             $actualCost = bcsub($issuedCost, $returnedCost, 8);
             $line->setAttribute('planned_cost', $plannedCost);
             $line->setAttribute('actual_cost', $actualCost);
             $line->setAttribute('waste_cost', $wasteCost);
             $line->setAttribute('cost_variance', bcsub($actualCost, $plannedCost, 8));
         });
+    }
+
+    private function materialComponentKey(ProductionMaterialRequirement $requirement): string
+    {
+        return $requirement->production_run_id.':'.($requirement->product_component_id ?? 'requirement-'.$requirement->getKey());
+    }
+
+    /** @param list<string> $quantities */
+    private function greatestQuantity(array $quantities): string
+    {
+        return array_reduce(
+            $quantities,
+            fn (string $greatest, string $quantity): string => bccomp($quantity, $greatest, 8) > 0 ? $quantity : $greatest,
+            '0.00000000',
+        );
     }
 }

@@ -62,7 +62,7 @@ class StoreDirectCustomerInvoiceRequest extends FormRequest
             'discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,16}(?:\.\d{1,4})?$/D', 'min:0'],
             'lines.*.discount_type' => ['nullable', Rule::in(['fixed', 'percentage'])],
             'lines.*.discount_value' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,16}(?:\.\d{1,4})?$/D', 'min:0'],
-            'withholding_basis' => ['nullable', Rule::in([SalesWithholdingService::GrossIncludingTax, SalesWithholdingService::EtaNetExcludingTax])],
+            'withholding_basis' => ['nullable', Rule::in([SalesWithholdingService::GrossIncludingTax, SalesWithholdingService::EtaNetExcludingTax, SalesWithholdingService::CommercialGrossPreview])],
             'withholding_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,3}(?:\.\d{1,4})?$/D', 'between:0,100'],
             'company_id' => ['required', 'integer', 'exists:companies,id'],
             'financial_period_id' => ['required', 'integer', 'exists:financial_periods,id'],

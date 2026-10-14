@@ -258,6 +258,7 @@
     purchaseOrderTable = $table.DataTable(window.AppDataTables.options({
       processing: true,
       serverSide: true,
+      stateSave: true,
       responsive: true,
       ajax: {
         url: $table.data('url'),

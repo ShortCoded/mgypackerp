@@ -1,0 +1,103 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::table('production_material_requirements', function (Blueprint $table): void {
+            $table->foreignId('allocation_root_requirement_id')
+                ->nullable()
+                ->after('production_run_id')
+                ->constrained('production_material_requirements', indexName: 'prod_req_allocation_root_fk')
+                ->restrictOnDelete();
+            $table->unique(
+                ['production_run_id', 'product_component_id', 'product_id'],
+                'production_requirements_material_allocation_unique',
+            );
+        });
+
+        Schema::table('production_material_request_lines', function (Blueprint $table): void {
+            $table->decimal('reallocated_quantity', 20, 8)->default(0)->after('issued_quantity');
+            $table->decimal('reallocated_original_quantity', 20, 8)->default(0)->after('reallocated_quantity');
+            $table->decimal('reallocated_reserved_quantity', 20, 8)->default(0)->after('reallocated_original_quantity');
+        });
+
+        Schema::create('production_material_request_reallocations', function (Blueprint $table): void {
+            $table->id();
+            $table->uuid('public_id')->unique();
+            $table->foreignId('company_id')->constrained('companies', indexName: 'pmr_realloc_company_fk')->restrictOnDelete();
+            $table->foreignId('financial_period_id')->constrained('financial_periods', indexName: 'pmr_realloc_period_fk')->restrictOnDelete();
+            $table->foreignId('branch_id')->constrained('branches', indexName: 'pmr_realloc_branch_fk')->restrictOnDelete();
+            $table->foreignId('production_run_id')->constrained('production_runs', indexName: 'pmr_realloc_run_fk')->restrictOnDelete();
+            $table->foreignId('source_material_request_id')->constrained('production_material_requests', indexName: 'pmr_realloc_source_request_fk')->restrictOnDelete();
+            $table->foreignId('source_material_request_line_id')->constrained('production_material_request_lines', indexName: 'pmr_realloc_source_line_fk')->restrictOnDelete();
+            $table->foreignId('source_requirement_id')->constrained('production_material_requirements', indexName: 'pmr_realloc_source_requirement_fk')->restrictOnDelete();
+            $table->foreignId('target_material_request_id')->constrained('production_material_requests', indexName: 'pmr_realloc_target_request_fk')->restrictOnDelete();
+            $table->foreignId('target_material_request_line_id')->constrained('production_material_request_lines', indexName: 'pmr_realloc_target_line_fk')->restrictOnDelete();
+            $table->foreignId('target_requirement_id')->constrained('production_material_requirements', indexName: 'pmr_realloc_target_requirement_fk')->restrictOnDelete();
+            $table->foreignId('source_product_id')->constrained('products', indexName: 'pmr_realloc_source_product_fk')->restrictOnDelete();
+            $table->foreignId('source_unit_id')->nullable()->constrained('item_units', indexName: 'pmr_realloc_source_unit_fk')->restrictOnDelete();
+            $table->decimal('source_conversion_factor', 20, 8);
+            $table->foreignId('target_product_id')->constrained('products', indexName: 'pmr_realloc_target_product_fk')->restrictOnDelete();
+            $table->foreignId('target_unit_id')->nullable()->constrained('item_units', indexName: 'pmr_realloc_target_unit_fk')->restrictOnDelete();
+            $table->decimal('target_conversion_factor', 20, 8);
+            $table->decimal('source_quantity', 20, 8);
+            $table->decimal('original_equivalent_quantity', 20, 8);
+            $table->decimal('target_quantity', 20, 8);
+            $table->decimal('released_reserved_quantity', 20, 8)->default(0);
+            $table->text('reason');
+            $table->foreignId('created_by')->nullable()->constrained('users', indexName: 'pmr_realloc_created_by_fk')->restrictOnDelete();
+            $table->timestamps();
+            $table->index(
+                ['source_material_request_id', 'source_material_request_line_id'],
+                'production_material_reallocations_source_index',
+            );
+            $table->index(
+                ['target_material_request_id', 'target_material_request_line_id'],
+                'production_material_reallocations_target_index',
+            );
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        $hasAllocationEvidence = DB::table('production_material_request_reallocations')->exists()
+            || DB::table('production_material_requirements')->whereNotNull('allocation_root_requirement_id')->exists()
+            || DB::table('production_material_request_lines')->where(function ($query): void {
+                $query->where('reallocated_quantity', '<>', 0)
+                    ->orWhere('reallocated_original_quantity', '<>', 0)
+                    ->orWhere('reallocated_reserved_quantity', '<>', 0);
+            })->exists();
+
+        if ($hasAllocationEvidence) {
+            throw new RuntimeException('Production material allocation evidence exists; rollback would discard immutable material lineage.');
+        }
+
+        Schema::dropIfExists('production_material_request_reallocations');
+
+        Schema::table('production_material_request_lines', function (Blueprint $table): void {
+            $table->dropColumn([
+                'reallocated_quantity',
+                'reallocated_original_quantity',
+                'reallocated_reserved_quantity',
+            ]);
+        });
+
+        Schema::table('production_material_requirements', function (Blueprint $table): void {
+            $table->dropUnique('production_requirements_material_allocation_unique');
+            $table->dropForeign('prod_req_allocation_root_fk');
+            $table->dropColumn('allocation_root_requirement_id');
+        });
+    }
+};

@@ -98,9 +98,14 @@ JS;
             '/admin/navigation-search',
             '/admin/notifications/',
             '/admin/operating-context/',
+            '/admin/purchases/procurement-print/',
             '/admin/select2/',
             '/debugbar',
             '/telescope',
+        ];
+        $networkOnlySuffixes = [
+            '/pdf',
+            '/print',
         ];
         $staticAssetPrefixes = [
             '/assets/',
@@ -118,6 +123,7 @@ const ERP_PWA_OFFLINE_ENABLED = %s;
 const ERP_PWA_NAVIGATION_BYPASS_EXACT_PATHS = %s;
 const ERP_PWA_NETWORK_ONLY_EXACT_PATHS = %s;
 const ERP_PWA_NETWORK_ONLY_PREFIXES = %s;
+const ERP_PWA_NETWORK_ONLY_SUFFIXES = %s;
 const ERP_PWA_STATIC_ASSET_PREFIXES = %s;
 const ERP_PWA_DASHBOARD_URL = %s;
 const ERP_PWA_DEFAULT_PUSH_TITLE = %s;
@@ -261,7 +267,8 @@ async function focusOrOpenApp(value) {
 
 function isNetworkOnlyPath(pathname) {
   return ERP_PWA_NETWORK_ONLY_EXACT_PATHS.includes(pathname)
-    || ERP_PWA_NETWORK_ONLY_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+    || ERP_PWA_NETWORK_ONLY_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+    || ERP_PWA_NETWORK_ONLY_SUFFIXES.some((suffix) => pathname.endsWith(suffix));
 }
 
 function isStaticAssetRequest(url) {
@@ -321,6 +328,7 @@ JS,
             json_encode(array_values(array_unique($navigationBypassExactPaths)), JSON_THROW_ON_ERROR),
             json_encode(array_values(array_unique($networkOnlyExactPaths)), JSON_THROW_ON_ERROR),
             json_encode($networkOnlyPrefixes, JSON_THROW_ON_ERROR),
+            json_encode($networkOnlySuffixes, JSON_THROW_ON_ERROR),
             json_encode($staticAssetPrefixes, JSON_THROW_ON_ERROR),
             json_encode($dashboardUrl, JSON_THROW_ON_ERROR),
             json_encode($defaultPushTitle, JSON_THROW_ON_ERROR),

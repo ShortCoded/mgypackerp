@@ -22,6 +22,7 @@ use Modules\Sales\Models\Quotation;
 use Modules\Sales\Models\QuotationPaymentMilestone;
 use Modules\Sales\Models\QuotationRevision;
 use Modules\Sales\Models\SalesOrder;
+use Modules\Sales\Services\CustomerInvoiceService;
 use Modules\Sales\Services\QuotationCalculationService;
 use Modules\Sales\Services\QuotationService;
 use Modules\Sales\Services\SalesOrderService;
@@ -1285,3 +1286,131 @@ test('native unchanged edit preserves the final quotation rounding allocation wh
     expect([$order->getAttributes(), $order->lines->sole()->getAttributes(), DB::table('activity_log')->count()])->toBe($before)
         ->and(bcadd((string) $quotation->salesOrders()->sum('total_amount'), '0', 4))->toBe($quotation->currentRevision->total);
 });
+
+test('quotation withholding follows line and document discounts before VAT without changing contractual prices', function (string $lineType, string $lineValue, string $headerType, string $headerValue, string $basis, string $withheld, string $net): void {
+    $calculation = app(QuotationCalculationService::class)->calculate([
+        ['quantity' => '1', 'unit_price' => '1000', 'discount_type' => $lineType, 'discount_value' => $lineValue, 'tax_rate' => '14'],
+    ], $headerType, $headerValue, '1', $basis);
+    expect($calculation['revision']['subtotal'])->toBe('1000.0000')
+        ->and($calculation['revision']['discount_amount'])->toBe('190.0000')
+        ->and($calculation['revision']['tax_amount'])->toBe('113.4000')
+        ->and($calculation['revision']['total'])->toBe('923.4000')
+        ->and($calculation['revision']['withholding_amount'])->toBe($withheld)
+        ->and($calculation['revision']['net_payable_amount'])->toBe($net)
+        ->and($calculation['lines'][0]['unit_price'])->toBe('1000');
+})->with([
+    ['fixed', '100', 'percentage', '10', 'eta_t4_net_excluding_tax', '8.1000', '915.3000'],
+    ['percentage', '10', 'fixed', '90', 'eta_t4_net_excluding_tax', '8.1000', '915.3000'],
+    ['percentage', '10', 'fixed', '90', 'gross_including_tax', '9.2340', '914.1660'],
+]);
+
+test('native quotation financial terms are visible outside tabs saved edited printed and copied into a new revision', function (): void {
+    $f = createQuotationThroughHttp(['quotations.print'], [
+        'discount_type' => 'fixed', 'discount_value' => '35', 'withholding_rate' => '1',
+        'withholding_basis' => 'eta_t4_net_excluding_tax', 'payment_milestones' => [],
+    ]);
+    $quote = $f['quotation'];
+    $revision = $quote->currentRevision;
+    expect($revision->discount_amount)->toBe('35.0000')->and($revision->tax_amount)->toBe('23.1000')
+        ->and($revision->total)->toBe('188.1000')->and($revision->withholding_basis_amount)->toBe('165.0000')
+        ->and($revision->withholding_amount)->toBe('1.6500')->and($revision->net_payable_amount)->toBe('186.4500');
+    foreach (['en', 'ar'] as $locale) {
+        $this->withSession(['locale' => $locale]);
+        app()->setLocale($locale);
+        foreach (['show', 'edit', 'create'] as $action) {
+            $html = $this->get(route('admin.sales.quotations.'.$action, $action === 'create' ? [] : $quote))->assertOk()->getContent();
+            expect(strpos($html, 'data-quotation-financial-summary'))->toBeLessThan(strpos($html, 'id="quotation-form-tabs"'));
+            expect($html)->toContain(__('sales_ui.document_discount'))->toContain(__('sales_ui.withholding_rate'));
+        }
+        $pdf = $this->get(route('admin.sales.quotations.print', $quote))->assertOk();
+        expect(quotationPdfText($pdf->getContent()))->toContain('186.45')->toContain('188.10')->toContain('1.65');
+    }
+    $payload = quotationPayload($f['product'], $f['unit'], $f['currency'], ['discount_type' => 'percentage', 'discount_value' => '10', 'payment_milestones' => []]);
+    $this->putJson(route('admin.sales.quotations.update', $quote), $payload)->assertOk()->assertJsonPath('success', true);
+    $revision = $revision->fresh();
+    expect($revision->withholding_basis)->toBe('eta_t4_net_excluding_tax')->and($revision->withholding_rate)->toBe('1.0000')
+        ->and($revision->total)->toBe('205.2000')->and($revision->withholding_amount)->toBe('1.8000')->and($revision->net_payable_amount)->toBe('203.4000');
+    $fields = ['subtotal', 'discount_type', 'discount_value', 'discount_amount', 'tax_amount', 'total', 'withholding_basis', 'withholding_rate', 'withholding_basis_amount', 'withholding_amount', 'net_payable_amount'];
+    $before = $revision->only($fields);
+    $next = app(QuotationService::class)->createNewRevision($quote->fresh(), 'SYNTHETIC financial snapshot');
+    expect($next->only($fields))->toBe($before)->and($revision->fresh()->only($fields))->toBe($before)
+        ->and(DB::table('journal_entries')->count())->toBe(0)->and(DB::table('customer_withholding_settlements')->count())->toBe(0);
+});
+
+test('quotation withholding invalid inputs are rejected atomically and historical null preview remains intact', function (): void {
+    $f = createQuotationThroughHttp();
+    $quote = $f['quotation'];
+    $revision = $quote->currentRevision;
+    $revision->update(['withholding_basis' => null, 'withholding_basis_amount' => null, 'net_payable_amount' => null]);
+    $before = $revision->fresh()->getAttributes();
+    foreach (['101', '-1', '1.00001', '1e2'] as $rate) {
+        $this->putJson(route('admin.sales.quotations.update', $quote), quotationPayload($f['product'], $f['unit'], $f['currency'], ['withholding_rate' => $rate]))
+            ->assertUnprocessable()->assertJsonValidationErrors('withholding_rate');
+    }
+    $this->putJson(route('admin.sales.quotations.update', $quote), quotationPayload($f['product'], $f['unit'], $f['currency'], ['withholding_basis' => 'unknown']))
+        ->assertUnprocessable()->assertJsonValidationErrors('withholding_basis');
+    expect($revision->fresh()->getAttributes())->toBe($before);
+    $this->get(route('admin.sales.quotations.edit', $quote))->assertOk()->assertSee('value="gross_including_tax" selected', false);
+    $next = app(QuotationService::class)->createNewRevision($quote, 'SYNTHETIC historical null snapshot');
+    expect($revision->fresh()->withholding_basis)->toBeNull()->and($next->withholding_basis)->toBeNull()
+        ->and($revision->fresh()->total)->toBe('228.0000');
+});
+
+test('partial quotation orders preserve combined commercial allocations and withholding through invoice conversion', function (): void {
+    $f = createQuotationThroughHttp(['sales_orders.create', 'sales_orders.view', 'sales_orders.view_prices', 'sales_orders.edit'], [
+        'valid_until' => now()->addMonth()->toDateString(), 'payment_milestones' => [],
+        'lines' => [['product_doc_num' => 'Product-00901', 'unit_doc_num' => 'Unit-00501', 'quantity' => '3', 'unit_price' => '1', 'tax_rate' => '14']],
+    ]);
+    $quote = $f['quotation'];
+    $line = $quote->currentRevision->lines()->sole();
+    $calculated = app(QuotationCalculationService::class)->calculate([
+        [...$line->attributesToArray(), 'discount_type' => 'percentage', 'discount_value' => '10', 'allowed_discount_type' => 'percentage', 'allowed_discount_value' => '100'],
+    ], 'fixed', '0.0002', '2.5', 'eta_t4_net_excluding_tax');
+    $line->update($calculated['lines'][0]);
+    $quote->currentRevision->update($calculated['revision']);
+    $this->postJson(route('admin.sales.quotations.mark-sent', $quote))->assertOk();
+    $this->postJson(route('admin.sales.quotations.accept', $quote))->assertOk();
+    $source = $quote->fresh()->currentRevision->getAttributes();
+    for ($i = 0; $i < 3; $i++) {
+        $order = app(SalesOrderService::class)->createFromQuotation($quote->fresh(), ['company_id' => $quote->company_id, 'branch_id' => $quote->branch_id], [['public_id' => $line->public_uuid, 'quantity' => '1']]);
+        expect($order->withholding_basis)->toBe('eta_t4_net_excluding_tax')->and($order->withholding_rate)->toBe('2.5000')
+            ->and($order->lines->sole()->unit_price)->toBe('1.00000000');
+        $this->get(route('admin.sales.sales-orders.edit', $order))->assertOk()->assertSee('data-sales-withholding-preview', false);
+        $order = app(SalesOrderService::class)->approve($order);
+        $invoice = app(CustomerInvoiceService::class)->createFromOrder($order, [['sales_order_line_id' => $order->lines->sole()->id, 'quantity' => '1']], [['due_date' => now()->toDateString(), 'amount' => $order->total_amount]]);
+        expect($invoice->withholding_basis)->toBe($order->withholding_basis)->and($invoice->withholding_rate)->toBe($order->withholding_rate)
+            ->and($invoice->withholding_amount)->toBe($order->withholding_amount)->and($invoice->total_amount)->toBe($order->total_amount)
+            ->and($invoice->lines->sole()->unit_price)->toBe('1.00000000');
+        $this->get(route('admin.sales.sales-orders.show', $order))->assertOk()->assertSee('data-sales-financial-summary', false)->assertSee(__('sales_ui.document_discount'));
+    }
+    expect($quote->fresh()->currentRevision->getAttributes())->toBe($source)
+        ->and(bcadd((string) $quote->salesOrders()->sum('total_amount'), '0', 4))->toBe(bcadd((string) $source['total'], '0', 4))
+        ->and(bcadd((string) $quote->salesOrders()->sum('tax_amount'), '0', 4))->toBe(bcadd((string) $source['tax_amount'], '0', 4))
+        ->and(DB::table('journal_entries')->count())->toBe(0);
+});
+
+test('contractual one pound and precise prices survive full and fractional partial order invoices without price drift', function (string $price, array $parts): void {
+    $f = createQuotationThroughHttp([], ['valid_until' => now()->addMonth()->toDateString(), 'payment_milestones' => [],
+        'lines' => [['product_doc_num' => 'Product-00901', 'unit_doc_num' => 'Unit-00501', 'quantity' => '2', 'unit_price' => $price, 'tax_rate' => '14']],
+    ]);
+    $quote = $f['quotation'];
+    $this->postJson(route('admin.sales.quotations.mark-sent', $quote))->assertOk();
+    $this->postJson(route('admin.sales.quotations.accept', $quote))->assertOk();
+    $orders = app(SalesOrderService::class);
+    $order = $orders->approve($orders->createFromQuotation($quote, ['company_id' => $quote->company_id, 'branch_id' => $quote->branch_id]));
+    $invoices = app(CustomerInvoiceService::class);
+    foreach ($parts as $quantity) {
+        $selection = [['sales_order_line_id' => $order->lines->sole()->id, 'quantity' => $quantity]];
+        $preview = $invoices->quoteOrderCorrection($order, $selection, 0);
+        $invoice = $invoices->createFromOrder($order, $selection, [['due_date' => now()->toDateString(), 'amount' => $preview['total']]]);
+        expect($invoice->lines->sole()->unit_price)->toBe(bcadd($price, '0', 8))
+            ->and($preview['lines'][0]['unit_price'])->toBe(bcadd($price, '0', 8));
+    }
+    expect(bcadd((string) $order->invoices()->sum('total_amount'), '0', 4))->toBe($order->total_amount)
+        ->and(bcadd((string) $order->invoices()->sum('tax_amount'), '0', 4))->toBe($order->tax_amount)
+        ->and($order->fresh('lines')->lines->sole()->unit_price)->toBe(bcadd($price, '0', 8));
+})->with([
+    ['1', ['2']],
+    ['1', ['0.00005', '1.99995']],
+    ['22.54545123', ['0.00005', '0.99995', '1']],
+]);

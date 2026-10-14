@@ -520,7 +520,8 @@ class ProductionOrderController extends Controller
         $record = $productionOrder->load([
             'company', 'salesOrder.branch', 'salesOrder.salesEmployee', 'orderStageSnapshots.stage',
             'lines.product.unit', 'lines.product.equivalentUnit',
-            'lines.product.components.componentProduct', 'lines.product.components.unit',
+            'lines.product.components.componentProduct.unit', 'lines.product.components.unit',
+            'lines.product.components.alternatives.alternativeProduct.unit',
             'lines.unit', 'lines.stageSnapshots',
         ]);
         $formulas = [];
@@ -538,12 +539,26 @@ class ProductionOrderController extends Controller
                     'product_name' => $component->componentProduct?->name,
                     'quantity_per_output' => (string) $component->quantity,
                     'unit_name' => $component->unit?->name,
+                    'base_unit_name' => $component->componentProduct?->unit?->name,
+                    'alternatives' => $component->alternatives->map(fn ($alternative): array => [
+                        'product_doc_num' => $alternative->alternativeProduct?->doc_num,
+                        'product_name' => $alternative->alternativeProduct?->name,
+                        'unit_name' => $alternative->alternativeProduct?->unit?->name,
+                        'conversion_factor' => (string) $alternative->conversion_factor,
+                    ])->values()->all(),
                 ])->all() ?? []
                 : collect($snapshot['components'] ?? [])->map(fn (array $component): array => [
                     'product_doc_num' => $component['product_doc_num'] ?? null,
                     'product_name' => $component['product_name'] ?? null,
                     'quantity_per_output' => (string) ($component['base_quantity_per_output'] ?? '0'),
                     'unit_name' => $component['base_unit_name'] ?? null,
+                    'base_unit_name' => $component['base_unit_name'] ?? null,
+                    'alternatives' => collect($component['alternatives'] ?? [])->map(fn (array $alternative): array => [
+                        'product_doc_num' => $alternative['product_doc_num'] ?? null,
+                        'product_name' => $alternative['product_name'] ?? null,
+                        'unit_name' => $alternative['base_unit_name'] ?? null,
+                        'conversion_factor' => (string) ($alternative['conversion_factor'] ?? '1'),
+                    ])->all(),
                 ])->all();
             $formulas[$line->getKey()] = [
                 'is_draft_preview' => $isDraftPreview,

@@ -4,10 +4,33 @@
         const table = $('#sales-cycle-table');
         if (!table.length) return;
         const filters = document.getElementById('sales-index-filter-form');
+        const stateKey = table.data('state-key');
+        const filterValues = () => {
+            const values = {};
+            new FormData(filters).forEach((value, key) => { values[key] = value; });
+            values.trash = $('#trash_filter').val() || 'active';
+            return values;
+        };
+        const restoreFilters = values => {
+            Object.entries(values || {}).forEach(([name, value]) => {
+                const field = name === 'trash' ? document.getElementById('trash_filter') : filters.elements.namedItem(name);
+                if (field) field.value = value;
+            });
+        };
         const grid = $.fn.DataTable.isDataTable(table[0])
             ? table.DataTable()
             : table.DataTable(window.AppDataTables.options({
-                processing: true, serverSide: true, order: [[0, 'desc']],
+                processing: true, serverSide: true, order: [[0, 'desc']], stateSave: true,
+                stateLoadCallback: () => {
+                    if (!stateKey) return null;
+                    try { return JSON.parse(window.localStorage.getItem(stateKey)); } catch (_) { return null; }
+                },
+                stateSaveCallback: (settings, data) => {
+                    if (!stateKey) return;
+                    try { window.localStorage.setItem(stateKey, JSON.stringify(data)); } catch (_) {}
+                },
+                stateLoadParams: (settings, data) => restoreFilters(data.salesFilters),
+                stateSaveParams: (settings, data) => { data.salesFilters = filterValues(); },
                 ajax: {url: table.data('url'), data: data => { data.trash = $('#trash_filter').val() || 'active'; new FormData(filters).forEach((value, key) => { data[key] = value; }); }},
                 columns: [
                     {data:'doc_num'}, {data:'date'}, {data:'customer', orderable:false},

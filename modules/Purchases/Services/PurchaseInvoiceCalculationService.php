@@ -37,8 +37,8 @@ class PurchaseInvoiceCalculationService
 
         foreach ($lines as $index => $line) {
             $quantity = $this->normalize($line['quantity'] ?? 0, self::QuantityScale);
-            $unitPrice = $this->numbers->normalize($this->normalize($line['unit_price'] ?? 0, 8)) ?? '0';
-            $lineSubtotal = $this->round(bcmul($quantity, $unitPrice, self::IntermediateScale));
+            $unitPrice = $this->numbers->normalize($this->normalize($line['unit_price'] ?? 0, 15)) ?? '0';
+            $lineSubtotal = $this->round(bcmul($quantity, $unitPrice, 23));
             $lineDiscount = $this->discountAmount($lineSubtotal, $line['discount_type'] ?? null, $line['discount_value'] ?? 0);
             if (isset($bookedAllocations[$index])) {
                 $lineSubtotal = $bookedAllocations[$index]['gross'];

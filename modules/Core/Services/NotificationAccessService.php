@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Services\EffectivePermissionResolver;
 use Illuminate\Database\Eloquent\Builder;
 use Modules\Core\Models\UserNotification;
+use Modules\Inventory\Models\InventoryReorderAlert;
 
 class NotificationAccessService
 {
@@ -56,6 +57,14 @@ class NotificationAccessService
             $query->where(function (Builder $query) use ($branchIds): void {
                 $query->whereNull('user_notifications.branch_id')
                     ->orWhereIn('user_notifications.branch_id', $branchIds->all() ?: [0]);
+            });
+        }
+
+        if (! $this->operatingScope->hasUnrestrictedFinancialPeriodAccess($user)) {
+            $periodIds = $this->operatingScope->allowedFinancialPeriodQuery($user)->pluck('financial_periods.id');
+            $query->where(function (Builder $query) use ($periodIds): void {
+                $query->where('type', '<>', InventoryReorderAlert::NotificationType)
+                    ->orWhereIn('metadata->financial_period_id', $periodIds->all() ?: [0]);
             });
         }
 

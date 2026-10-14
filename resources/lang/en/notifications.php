@@ -72,7 +72,12 @@ return [
         'unassigned_body' => 'An operational event has no eligible recipient. Review responsibility and access settings.',
         'unassigned_external_body' => 'An operational responsibility needs configuration. Open the system to review it.',
     ],
+    'reorder' => [
+        'title' => 'Reorder alert: :item',
+        'body' => 'Item :code, store :store, branch :branch: available :available :unit; reorder point :threshold :unit. Review the inventory report.',
+    ],
     'types' => [
+        'inventory_reorder_low' => 'Reorder alert',
         'task_assigned' => 'Task assigned',
         'task_updated' => 'Task updated',
         'task_unassigned' => 'Task reassigned',

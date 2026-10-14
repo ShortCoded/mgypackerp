@@ -160,7 +160,7 @@
             @if(in_array($kind, ['sales_order', 'invoice'], true) && $record->discount_type)<tr><th>{{ __($kind === 'invoice' ? 'sales_ui.invoice_discount' : 'sales_ui.header_discount') }} ({{ __('quotations.discount_types.'.$record->discount_type) }}: {{ $numbers->format($record->discount_value) }}{{ $record->discount_type === 'percentage' ? '%' : '' }})</th><td>{{ $numbers->formatWithMinimumDecimals($record->header_discount_amount, 2) }}</td></tr>@endif
             <tr><th>{{ __('Grand total') }}</th><td><strong>{{ $numbers->formatWithMinimumDecimals($record->total_amount, 2) }}</strong></td></tr>
             @if(in_array($kind, ['sales_order', 'invoice'], true) && bccomp((string) ($record->withholding_rate ?? 0), '0', 4) > 0)
-            <tr><th>{{ __('sales_ui.withholding') }} / {{ __($record->withholding_basis === 'eta_t4_net_excluding_tax' ? 'sales_ui.wht.eta' : 'sales_ui.wht.legacy') }} ({{ $numbers->format($record->withholding_rate) }}%)</th><td>{{ $numbers->formatWithMinimumDecimals($record->withholding_amount, 2) }}</td></tr>
+            <tr><th>{{ __('sales_ui.withholding') }} / {{ __(\Modules\Sales\Services\SalesWithholdingService::labelKey($record->withholding_basis)) }} ({{ $numbers->format($record->withholding_rate) }}%)</th><td>{{ $numbers->formatWithMinimumDecimals($record->withholding_amount, 2) }}</td></tr>
             <tr><th>{{ __('sales_ui.net_payable') }}</th><td><strong>{{ $numbers->formatWithMinimumDecimals($record->net_payable_amount, 2) }}</strong></td></tr>
             @endif
             @if($kind === 'invoice' && bccomp((string) ($record->actual_withholding_amount ?? '0'), '0', 4) > 0)

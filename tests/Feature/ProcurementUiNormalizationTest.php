@@ -40,6 +40,38 @@ function procurementUiFixture(): array
     return $fixture;
 }
 
+test('legacy purchase requisition edits retain an absent requester without inventing an employee', function (): void {
+    $f = procurementUiFixture();
+    $record = procurementManualRequisition($f);
+    expect($record->requester_employee_id)->toBeNull();
+    $payload = ['request_date' => now()->toDateString(), 'branch_store_uuid' => $f['store']->public_uuid,
+        'lines' => [['public_id' => $record->lines->sole()->public_id, 'product_doc_num' => $f['raw']->doc_num, 'unit_doc_num' => $f['unit']->doc_num, 'requested_quantity' => '12']]];
+    $this->actingAs($f['user']);
+    $this->get(route('admin.purchases.purchase-requisitions.edit', $record))->assertOk()->assertSee(__('procurement.ui.legacy_requester_help'));
+    $this->putJson(route('admin.purchases.purchase-requisitions.update', $record), $payload)->assertOk()->assertJsonPath('success', true);
+    expect($record->fresh()->requester_employee_id)->toBeNull()->and($record->fresh()->lines->sole()->requested_quantity)->toBe('12.00000000');
+    unset($payload['lines'][0]['public_id']);
+    $this->postJson(route('admin.purchases.purchase-requisitions.store'), $payload)->assertUnprocessable()->assertJsonValidationErrors('requester_employee_id');
+    expect(PurchaseRequisition::query()->count())->toBe(1);
+});
+
+test('purchase requisition preserves its archived requester while refusing another archived employee', function (): void {
+    $f = procurementUiFixture();
+    $record = app(ProcurementSourcingService::class)->createRequisition(['request_date' => now()->toDateString(),
+        'branch_store_uuid' => $f['store']->public_uuid, 'requester_employee_id' => $f['employee']->id,
+        'lines' => [['product_doc_num' => $f['raw']->doc_num, 'unit_doc_num' => $f['unit']->doc_num, 'requested_quantity' => '2']]]);
+    $f['employee']->delete();
+    $other = HrEmployee::query()->create(['company_id' => $f['company']->id, 'branch_id' => $f['branch']->id, 'doc_num' => 'EMP-ARCHIVED-OTHER', 'doc_number' => 9911, 'name' => 'Other archived employee', 'full_name' => 'Other archived employee', 'status' => 'active']);
+    $other->delete();
+    $payload = ['request_date' => now()->toDateString(), 'branch_store_uuid' => $f['store']->public_uuid, 'requester_employee_id' => $f['employee']->id,
+        'lines' => [['public_id' => $record->lines->sole()->public_id, 'product_doc_num' => $f['raw']->doc_num, 'unit_doc_num' => $f['unit']->doc_num, 'requested_quantity' => '3']]];
+    $this->actingAs($f['user'])->get(route('admin.purchases.purchase-requisitions.edit', $record))->assertOk()->assertSee('Warehouse Requester');
+    $this->putJson(route('admin.purchases.purchase-requisitions.update', $record), $payload)->assertOk();
+    $this->putJson(route('admin.purchases.purchase-requisitions.update', $record), [...$payload, 'requester_employee_id' => $other->id])->assertUnprocessable()->assertJsonValidationErrors('requester_employee_id');
+    $this->putJson(route('admin.purchases.purchase-requisitions.update', $record), [...$payload, 'requester_employee_id' => null])->assertUnprocessable()->assertJsonValidationErrors('requester_employee_id');
+    expect($record->fresh()->requester_employee_id)->toBe($f['employee']->id)->and($record->fresh()->lines->sole()->requested_quantity)->toBe('3.00000000');
+});
+
 test('purchase order form restores the permission-gated direct procurement option', function (): void {
     $fixture = procurementUiFixture();
     procurementUseBranch($fixture, procurementAdministrativeBranch($fixture));
@@ -551,7 +583,7 @@ test('invalid purchase invoice numbers return field validation errors without mu
         ['lines.0.discount_value', '1,2,3'],
         ['lines.0.discount_value', '0.00001'],
         ['lines.0.quantity', '1,00.00000001'],
-        ['lines.0.unit_price', '1.000000001'],
+        ['lines.0.unit_price', '1.0000000000000001'],
         ['lines.0.unit_price', '100000000000000'],
         ['lines.0.tax_rate', '1.2.3'],
         ['header_discount_value', '1,2,3'],

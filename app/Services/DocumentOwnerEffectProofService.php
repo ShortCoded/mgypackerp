@@ -384,9 +384,12 @@ class DocumentOwnerEffectProofService
             return false;
         }
         $expectedCount = 0;
-        foreach ($receipt->lines()->with(['product', 'purchaseOrderLine'])->lazyById() as $line) {
-            $source = $line->purchaseOrderLine;
-            if ($source === null || (int) $source->purchase_order_id !== (int) $receipt->purchase_order_id
+        foreach ($receipt->lines()->with(['product', 'purchaseOrderLine', 'supplyOrderLine.purchaseInvoiceLine'])->lazyById() as $line) {
+            $direct = $receipt->purchase_order_id === null && $receipt->supply_order_id !== null;
+            $source = $direct ? $line->supplyOrderLine?->purchaseInvoiceLine : $line->purchaseOrderLine;
+            if ($source === null || (! $direct && (int) $source->purchase_order_id !== (int) $receipt->purchase_order_id)
+                || ($direct && ((int) $line->supplyOrderLine?->supply_order_id !== (int) $receipt->supply_order_id
+                    || (int) $source?->purchase_invoice_id !== (int) $receipt->supplyOrder?->purchase_invoice_id))
                 || (int) $source->company_id !== (int) $receipt->company_id || $line->product === null
                 || (int) $source->product_id !== (int) $line->product_id || (int) $source->unit_id !== (int) $line->unit_id) {
                 return false;
@@ -400,15 +403,21 @@ class DocumentOwnerEffectProofService
             }
             $expectedCount++;
             $movement = (clone $originals)->where('posting_key', 'purchase-receipt:'.$line->id)->first();
-            $quantity = bcmul((string) $line->accepted_quantity, (string) $source->stockConversionFactor(), 8);
-            $journal = JournalEntry::query()->find($line->grni_journal_entry_id);
-            $order = $source->purchaseOrder;
-            if ($journal === null || $order === null || (int) $journal->branch_id !== (int) $receipt->branch_id
-                || (int) $journal->financial_period_id !== (int) $receipt->financial_period_id
-                || (int) $journal->currency_id !== (int) $order->currency_id
-                || bccomp((string) $journal->exchange_rate, (string) $order->exchange_rate, 6) !== 0
-                || bccomp(bcmul((string) $journal->lines()->sum('debit_amount'), (string) $journal->exchange_rate, 4), (string) $line->provisional_total_value, 4) !== 0) {
-                return false;
+            $quantity = bcmul((string) $line->accepted_quantity, (string) ($line->product_snapshot['stock_conversion_factor'] ?? $source->stockConversionFactor()), 8);
+            if ($direct) {
+                if ($line->grni_journal_entry_id !== null || $receipt->grni_journal_entry_id !== null) {
+                    return false;
+                }
+            } else {
+                $journal = JournalEntry::query()->find($line->grni_journal_entry_id);
+                $order = $source->purchaseOrder;
+                if ($journal === null || $order === null || (int) $journal->branch_id !== (int) $receipt->branch_id
+                    || (int) $journal->financial_period_id !== (int) $receipt->financial_period_id
+                    || (int) $journal->currency_id !== (int) $order->currency_id
+                    || bccomp((string) $journal->exchange_rate, (string) $order->exchange_rate, 6) !== 0
+                    || bccomp(bcmul((string) $journal->lines()->sum('debit_amount'), (string) $journal->exchange_rate, 4), (string) $line->provisional_total_value, 4) !== 0) {
+                    return false;
+                }
             }
             if ($movement === null || $movement->source_line_type !== $line::class || (int) $movement->source_line_id !== (int) $line->id
                 || (int) $movement->company_id !== (int) $receipt->company_id || (int) $movement->branch_id !== (int) $receipt->branch_id
@@ -420,7 +429,7 @@ class DocumentOwnerEffectProofService
                 || bccomp((string) $movement->total_cost, (string) $line->provisional_total_value, 8) !== 0
                 || bccomp((string) $movement->unit_cost, bcdiv((string) $line->provisional_total_value, $quantity, 8), 8) !== 0
                 || ! $this->stockHasExactInverse($movement)
-                || ! $this->journalHasExactInverse((int) $line->grni_journal_entry_id, 'grni_receipt', (int) $line->id, 'grni_receipt_reversal', (int) $receipt->company_id)) {
+                || (! $direct && ! $this->journalHasExactInverse((int) $line->grni_journal_entry_id, 'grni_receipt', (int) $line->id, 'grni_receipt_reversal', (int) $receipt->company_id))) {
                 return false;
             }
         }

@@ -194,6 +194,8 @@ test('roles index requires view permission', function () {
         ->toContain('maxPageLength = 100')
         ->toContain('lengthMenuValues = [10, 25, 50, 75, maxPageLength]')
         ->toContain('lengthMenuValues.slice()')
+        ->toContain('lengthMenuValues.includes(pageLength)')
+        ->toContain('const result = callback.apply(this, arguments)')
         ->not->toContain('-1]')
         ->not->toContain('allLabel')
         ->toContain("type: 'inline'")

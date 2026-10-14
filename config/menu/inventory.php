@@ -13,7 +13,7 @@ return [
         ],
         'children' => [
             [
-                'label' => 'inventory_handovers', 'title' => 'production_handover.warehouse_title', 'icon' => 'dolly',
+                'label' => 'inventory_handovers', 'title' => 'menu.inventory_handovers', 'icon' => 'dolly',
                 'route' => 'admin.inventory.production-receipts.index', 'permission' => 'inventory.production_receipts.view',
                 'actions' => ['view' => 'inventory.production_receipts.view', 'create' => 'inventory.production_receipts.create',
                     'approve' => 'inventory.production_receipts.approve', 'cancel' => 'inventory.production_receipts.cancel',
@@ -99,7 +99,7 @@ return [
             ],
             [
                 'label' => 'inventory_cost_completion',
-                'title' => 'Historical receipt cost completion',
+                'title' => 'inventory.movements.receipt_completion_title',
                 'icon' => 'calculator',
                 'route' => 'admin.inventory.cost-completions.index',
                 'permission' => ['inventory.documents.propose_receipt_cost', 'inventory.documents.approve_receipt_cost'],

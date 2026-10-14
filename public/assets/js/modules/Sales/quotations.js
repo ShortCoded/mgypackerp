@@ -499,6 +499,14 @@
     });
     const total = numbers.add(numbers.subtract(subtotal, discount), tax);
 
+    const basis = $form.find('[name="withholding_basis"]').val() || 'gross_including_tax';
+    const rate = numbers.normalize($form.find('[name="withholding_rate"]').val() || '0') || '0';
+    const withholding = window.AppSalesDiscounts.withholding(total, rate, basis, numbers.subtract(subtotal, discount));
+    $form.find('[data-sales-header-discount-amount]').text(decimal(headerDiscount));
+    $form.find('[data-sales-withholding-amount]').text(decimal(withholding.withholding_amount));
+    $form.find('[data-sales-net-payable]').text(decimal(withholding.net_payable_amount));
+    $form.find('[data-sales-withholding-pending]').toggleClass('d-none', basis !== 'gross_including_tax' || numbers.compare(rate, '0') <= 0);
+
     $form.find('.js-quotation-subtotal').text(decimal(subtotal));
     $form.find('.js-quotation-discount').text(decimal(discount));
     $form.find('.js-quotation-tax').text(decimal(tax));
@@ -650,6 +658,8 @@
       $currency.empty().append(new Option(currencyLabel || currencyDocNum, currencyDocNum, true, true)).trigger('change');
     }
     $form.find('[name="exchange_rate"]').val('1');
+    $form.find('[name="withholding_rate"]').val('0');
+    $form.find('[name="withholding_basis"]').val('commercial_gross_preview');
     $form.find('[name="quotation_date"]').val(String($form.data('default-quotation-date') || ''));
     $form.find('[name="submit_action"]').val('save');
     $form.find('[name="clone_source_token"]').remove();
@@ -786,8 +796,8 @@
           setLoading($button, false);
         });
       })
-      .off('input.quotationsCalc change.quotationsCalc', '.js-quotation-calc')
-      .on('input.quotationsCalc change.quotationsCalc', '.js-quotation-calc', function () {
+      .off('input.quotationsCalc change.quotationsCalc', '.js-quotation-calc, .js-quotation-form .js-sales-withholding-rate, .js-quotation-form .js-sales-withholding-basis')
+      .on('input.quotationsCalc change.quotationsCalc', '.js-quotation-calc, .js-quotation-form .js-sales-withholding-rate, .js-quotation-form .js-sales-withholding-basis', function () {
         const $currentForm = $(this).closest('.js-quotation-form');
         syncDiscountInputs($currentForm);
         calculateTotals($currentForm);

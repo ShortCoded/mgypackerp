@@ -122,6 +122,17 @@ class PurchasesSelect2Service
             )
             ->whereIn('status', [PurchaseOrder::StatusApproved, PurchaseOrder::StatusClosed])
             ->with(['supplier', 'currency', 'branchStore.branch'])->orderByDesc('id');
+        if ($request->input('purpose') === 'invoice') {
+            $query->whereHas('lines', function (Builder $lines): void {
+                $billed = PurchaseInvoiceLine::query()->selectRaw('COALESCE(SUM(quantity), 0)')
+                    ->whereColumn('purchase_order_line_id', 'purchase_order_lines.id')
+                    ->whereHas('purchaseInvoice', fn (Builder $invoices) => $invoices->whereNotIn('status', [PurchaseInvoice::StatusCancelled, 'reversed']));
+                $lines->where('ordered_quantity', '>', $billed);
+            });
+        }
+        if ($request->input('purpose') === 'supply_order') {
+            $query->where('branch_id', $context['branch_id'])->where('financial_period_id', $context['financial_period_id']);
+        }
         if (in_array($request->input('purpose'), ['receipt', 'inspection', 'supply_order'], true)) {
             $query->where('status', PurchaseOrder::StatusApproved)->whereHas('lines', function ($lines) use ($request): void {
                 $received = UnpricedInventoryReceiptLine::query()->selectRaw('COALESCE(SUM(accepted_quantity), 0)')
@@ -150,14 +161,20 @@ class PurchasesSelect2Service
                         'ordered_quantity > ('.$received->toSql().') + ('.$inspected->toSql().') - ('.$receivedFromInspections->toSql().')',
                         [...$received->getBindings(), ...$inspected->getBindings(), ...$receivedFromInspections->getBindings()],
                     );
-                } else {
+                } elseif ($request->input('purpose') !== 'supply_order') {
                     $lines->where('ordered_quantity', '>', $received);
                 }
                 if ($request->input('purpose') === 'supply_order') {
                     $allocated = SupplyOrderLine::query()->selectRaw('COALESCE(SUM(ordered_quantity), 0)')
                         ->whereColumn('purchase_order_line_id', 'purchase_order_lines.id')
                         ->whereHas('supplyOrder', fn ($orders) => $orders->whereNotIn('status', [SupplyOrder::StatusCancelled]));
-                    $lines->where('ordered_quantity', '>', $allocated);
+                    $returned = PurchaseReturnLine::query()->selectRaw('COALESCE(SUM(quantity), 0)')
+                        ->whereColumn('purchase_order_line_id', 'purchase_order_lines.id')->where('from_quarantine', false)
+                        ->whereHas('purchaseReturn', fn (Builder $returns) => $returns->where('status', 'posted'));
+                    $lines->where('ordered_quantity', '>', $allocated)->whereHas('product', fn (Builder $products) => $products->purchasable()
+                        ->where('item_classification', '<>', Product::ClassificationService))
+                        ->whereRaw('purchase_order_lines.ordered_quantity > ('.$received->toSql().') - ('.$returned->toSql().')',
+                            [...$received->getBindings(), ...$returned->getBindings()]);
                 }
             });
         }
@@ -207,12 +224,54 @@ class PurchasesSelect2Service
                 fn (Builder $query) => $query->when(! $isAdministrativeBranch, fn (Builder $invoices) => $invoices->where('branch_id', $context['branch_id'])),
             )
             ->whereIn('status', [PurchaseInvoice::StatusApproved, PurchaseInvoice::StatusClosed])
-            ->when($request->input('purpose') === 'supply_order' && ! $request->filled('purchase_order'),
-                fn ($query) => $query->whereNotNull('purchase_order_id')
-                    ->whereHas('lines', fn ($lines) => $lines->whereNotNull('purchase_order_line_id')->whereHas('product', fn ($products) => $products->purchasable())),
-                fn ($query) => $query->whereHas('purchaseOrder', fn ($orders) => $orders->where('doc_num', $request->input('purchase_order'))))
+            ->when($request->filled('purchase_order'), fn (Builder $invoices) => $invoices->whereHas('purchaseOrder',
+                fn (Builder $orders) => $orders->where('doc_num', $request->input('purchase_order'))))
             ->when($request->filled('receipt'), fn ($query) => $query->whereHas('lines.receiptLine.receipt', fn ($receipts) => $receipts->where('doc_num', $request->input('receipt'))))
             ->orderByDesc('id');
+        if ($request->input('purpose') === 'supply_order') {
+            $query->where('branch_id', $context['branch_id'])->where('financial_period_id', $context['financial_period_id'])
+                ->whereNull('reversal_journal_entry_id')
+                ->where(function (Builder $sources): void {
+                    $sources->where(function (Builder $direct): void {
+                        $direct->whereNull('purchase_order_id')->whereHas('lines', function (Builder $lines): void {
+                            $allocated = SupplyOrderLine::query()->selectRaw('COALESCE(SUM(ordered_quantity), 0)')
+                                ->whereColumn('purchase_invoice_line_id', 'purchase_invoice_lines.id')
+                                ->whereHas('supplyOrder', fn (Builder $orders) => $orders->where('status', '<>', SupplyOrder::StatusCancelled));
+                            $lines->whereNull('purchase_order_line_id')->where('quantity', '>', $allocated)
+                                ->whereHas('product', fn (Builder $products) => $products->purchasable()->where('item_classification', '<>', Product::ClassificationService));
+                        });
+                    })->orWhere(function (Builder $linked): void {
+                        $linked->whereHas('purchaseOrder', fn (Builder $orders) => $orders->where('status', PurchaseOrder::StatusApproved))
+                            ->whereHas('lines', function (Builder $lines): void {
+                                $invoiceQuantity = DB::table('purchase_invoice_lines as source_invoice_lines')->selectRaw('COALESCE(SUM(source_invoice_lines.quantity), 0)')
+                                    ->whereColumn('source_invoice_lines.purchase_order_line_id', 'purchase_invoice_lines.purchase_order_line_id')
+                                    ->whereColumn('source_invoice_lines.purchase_invoice_id', 'purchase_invoice_lines.purchase_invoice_id')->whereNull('source_invoice_lines.deleted_at');
+                                $invoiceAllocated = SupplyOrderLine::query()->selectRaw('COALESCE(SUM(ordered_quantity), 0)')
+                                    ->whereColumn('purchase_order_line_id', 'purchase_invoice_lines.purchase_order_line_id')
+                                    ->whereHas('supplyOrder', fn (Builder $orders) => $orders->where('status', '<>', SupplyOrder::StatusCancelled)
+                                        ->whereColumn('purchase_invoice_id', 'purchase_invoice_lines.purchase_invoice_id'));
+                                $lines->whereNotNull('purchase_order_line_id')
+                                    ->whereHas('product', fn (Builder $products) => $products->purchasable()->where('item_classification', '<>', Product::ClassificationService))
+                                    ->whereRaw('('.$invoiceQuantity->toSql().') > ('.$invoiceAllocated->toSql().')',
+                                        [...$invoiceQuantity->getBindings(), ...$invoiceAllocated->getBindings()])
+                                    ->whereHas('purchaseOrderLine', function (Builder $orderLines): void {
+                                        $allocated = SupplyOrderLine::query()->selectRaw('COALESCE(SUM(ordered_quantity), 0)')
+                                            ->whereColumn('purchase_order_line_id', 'purchase_order_lines.id')
+                                            ->whereHas('supplyOrder', fn (Builder $orders) => $orders->where('status', '<>', SupplyOrder::StatusCancelled));
+                                        $received = UnpricedInventoryReceiptLine::query()->selectRaw('COALESCE(SUM(accepted_quantity), 0)')
+                                            ->whereColumn('purchase_order_line_id', 'purchase_order_lines.id')
+                                            ->whereHas('receipt', fn (Builder $receipts) => $receipts->where('approved', true)->where('posting_status', 'posted')->whereNotIn('status', ['cancelled', 'reversed']));
+                                        $returned = PurchaseReturnLine::query()->selectRaw('COALESCE(SUM(quantity), 0)')
+                                            ->whereColumn('purchase_order_line_id', 'purchase_order_lines.id')->where('from_quarantine', false)
+                                            ->whereHas('purchaseReturn', fn (Builder $returns) => $returns->where('status', 'posted'));
+                                        $orderLines->where('ordered_quantity', '>', $allocated)
+                                            ->whereRaw('purchase_order_lines.ordered_quantity > ('.$received->toSql().') - ('.$returned->toSql().')',
+                                                [...$received->getBindings(), ...$returned->getBindings()]);
+                                    });
+                            });
+                    });
+                });
+        }
         $this->search->applyMultiTermSearch($query, $this->search->terms($request->input('q')), ['text' => ['doc_num']]);
 
         return $this->select2->paginated($query, $request, fn ($record): array => ['id' => $record->doc_num, 'text' => $record->doc_num]);

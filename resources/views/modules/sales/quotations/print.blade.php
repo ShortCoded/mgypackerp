@@ -82,6 +82,7 @@
                     <tr><th>{{ __('quotations.attributes.discount_amount') }}</th><td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($revision->discount_amount, 2) }}</td></tr>
                     <tr><th>{{ __('quotations.attributes.tax_amount') }}</th><td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($revision->tax_amount, 2) }}</td></tr>
                     <tr class="fw-bold"><th>{{ __('quotations.print.grand_total') }}</th><td class="text-end" dir="ltr">{{ $numbers->formatWithMinimumDecimals($revision->total, 2) }} {{ $record->currency?->code }}</td></tr>
+                    @include('modules.sales.quotations.partials.financial-preview-rows')
                 </tbody></table></div>
             </div>
 

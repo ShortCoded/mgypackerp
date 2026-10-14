@@ -47,6 +47,11 @@ class QuotationRevision extends Model
         'discount_amount',
         'tax_amount',
         'total',
+        'withholding_basis',
+        'withholding_rate',
+        'withholding_basis_amount',
+        'withholding_amount',
+        'net_payable_amount',
         'notes_snapshot',
         'terms_snapshot',
         'payment_terms_snapshot',
@@ -67,6 +72,8 @@ class QuotationRevision extends Model
         'discount_amount' => 0,
         'tax_amount' => 0,
         'total' => 0,
+        'withholding_rate' => 0,
+        'withholding_amount' => 0,
     ];
 
     protected function casts(): array
@@ -78,6 +85,10 @@ class QuotationRevision extends Model
             'discount_amount' => 'decimal:4',
             'tax_amount' => 'decimal:4',
             'total' => 'decimal:4',
+            'withholding_rate' => 'decimal:4',
+            'withholding_basis_amount' => 'decimal:4',
+            'withholding_amount' => 'decimal:4',
+            'net_payable_amount' => 'decimal:4',
             'created_at' => 'datetime',
             'updated_at' => 'datetime',
         ];

@@ -6,15 +6,18 @@
     @php
         $dates = app(\Modules\Core\Services\DateFormatService::class);
         $numbers = app(\Modules\Core\Services\NumericFormatService::class);
+        $editing = $editing ?? null;
         $isSupplyOrder = $record instanceof \Modules\Purchases\Models\SupplyOrder;
         $sourceLines = $record->lines
             ->reject(fn ($line) => $line->product?->isService())
+            ->filter(fn ($line) => ! $editing || $editing->lines->contains($isSupplyOrder ? 'supply_order_line_id' : 'purchase_order_line_id', $line->id))
             ->filter(fn ($line) => (float) $line->available_inspection_quantity > 0)
             ->values();
     @endphp
 
-    <form method="POST" action="{{ route('admin.purchases.goods-receipt-inspection.store', $record->doc_num) }}">
+    <form method="POST" action="{{ $editing ? route('admin.purchases.goods-receipt-inspection.update', $editing) : route('admin.purchases.goods-receipt-inspection.store', $record->doc_num) }}" data-procurement-form>
         @csrf
+        @if($editing) @method('PUT') @endif
         <x-forms.line-item-cards />
 
         <div class="alert alert-info d-flex gap-2 align-items-start">
@@ -36,22 +39,23 @@
                         <span class="mx-1">·</span>{{ $record->branchStore?->name }}
                     </div>
                 </div>
-                <a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.goods-receipt-inspection.choose-source') }}">
+                @unless($editing)<a class="btn btn-falcon-default btn-sm" href="{{ route('admin.purchases.goods-receipt-inspection.choose-source') }}">
                     {{ __('Change source') }}
-                </a>
+                </a>@endunless
             </div>
             <div class="card-body py-3">
                 @if($errors->any())
                     <div class="alert alert-danger">{{ $errors->first() }}</div>
                 @endif
+                @if($editing)<div class="mb-3"><x-forms.label for="correction_reason" :label="__('Reason')" required /><x-forms.input id="correction_reason" name="correction_reason" value="{{ old('correction_reason') }}" maxlength="2000" required /></div>@endif
                 <div class="row g-3">
                     <div class="col-12 col-md-4">
                         <label class="form-label" for="inspection_at">{{ __('Inspection date/time') }}</label>
-                        <x-forms.date-input id="inspection_at" name="inspection_at" :value="old('inspection_at', now()->format('Y-m-d\TH:i'))" enable-time />
+                        <x-forms.date-input id="inspection_at" name="inspection_at" :value="old('inspection_at', $editing?->inspection_at?->format('Y-m-d\TH:i') ?? now()->format('Y-m-d\TH:i'))" enable-time />
                     </div>
                     <div class="col-12 col-md-8">
                         <label class="form-label" for="observations">{{ __('Observations') }}</label>
-                        <x-forms.input class="form-control" id="observations" name="observations" value="{{ old('observations') }}" />
+                        <x-forms.input class="form-control" id="observations" name="observations" value="{{ old('observations', $editing?->observations) }}" />
                     </div>
                 </div>
             </div>
@@ -81,6 +85,7 @@
                         <tbody>
                             @forelse($sourceLines as $index => $line)
                                 @php
+                                    $savedLine = $editing?->lines->firstWhere($isSupplyOrder ? 'supply_order_line_id' : 'purchase_order_line_id', $line->id);
                                     $orderLine = $isSupplyOrder ? $line->purchaseOrderLine : $line;
                                     $available = (float) $line->available_inspection_quantity;
                                 @endphp
@@ -99,7 +104,7 @@
                                             <x-forms.select class="form-select js-select2-local" name="lines[{{ $index }}][delivery_schedule_public_id]">
                                                 <option value="">{{ __('Unscheduled') }}</option>
                                                 @foreach($orderLine->deliverySchedules->whereNotIn('status', ['received', 'cancelled']) as $schedule)
-                                                    <option value="{{ $schedule->public_id }}">{{ $schedule->scheduled_date?->format('Y-m-d') }} / {{ $numbers->format((float) $schedule->scheduled_quantity - (float) $schedule->received_quantity) }}</option>
+                                                    <option value="{{ $schedule->public_id }}" @selected(old('lines.'.$index.'.delivery_schedule_public_id', $savedLine?->deliverySchedule?->public_id) === $schedule->public_id)>{{ $schedule->scheduled_date?->format('Y-m-d') }} / {{ $numbers->format((float) $schedule->scheduled_quantity - (float) $schedule->received_quantity) }}</option>
                                                 @endforeach
                                             </x-forms.select>
                                         @else
@@ -108,31 +113,31 @@
                                     </td>
                                     <td class="text-end" dir="ltr">{{ $numbers->format($available) }}</td>
                                     <td>
-                                        <x-forms.numeric-input name="lines[{{ $index }}][delivered_quantity]" :scale="8" min="0.00000001" :max="$available" step="0.00000001" :value="old('lines.'.$index.'.delivered_quantity', $available)" required />
+                                        <x-forms.numeric-input name="lines[{{ $index }}][delivered_quantity]" :scale="8" min="0.00000001" :max="$available" step="0.00000001" :value="old('lines.'.$index.'.delivered_quantity', $savedLine?->inspected_quantity ?? $available)" required />
                                     </td>
                                     <td>
-                                        <x-forms.numeric-input name="lines[{{ $index }}][accepted_quantity]" :scale="8" min="0" :max="$available" step="0.00000001" :value="old('lines.'.$index.'.accepted_quantity', $available)" required />
+                                        <x-forms.numeric-input name="lines[{{ $index }}][accepted_quantity]" :scale="8" min="0" :max="$available" step="0.00000001" :value="old('lines.'.$index.'.accepted_quantity', $savedLine?->accepted_quantity ?? $available)" required />
                                     </td>
                                     <td>
-                                        <x-forms.numeric-input name="lines[{{ $index }}][rejected_quantity]" :scale="8" min="0" :max="$available" step="0.00000001" :value="old('lines.'.$index.'.rejected_quantity', 0)" required />
+                                        <x-forms.numeric-input name="lines[{{ $index }}][rejected_quantity]" :scale="8" min="0" :max="$available" step="0.00000001" :value="old('lines.'.$index.'.rejected_quantity', $savedLine?->rejected_quantity ?? 0)" required />
                                     </td>
-                                    <td><x-forms.input class="form-control" name="lines[{{ $index }}][supplier_lot_number]" value="{{ old('lines.'.$index.'.supplier_lot_number') }}" />@if($line->product?->tracks_serials)<x-forms.label :label="__('inventory_serial.accepted_numbers')" /><x-forms.textarea name="lines[{{ $index }}][serial_numbers]" rows="3"  :placeholder="__('inventory_serial.input_help')" >{{ old('lines.'.$index.'.serial_numbers') }}</x-forms.textarea>@endif</td>
+                                    <td><x-forms.input class="form-control" name="lines[{{ $index }}][supplier_lot_number]" value="{{ old('lines.'.$index.'.supplier_lot_number', $savedLine?->supplier_lot_number) }}" />@if($line->product?->tracks_serials)<x-forms.label :label="__('inventory_serial.accepted_numbers')" /><x-forms.textarea name="lines[{{ $index }}][serial_numbers]" rows="3"  :placeholder="__('inventory_serial.input_help')" >{{ old('lines.'.$index.'.serial_numbers', implode("\n", $savedLine?->serial_numbers ?? [])) }}</x-forms.textarea>@endif</td>
                                     <td @if(!$line->product?->tracks_expiry) hidden @endif>
-                                        <x-forms.date-input class="form-control js-date-picker" type="text" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" name="lines[{{ $index }}][manufacture_date]" value="{{ old('lines.'.$index.'.manufacture_date') }}" />
+                                        <x-forms.date-input class="form-control js-date-picker" type="text" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" name="lines[{{ $index }}][manufacture_date]" value="{{ old('lines.'.$index.'.manufacture_date', $savedLine?->manufacture_date?->toDateString()) }}" />
                                     </td>
                                     <td @if(!$line->product?->tracks_expiry) hidden @endif>
-                                        <x-forms.date-input class="form-control js-date-picker" type="text" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" name="lines[{{ $index }}][expiry_date]" value="{{ old('lines.'.$index.'.expiry_date') }}" />
+                                        <x-forms.date-input class="form-control js-date-picker" type="text" data-date-format="{{ $dates->jsDateFormat() }}" data-locale="{{ app()->getLocale() }}" dir="ltr" name="lines[{{ $index }}][expiry_date]" value="{{ old('lines.'.$index.'.expiry_date', $savedLine?->expiry_date?->toDateString()) }}" />
                                     </td>
                                     <td>
                                         <x-forms.select class="form-select" name="lines[{{ $index }}][disposition]">
-                                            <option value="quarantine">{{ __('Quarantine') }}</option>
-                                            <option value="return_supplier">{{ __('Return to supplier') }}</option>
-                                            <option value="reinspect">{{ __('Reinspect') }}</option>
-                                            <option value="conditional_acceptance">{{ __('Conditional acceptance') }}</option>
+                                            <option value="quarantine" @selected(old('lines.'.$index.'.disposition', $savedLine?->disposition ?? 'quarantine') === 'quarantine')>{{ __('Quarantine') }}</option>
+                                            <option value="return_supplier" @selected(old('lines.'.$index.'.disposition', $savedLine?->disposition ?? 'quarantine') === 'return_supplier')>{{ __('Return to supplier') }}</option>
+                                            <option value="reinspect" @selected(old('lines.'.$index.'.disposition', $savedLine?->disposition ?? 'quarantine') === 'reinspect')>{{ __('Reinspect') }}</option>
+                                            <option value="conditional_acceptance" @selected(old('lines.'.$index.'.disposition', $savedLine?->disposition ?? 'quarantine') === 'conditional_acceptance')>{{ __('Conditional acceptance') }}</option>
                                         </x-forms.select>
                                     </td>
-                                    <td><x-forms.input class="form-control" name="lines[{{ $index }}][reason]" value="{{ old('lines.'.$index.'.reason') }}" /></td>
-                                    <td>@include('modules.purchases.procurement.line-attachments', ['attachmentLine' => null, 'attachmentCompanyId' => $record->company_id, 'index' => $index])</td>
+                                    <td><x-forms.input class="form-control" name="lines[{{ $index }}][reason]" value="{{ old('lines.'.$index.'.reason', $savedLine?->reason) }}" /></td>
+                                    <td>@include('modules.purchases.procurement.line-attachments', ['attachmentLine' => $savedLine, 'attachmentCompanyId' => $record->company_id, 'index' => $index])</td>
                                 </tr>
                             @empty
                                 <tr><td colspan="13" class="text-center text-500 py-5">{{ __('No quantities are available for inspection.') }}</td></tr>
@@ -144,13 +149,13 @@
         </div>
 
         @include('modules.purchases.procurement.attachments', [
-            'attachmentRecord' => null,
+            'attachmentRecord' => $editing,
             'attachmentsReadonly' => false,
             'attachmentCollection' => \Modules\Purchases\Models\GoodsReceiptInspection::AttachmentCollection,
         ])
 
         <div class="d-flex justify-content-end">
-            <button class="btn btn-primary" @disabled($sourceLines->isEmpty())>{{ __('procurement.ui.finalize_quality_inspection') }}</button>
+            <button class="btn btn-primary" @disabled($sourceLines->isEmpty())>{{ $editing ? __('Save') : __('procurement.ui.finalize_quality_inspection') }}</button>
         </div>
     </form>
 @endsection

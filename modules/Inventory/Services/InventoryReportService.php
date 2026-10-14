@@ -434,6 +434,7 @@ class InventoryReportService
             ->when($filters['branch_store_id'] ?? null, fn ($query, $storeId) => $query->where('branch_store_id', $storeId))
             ->when($filters['warehouse_location_id'] ?? null, fn ($query, $locationId) => $query->where('warehouse_location_id', $locationId))
             ->when($filters['product_id'] ?? null, fn ($query, $productId) => $query->where('product_id', $productId))
+            ->when(isset($filters['product_ids']), fn ($query) => $query->whereIn('product_id', $filters['product_ids']))
             ->when($filters['stock_status'] ?? null, fn ($query, $status) => $query->where('stock_status', $status))
             ->when($filters['as_of'] ?? $filters['to'] ?? null, fn ($query, $date) => $query->whereDate('transaction_date', '<=', $date))
             ->with(['product', 'branchStore', 'warehouseLocation'])
@@ -549,6 +550,7 @@ class InventoryReportService
             ->when($filters['branch_id'] ?? null, fn ($query, $branchId) => $query->whereHas('branchStore', fn ($storeQuery) => $storeQuery->where('branch_id', $branchId)))
             ->when($filters['status'] ?? null, fn ($query, $status) => $query->where('status', $status))
             ->when($filters['branch_store_id'] ?? null, fn ($query, $storeId) => $query->where('branch_store_id', $storeId))
+            ->when(isset($filters['product_ids']), fn ($query) => $query->whereIn('product_id', $filters['product_ids']))
             ->with(['product', 'branchStore', 'warehouseLocation', 'order', 'productionOrder', 'productionRun'])
             ->orderByDesc('id')
             ->get();
@@ -656,6 +658,7 @@ class InventoryReportService
             ->whereNotNull('reorder_point')
             ->where('reorder_point', '>', 0)
             ->when($filters['product_id'] ?? null, fn ($query, $productId) => $query->whereKey($productId))
+            ->when(isset($filters['product_ids']), fn ($query) => $query->whereKey($filters['product_ids']))
             ->with('unit')
             ->orderBy('doc_num')
             ->get()

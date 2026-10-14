@@ -25,6 +25,9 @@ class ProductionOutputEvidenceService
     public function policy(ProductionRun $run, array $definitions, string $executionStructure = self::StructurePhysicalRoute, array $stageRoles = []): array
     {
         $requirements = $run->requirements->keyBy('public_id');
+        if ($requirements->contains(fn (ProductionMaterialRequirement $requirement): bool => $requirement->allocation_root_requirement_id !== null)) {
+            throw new DomainException(__('production_execution.messages.material_allocation_evidence_unsupported'));
+        }
         $policy = [];
         foreach ($definitions as $definition) {
             $publicId = (string) ($definition['requirement_public_id'] ?? '');

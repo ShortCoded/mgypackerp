@@ -108,6 +108,26 @@ document.addEventListener('DOMContentLoaded', () => {
                 form.querySelectorAll('[data-procurement-line]').forEach(row => refreshAvailability(form, row));
             }
         });
+        form.addEventListener('submit', event => {
+            event.preventDefault();
+            const $form = window.jQuery(form);
+            const $buttons = $form.find('[type="submit"]');
+            if (!window.AppAjaxErrors.beginSubmission($form, $buttons)) return;
+            window.AppAjaxErrors.clear($form);
+            window.AppNumbers?.normalizeForm(form);
+            window.jQuery.ajax({
+                url: form.action, method: form.method || 'POST', data: new FormData(form),
+                processData: false, contentType: false,
+                headers: {Accept: 'application/json', 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content || ''}
+            }).done(response => {
+                if (response.success === false) {
+                    window.AppAjaxErrors.render($form, {status: 422, responseJSON: response});
+                    return;
+                }
+                window.location.assign(response.redirect || response.data?.url || window.location.href);
+            }).fail(response => window.AppAjaxErrors.render($form, response))
+                .always(() => window.AppAjaxErrors.endSubmission($form, $buttons));
+        });
         initialize(form);
         window.jQuery(form).on('select2:select', '.js-procurement-product', function (event) {
             syncProductUnit(this, event.params.data);

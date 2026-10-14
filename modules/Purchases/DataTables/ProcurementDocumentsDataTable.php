@@ -60,7 +60,7 @@ class ProcurementDocumentsDataTable
             }
         }
         if ($screen === 'goods_receipts') {
-            $query->whereNotNull('purchase_order_id');
+            $query->where(fn ($receipts) => $receipts->whereNotNull('purchase_order_id')->orWhereHas('supplyOrder', fn ($supply) => $supply->whereNotNull('purchase_invoice_id')));
         }
         if ($screen === 'supply_orders' && ! $isAdministrativeBranch) {
             $query->where('status', '<>', SupplyOrder::StatusDraft);
@@ -68,10 +68,13 @@ class ProcurementDocumentsDataTable
         if ($request->filled('status')) {
             $statusColumn = match ($screen) {
                 'goods_receipts' => 'posting_status',
-                'goods_receipt_inspections' => 'result',
+                'goods_receipt_inspections' => in_array($request->string('status')->toString(), ['draft', 'cancelled'], true) ? 'status' : 'result',
                 default => 'status',
             };
             $query->where($statusColumn, $request->string('status')->toString());
+            if ($screen === 'goods_receipt_inspections' && $statusColumn === 'result') {
+                $query->where('status', 'finalized');
+            }
         }
         foreach (['date_from' => '>=', 'date_to' => '<='] as $filter => $operator) {
             if ($request->filled($filter) && $this->dates->isValidDate($request->input($filter))) {

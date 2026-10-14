@@ -96,7 +96,12 @@ return [
         'unassigned_body' => 'حدث تشغيلي بلا مستلم صالح. راجع توزيع المسؤوليات والصلاحيات.',
         'unassigned_external_body' => 'توجد مسؤولية تشغيلية تحتاج ضبطًا. افتح النظام لمراجعتها.',
     ],
+    'reorder' => [
+        'title' => 'تنبيه إعادة الطلب: :item',
+        'body' => 'الصنف :code، المخزن :store، الفرع :branch: المتاح :available :unit؛ حد إعادة الطلب :threshold :unit. راجع تقرير المخزون.',
+    ],
     'types' => [
+        'inventory_reorder_low' => 'تنبيه إعادة الطلب',
         'task_assigned' => 'إسناد مهمة',
         'task_updated' => 'تحديث مهمة',
         'task_unassigned' => 'إعادة إسناد مهمة',

@@ -94,3 +94,21 @@ test('order partial invoice copying retains the withholding basis and does not a
     expect(bcadd((string) DB::table('customer_invoices')->where('sales_order_id', $order->id)->sum('withholding_amount'), '0', 4))->toBe($order->withholding_amount)
         ->and(bcadd((string) DB::table('customer_invoices')->where('sales_order_id', $order->id)->sum('tax_amount'), '0', 4))->toBe('140.0000');
 });
+
+test('commercial gross preview posts full receivable without recording actual withheld cash or requiring a tax account', function (): void {
+    $f = salesCycleFixture(isolatedCompany: DB::getDriverName() === 'pgsql');
+    $classification = AccountClassification::query()->where('code', 'withholding_tax_receivable')->sole();
+    Account::query()->where('company_id', $f['company']->id)->where('account_classification_id', $classification->id)->update(['is_postable' => false]);
+    $orders = app(SalesOrderService::class);
+    $order = $orders->approve($orders->create(salesCycleOrderPayload($f, ['payment_schedules' => [],
+        'withholding_rate' => '1', 'withholding_basis' => SalesWithholdingService::CommercialGrossPreview,
+        'lines' => [['product_id' => $f['service']->id, 'unit_id' => $f['unit']->id, 'quantity' => '1', 'unit_price' => '1000', 'tax_amount' => '140']]])));
+    $invoices = app(CustomerInvoiceService::class);
+    $invoice = $invoices->post($invoices->createFromOrder($order, [['sales_order_line_id' => $order->lines->sole()->id, 'quantity' => '1']], [['amount' => '1140', 'due_date' => now()->toDateString()]]));
+    expect($invoice->withholding_basis)->toBe(SalesWithholdingService::CommercialGrossPreview)->and($invoice->withholding_amount)->toBe('11.4000')
+        ->and($invoice->net_payable_amount)->toBe('1128.6000')->and($invoice->actual_withholding_amount)->toBe('0.0000')
+        ->and($invoice->remaining_amount)->toBe('1140.0000')->and(DB::table('customer_withholding_settlements')->count())->toBe(0);
+    expect($invoice->journalEntry->lines->firstWhere('account_id', $f['customer']->account_id)->debit_amount)->toBe('1140.0000');
+    $expected = app(SalesWithholdingService::class)->calculate('1140', '1', SalesWithholdingService::EtaNetExcludingTax, '1000');
+    expect($expected['withholding_amount'])->toBe('10.0000');
+});

@@ -14,6 +14,7 @@ use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
+use Modules\Core\Models\ProductComponentAlternative;
 use Modules\Core\Services\ActivityLogger;
 use Modules\Core\Services\CrudAuditService;
 use Modules\Core\Services\DocumentNumberService;
@@ -552,6 +553,11 @@ class ProductionCycleService
             }
 
             foreach ($locked->lines as $line) {
+                Product::query()
+                    ->forCompany((int) $locked->company_id)
+                    ->whereKey($line->product_id)
+                    ->lockForUpdate()
+                    ->firstOrFail();
                 $components = ProductComponent::query()
                     ->forCompany((int) $locked->company_id)
                     ->where('product_id', $line->product_id)
@@ -564,13 +570,60 @@ class ProductionCycleService
                     throw new DomainException(__('Product :product does not have a bill of materials.', ['product' => $line->description]));
                 }
 
-                $snapshotComponents = $components->map(function (ProductComponent $component): array {
+                $alternatives = ProductComponentAlternative::query()
+                    ->where('company_id', $locked->company_id)
+                    ->whereIn('product_component_id', $components->modelKeys())
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->get();
+                $alternativeProducts = Product::query()
+                    ->where('company_id', $locked->company_id)
+                    ->whereIn('id', $alternatives->pluck('alternative_product_id'))
+                    ->with('unit')
+                    ->orderBy('id')
+                    ->lockForUpdate()
+                    ->get()
+                    ->keyBy('id');
+                $alternatives = $alternatives->groupBy('product_component_id');
+
+                $snapshotComponents = $components->map(function (ProductComponent $component) use ($alternatives, $alternativeProducts): array {
                     $componentProduct = $component->componentProduct;
                     $unitSnapshot = $this->units->snapshot(
                         $componentProduct,
                         $component->unit_id,
                         (string) $component->quantity,
                     );
+
+                    $componentAlternatives = $alternatives->get($component->getKey(), collect())
+                        ->map(function (ProductComponentAlternative $alternative) use ($componentProduct, $alternativeProducts): array {
+                            $alternativeProduct = $alternativeProducts->get($alternative->alternative_product_id);
+                            if (! $alternativeProduct instanceof Product
+                                || $alternativeProduct->trashed()
+                                || $alternativeProduct->status !== 'active'
+                                || (int) $alternativeProduct->company_id !== (int) $alternative->company_id
+                                || (int) $alternativeProduct->getKey() === (int) $componentProduct->getKey()
+                                || $alternativeProduct->item_classification !== Product::ClassificationRawMaterial
+                                || ! $alternativeProduct->unit
+                                || $alternativeProduct->unit->status !== 'active'
+                                || bccomp((string) $alternative->conversion_factor, '0', 8) <= 0
+                            ) {
+                                throw new DomainException(__('production_execution.messages.bom_alternative_invalid'));
+                            }
+
+                            return [
+                                'product_component_alternative_id' => $alternative->getKey(),
+                                'public_id' => $alternative->public_id,
+                                'product_id' => $alternativeProduct->getKey(),
+                                'product_doc_num' => $alternativeProduct->doc_num,
+                                'product_name' => $alternativeProduct->name,
+                                'base_unit_id' => $alternativeProduct->item_unit_id,
+                                'base_unit_name' => $alternativeProduct->unit->name,
+                                'conversion_factor' => (string) $alternative->conversion_factor,
+                                'notes' => $alternative->notes,
+                            ];
+                        })
+                        ->values()
+                        ->all();
 
                     return [
                         'product_component_id' => $component->getKey(),
@@ -588,6 +641,7 @@ class ProductionCycleService
                         'base_quantity_per_output' => $unitSnapshot['base_quantity'],
                         'percentage' => $component->percentage,
                         'reference_component_id' => $component->reference_component_id,
+                        'alternatives' => $componentAlternatives,
                     ];
                 })->all();
 
@@ -916,6 +970,9 @@ class ProductionCycleService
             if (! in_array($locked->status, [ProductionRun::StatusPlanned, ProductionRun::StatusSetup, ProductionRun::StatusReady], true)) {
                 throw new DomainException(__('Materials can only be reserved before the run starts.'));
             }
+            if ($this->hasSplitMaterialAllocations($locked->requirements)) {
+                throw new DomainException(__('production_execution.messages.material_allocation_explicit_reservation_required'));
+            }
 
             foreach ($locked->requirements as $requirement) {
                 $remaining = bcsub((string) $requirement->planned_quantity, (string) $requirement->reserved_quantity, 8);
@@ -957,6 +1014,9 @@ class ProductionCycleService
             if (array_diff(array_map('intval', array_keys($quantitiesByRequirementId + $selectedLayersByRequirementId)), $locked->requirements->modelKeys()) !== []) {
                 throw new DomainException(__('production_execution.messages.material_request_issue_line_invalid'));
             }
+            if (! $additional && $quantitiesByRequirementId === [] && $this->hasSplitMaterialAllocations($locked->requirements)) {
+                throw new DomainException(__('production_execution.messages.material_allocation_explicit_issue_required'));
+            }
 
             if (! in_array($locked->status, [
                 ProductionRun::StatusPlanned,
@@ -970,6 +1030,27 @@ class ProductionCycleService
 
             $movementLines = [];
             $issuedRequirements = [];
+            $requestIdsByRequirementId = ProductionMaterialRequestLine::query()
+                ->whereIn('id', array_values($materialRequestLineIdsByRequirementId))
+                ->pluck('production_material_request_id', 'production_material_requirement_id');
+            $sharedOriginalBudgets = [];
+            if (! $additional) {
+                foreach ($locked->requirements as $requirement) {
+                    if ($requirement->product_component_id === null) {
+                        continue;
+                    }
+                    $remaining = app(ProductionMaterialDemandService::class)->remaining(
+                        $requirement,
+                        ($requestId = $requestIdsByRequirementId->get($requirement->getKey())) === null ? null : (int) $requestId,
+                    );
+                    $componentId = (int) $requirement->product_component_id;
+                    $remainingOriginal = $requirement->toOriginalQuantity($remaining);
+                    if (! isset($sharedOriginalBudgets[$componentId])
+                        || bccomp($remainingOriginal, $sharedOriginalBudgets[$componentId], 8) > 0) {
+                        $sharedOriginalBudgets[$componentId] = $remainingOriginal;
+                    }
+                }
+            }
 
             foreach ($locked->requirements as $requirement) {
                 $defaultQuantity = $additional
@@ -996,6 +1077,14 @@ class ProductionCycleService
 
                 if (! $additional && bccomp($quantity, $defaultQuantity, 8) > 0) {
                     throw new DomainException(__('A planned material issue cannot exceed the remaining planned requirement.'));
+                }
+                if (! $additional && $requirement->product_component_id !== null) {
+                    $componentId = (int) $requirement->product_component_id;
+                    $originalQuantity = $requirement->toOriginalQuantity($quantity);
+                    if (bccomp($originalQuantity, (string) ($sharedOriginalBudgets[$componentId] ?? '0'), 8) > 0) {
+                        throw new DomainException(__('production_execution.messages.material_request_exceeds_bom'));
+                    }
+                    $sharedOriginalBudgets[$componentId] = bcsub($sharedOriginalBudgets[$componentId], $originalQuantity, 8);
                 }
 
                 $materialRequestLineId = $materialRequestLineIdsByRequirementId[$requirement->getKey()] ?? null;
@@ -1094,6 +1183,9 @@ class ProductionCycleService
                 ->get();
             if ($runs->isEmpty()) {
                 throw new DomainException(__('production_execution.messages.run_batch_lines_required'));
+            }
+            if ($runs->contains(fn (ProductionRun $run): bool => $this->hasSplitMaterialAllocations($run->requirements))) {
+                throw new DomainException(__('production_execution.messages.material_allocation_batch_issue_unsupported'));
             }
             if (array_diff(array_map('intval', array_keys($selectedLayersByRequirementId)), $runs->flatMap->requirements->pluck('id')->all()) !== []) {
                 throw new DomainException(__('production_execution.messages.material_request_issue_line_invalid'));
@@ -3120,12 +3212,28 @@ class ProductionCycleService
                 'production_order_line_id' => $line->getKey(),
                 'line_number' => $index + 1,
                 'product_component_id' => $component['product_component_id'],
+                'original_product_id' => $component['product_id'],
                 'product_id' => $component['product_id'],
+                'original_unit_id' => $component['base_unit_id'],
                 'unit_id' => $component['base_unit_id'],
                 'calculation_method' => $component['calculation_method'],
                 'component_quantity_snapshot' => $component['base_quantity_per_output'],
+                'original_planned_quantity' => $plannedMaterial,
+                'material_conversion_factor' => '1.00000000',
                 'planned_quantity' => $plannedMaterial,
-                'component_snapshot' => $component,
+                'component_snapshot' => [
+                    ...$component,
+                    'selected_material' => [
+                        'kind' => 'primary',
+                        'alternative_public_id' => null,
+                        'product_id' => $component['product_id'],
+                        'product_doc_num' => $component['product_doc_num'],
+                        'product_name' => $component['product_name'],
+                        'unit_id' => $component['base_unit_id'],
+                        'unit_name' => $component['base_unit_name'] ?? '',
+                        'conversion_factor' => '1.00000000',
+                    ],
+                ],
             ]);
         }
     }
@@ -3177,5 +3285,14 @@ class ProductionCycleService
         if (bccomp(bcadd($claimedOutput, (string) $run->planned_base_quantity, 8), $availableOutput, 8) > 0) {
             throw new DomainException(__('production_execution.messages.previous_stage_output_insufficient'));
         }
+    }
+
+    /** @param Collection<int, ProductionMaterialRequirement> $requirements */
+    private function hasSplitMaterialAllocations(Collection $requirements): bool
+    {
+        return $requirements
+            ->filter(fn (ProductionMaterialRequirement $requirement): bool => $requirement->product_component_id !== null)
+            ->groupBy('product_component_id')
+            ->contains(fn (Collection $componentRequirements): bool => $componentRequirements->count() > 1);
     }
 }

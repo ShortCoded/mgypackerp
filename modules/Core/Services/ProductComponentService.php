@@ -21,6 +21,7 @@ class ProductComponentService
         'reference_component_key',
         'input_source',
         'notes',
+        'alternatives',
     ];
 
     public function __construct(
@@ -39,7 +40,7 @@ class ProductComponentService
         try {
             return $this->bom
                 ->createComponent($product, $this->normalizedValues($data))
-                ->loadMissing(['componentProduct.unit', 'componentProduct.equivalentUnit', 'unit', 'referenceComponent']);
+                ->loadMissing(['componentProduct.unit', 'componentProduct.equivalentUnit', 'unit', 'referenceComponent', 'alternatives.alternativeProduct.unit']);
         } catch (ValidationException $exception) {
             throw $this->standaloneValidationException($product, $exception);
         }
@@ -54,7 +55,9 @@ class ProductComponentService
         $this->assertProductBelongsToCurrentCompany($product);
         $this->assertComponentBelongsToProduct($product, $component);
 
+        $component->loadMissing('alternatives.alternativeProduct');
         $original = $component->replicate();
+        $original->setRelation('alternatives', $component->alternatives);
 
         try {
             $record = $this->bom->updateComponent($product, $component, $this->normalizedValues($data));
@@ -65,7 +68,7 @@ class ProductComponentService
         $changes = $this->changedValues($original, $this->semanticValues($record));
 
         return [
-            'record' => $record->loadMissing(['componentProduct.unit', 'componentProduct.equivalentUnit', 'unit', 'referenceComponent']),
+            'record' => $record->loadMissing(['componentProduct.unit', 'componentProduct.equivalentUnit', 'unit', 'referenceComponent', 'alternatives.alternativeProduct.unit']),
             'changed' => $changes !== [],
             'changes' => $changes,
         ];
@@ -105,6 +108,7 @@ class ProductComponentService
         return match ($field) {
             'component_product_id', 'unit_id' => $value === null ? null : (int) $value,
             'quantity', 'percentage' => $this->numbers->normalizeToScale($value, 8),
+            'alternatives' => is_array($value) ? $value : [],
             default => $this->normalizeNullableString($value),
         };
     }
@@ -118,6 +122,16 @@ class ProductComponentService
         $changes = [];
 
         foreach ($newValues as $field => $value) {
+            if ($field === 'alternatives') {
+                $current = $this->semanticAlternatives($component);
+
+                if ($current !== $value) {
+                    $changes[$field] = ['old' => $current, 'new' => $value];
+                }
+
+                continue;
+            }
+
             if (in_array($field, ['quantity', 'percentage'], true)) {
                 $current = $this->numbers->normalizeToScale($component->{$field}, 8);
                 $new = $this->numbers->normalizeToScale($value, 8);
@@ -181,7 +195,20 @@ class ProductComponentService
             'percentage' => $component->percentage,
             'reference_component_id' => $component->reference_component_id,
             'notes' => $component->notes,
+            'alternatives' => $this->semanticAlternatives($component),
         ];
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function semanticAlternatives(ProductComponent $component): array
+    {
+        return $component->alternatives->map(fn ($alternative): array => [
+            'product' => $this->productLabel((int) $alternative->alternative_product_id),
+            'conversion_factor' => (string) $alternative->conversion_factor,
+            'notes' => $alternative->notes,
+        ])->values()->all();
     }
 
     private function productLabel(?int $id): ?string

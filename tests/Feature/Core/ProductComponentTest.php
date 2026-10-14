@@ -11,6 +11,7 @@ use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
 use Modules\Core\Models\ProductComponent;
+use Modules\Core\Models\ProductComponentAlternative;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Core\Services\ProductComponentUnitOptionsService;
 use Spatie\Permission\Models\Permission;
@@ -131,6 +132,8 @@ test('product components schema and routes use public identifiers', function () 
         ->and(Schema::hasColumn('product_components', 'component_product_id'))->toBeTrue()
         ->and(Schema::hasColumn('product_components', 'unit_id'))->toBeTrue()
         ->and(Schema::hasColumn('product_components', 'quantity'))->toBeTrue()
+        ->and(Schema::hasTable('product_component_alternatives'))->toBeTrue()
+        ->and(Schema::hasColumn('product_component_alternatives', 'conversion_factor'))->toBeTrue()
         ->and(ProductComponent::calculationMethods())->toBe([
             ProductComponent::CalculationDirect,
             ProductComponent::CalculationPercentage,
@@ -141,6 +144,7 @@ test('product components schema and routes use public identifiers', function () 
             Product::ClassificationRawMaterial,
             Product::ClassificationPackaging,
             Product::ClassificationFinishedProduct,
+            Product::ClassificationSemiFinished,
         ]);
 
     foreach (['index', 'store', 'update', 'destroy'] as $action) {
@@ -197,7 +201,50 @@ test('can add raw material component and unit is derived from raw material produ
         ->and($list['data'][0]['public_id'] ?? null)->toBe($component->public_id);
 });
 
-test('product form can save a finished product as a component', function () {
+test('component alternatives persist explicit conversion factors and reject the primary material', function () {
+    $actor = productComponentActor(['products.view', 'products.edit']);
+    $unit = productComponentUnit($this->componentCompany, 12, 'Kilogram');
+    $product = productComponentProduct($this->componentCompany, ['name' => 'Finished Blend']);
+    $primary = productComponentProduct($this->componentCompany, [
+        'name' => 'Primary Resin',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->id,
+    ]);
+    $alternative = productComponentProduct($this->componentCompany, [
+        'name' => 'Alternative Resin',
+        'item_classification' => Product::ClassificationRawMaterial,
+        'item_unit_id' => $unit->id,
+    ]);
+
+    $payload = $this->actingAs($actor)->postJson(route('admin.products.components.store', $product->doc_num), [
+        'component_product_doc_num' => $primary->doc_num,
+        'unit_doc_num' => $unit->doc_num,
+        'quantity' => '2',
+        'alternatives' => [[
+            'alternative_product_doc_num' => $alternative->doc_num,
+            'conversion_factor' => '1.25000000',
+            'notes' => 'Approved technical replacement',
+        ]],
+    ])->assertOk()->json('data');
+
+    $component = ProductComponent::query()->where('public_id', $payload['public_id'])->sole();
+    $stored = ProductComponentAlternative::query()->where('product_component_id', $component->id)->sole();
+    expect($stored->alternative_product_id)->toBe($alternative->id)
+        ->and($stored->conversion_factor)->toBe('1.25000000')
+        ->and($payload['alternatives'][0]['alternative_product_doc_num'])->toBe($alternative->doc_num);
+
+    $this->postJson(route('admin.products.components.store', $product->doc_num), [
+        'component_product_doc_num' => $primary->doc_num,
+        'unit_doc_num' => $unit->doc_num,
+        'quantity' => '2',
+        'alternatives' => [[
+            'alternative_product_doc_num' => $primary->doc_num,
+            'conversion_factor' => '1',
+        ]],
+    ])->assertJsonValidationErrors(['alternatives.0.alternative_product_doc_num']);
+});
+
+test('product form can save finished and semi finished products as components', function () {
     config()->set('products.image_required', false);
 
     $actor = productComponentActor(['products.create']);
@@ -208,7 +255,15 @@ test('product form can save a finished product as a component', function () {
         'name' => 'Finished Assembly',
         'item_unit_id' => $unit->getKey(),
     ]);
+    $semiFinishedComponent = productComponentProduct($this->componentCompany, [
+        'doc_number' => 112,
+        'doc_num' => 'Product-00112',
+        'name' => 'Semi Finished Assembly',
+        'item_classification' => Product::ClassificationSemiFinished,
+        'item_unit_id' => $unit->getKey(),
+    ]);
     $clientKey = (string) Str::uuid();
+    $semiFinishedClientKey = (string) Str::uuid();
 
     $response = $this->actingAs($actor)
         ->postJson(route('admin.products.store'), [
@@ -222,18 +277,34 @@ test('product form can save a finished product as a component', function () {
                 'calculation_method' => ProductComponent::CalculationDirect,
                 'quantity' => '2',
                 'input_source' => ProductComponent::InputWeight,
+            ], [
+                'client_key' => $semiFinishedClientKey,
+                'component_product_doc_num' => $semiFinishedComponent->doc_num,
+                'unit_doc_num' => $unit->doc_num,
+                'calculation_method' => ProductComponent::CalculationDirect,
+                'quantity' => '1.5',
+                'input_source' => ProductComponent::InputWeight,
             ]],
         ])
         ->assertOk()
         ->assertJsonPath('success', true)
-        ->assertJsonPath('data.components.0.component_product_doc_num', $finishedComponent->doc_num);
+        ->assertJsonPath('data.components.0.component_product_doc_num', $finishedComponent->doc_num)
+        ->assertJsonPath('data.components.1.component_product_doc_num', $semiFinishedComponent->doc_num);
 
     $product = Product::query()->where('doc_num', $response->json('data.doc_num'))->firstOrFail();
-    $component = ProductComponent::query()->where('product_id', $product->getKey())->firstOrFail();
+    $components = ProductComponent::query()
+        ->where('product_id', $product->getKey())
+        ->get()
+        ->keyBy('component_product_id');
+    $finishedRow = $components->get($finishedComponent->getKey());
+    $semiFinishedRow = $components->get($semiFinishedComponent->getKey());
 
-    expect($component->component_product_id)->toBe($finishedComponent->getKey())
-        ->and($component->unit_id)->toBe($unit->getKey())
-        ->and((string) $component->quantity)->toBe('2.00000000');
+    expect($finishedRow)->toBeInstanceOf(ProductComponent::class)
+        ->and($finishedRow->unit_id)->toBe($unit->getKey())
+        ->and((string) $finishedRow->quantity)->toBe('2.00000000')
+        ->and($semiFinishedRow)->toBeInstanceOf(ProductComponent::class)
+        ->and($semiFinishedRow->unit_id)->toBe($unit->getKey())
+        ->and((string) $semiFinishedRow->quantity)->toBe('1.50000000');
 });
 
 test('component quantities preserve eight-place precision and strictly normalize grouped input', function () {
@@ -850,7 +921,7 @@ test('can update and delete product component by public id only', function () {
     expect(ProductComponent::withTrashed()->where('public_id', $component->public_id)->first()?->trashed())->toBeTrue();
 });
 
-test('component select2 returns active materials and finished products for the current company', function () {
+test('component select2 returns active materials, finished products, and semi finished products for the current company', function () {
     $actor = productComponentActor(['products.view']);
     $unit = productComponentUnit($this->componentCompany, 15, 'Linear Meter');
     $master = productComponentProduct($this->componentCompany, ['doc_number' => 12, 'doc_num' => 'Product-00012', 'name' => 'Master Fabric Product']);
@@ -884,10 +955,10 @@ test('component select2 returns active materials and finished products for the c
         'name' => 'Finished Visible Fabric Product',
         'item_unit_id' => $unit->getKey(),
     ]);
-    productComponentProduct($this->componentCompany, [
+    $semiFinishedProduct = productComponentProduct($this->componentCompany, [
         'doc_number' => 19,
         'doc_num' => 'Product-00019',
-        'name' => 'Semi Finished Hidden Fabric Product',
+        'name' => 'Semi Finished Visible Fabric Product',
         'item_classification' => Product::ClassificationSemiFinished,
         'item_unit_id' => $unit->getKey(),
     ]);
@@ -944,6 +1015,7 @@ test('component select2 returns active materials and finished products for the c
     $plainResult = $results->firstWhere('id', $plainRawMaterial->doc_num);
     $packagingResult = $results->firstWhere('id', $packagingMaterial->doc_num);
     $finishedResult = $results->firstWhere('id', $finishedProduct->doc_num);
+    $semiFinishedResult = $results->firstWhere('id', $semiFinishedProduct->doc_num);
     $expectedImageUrl = Storage::disk('public')->url('products/images/raw-visible-fabric.webp');
     $json = json_encode($payload, JSON_THROW_ON_ERROR);
 
@@ -978,6 +1050,11 @@ test('component select2 returns active materials and finished products for the c
         ->and($finishedResult['text'])->toContain('Finished Visible Fabric Product')
         ->and($finishedResult['unit_text'])->toContain('Linear Meter');
 
+    expect($semiFinishedResult)
+        ->toBeArray()
+        ->and($semiFinishedResult['text'])->toContain('Semi Finished Visible Fabric Product')
+        ->and($semiFinishedResult['unit_text'])->toContain('Linear Meter');
+
     expect($json)
         ->toContain($rawMaterial->doc_num)
         ->toContain('Raw Visible Fabric')
@@ -986,7 +1063,8 @@ test('component select2 returns active materials and finished products for the c
         ->toContain($packagingMaterial->doc_num)
         ->toContain($finishedProduct->doc_num)
         ->toContain('Finished Visible Fabric Product')
-        ->not->toContain('Semi Finished Hidden Fabric Product')
+        ->toContain($semiFinishedProduct->doc_num)
+        ->toContain('Semi Finished Visible Fabric Product')
         ->not->toContain('Service Hidden Fabric Item')
         ->not->toContain('Deleted Raw Fabric')
         ->not->toContain('Other Company Raw Fabric')
@@ -1002,6 +1080,8 @@ test('component select2 returns active materials and finished products for the c
         ->and(app(ProductComponentUnitOptionsService::class)->options($packagingMaterial->fresh()))
         ->toHaveCount(1)
         ->and(app(ProductComponentUnitOptionsService::class)->options($finishedProduct->fresh()))
+        ->toHaveCount(1)
+        ->and(app(ProductComponentUnitOptionsService::class)->options($semiFinishedProduct->fresh()))
         ->toHaveCount(1);
 
     $selectedPayload = $this->actingAs($actor)

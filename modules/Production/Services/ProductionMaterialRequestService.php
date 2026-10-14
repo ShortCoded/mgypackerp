@@ -7,6 +7,7 @@ use DomainException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Str;
 use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Services\ActivityLogger;
@@ -45,8 +46,11 @@ class ProductionMaterialRequestService
         ?string $reason = null,
         ?string $requiredByDate = null,
         array $quantitiesByComponentId = [],
+        array $materialChoicesByRequirementId = [],
+        array $materialChoicesByComponentId = [],
+        array $componentAllocations = [],
     ): ProductionMaterialRequest {
-        return DB::transaction(function () use ($run, $branchStoreId, $quantitiesByRequirementId, $additional, $reason, $requiredByDate, $quantitiesByComponentId): ProductionMaterialRequest {
+        return DB::transaction(function () use ($run, $branchStoreId, $quantitiesByRequirementId, $additional, $reason, $requiredByDate, $quantitiesByComponentId, $materialChoicesByRequirementId, $materialChoicesByComponentId, $componentAllocations): ProductionMaterialRequest {
             $context = $this->requiredContext();
             Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionRun::query()->with(['requirements.product', 'requirements.unit', 'orderLine'])->lockForUpdate()->findOrFail($run->getKey());
@@ -60,8 +64,18 @@ class ProductionMaterialRequestService
             if ($additional && blank($reason)) {
                 throw new DomainException(__('production_execution.messages.additional_material_reason_required'));
             }
-            $explicitQuantities = $quantitiesByRequirementId !== [] || $quantitiesByComponentId !== [];
-            $resolved = $this->demand->materializeSelections($locked, $quantitiesByComponentId);
+            if ($componentAllocations === []) {
+                $componentAllocations = collect($quantitiesByComponentId)->map(
+                    fn (mixed $quantity, int|string $componentId): array => [
+                        'product_component_id' => (int) $componentId,
+                        'material_choice' => (string) ($materialChoicesByComponentId[(int) $componentId] ?? 'primary'),
+                        'quantity' => $quantity,
+                    ],
+                )->values()->all();
+            }
+            $explicitQuantities = $quantitiesByRequirementId !== [] || $componentAllocations !== [];
+            $this->demand->selectRequirementMaterials($locked, $materialChoicesByRequirementId);
+            $resolved = $this->demand->materializeSelections($locked, $componentAllocations);
             if (array_intersect_key($quantitiesByRequirementId, $resolved) !== []) {
                 throw new DomainException(__('production_execution.messages.material_request_issue_line_invalid'));
             }
@@ -69,6 +83,25 @@ class ProductionMaterialRequestService
             $locked->load(['requirements.product', 'requirements.unit']);
             if (array_diff(array_map('intval', array_keys($quantitiesByRequirementId)), $locked->requirements->modelKeys()) !== []) {
                 throw new DomainException(__('production_execution.messages.material_request_issue_line_invalid'));
+            }
+
+            $lineQuantities = [];
+            foreach ($locked->requirements as $requirement) {
+                $defaultQuantity = $additional
+                    ? '0'
+                    : ($requirement->allocation_root_requirement_id === null
+                        ? $this->remainingRequestableFor($requirement)
+                        : '0');
+                $quantity = bcadd((string) ($quantitiesByRequirementId[$requirement->getKey()] ?? ($explicitQuantities ? '0' : $defaultQuantity)), '0', 8);
+                if (bccomp($quantity, '0', 8) > 0) {
+                    $lineQuantities[(int) $requirement->getKey()] = $quantity;
+                }
+            }
+            if ($lineQuantities === []) {
+                throw new DomainException(__('production_execution.messages.material_request_lines_required'));
+            }
+            if (! $additional) {
+                $this->demand->assertPlannedRequestBudget($locked, $lineQuantities);
             }
 
             $numbers = $this->documents->nextForCompany(
@@ -94,30 +127,24 @@ class ProductionMaterialRequestService
             ]);
 
             foreach ($locked->requirements as $index => $requirement) {
-                $defaultQuantity = $additional
-                    ? '0'
-                    : $this->remainingRequestableFor($requirement);
-                $quantity = bcadd((string) ($quantitiesByRequirementId[$requirement->getKey()] ?? ($explicitQuantities ? '0' : $defaultQuantity)), '0', 8);
+                $quantity = $lineQuantities[(int) $requirement->getKey()] ?? '0.00000000';
 
                 if (bccomp($quantity, '0', 8) <= 0) {
                     continue;
-                }
-                if (! $additional && bccomp($quantity, $defaultQuantity, 8) > 0) {
-                    throw new DomainException(__('production_execution.messages.material_request_exceeds_bom'));
                 }
 
                 $request->lines()->create([
                     'production_material_requirement_id' => $requirement->getKey(),
                     'line_number' => $index + 1,
+                    'original_product_id' => $requirement->original_product_id ?? $requirement->product_id,
                     'product_id' => $requirement->product_id,
+                    'original_unit_id' => $requirement->original_unit_id ?? $requirement->unit_id,
                     'unit_id' => $requirement->unit_id,
                     'planned_quantity' => $requirement->planned_quantity,
                     'requested_quantity' => $quantity,
+                    'original_requested_quantity' => $requirement->toOriginalQuantity($quantity),
+                    'material_conversion_factor' => $requirement->conversionFactor(),
                 ]);
-            }
-
-            if (! $request->lines()->exists()) {
-                throw new DomainException(__('production_execution.messages.material_request_lines_required'));
             }
 
             return $request->load(['lines.product', 'lines.unit', 'run']);
@@ -133,8 +160,11 @@ class ProductionMaterialRequestService
         ?string $reason = null,
         ?string $requiredByDate = null,
         array $quantitiesByComponentId = [],
+        array $materialChoicesByRequirementId = [],
+        array $materialChoicesByComponentId = [],
+        array $componentAllocations = [],
     ): ProductionMaterialRequest {
-        return DB::transaction(function () use ($request, $branchStoreId, $quantitiesByRequirementId, $additional, $reason, $requiredByDate, $quantitiesByComponentId): ProductionMaterialRequest {
+        return DB::transaction(function () use ($request, $branchStoreId, $quantitiesByRequirementId, $additional, $reason, $requiredByDate, $quantitiesByComponentId, $materialChoicesByRequirementId, $materialChoicesByComponentId, $componentAllocations): ProductionMaterialRequest {
             $context = $this->requiredContext();
             Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             $locked = ProductionMaterialRequest::query()
@@ -146,13 +176,26 @@ class ProductionMaterialRequestService
             if ($locked->status !== ProductionMaterialRequest::StatusSubmitted) {
                 throw new DomainException(__('production_execution.messages.material_request_submitted_edit_only'));
             }
+            if ($locked->hasMaterialReallocationEvidence()) {
+                throw new DomainException(__('production_execution.messages.material_request_reallocation_locked'));
+            }
             if (in_array($locked->run->status, [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled], true)) {
                 throw new DomainException(__('production_execution.messages.material_request_run_closed'));
             }
             if ($additional && blank($reason)) {
                 throw new DomainException(__('production_execution.messages.additional_material_reason_required'));
             }
-            $resolved = $this->demand->materializeSelections($locked->run, $quantitiesByComponentId);
+            if ($componentAllocations === []) {
+                $componentAllocations = collect($quantitiesByComponentId)->map(
+                    fn (mixed $quantity, int|string $componentId): array => [
+                        'product_component_id' => (int) $componentId,
+                        'material_choice' => (string) ($materialChoicesByComponentId[(int) $componentId] ?? 'primary'),
+                        'quantity' => $quantity,
+                    ],
+                )->values()->all();
+            }
+            $this->demand->selectRequirementMaterials($locked->run, $materialChoicesByRequirementId, (int) $locked->getKey());
+            $resolved = $this->demand->materializeSelections($locked->run, $componentAllocations);
             if (array_intersect_key($quantitiesByRequirementId, $resolved) !== []) {
                 throw new DomainException(__('production_execution.messages.material_request_issue_line_invalid'));
             }
@@ -162,6 +205,19 @@ class ProductionMaterialRequestService
                 throw new DomainException(__('production_execution.messages.material_request_issue_line_invalid'));
             }
 
+            $lineQuantities = collect($quantitiesByRequirementId)
+                ->mapWithKeys(fn (mixed $quantity, int|string $requirementId): array => [
+                    (int) $requirementId => bcadd((string) $quantity, '0', 8),
+                ])
+                ->filter(fn (string $quantity): bool => bccomp($quantity, '0', 8) > 0)
+                ->all();
+            if ($lineQuantities === []) {
+                throw new DomainException(__('production_execution.messages.material_request_lines_required'));
+            }
+            if (! $additional) {
+                $this->demand->assertPlannedRequestBudget($locked->run, $lineQuantities, (int) $locked->getKey());
+            }
+
             $store = BranchStore::query()
                 ->where('branch_id', $context['branch_id'])
                 ->lockForUpdate()
@@ -169,30 +225,24 @@ class ProductionMaterialRequestService
             $locked->lines()->delete();
 
             foreach ($locked->run->requirements as $index => $requirement) {
-                $quantity = bcadd((string) ($quantitiesByRequirementId[$requirement->getKey()] ?? '0'), '0', 8);
+                $quantity = $lineQuantities[(int) $requirement->getKey()] ?? '0.00000000';
 
                 if (bccomp($quantity, '0', 8) <= 0) {
                     continue;
-                }
-                if (! $additional) {
-                    $remaining = $this->remainingRequestableFor($requirement, (int) $locked->getKey());
-                    if (bccomp($quantity, $remaining, 8) > 0) {
-                        throw new DomainException(__('production_execution.messages.material_request_exceeds_bom'));
-                    }
                 }
 
                 $locked->lines()->create([
                     'production_material_requirement_id' => $requirement->getKey(),
                     'line_number' => $index + 1,
+                    'original_product_id' => $requirement->original_product_id ?? $requirement->product_id,
                     'product_id' => $requirement->product_id,
+                    'original_unit_id' => $requirement->original_unit_id ?? $requirement->unit_id,
                     'unit_id' => $requirement->unit_id,
                     'planned_quantity' => $requirement->planned_quantity,
                     'requested_quantity' => $quantity,
+                    'original_requested_quantity' => $requirement->toOriginalQuantity($quantity),
+                    'material_conversion_factor' => $requirement->conversionFactor(),
                 ]);
-            }
-
-            if (! $locked->lines()->exists()) {
-                throw new DomainException(__('production_execution.messages.material_request_lines_required'));
             }
 
             $locked->update([
@@ -215,7 +265,8 @@ class ProductionMaterialRequestService
             $this->assertContext($locked, $context);
 
             if ($locked->status !== ProductionMaterialRequest::StatusSubmitted
-                || $locked->approved_at !== null || $locked->inventoryDocuments()->exists()) {
+                || $locked->approved_at !== null || $locked->inventoryDocuments()->exists()
+                || $locked->hasMaterialReallocationEvidence()) {
                 throw new DomainException(__('production_execution.messages.material_request_submitted_edit_only'));
             }
 
@@ -282,11 +333,14 @@ class ProductionMaterialRequestService
                 ->findOrFail($locked->production_run_id);
             $this->assertContext($run, $context);
             if ($locked->request_type === 'planned') {
-                foreach ($locked->lines()->with('requirement.run.orderLine')->get() as $line) {
-                    if (bccomp((string) $line->requested_quantity, $this->remainingRequestableFor($line->requirement), 8) > 0) {
-                        throw new DomainException(__('production_execution.messages.material_request_exceeds_bom'));
-                    }
-                }
+                $quantities = $locked->lines()->get()
+                    ->groupBy('production_material_requirement_id')
+                    ->map(fn ($lines): string => $lines->reduce(
+                        fn (string $total, ProductionMaterialRequestLine $line): string => bcadd($total, (string) $line->requested_quantity, 8),
+                        '0.00000000',
+                    ))
+                    ->all();
+                $this->demand->assertPlannedRequestBudget($run, $quantities, (int) $locked->getKey());
             }
             $locked->restore();
             $locked->update(['restored_by' => auth()->id(), 'restored_at' => now(), 'updated_by' => auth()->id()]);
@@ -307,9 +361,22 @@ class ProductionMaterialRequestService
                 throw new DomainException(__('production_execution.messages.material_request_submitted_only'));
             }
 
+            if ($locked->request_type === 'planned') {
+                $quantities = $locked->lines
+                    ->groupBy('production_material_requirement_id')
+                    ->map(fn ($lines): string => $lines->reduce(function (string $total, ProductionMaterialRequestLine $line): string {
+                        $remaining = bcsub((string) $line->requested_quantity, (string) $line->reallocated_quantity, 8);
+
+                        return bcadd($total, bccomp($remaining, '0', 8) > 0 ? $remaining : '0.00000000', 8);
+                    }, '0.00000000'))
+                    ->all();
+                $this->demand->assertPlannedRequestBudget($locked->run, $quantities, (int) $locked->getKey());
+            }
+
             $hasShortage = false;
             foreach ($locked->lines as $line) {
                 $quantity = (string) $line->requested_quantity;
+                $this->reservations->assertProductionMaterialIdentity($line->requirement, (int) $line->getKey());
                 $available = $this->availability->forProduct(
                     $context['company_id'],
                     (int) $locked->branch_store_id,
@@ -429,7 +496,7 @@ class ProductionMaterialRequestService
             $quantities = $locked->run->requirements->mapWithKeys(fn ($requirement): array => [$requirement->getKey() => '0.00000000'])->all();
             $issuedByRequestLineId = [];
             foreach ($locked->lines as $line) {
-                $remainingReserved = bcsub((string) $line->reserved_quantity, (string) $line->issued_quantity, 8);
+                $remainingReserved = $line->remainingReservedQuantity();
                 $quantity = $quantitiesByRequestLineId === []
                     ? $remainingReserved
                     : bcadd((string) ($quantitiesByRequestLineId[$line->getKey()] ?? '0'), '0', 8);
@@ -482,15 +549,207 @@ class ProductionMaterialRequestService
                 }
             }
 
+            $updatedLines = $locked->lines()->get();
+            $hasOutstanding = $updatedLines->contains(fn (ProductionMaterialRequestLine $line): bool => bccomp(
+                bcadd((string) $line->issued_quantity, (string) $line->reallocated_quantity, 8),
+                (string) $line->approved_quantity,
+                8,
+            ) < 0
+            );
             $locked->update([
-                'status' => $locked->lines()->whereColumn('issued_quantity', '<', 'approved_quantity')->exists()
+                'status' => $hasOutstanding
                     ? ProductionMaterialRequest::StatusPartiallyIssued
-                    : ProductionMaterialRequest::StatusIssued,
+                    : ($updatedLines->contains(fn (ProductionMaterialRequestLine $line): bool => bccomp((string) $line->reallocated_quantity, '0', 8) > 0)
+                        ? ProductionMaterialRequest::StatusReallocated
+                        : ProductionMaterialRequest::StatusIssued),
                 'updated_by' => auth()->id(),
             ]);
 
             return $document;
         });
+    }
+
+    public function reallocateUnissued(
+        ProductionMaterialRequest $request,
+        int $sourceLineId,
+        string $quantity,
+        string $materialChoice,
+        string $reason,
+    ): ProductionMaterialRequest {
+        Gate::authorize('production.material_requests.edit');
+        Gate::authorize('production.material_requests.approve');
+
+        return DB::transaction(function () use ($request, $sourceLineId, $quantity, $materialChoice, $reason): ProductionMaterialRequest {
+            $context = $this->requiredContext();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
+            $locked = ProductionMaterialRequest::query()->lockForUpdate()->findOrFail($request->getKey());
+            $this->assertContext($locked, $context);
+            if (trim($reason) === ''
+                || $locked->request_type !== 'planned'
+                || ! in_array($locked->status, [
+                    ProductionMaterialRequest::StatusApproved,
+                    ProductionMaterialRequest::StatusShortage,
+                    ProductionMaterialRequest::StatusPartiallyIssued,
+                ], true)) {
+                throw new DomainException(__('production_execution.messages.material_reallocation_invalid'));
+            }
+            if ($locked->purchase_requisition_id !== null) {
+                throw new DomainException(__('production_execution.messages.material_reallocation_purchase_linked'));
+            }
+            app(FinancialPeriodService::class)->resolveOpenForPostingDate(
+                $context['company_id'],
+                $locked->request_date,
+                $context['financial_period_id'],
+                lockForUpdate: true,
+            );
+
+            $run = ProductionRun::query()->with(['requirements', 'orderLine'])->lockForUpdate()->findOrFail($locked->production_run_id);
+            if (in_array($run->status, [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled], true)) {
+                throw new DomainException(__('production_execution.messages.material_request_run_closed'));
+            }
+            $sourceLine = ProductionMaterialRequestLine::query()
+                ->where('production_material_request_id', $locked->getKey())
+                ->lockForUpdate()
+                ->findOrFail($sourceLineId);
+            $sourceRequirement = ProductionMaterialRequirement::query()->lockForUpdate()
+                ->findOrFail($sourceLine->production_material_requirement_id);
+            $normalizedQuantity = bcadd($quantity, '0', 8);
+            if ($sourceRequirement->product_component_id === null
+                || bccomp($normalizedQuantity, '0', 8) <= 0
+                || bccomp($normalizedQuantity, $sourceLine->reallocatableQuantity(), 8) > 0) {
+                throw new DomainException(__('production_execution.messages.material_reallocation_exceeds_unissued'));
+            }
+
+            $targetRequirement = $this->demand->allocationRequirement(
+                $run,
+                (int) $sourceRequirement->product_component_id,
+                $materialChoice,
+            );
+            if ((int) $targetRequirement->getKey() === (int) $sourceRequirement->getKey()) {
+                throw new DomainException(__('production_execution.messages.material_reallocation_same_material'));
+            }
+
+            $sourceFactor = bcadd((string) $sourceLine->material_conversion_factor, '0', 8);
+            if (bccomp($sourceFactor, '0', 8) <= 0) {
+                throw new DomainException(__('production_execution.messages.material_reallocation_invalid'));
+            }
+            $originalEquivalent = bcdiv($normalizedQuantity, $sourceFactor, 8);
+            $targetQuantity = $targetRequirement->toActualQuantity($originalEquivalent);
+            $reservedToRelease = bccomp($normalizedQuantity, $sourceLine->remainingReservedQuantity(), 8) < 0
+                ? $normalizedQuantity
+                : $sourceLine->remainingReservedQuantity();
+            $releasedReserved = bccomp($reservedToRelease, '0', 8) > 0
+                ? $this->reservations->releaseRemainingForMaterialRequestLine($sourceLine, $reservedToRelease, trim($reason))
+                : '0.00000000';
+            if (bccomp($releasedReserved, $reservedToRelease, 8) !== 0) {
+                throw new DomainException(__('production_execution.messages.material_reallocation_reservation_mismatch'));
+            }
+            $shortageMoved = bcsub($normalizedQuantity, $releasedReserved, 8);
+            if (bccomp($shortageMoved, (string) $sourceLine->shortage_quantity, 8) > 0) {
+                throw new DomainException(__('production_execution.messages.material_reallocation_reservation_mismatch'));
+            }
+
+            $sourceLine->forceFill([
+                'reallocated_quantity' => bcadd((string) $sourceLine->reallocated_quantity, $normalizedQuantity, 8),
+                'reallocated_original_quantity' => bcadd((string) $sourceLine->reallocated_original_quantity, $originalEquivalent, 8),
+                'reallocated_reserved_quantity' => bcadd((string) $sourceLine->reallocated_reserved_quantity, $releasedReserved, 8),
+                'shortage_quantity' => bcsub((string) $sourceLine->shortage_quantity, $shortageMoved, 8),
+            ])->save();
+
+            $numbers = $this->documents->nextForCompany(
+                'production_material_requests',
+                ProductionMaterialRequest::class,
+                $context['company_id'],
+                fn ($query) => $query->where('financial_period_id', $context['financial_period_id']),
+            );
+            $targetRequest = ProductionMaterialRequest::query()->create([
+                ...$numbers,
+                ...$context,
+                'branch_store_id' => $locked->branch_store_id,
+                'production_order_id' => $locked->production_order_id,
+                'production_run_id' => $locked->production_run_id,
+                'request_date' => now()->toDateString(),
+                'required_by_date' => $locked->required_by_date,
+                'request_type' => 'planned',
+                'status' => ProductionMaterialRequest::StatusSubmitted,
+                'reason' => trim($reason),
+                'submitted_by' => auth()->id(),
+                'submitted_at' => now(),
+                'created_by' => auth()->id(),
+            ]);
+            $targetLine = $targetRequest->lines()->create([
+                'production_material_requirement_id' => $targetRequirement->getKey(),
+                'line_number' => 1,
+                'original_product_id' => $targetRequirement->original_product_id ?? $targetRequirement->product_id,
+                'product_id' => $targetRequirement->product_id,
+                'original_unit_id' => $targetRequirement->original_unit_id ?? $targetRequirement->unit_id,
+                'unit_id' => $targetRequirement->unit_id,
+                'planned_quantity' => $targetRequirement->planned_quantity,
+                'requested_quantity' => $targetQuantity,
+                'original_requested_quantity' => $originalEquivalent,
+                'material_conversion_factor' => $targetRequirement->conversionFactor(),
+            ]);
+
+            DB::table('production_material_request_reallocations')->insert([
+                'public_id' => (string) Str::uuid(),
+                ...$context,
+                'production_run_id' => $run->getKey(),
+                'source_material_request_id' => $locked->getKey(),
+                'source_material_request_line_id' => $sourceLine->getKey(),
+                'source_requirement_id' => $sourceRequirement->getKey(),
+                'target_material_request_id' => $targetRequest->getKey(),
+                'target_material_request_line_id' => $targetLine->getKey(),
+                'target_requirement_id' => $targetRequirement->getKey(),
+                'source_product_id' => $sourceLine->product_id,
+                'source_unit_id' => $sourceLine->unit_id,
+                'source_conversion_factor' => $sourceFactor,
+                'target_product_id' => $targetLine->product_id,
+                'target_unit_id' => $targetLine->unit_id,
+                'target_conversion_factor' => $targetRequirement->conversionFactor(),
+                'source_quantity' => $normalizedQuantity,
+                'original_equivalent_quantity' => $originalEquivalent,
+                'target_quantity' => $targetQuantity,
+                'released_reserved_quantity' => $releasedReserved,
+                'reason' => trim($reason),
+                'created_by' => auth()->id(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            $sourceLines = $locked->lines()->get();
+            $isComplete = $sourceLines->every(fn (ProductionMaterialRequestLine $line): bool => bccomp(
+                bcadd((string) $line->issued_quantity, (string) $line->reallocated_quantity, 8),
+                (string) $line->approved_quantity,
+                8,
+            ) >= 0
+            );
+            $locked->forceFill([
+                'status' => $isComplete
+                    ? ProductionMaterialRequest::StatusReallocated
+                    : ProductionMaterialRequest::StatusPartiallyIssued,
+                'updated_by' => auth()->id(),
+            ])->save();
+
+            $this->activityLogger->log(request(), 'production', 'production_material_request.unissued_reallocated', 'success', [
+                'subject' => $locked,
+                'company_id' => $locked->company_id,
+                'branch_id' => $locked->branch_id,
+                'financial_period_id' => $locked->financial_period_id,
+                'properties_only' => true,
+                'properties' => [
+                    'source_request' => $locked->doc_num,
+                    'source_line_id' => $sourceLine->getKey(),
+                    'target_request' => $targetRequest->doc_num,
+                    'source_quantity' => $normalizedQuantity,
+                    'original_equivalent_quantity' => $originalEquivalent,
+                    'target_quantity' => $targetQuantity,
+                    'released_reserved_quantity' => $releasedReserved,
+                    'reason' => trim($reason),
+                ],
+            ]);
+
+            return $targetRequest->load(['lines.product', 'lines.unit', 'run']);
+        }, 3);
     }
 
     public function reconcileReservationStore(ProductionMaterialRequest $request, string $reason): ProductionMaterialRequest
@@ -572,6 +831,7 @@ class ProductionMaterialRequestService
                     continue;
                 }
 
+                $this->reservations->assertProductionMaterialIdentity($line->requirement, (int) $line->getKey());
                 $available = $this->availability->forProduct(
                     $context['company_id'],
                     (int) $locked->branch_store_id,
@@ -600,11 +860,13 @@ class ProductionMaterialRequestService
             }
 
             $hasShortage = $locked->lines()->where('shortage_quantity', '>', 0)->exists();
-            $hasIssuedQuantity = $locked->lines()->where('issued_quantity', '>', 0)->exists();
+            $hasMaterialActivity = $locked->lines()->where(function ($query): void {
+                $query->where('issued_quantity', '>', 0)->orWhere('reallocated_quantity', '>', 0);
+            })->exists();
             $locked->update([
                 'status' => $hasShortage
                     ? ProductionMaterialRequest::StatusShortage
-                    : ($hasIssuedQuantity ? ProductionMaterialRequest::StatusPartiallyIssued : ProductionMaterialRequest::StatusApproved),
+                    : ($hasMaterialActivity ? ProductionMaterialRequest::StatusPartiallyIssued : ProductionMaterialRequest::StatusApproved),
                 'updated_by' => auth()->id(),
             ]);
 
@@ -620,7 +882,7 @@ class ProductionMaterialRequestService
         return DB::transaction(function () use ($request): PurchaseRequisition {
             $context = $this->requiredContext();
             Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
-            $locked = ProductionMaterialRequest::query()->with(['lines.product', 'lines.unit', 'run.order', 'run.orderLine', 'store'])->lockForUpdate()->findOrFail($request->getKey());
+            $locked = ProductionMaterialRequest::query()->with(['lines.product', 'lines.unit', 'lines.requirement', 'run.order', 'run.orderLine', 'store'])->lockForUpdate()->findOrFail($request->getKey());
             $this->assertContext($locked, $context);
             $previous = null;
             if ($locked->purchase_requisition_id !== null) {
@@ -641,6 +903,21 @@ class ProductionMaterialRequestService
                 || ! $locked->lines->contains(fn ($line): bool => bccomp((string) $line->shortage_quantity, '0', 8) > 0)
                 || in_array($locked->run->status, [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled], true)) {
                 throw new DomainException(__('production_execution.messages.material_request_has_no_shortage'));
+            }
+            if ($locked->request_type === 'planned') {
+                $quantities = $locked->lines
+                    ->groupBy('production_material_requirement_id')
+                    ->map(fn ($lines): string => $lines->reduce(function (string $total, ProductionMaterialRequestLine $line): string {
+                        $remaining = bcsub(
+                            bcsub((string) $line->requested_quantity, (string) $line->issued_quantity, 8),
+                            (string) $line->reallocated_quantity,
+                            8,
+                        );
+
+                        return bcadd($total, bccomp($remaining, '0', 8) > 0 ? $remaining : '0.00000000', 8);
+                    }, '0.00000000'))
+                    ->all();
+                $this->demand->assertPlannedRequestBudget($locked->run, $quantities, (int) $locked->getKey());
             }
             app(FinancialPeriodService::class)->resolveOpenForPostingDate($context['company_id'], now()->toDateString(), $context['financial_period_id'], lockForUpdate: true);
             $requisition = $this->createShortageRequisition($locked);
@@ -672,19 +949,23 @@ class ProductionMaterialRequestService
 
     private function createShortageRequisition(ProductionMaterialRequest $request): PurchaseRequisition
     {
-        $request->loadMissing(['lines.product', 'lines.unit', 'run.order', 'run.orderLine', 'store']);
+        $request->loadMissing(['lines.product', 'lines.unit', 'lines.requirement', 'run.order', 'run.orderLine', 'store']);
         $lines = $request->lines
             ->filter(fn ($line): bool => bccomp((string) $line->shortage_quantity, '0', 8) > 0)
-            ->map(fn ($line): array => [
-                'product_doc_num' => $line->product->doc_num,
-                'unit_doc_num' => $line->unit?->doc_num,
-                'requested_quantity' => (string) $line->shortage_quantity,
-                'required_date' => $request->required_by_date?->toDateString(),
-                'source_type' => 'production_order',
-                'source_doc_num' => $request->run->order->doc_num,
-                'source_line_reference' => $request->run->orderLine->public_id,
-                'notes' => __('production_execution.messages.generated_from_material_request', ['number' => $request->doc_num]),
-            ])->values()->all();
+            ->map(function ($line) use ($request): array {
+                $this->reservations->assertProductionMaterialIdentity($line->requirement, (int) $line->getKey());
+
+                return [
+                    'product_doc_num' => $line->product->doc_num,
+                    'unit_doc_num' => $line->unit?->doc_num,
+                    'requested_quantity' => (string) $line->shortage_quantity,
+                    'required_date' => $request->required_by_date?->toDateString(),
+                    'source_type' => 'production_order',
+                    'source_doc_num' => $request->run->order->doc_num,
+                    'source_line_reference' => $request->run->orderLine->public_id,
+                    'notes' => __('production_execution.messages.generated_from_material_request', ['number' => $request->doc_num]),
+                ];
+            })->values()->all();
 
         return $this->procurement->createRequisition([
             'branch_store_uuid' => $request->store->public_uuid,

@@ -670,7 +670,7 @@
                                             @if($isReadonly)
                                                 <div class="form-control-plaintext text-end" dir="ltr">{{ $numbers->format($line['unit_price'] ?? 0) }}</div>
                                             @else
-                                                <x-forms.numeric-input class="text-end js-purchase-invoice-line-number js-purchase-invoice-unit-price" :name="'lines['.$index.'][unit_price]'" :value="$line['unit_price'] ?? ''" :scale="8" min="0" step="0.00000001" required />
+                                                <x-forms.numeric-input class="text-end js-purchase-invoice-line-number js-purchase-invoice-unit-price" :name="'lines['.$index.'][unit_price]'" :value="$line['unit_price'] ?? ''" :scale="15" min="0" step="0.000000000000001" required />
                                                 <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.unit_price"></div>
                                             @endif
                                         </td>

@@ -32,7 +32,7 @@
                                 <td>{{ __('production_execution.statuses.'.$run->status) }}</td>
                                 <td>
                                     @foreach($run->requirements as $requirement)
-                                        <div>{{ $requirement->product?->name }} — {{ $numbers->format($requirement->planned_quantity) }} {{ $requirement->unit?->name }}</div>
+                                        <div>{{ $requirement->product?->name }} — {{ $numbers->format($requirement->report_planned_quantity) }} {{ $requirement->unit?->name }}</div>
                                     @endforeach
                                 </td>
                                 <td><x-document-owner-actions :record="$run" :menu="false" /></td>

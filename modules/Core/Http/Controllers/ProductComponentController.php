@@ -34,7 +34,7 @@ class ProductComponentController extends Controller
         $components = ProductComponent::query()
             ->forCompany((int) $product->company_id)
             ->where('product_id', $product->getKey())
-            ->with(['componentProduct.unit', 'componentProduct.equivalentUnit', 'unit', 'referenceComponent'])
+            ->with(['componentProduct.unit', 'componentProduct.equivalentUnit', 'unit', 'referenceComponent', 'alternatives.alternativeProduct.unit'])
             ->orderBy('created_at')
             ->get()
             ->map(fn (ProductComponent $component): array => $this->componentPayload($component))
@@ -106,7 +106,7 @@ class ProductComponentController extends Controller
      */
     private function componentPayload(ProductComponent $component): array
     {
-        $component->loadMissing(['componentProduct.unit', 'componentProduct.equivalentUnit', 'unit']);
+        $component->loadMissing(['componentProduct.unit', 'componentProduct.equivalentUnit', 'unit', 'alternatives.alternativeProduct.unit']);
         $componentProduct = $component->componentProduct;
         $unit = $component->unit ?: $componentProduct?->unit;
 
@@ -131,6 +131,13 @@ class ProductComponentController extends Controller
                 ? ProductComponent::InputPercentage
                 : ProductComponent::InputWeight,
             'notes' => $component->notes,
+            'alternatives' => $component->alternatives->map(fn ($alternative): array => [
+                'public_id' => $alternative->public_id,
+                'alternative_product_doc_num' => $alternative->alternativeProduct?->doc_num,
+                'raw_material' => $this->productLabel($alternative->alternativeProduct),
+                'conversion_factor' => (string) $alternative->conversion_factor,
+                'notes' => $alternative->notes,
+            ])->values()->all(),
         ];
     }
 

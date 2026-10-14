@@ -3,6 +3,9 @@
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Modules\Core\Models\ArchiveFile;
+use Modules\Core\Models\ItemColor;
+use Modules\Core\Models\ItemUnit;
+use Modules\Core\Models\ProductComponent;
 use Modules\Core\Services\MenuService;
 use Modules\HR\Models\HrEmployee;
 use Modules\Sales\Exports\SalesCycleReportExport;
@@ -303,6 +306,89 @@ test('sales order and quotation omit production packing fields and expose a seco
         ->assertSee('data-main-currency-doc-num="'.$f['currency']->doc_num.'"', false)
         ->assertSee(__('sales_ui.requested_date_help'));
     expect(substr_count($quotation->getContent(), 'js-quotation-add-line'))->toBeGreaterThanOrEqual(2);
+});
+
+test('sales order line presentation derives packing and pieces without exposing bom materials', function () {
+    $fixture = salesUiFixture();
+    $carton = ItemUnit::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'doc_number' => 8098,
+        'doc_num' => 'Unit-SALES-CARTON',
+        'name' => 'Carton',
+        'status' => 'active',
+    ]);
+    $color = ItemColor::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'doc_number' => 8098,
+        'doc_num' => 'Color-SALES-BLACK',
+        'name' => 'Black',
+        'status' => 'active',
+    ]);
+    $fixture['finished']->update([
+        'item_unit_id' => $carton->getKey(),
+        'equivalent_unit_id' => $fixture['unit']->getKey(),
+        'equivalent_value' => '1000',
+        'item_color_id' => $color->getKey(),
+    ]);
+    ProductComponent::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'product_id' => $fixture['finished']->getKey(),
+        'component_product_id' => $fixture['raw']->getKey(),
+        'unit_id' => $fixture['unit']->getKey(),
+        'calculation_method' => ProductComponent::CalculationDirect,
+        'quantity' => '2',
+    ]);
+
+    $form = $this->actingAs($fixture['user'])
+        ->withSession(salesCycleSession($fixture))
+        ->get(route('admin.sales.sales-orders.create'))
+        ->assertOk()
+        ->assertSee(__('Color'))
+        ->assertSee(__('Number in pieces'))
+        ->assertSee(__('Packing'))
+        ->assertSee('data-sales-line-color', false)
+        ->assertSee('data-sales-piece-count', false)
+        ->assertSee('data-sales-packing-factor', false)
+        ->assertSee('linePresentationUrl', false);
+
+    expect($form->getContent())->not->toContain($fixture['raw']->name);
+
+    $this->getJson(route('admin.sales.sales-orders.line-presentation', [
+        'product_doc_num' => $fixture['finished']->doc_num,
+        'unit_doc_num' => $carton->doc_num,
+        'quantity' => '3',
+    ]))
+        ->assertOk()
+        ->assertJsonPath('data.color', 'Black')
+        ->assertJsonPath('data.sales_unit', 'Unit-SALES-CARTON / Carton')
+        ->assertJsonPath('data.packing_factor', '1000.00000000')
+        ->assertJsonPath('data.piece_count', '3000.00000000')
+        ->assertJsonMissing(['raw_material' => $fixture['raw']->name])
+        ->assertJsonMissingPath('data.components');
+
+    $unconfiguredUnit = ItemUnit::query()->create([
+        'company_id' => $fixture['company']->getKey(),
+        'doc_number' => 8099,
+        'doc_num' => 'Unit-SALES-UNCONFIGURED',
+        'name' => 'Unconfigured',
+        'status' => 'active',
+    ]);
+    $this->getJson(route('admin.sales.sales-orders.line-presentation', [
+        'product_doc_num' => $fixture['finished']->doc_num,
+        'unit_doc_num' => $unconfiguredUnit->doc_num,
+        'quantity' => '3',
+    ]))->assertUnprocessable();
+
+    $fixture['user']->revokePermissionTo(['sales_orders.create', 'sales_orders.edit']);
+    $this->getJson(route('admin.sales.sales-orders.line-presentation', [
+        'product_doc_num' => $fixture['finished']->doc_num,
+        'unit_doc_num' => $carton->doc_num,
+        'quantity' => '3',
+    ]))->assertForbidden();
+
+    expect(file_get_contents(public_path('assets/js/modules/Sales/sales-cycle.js')))
+        ->toContain('select2:select.salesUnit select2:clear.salesUnit')
+        ->toContain(".on('select2:select.salesUnit select2:clear.salesUnit', '.js-sales-unit'");
 });
 
 test('sales invoice creation starts from an invoiceable sales order without duplicating posting logic', function () {

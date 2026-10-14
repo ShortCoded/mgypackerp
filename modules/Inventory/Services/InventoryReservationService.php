@@ -21,6 +21,36 @@ class InventoryReservationService
 {
     public function __construct(private readonly InventoryAvailabilityService $availability, private readonly ActivityLogger $activities) {}
 
+    public function assertProductionMaterialIdentity(
+        ProductionMaterialRequirement $requirement,
+        ?int $materialRequestLineId = null,
+    ): ProductionMaterialRequirement {
+        $locked = ProductionMaterialRequirement::query()
+            ->with('run.order.salesOrder')
+            ->lockForUpdate()
+            ->findOrFail($requirement->getKey());
+
+        if ($materialRequestLineId !== null) {
+            $requestLine = ProductionMaterialRequestLine::query()
+                ->whereKey($materialRequestLineId)
+                ->where('production_material_requirement_id', $locked->getKey())
+                ->where('product_id', $locked->product_id)
+                ->where('unit_id', $locked->unit_id)
+                ->lockForUpdate()
+                ->first();
+            if (! $requestLine instanceof ProductionMaterialRequestLine) {
+                throw new DomainException(__('production_execution.messages.material_request_issue_line_invalid'));
+            }
+        }
+
+        $product = Product::query()->lockForUpdate()->findOrFail($locked->product_id);
+        if ((int) $product->item_unit_id !== (int) $locked->unit_id) {
+            throw new DomainException(__('production_execution.messages.material_unit_snapshot_mismatch'));
+        }
+
+        return $locked;
+    }
+
     public function reserveForProduction(
         ProductionMaterialRequirement $requirement,
         int $branchStoreId,
@@ -33,10 +63,7 @@ class InventoryReservationService
     ): InventoryReservation {
         return DB::transaction(function () use ($requirement, $branchStoreId, $quantity, $warehouseLocationId, $allowBeyondRequirement, $materialRequestLineId, $batchLot, $matchBatch): InventoryReservation {
             Company::query()->whereKey($requirement->run->company_id)->lockForUpdate()->firstOrFail();
-            $locked = ProductionMaterialRequirement::query()
-                ->with('run.order.salesOrder')
-                ->lockForUpdate()
-                ->findOrFail($requirement->getKey());
+            $locked = $this->assertProductionMaterialIdentity($requirement, $materialRequestLineId);
             $run = $locked->run;
             $order = $run->order;
             $remainingRequirement = bcsub((string) $locked->planned_quantity, (string) $locked->reserved_quantity, 8);
@@ -64,6 +91,8 @@ class InventoryReservationService
             if ($materialRequestLineId !== null && ! ProductionMaterialRequestLine::query()
                 ->whereKey($materialRequestLineId)
                 ->where('production_material_requirement_id', $locked->getKey())
+                ->where('product_id', $locked->product_id)
+                ->where('unit_id', $locked->unit_id)
                 ->whereHas('request', fn ($query) => $query
                     ->where('production_run_id', $run->getKey())
                     ->where('branch_store_id', $branchStoreId))
@@ -79,7 +108,6 @@ class InventoryReservationService
                 ->exists()) {
                 throw new DomainException(__('Production reservations require an active location in the selected store.'));
             }
-            $product = Product::query()->lockForUpdate()->findOrFail($locked->product_id);
             $stockPosition = $this->availableStockPosition(
                 (int) $order->company_id,
                 $branchStoreId,
@@ -107,8 +135,8 @@ class InventoryReservationService
                 'production_material_request_line_id' => $materialRequestLineId,
                 'customer_id' => $order->salesOrder?->customer_id,
                 'product_id' => $locked->product_id,
-                'unit_id' => $product->item_unit_id,
-                'transaction_unit_id' => $product->item_unit_id,
+                'unit_id' => $locked->unit_id,
+                'transaction_unit_id' => $locked->unit_id,
                 'conversion_factor' => 1,
                 'transaction_quantity' => $reserveQuantity,
                 'quantity' => $reserveQuantity,
@@ -137,6 +165,7 @@ class InventoryReservationService
             }
             $companyId = (int) $requirement->run->company_id;
             Company::query()->whereKey($companyId)->lockForUpdate()->firstOrFail();
+            $requirement = $this->assertProductionMaterialIdentity($requirement, $materialRequestLineId);
             $positions = InventoryTransaction::query()->where('company_id', $companyId)->where('branch_store_id', $branchStoreId)
                 ->where('product_id', $requirement->product_id)->where('stock_status', InventoryTransaction::StatusAvailable)
                 ->when($warehouseLocationId !== null, fn ($query) => $query->where('warehouse_location_id', $warehouseLocationId))
@@ -278,6 +307,27 @@ class InventoryReservationService
         array $selectedLayers = [],
     ): array {
         return DB::transaction(function () use ($requirement, $quantity, $branchStoreId, $materialRequestLineId, $unlinkedOnly, $selectedLayers): array {
+            $locked = ProductionMaterialRequirement::query()
+                ->with('run')
+                ->lockForUpdate()
+                ->findOrFail($requirement->getKey());
+            $product = Product::query()->lockForUpdate()->findOrFail($locked->product_id);
+            if ((int) $product->item_unit_id !== (int) $locked->unit_id) {
+                throw new DomainException(__('production_execution.messages.material_unit_snapshot_mismatch'));
+            }
+            if ($materialRequestLineId !== null) {
+                $requestLine = ProductionMaterialRequestLine::query()
+                    ->whereKey($materialRequestLineId)
+                    ->where('production_material_requirement_id', $locked->getKey())
+                    ->where('product_id', $locked->product_id)
+                    ->where('unit_id', $locked->unit_id)
+                    ->lockForUpdate()
+                    ->first();
+                if (! $requestLine instanceof ProductionMaterialRequestLine) {
+                    throw new DomainException(__('production_execution.messages.material_request_issue_line_invalid'));
+                }
+            }
+
             $remaining = $quantity;
             $consumed = [];
 
@@ -286,7 +336,7 @@ class InventoryReservationService
             }
 
             $reservations = InventoryReservation::query()
-                ->where('production_material_requirement_id', $requirement->getKey())
+                ->where('production_material_requirement_id', $locked->getKey())
                 ->when($branchStoreId !== null, fn ($query) => $query->where('branch_store_id', $branchStoreId))
                 ->when($materialRequestLineId !== null, fn ($query) => $query->where('production_material_request_line_id', $materialRequestLineId))
                 ->when($unlinkedOnly, fn ($query) => $query->whereNull('production_material_request_line_id'))
@@ -294,6 +344,12 @@ class InventoryReservationService
                 ->oldest()
                 ->lockForUpdate()
                 ->get();
+            if ($reservations->contains(fn (InventoryReservation $reservation): bool => (int) $reservation->product_id !== (int) $locked->product_id
+                || (int) $reservation->unit_id !== (int) $locked->unit_id
+                || (int) $reservation->transaction_unit_id !== (int) $locked->unit_id
+                || bccomp((string) $reservation->conversion_factor, '1', 8) !== 0)) {
+                throw new DomainException(__('production_execution.messages.material_unit_snapshot_mismatch'));
+            }
 
             $selectionPlan = $selectedLayers === [] ? [['quantity' => $quantity, 'layer' => null]] : [];
             $selectedTotal = '0';
@@ -301,8 +357,8 @@ class InventoryReservationService
             foreach ($selectedLayers as $selection) {
                 $id = (int) ($selection['layer_id'] ?? 0);
                 $slice = (string) ($selection['quantity'] ?? '0');
-                $layer = InventoryReceiptLayer::query()->whereKey($id)->where('company_id', $requirement->run->company_id)
-                    ->where('branch_store_id', $branchStoreId)->where('product_id', $requirement->product_id)->where('stock_status', InventoryTransaction::StatusAvailable)
+                $layer = InventoryReceiptLayer::query()->whereKey($id)->where('company_id', $locked->run->company_id)
+                    ->where('branch_store_id', $branchStoreId)->where('product_id', $locked->product_id)->where('stock_status', InventoryTransaction::StatusAvailable)
                     ->whereNotNull('unit_cost')->lockForUpdate()->first();
                 if (isset($seen[$id]) || $layer === null || ! preg_match('/^\d+(?:\.\d{1,8})?$/D', $slice)
                     || bccomp($slice, '0', 8) <= 0 || bccomp($slice, (string) $layer->remaining_quantity, 8) > 0) {
@@ -393,7 +449,7 @@ class InventoryReservationService
             }
 
             ProductionMaterialRequirement::query()->lockForUpdate()->findOrFail($line->production_material_requirement_id);
-            $expected = bcsub((string) $line->reserved_quantity, (string) $line->issued_quantity, 8);
+            $expected = $line->remainingReservedQuantity();
             $linked = InventoryReservation::query()
                 ->where('production_material_request_line_id', $line->getKey())
                 ->where('status', InventoryReservation::StatusActive)
@@ -411,11 +467,11 @@ class InventoryReservationService
             $otherLines = ProductionMaterialRequestLine::query()
                 ->where('production_material_requirement_id', $line->production_material_requirement_id)
                 ->whereKeyNot($line->getKey())
-                ->whereColumn('reserved_quantity', '>', 'issued_quantity')
+                ->whereRaw('reserved_quantity > issued_quantity + reallocated_reserved_quantity')
                 ->lockForUpdate()
                 ->get();
             foreach ($otherLines as $otherLine) {
-                $otherExpected = bcsub((string) $otherLine->reserved_quantity, (string) $otherLine->issued_quantity, 8);
+                $otherExpected = $otherLine->remainingReservedQuantity();
                 $otherLinked = InventoryReservation::query()
                     ->where('production_material_request_line_id', $otherLine->getKey())
                     ->where('status', InventoryReservation::StatusActive)
@@ -494,7 +550,7 @@ class InventoryReservationService
                 throw new DomainException(__('production_execution.messages.material_request_reservation_repair_unsafe'));
             }
 
-            $expected = bcsub((string) $line->reserved_quantity, (string) $line->issued_quantity, 8);
+            $expected = $line->remainingReservedQuantity();
             $linked = $reservations
                 ->filter(fn (InventoryReservation $reservation): bool => (int) $reservation->production_material_request_line_id === (int) $line->getKey()
                     && $reservation->status === InventoryReservation::StatusActive)
@@ -548,7 +604,7 @@ class InventoryReservationService
                 ->orderBy('id')
                 ->lockForUpdate()
                 ->get();
-            $expectedRemaining = bcsub((string) $line->reserved_quantity, (string) $line->issued_quantity, 8);
+            $expectedRemaining = $line->remainingReservedQuantity();
             $actualRemaining = $reservations->reduce(
                 fn (string $sum, InventoryReservation $reservation): string => bcadd($sum, $reservation->remaining_quantity, 8),
                 '0.00000000',
@@ -663,6 +719,66 @@ class InventoryReservationService
             $requirement->forceFill([
                 'reserved_quantity' => bcsub((string) $requirement->reserved_quantity, $reserved, 8),
             ])->save();
+        }, 3);
+    }
+
+    public function releaseRemainingForMaterialRequestLine(
+        ProductionMaterialRequestLine $line,
+        string $quantity,
+        string $reason,
+    ): string {
+        return DB::transaction(function () use ($line, $quantity, $reason): string {
+            if (trim($reason) === '' || bccomp($quantity, '0', 8) <= 0) {
+                throw new DomainException(__('production_execution.messages.material_reallocation_invalid'));
+            }
+
+            $line->loadMissing('request');
+            $requirement = ProductionMaterialRequirement::query()->lockForUpdate()
+                ->findOrFail($line->production_material_requirement_id);
+            $reservations = InventoryReservation::query()
+                ->where('production_material_request_line_id', $line->getKey())
+                ->where('status', InventoryReservation::StatusActive)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get();
+
+            $remaining = $quantity;
+            $released = '0.00000000';
+            foreach ($reservations as $reservation) {
+                if ((int) $reservation->production_material_requirement_id !== (int) $requirement->getKey()
+                    || (int) $reservation->production_run_id !== (int) $line->request->production_run_id
+                    || (int) $reservation->product_id !== (int) $line->product_id) {
+                    throw new DomainException(__('production_execution.messages.material_reallocation_reservation_mismatch'));
+                }
+
+                $available = (string) $reservation->remaining_quantity;
+                if (bccomp($available, '0', 8) <= 0 || bccomp($remaining, '0', 8) <= 0) {
+                    continue;
+                }
+                $slice = bccomp($remaining, $available, 8) < 0 ? $remaining : $available;
+                $reservation->forceFill([
+                    'released_quantity' => bcadd((string) $reservation->released_quantity, $slice, 8),
+                    'status' => bccomp($slice, $available, 8) === 0
+                        ? InventoryReservation::StatusReleased
+                        : InventoryReservation::StatusActive,
+                    'released_by' => auth()->id(),
+                    'released_at' => now(),
+                    'release_reason' => trim($reason),
+                ])->save();
+                $remaining = bcsub($remaining, $slice, 8);
+                $released = bcadd($released, $slice, 8);
+            }
+
+            if (bccomp($released, '0', 8) > 0) {
+                if (bccomp((string) $requirement->reserved_quantity, $released, 8) < 0) {
+                    throw new DomainException(__('production_execution.messages.material_reallocation_reservation_mismatch'));
+                }
+                $requirement->forceFill([
+                    'reserved_quantity' => bcsub((string) $requirement->reserved_quantity, $released, 8),
+                ])->save();
+            }
+
+            return $released;
         }, 3);
     }
 }

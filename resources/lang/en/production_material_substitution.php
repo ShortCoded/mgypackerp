@@ -2,7 +2,7 @@
 
 return [
     'title' => 'Unconsumed material substitution',
-    'help' => 'Prepare one run-local recipe exception. A different user with recipe edit, correction approval and material issue permissions must approve the technical evidence. Approval returns the original material and issues the replacement together. The master recipe and original issue stay in the audit trail.',
+    'help' => 'Prepare one run-local exception using only an alternative frozen into the released production order. A different user with recipe edit, correction approval and material issue permissions must approve the technical evidence. Approval returns the original material and issues the converted replacement quantity together. The master recipe and original issue stay in the audit trail.',
     'original' => 'Original material', 'replacement' => 'Replacement material', 'reason' => 'Recording correction reason',
     'prepare' => 'Prepare substitution', 'approve' => 'Approve recipe exception and apply', 'reject' => 'Reject',
     'prepared' => 'Substitution prepared for independent recipe approval.', 'approved' => 'Original returned and approved replacement issued.', 'rejected' => 'Substitution rejected.',
@@ -12,7 +12,9 @@ return [
     'quantity' => 'Use a positive quantity from a fully issued, unconsumed requirement without pending reservations or material requests. Each original requirement may be substituted once.',
     'active' => 'Substitution requires a single running or held run without a shared batch or an existing execution correction.',
     'dependencies' => 'Material has downstream output, quality, consumption, waste, receipt, expense, payroll approval, overhead or valuation activity. Recover it through its owning workflow first.',
-    'compatibility' => 'Choose a different active raw material in the same company and base unit. Serial-tracked and expiry-tracked materials are outside this substitution workflow.',
+    'compatibility' => 'Choose a different active raw material approved in this production order’s BOM snapshot. Its frozen conversion factor determines the replacement base quantity. Serial-tracked and expiry-tracked materials are outside this substitution workflow.',
+    'converted_quantity' => 'Converted replacement quantity',
+    'conversion_factor' => 'Frozen conversion factor',
     'independent' => 'The preparer cannot approve their own recipe exception.', 'stale' => 'The proposal, source, replacement stock or posting date changed. Reject and prepare a fresh substitution.',
     'pending' => 'Reject the existing prepared substitution before preparing a different one.', 'state' => 'This substitution is no longer awaiting approval.',
     'reason_required' => 'Enter a correction reason.', 'evidence_required' => 'Enter technical evidence approving the replacement for this run.',

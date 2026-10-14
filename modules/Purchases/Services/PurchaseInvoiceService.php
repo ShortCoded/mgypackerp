@@ -36,6 +36,7 @@ use Modules\Purchases\Models\PurchaseReturn;
 use Modules\Purchases\Models\Supplier;
 use Modules\Purchases\Models\SupplierPaymentAllocation;
 use Modules\Purchases\Models\SupplierPaymentContext;
+use Modules\Purchases\Models\SupplyOrder;
 
 class PurchaseInvoiceService
 {
@@ -258,6 +259,10 @@ class PurchaseInvoiceService
                 throw new DomainException(__('open_documents.corrections.invoice_returns_active'));
             }
 
+            if ($this->hasActiveDirectSupplies($locked)) {
+                throw new DomainException(__('procurement.messages.direct_invoice_reversal_blocked'));
+            }
+
             $this->fixedAssetPurchases->assertReversible($locked);
 
             if (blank($reason)) {
@@ -342,6 +347,10 @@ class PurchaseInvoiceService
             ->filter()->unique()->values()->all();
         if ($activePaymentAllocations->isNotEmpty() || $approvedVouchers !== []) {
             $blockers[] = __('open_documents.corrections.invoice_payments_active');
+        }
+
+        if ($this->hasActiveDirectSupplies($record)) {
+            $blockers[] = __('procurement.messages.direct_invoice_reversal_blocked');
         }
 
         $activeReturns = $record->purchaseReturns
@@ -1297,6 +1306,12 @@ class PurchaseInvoiceService
             || (int) $record->branch_id !== (int) ($context['branch_id'] ?? 0)) {
             throw new DomainException(__('The document is outside the active operating context.'));
         }
+    }
+
+    private function hasActiveDirectSupplies(PurchaseInvoice $invoice): bool
+    {
+        return $invoice->purchase_order_id === null && SupplyOrder::query()->where('purchase_invoice_id', $invoice->id)
+            ->where('status', '<>', SupplyOrder::StatusCancelled)->exists();
     }
 
     private function sourceJournalForCorrection(PurchaseInvoice $record, bool $lock = false): JournalEntry

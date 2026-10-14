@@ -16,6 +16,7 @@ use Modules\Core\Models\CalendarEvent;
 use Modules\Core\Models\ChatConversation;
 use Modules\Core\Models\UserNotification;
 use Modules\Core\Models\UserTask;
+use Modules\Inventory\Models\InventoryReorderAlert;
 use Ramsey\Uuid\Uuid;
 use stdClass;
 
@@ -33,6 +34,9 @@ class NotificationService
         $metadata = $notification->metadata ?? null;
         if (is_string($metadata)) {
             $metadata = json_decode($metadata, true);
+        }
+        if ($notification->type === InventoryReorderAlert::NotificationType && is_array($metadata)) {
+            return $this->reorderPresentation($metadata);
         }
         if (! is_array($metadata) || blank($metadata['subject_type'] ?? null) || blank($metadata['document_number'] ?? null)) {
             return $original;
@@ -59,6 +63,27 @@ class NotificationService
         }
 
         return $original;
+    }
+
+    /**
+     * @param  array<string, mixed>  $metadata
+     * @return array{title: string, body: string}
+     */
+    public function reorderPresentation(array $metadata): array
+    {
+        $numbers = app(NumericFormatService::class);
+
+        return [
+            'title' => __('notifications.reorder.title', ['item' => $metadata['product_name'] ?? '']),
+            'body' => __('notifications.reorder.body', [
+                'code' => $metadata['product_code'] ?? '',
+                'store' => $metadata['store_name'] ?? '',
+                'branch' => $metadata['branch_name'] ?? '',
+                'available' => $numbers->format($metadata['available_quantity'] ?? '0'),
+                'unit' => $metadata['unit_name'] ?? '',
+                'threshold' => $numbers->format($metadata['reorder_point'] ?? '0'),
+            ]),
+        ];
     }
 
     /**

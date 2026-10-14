@@ -4,6 +4,7 @@ namespace Modules\Production\Services;
 
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 use Modules\Core\Models\BranchStore;
@@ -66,9 +67,14 @@ final class ProductionMaterialSubstitutionService
         Gate::authorize('production.runs.issue');
         $run = $this->scopedRun($run);
         $requirement = $run->requirements()->where('public_id', $requirementId)->firstOrFail();
+        $allowedProductIds = $this->approvedMaterialSelections($requirement)
+            ->pluck('product_id')
+            ->map(fn (mixed $productId): int => (int) $productId)
+            ->all();
 
         return Product::query()->where('company_id', $run->company_id)->where('status', 'active')
-            ->where('item_classification', Product::ClassificationRawMaterial)->where('item_unit_id', $requirement->unit_id)
+            ->where('item_classification', Product::ClassificationRawMaterial)
+            ->whereIn('id', $allowedProductIds)
             ->where('tracks_serials', false)->where('tracks_expiry', false)
             ->whereNotIn('id', $run->requirements()->select('product_id'))->orderBy('doc_num');
     }
@@ -91,7 +97,9 @@ final class ProductionMaterialSubstitutionService
             $quantity = $this->quantity((string) $input['quantity']);
             $this->assertRequirement($run, $requirement, $quantity);
             $product = Product::query()->where('company_id', $run->company_id)->where('doc_num', $input['replacement_product_doc_num'])->lockForUpdate()->firstOrFail();
-            $this->assertReplacement($run, $requirement, $product);
+            $selection = $this->replacementSelection($run, $requirement, $product);
+            $originalEquivalent = $requirement->toOriginalQuantity($quantity);
+            $replacementQuantity = bcmul($originalEquivalent, $selection['conversion_factor'], 8);
             $store = BranchStore::query()->where('branch_id', $run->branch_id)->whereKey($input['branch_store_id'])->lockForUpdate()->firstOrFail();
             $this->assertCostPolicy($run, $store);
             if (trim($input['reason']) === '' || mb_strlen($input['reason']) > 2000) {
@@ -100,7 +108,9 @@ final class ProductionMaterialSubstitutionService
             $payload = ['company_id' => $run->company_id, 'branch_id' => $run->branch_id,
                 'financial_period_id' => $run->financial_period_id, 'production_run_id' => $run->id,
                 'original_requirement_id' => $requirement->id, 'replacement_product_id' => $product->id,
-                'branch_store_id' => $store->id, 'quantity' => $quantity, 'reason' => trim($input['reason']),
+                'branch_store_id' => $store->id, 'quantity' => $quantity,
+                'conversion_factor' => $selection['conversion_factor'], 'replacement_quantity' => $replacementQuantity,
+                'reason' => trim($input['reason']),
                 'posting_date' => now()->toDateString(), 'fingerprint' => $input['fingerprint'],
                 'source_snapshot' => json_encode($snapshot, JSON_THROW_ON_ERROR),
                 'replacement_snapshot' => json_encode($this->replacementSnapshot($product, $store), JSON_THROW_ON_ERROR),
@@ -162,7 +172,15 @@ final class ProductionMaterialSubstitutionService
             $this->assertRequirement($run, $requirement, $quantity);
             $product = Product::query()->where('company_id', $run->company_id)->whereKey($proposal->replacement_product_id)->lockForUpdate()->firstOrFail();
             $store = BranchStore::query()->where('branch_id', $run->branch_id)->whereKey($proposal->branch_store_id)->lockForUpdate()->firstOrFail();
-            $this->assertReplacement($run, $requirement, $product);
+            $selection = $this->replacementSelection($run, $requirement, $product);
+            $originalEquivalent = $requirement->toOriginalQuantity($quantity);
+            $replacementQuantity = bcmul($originalEquivalent, $selection['conversion_factor'], 8);
+            if ($proposal->replacement_quantity === null
+                || bccomp((string) $proposal->conversion_factor, $selection['conversion_factor'], 8) !== 0
+                || bccomp((string) $proposal->replacement_quantity, $replacementQuantity, 8) !== 0
+            ) {
+                throw new DomainException(__('production_material_substitution.stale'));
+            }
             $this->assertCostPolicy($run, $store);
             if (! hash_equals($this->digest(json_decode($proposal->replacement_snapshot, true, 512, JSON_THROW_ON_ERROR)), $this->digest($this->replacementSnapshot($product, $store)))) {
                 throw new DomainException(__('production_material_substitution.stale'));
@@ -174,18 +192,45 @@ final class ProductionMaterialSubstitutionService
             DB::table(self::Table)->where('id', $id)->update(['status' => 'applying']);
             $returned = $this->cycle->returnMaterials($run, $store->id, [$requirement->id => $quantity]);
             $requirement->refresh();
-            $requirement->update(['planned_quantity' => bcsub((string) $requirement->planned_quantity, $quantity, 8)]);
+            $requirement->update([
+                'planned_quantity' => bcsub((string) $requirement->planned_quantity, $quantity, 8),
+                'original_planned_quantity' => bcsub($requirement->originalPlannedQuantity(), $originalEquivalent, 8),
+            ]);
+            $componentSnapshot = $requirement->component_snapshot ?? [];
+            $plannedEquivalentOutput = bcmul(
+                (string) $run->planned_base_quantity,
+                (string) ($run->orderLine->bom_snapshot['basis_base_quantity'] ?? '1'),
+                8,
+            );
             $replacement = $run->requirements()->create([
                 'production_order_id' => $requirement->production_order_id, 'production_order_line_id' => $requirement->production_order_line_id,
-                'line_number' => (int) $run->requirements()->max('line_number') + 1, 'product_component_id' => null,
-                'product_id' => $product->id, 'unit_id' => $requirement->unit_id, 'calculation_method' => $requirement->calculation_method,
-                'component_quantity_snapshot' => bcdiv($quantity, bcmul((string) $run->planned_base_quantity, (string) ($run->orderLine->bom_snapshot['basis_base_quantity'] ?? '1'), 8), 8), 'planned_quantity' => $quantity,
-                'component_snapshot' => ['product_id' => $product->id, 'base_unit_id' => $requirement->unit_id,
-                    'approved_substitution' => ['proposal_id' => $id, 'original_requirement_id' => $requirement->id,
-                        'original_product_id' => $requirement->product_id, 'quantity' => $quantity,
-                        'approved_by' => auth()->id(), 'recipe_approval_evidence' => trim($evidence)]]]);
-            $this->reservations->reserveForProductionAcrossPositions($replacement, $store->id, $quantity);
-            $quantities = $run->requirements()->get()->mapWithKeys(fn (ProductionMaterialRequirement $line): array => [$line->id => $line->id === $replacement->id ? $quantity : '0'])->all();
+                'line_number' => (int) $run->requirements()->max('line_number') + 1,
+                'product_component_id' => $requirement->product_component_id,
+                'original_product_id' => $requirement->original_product_id ?? $componentSnapshot['product_id'] ?? $requirement->product_id,
+                'product_id' => $product->id,
+                'original_unit_id' => $requirement->original_unit_id ?? $componentSnapshot['base_unit_id'] ?? $requirement->unit_id,
+                'unit_id' => $selection['unit_id'], 'calculation_method' => $requirement->calculation_method,
+                'component_quantity_snapshot' => bcdiv($replacementQuantity, $plannedEquivalentOutput, 8),
+                'original_planned_quantity' => $originalEquivalent,
+                'material_conversion_factor' => $selection['conversion_factor'],
+                'planned_quantity' => $replacementQuantity,
+                'component_snapshot' => [
+                    ...$componentSnapshot,
+                    'selected_material' => $selection,
+                    'approved_substitution' => [
+                        'proposal_id' => $id,
+                        'original_requirement_id' => $requirement->id,
+                        'original_product_id' => $requirement->product_id,
+                        'original_quantity' => $quantity,
+                        'original_equivalent_quantity' => $originalEquivalent,
+                        'replacement_quantity' => $replacementQuantity,
+                        'approved_by' => auth()->id(),
+                        'recipe_approval_evidence' => trim($evidence),
+                    ],
+                ],
+            ]);
+            $this->reservations->reserveForProductionAcrossPositions($replacement, $store->id, $replacementQuantity);
+            $quantities = $run->requirements()->get()->mapWithKeys(fn (ProductionMaterialRequirement $line): array => [$line->id => $line->id === $replacement->id ? $replacementQuantity : '0'])->all();
             $issued = $this->cycle->issueMaterials($run, $store->id, $quantities);
             if ($returned->lines()->whereNull('total_cost')->exists() || $issued->lines()->whereNull('total_cost')->exists()) {
                 throw new DomainException(__('production_material_substitution.valuation'));
@@ -292,13 +337,52 @@ final class ProductionMaterialSubstitutionService
         }
     }
 
-    private function assertReplacement(ProductionRun $run, ProductionMaterialRequirement $requirement, Product $product): void
+    /** @return array<string, mixed> */
+    private function replacementSelection(ProductionRun $run, ProductionMaterialRequirement $requirement, Product $product): array
     {
+        $selection = $this->approvedMaterialSelections($requirement)
+            ->first(fn (array $candidate): bool => (int) $candidate['product_id'] === (int) $product->getKey());
+
         if ($product->status !== 'active' || $product->item_classification !== Product::ClassificationRawMaterial
-            || (int) $product->item_unit_id !== (int) $requirement->unit_id || $product->tracks_serials || $product->tracks_expiry
-            || $run->requirements()->where('product_id', $product->id)->exists()) {
+            || ! is_array($selection)
+            || (int) $product->company_id !== (int) $run->company_id
+            || (int) $product->item_unit_id !== (int) $selection['unit_id']
+            || bccomp((string) $selection['conversion_factor'], '0', 8) <= 0
+            || $product->tracks_serials || $product->tracks_expiry
+            || $run->requirements()->where('product_id', $product->id)->exists()
+        ) {
             throw new DomainException(__('production_material_substitution.compatibility'));
         }
+
+        return $selection;
+    }
+
+    /** @return Collection<int, array<string, mixed>> */
+    private function approvedMaterialSelections(ProductionMaterialRequirement $requirement): Collection
+    {
+        $snapshot = $requirement->component_snapshot ?? [];
+        $primary = [
+            'kind' => 'primary',
+            'alternative_public_id' => null,
+            'product_id' => (int) ($snapshot['product_id'] ?? $requirement->original_product_id ?? $requirement->product_id),
+            'product_doc_num' => (string) ($snapshot['product_doc_num'] ?? ''),
+            'product_name' => (string) ($snapshot['product_name'] ?? ''),
+            'unit_id' => (int) ($snapshot['base_unit_id'] ?? $requirement->original_unit_id ?? $requirement->unit_id),
+            'unit_name' => (string) ($snapshot['base_unit_name'] ?? ''),
+            'conversion_factor' => '1.00000000',
+        ];
+        $alternatives = collect($snapshot['alternatives'] ?? [])->map(fn (array $alternative): array => [
+            'kind' => 'alternative',
+            'alternative_public_id' => (string) $alternative['public_id'],
+            'product_id' => (int) $alternative['product_id'],
+            'product_doc_num' => (string) $alternative['product_doc_num'],
+            'product_name' => (string) $alternative['product_name'],
+            'unit_id' => (int) $alternative['base_unit_id'],
+            'unit_name' => (string) ($alternative['base_unit_name'] ?? ''),
+            'conversion_factor' => bcadd((string) $alternative['conversion_factor'], '0', 8),
+        ]);
+
+        return collect([$primary])->concat($alternatives)->unique('product_id')->values();
     }
 
     /** @return array<string, mixed> */
@@ -350,10 +434,16 @@ final class ProductionMaterialSubstitutionService
     private function assertSeal(object $proposal): void
     {
         $keys = ['company_id', 'branch_id', 'financial_period_id', 'production_run_id', 'original_requirement_id', 'replacement_product_id',
-            'branch_store_id', 'quantity', 'reason', 'posting_date', 'fingerprint', 'source_snapshot', 'replacement_snapshot', 'prepared_by'];
+            'branch_store_id', 'quantity'];
+        if ($proposal->replacement_quantity !== null) {
+            $keys = [...$keys, 'conversion_factor', 'replacement_quantity'];
+        }
+        $keys = [...$keys, 'reason', 'posting_date', 'fingerprint', 'source_snapshot', 'replacement_snapshot', 'prepared_by'];
         $payload = [];
         foreach ($keys as $key) {
-            $payload[$key] = $key === 'quantity' ? bcadd((string) $proposal->{$key}, '0', 8) : $proposal->{$key};
+            $payload[$key] = in_array($key, ['quantity', 'conversion_factor', 'replacement_quantity'], true)
+                ? bcadd((string) $proposal->{$key}, '0', 8)
+                : $proposal->{$key};
         }
         if (! hash_equals($proposal->proposal_seal, $this->digest($payload))) {
             throw new DomainException(__('production_material_substitution.stale'));

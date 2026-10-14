@@ -122,7 +122,7 @@ class ProductionReportExport implements WithMultipleSheets
             $line = $entry['line'];
             $pending = $entry['status'] === 'pending';
 
-            return [$run->order?->branch?->name, $run->run_number, $run->product?->doc_num.' — '.$run->product?->name, $line->product?->doc_num.' — '.$line->product?->name, $line->unit?->name, $entry['basis_quantity'], $line->component_quantity_snapshot, $line->planned_quantity, $pending ? null : $entry['issued'], $pending ? null : $line->returned_quantity, $pending ? null : $line->consumed_quantity, $pending ? null : $line->waste_quantity, $pending ? null : $entry['variance'], __('production_execution.reports.control.material_statuses.'.$entry['status'])];
+            return [$run->order?->branch?->name, $run->run_number, $run->product?->doc_num.' — '.$run->product?->name, $line->product?->doc_num.' — '.$line->product?->name, $line->unit?->name, $entry['basis_quantity'], $line->component_quantity_snapshot, $line->report_planned_quantity, $pending ? null : $entry['issued'], $pending ? null : $line->returned_quantity, $pending ? null : $line->consumed_quantity, $pending ? null : $line->waste_quantity, $pending ? null : $entry['variance'], __('production_execution.reports.control.material_statuses.'.$entry['status'])];
         });
 
         return [
@@ -151,7 +151,7 @@ class ProductionReportExport implements WithMultipleSheets
     /** @return list<mixed> */
     private function materialRow($line): array
     {
-        return [$line->run?->run_number, $line->run?->order?->doc_num, $line->product?->doc_num, $line->product?->name, $line->planned_quantity, $line->reserved_quantity, $line->issued_quantity, $line->additional_issued_quantity, $line->returned_quantity, $line->consumed_quantity, $line->waste_quantity, $line->quantity_variance, $line->accountability_variance];
+        return [$line->run?->run_number, $line->run?->order?->doc_num, $line->product?->doc_num, $line->product?->name, $line->report_planned_quantity, $line->reserved_quantity, $line->issued_quantity, $line->additional_issued_quantity, $line->returned_quantity, $line->consumed_quantity, $line->waste_quantity, $line->quantity_variance, $line->accountability_variance];
     }
 
     /** @return list<string> */

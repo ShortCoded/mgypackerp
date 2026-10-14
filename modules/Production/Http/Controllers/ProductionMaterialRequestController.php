@@ -82,6 +82,9 @@ class ProductionMaterialRequestController extends Controller
             $data['reason'] ?? null,
             $data['required_by_date'] ?? null,
             $this->componentQuantities($data['lines'] ?? []),
+            $this->materialChoices($data['lines'] ?? []),
+            $this->componentMaterialChoices($data['lines'] ?? []),
+            $this->componentAllocations($data['lines'] ?? []),
         ));
 
         return redirect()->to($this->submitRedirectUrl($request, $record))
@@ -100,6 +103,9 @@ class ProductionMaterialRequestController extends Controller
             $data['reason'] ?? null,
             $data['required_by_date'] ?? null,
             $this->componentQuantities($data['lines'] ?? []),
+            $this->materialChoices($data['lines'] ?? []),
+            $this->componentMaterialChoices($data['lines'] ?? []),
+            $this->componentAllocations($data['lines'] ?? []),
         ));
 
         return redirect()->to($this->submitRedirectUrl($request, $record))
@@ -158,6 +164,7 @@ class ProductionMaterialRequestController extends Controller
         $this->assertProductionRequest($request, $productionMaterialRequest);
         $record = $productionMaterialRequest->load([
             'order.company', 'run.product', 'run.stageSnapshot', 'store', 'lines.product', 'lines.unit',
+            'lines.originalProduct', 'lines.originalUnit',
             'purchaseRequisition', 'inventoryDocuments',
         ]);
 
@@ -240,6 +247,29 @@ class ProductionMaterialRequestController extends Controller
                 ->with('success', __('production_execution.messages.material_issue_created_with_number', ['number' => $document->doc_num]));
     }
 
+    public function reallocate(Request $request, ProductionMaterialRequest $productionMaterialRequest): RedirectResponse
+    {
+        $this->assertProductionRequest($request, $productionMaterialRequest);
+        $numbers = app(NumericFormatService::class);
+        $request->merge(['quantity' => $numbers->normalizeForValidation($request->input('quantity'))]);
+        $data = $request->validate([
+            'source_line_id' => ['required', 'integer'],
+            'quantity' => ['required', 'numeric', 'gt:0'],
+            'material_choice' => ['required', 'string', 'regex:/^(?:primary|[0-9a-fA-F-]{36})$/'],
+            'reason' => ['required', 'string', 'max:2000'],
+        ]);
+        $target = $this->guard(fn (): ProductionMaterialRequest => $this->service->reallocateUnissued(
+            $productionMaterialRequest,
+            (int) $data['source_line_id'],
+            (string) $data['quantity'],
+            (string) $data['material_choice'],
+            (string) $data['reason'],
+        ));
+
+        return to_route('admin.production.material-requests.show', $target)
+            ->with('success', __('production_execution.messages.material_reallocation_created', ['number' => $target->doc_num]));
+    }
+
     public function reconcileReservations(Request $request, ProductionMaterialRequest $productionMaterialRequest): JsonResponse|RedirectResponse
     {
         $this->assertProductionRequest($request, $productionMaterialRequest);
@@ -275,13 +305,13 @@ class ProductionMaterialRequestController extends Controller
     private function form(Request $request, ?ProductionMaterialRequest $record = null, string $mode = 'create'): View
     {
         $context = $this->requiredContext($request);
-        $record?->loadMissing(['run.requirements.product', 'run.requirements.unit', 'lines.product', 'lines.unit', 'store', 'inventoryDocuments']);
+        $record?->loadMissing(['run.requirements.product', 'run.requirements.unit', 'run.requirements.originalProduct', 'run.requirements.originalUnit', 'lines.requirement', 'lines.product', 'lines.unit', 'lines.originalProduct', 'lines.originalUnit', 'store', 'inventoryDocuments']);
         $runs = ProductionRun::query()
             ->where('company_id', $context['company_id'])
             ->where('financial_period_id', $context['financial_period_id'])
             ->where('branch_id', $context['branch_id'])
             ->when($mode !== 'view', fn ($query) => $query->whereNotIn('status', [ProductionRun::StatusCompleted, ProductionRun::StatusCancelled]))
-            ->with(['requirements.product', 'requirements.unit', 'stageSnapshot'])
+            ->with(['requirements.product', 'requirements.unit', 'requirements.originalProduct', 'requirements.originalUnit', 'orderLine', 'stageSnapshot'])
             ->latest()
             ->get();
 
@@ -299,6 +329,25 @@ class ProductionMaterialRequestController extends Controller
                     $mode === 'edit' ? $record?->getKey() : null,
                 ),
             ]) ?? collect();
+        $reallocationEvidence = $record === null
+            ? collect()
+            : DB::table('production_material_request_reallocations as reallocations')
+                ->join('production_material_requests as source_requests', 'source_requests.id', '=', 'reallocations.source_material_request_id')
+                ->join('production_material_requests as target_requests', 'target_requests.id', '=', 'reallocations.target_material_request_id')
+                ->join('products as source_products', 'source_products.id', '=', 'reallocations.source_product_id')
+                ->join('products as target_products', 'target_products.id', '=', 'reallocations.target_product_id')
+                ->where(fn ($query) => $query->where('reallocations.source_material_request_id', $record->getKey())
+                    ->orWhere('reallocations.target_material_request_id', $record->getKey()))
+                ->orderBy('reallocations.id')
+                ->get([
+                    'reallocations.*',
+                    'source_requests.doc_num as source_doc_num',
+                    'target_requests.doc_num as target_doc_num',
+                    'source_products.doc_num as source_product_doc_num',
+                    'source_products.name as source_product_name',
+                    'target_products.doc_num as target_product_doc_num',
+                    'target_products.name as target_product_name',
+                ]);
 
         return view('modules.production.material-requests.form', [
             'record' => $record,
@@ -307,6 +356,7 @@ class ProductionMaterialRequestController extends Controller
             'selectedRun' => $selectedRun,
             'materialOptions' => $materialOptions,
             'remainingRequestableByRequirement' => $remainingRequestableByRequirement,
+            'reallocationEvidence' => $reallocationEvidence,
             'stores' => BranchStore::query()->where('branch_id', $context['branch_id'])->orderBy('position')->get(),
         ]);
     }
@@ -325,6 +375,38 @@ class ProductionMaterialRequestController extends Controller
     {
         return collect($lines)->filter(fn (array $line): bool => blank($line['requirement_id'] ?? null) && filled($line['quantity'] ?? null))
             ->mapWithKeys(fn (array $line): array => [(int) $line['product_component_id'] => $line['quantity']])->all();
+    }
+
+    /** @param list<array<string, mixed>> $lines @return array<int, string> */
+    private function materialChoices(array $lines): array
+    {
+        return collect($lines)
+            ->filter(fn (array $line): bool => filled($line['requirement_id'] ?? null) && filled($line['quantity'] ?? null))
+            ->mapWithKeys(fn (array $line): array => [(int) $line['requirement_id'] => (string) ($line['material_choice'] ?? 'primary')])
+            ->all();
+    }
+
+    /** @param list<array<string, mixed>> $lines @return array<int, string> */
+    private function componentMaterialChoices(array $lines): array
+    {
+        return collect($lines)
+            ->filter(fn (array $line): bool => blank($line['requirement_id'] ?? null) && filled($line['quantity'] ?? null))
+            ->mapWithKeys(fn (array $line): array => [(int) $line['product_component_id'] => (string) ($line['material_choice'] ?? 'primary')])
+            ->all();
+    }
+
+    /** @param list<array<string, mixed>> $lines @return list<array{product_component_id:int, material_choice:string, quantity:mixed}> */
+    private function componentAllocations(array $lines): array
+    {
+        return collect($lines)
+            ->filter(fn (array $line): bool => blank($line['requirement_id'] ?? null) && filled($line['quantity'] ?? null))
+            ->map(fn (array $line): array => [
+                'product_component_id' => (int) $line['product_component_id'],
+                'material_choice' => (string) ($line['material_choice'] ?? 'primary'),
+                'quantity' => $line['quantity'],
+            ])
+            ->values()
+            ->all();
     }
 
     /** @param list<array<string, mixed>> $lines @return array<int, mixed> */
@@ -365,6 +447,7 @@ class ProductionMaterialRequestController extends Controller
     {
         return ! $record->trashed()
             && $record->status === ProductionMaterialRequest::StatusSubmitted
+            && ! $record->hasMaterialReallocationEvidence()
             && ! $record->inventoryDocuments()->exists();
     }
 

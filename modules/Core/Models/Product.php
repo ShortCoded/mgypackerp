@@ -143,6 +143,7 @@ class Product extends Model
         return [
             ...self::materialClassifications(),
             self::ClassificationFinishedProduct,
+            self::ClassificationSemiFinished,
         ];
     }
 
@@ -375,6 +376,14 @@ class Product extends Model
     public function usedInComponents(): HasMany
     {
         return $this->hasMany(ProductComponent::class, 'component_product_id');
+    }
+
+    /**
+     * @return HasMany<ProductComponentAlternative, $this>
+     */
+    public function usedAsComponentAlternative(): HasMany
+    {
+        return $this->hasMany(ProductComponentAlternative::class, 'alternative_product_id');
     }
 
     /**

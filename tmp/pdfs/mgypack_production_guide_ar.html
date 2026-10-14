@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>دليل تصحيح واستلام الإنتاج التام في MgyPack</title>
+  <style>
+    @page { size: A4; margin: 14mm 14mm 15mm; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Noto Sans Arabic", "Noto Naskh Arabic", sans-serif;
+      direction: rtl;
+      color: #122033;
+      background: #ffffff;
+      font-size: 10.4pt;
+      line-height: 1.75;
+    }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { font-size: 26pt; line-height: 1.35; margin-bottom: 7mm; color: #123d67; }
+    h2 {
+      font-size: 17pt;
+      line-height: 1.4;
+      color: #123d67;
+      border-right: 4px solid #1f9d8b;
+      padding-right: 8px;
+      margin: 0 0 4mm;
+    }
+    h3 { font-size: 12.5pt; color: #1f5a82; margin: 4mm 0 1.5mm; }
+    p { margin-bottom: 3mm; }
+    ul, ol { margin: 0 0 3mm; padding-right: 6mm; }
+    li { margin-bottom: 1.5mm; }
+    .cover {
+      min-height: 252mm;
+      padding: 34mm 15mm 20mm;
+      color: #ffffff;
+      background: #123d67;
+      page-break-after: always;
+    }
+    .cover .eyebrow { color: #83dfd0; font-size: 11pt; letter-spacing: .7px; margin-bottom: 8mm; }
+    .cover h1 { color: #ffffff; font-size: 31pt; max-width: 155mm; }
+    .cover .lead { color: #e9f5f7; font-size: 14pt; max-width: 155mm; margin-bottom: 16mm; }
+    .cover .rule { width: 35mm; height: 4px; background: #27b7a2; margin: 14mm 0 8mm; }
+    .cover .meta { color: #cde2e8; font-size: 10pt; }
+    .page { page-break-after: always; min-height: 252mm; }
+    .page:last-child { page-break-after: auto; }
+    .kicker { color: #1f9d8b; font-size: 9.5pt; font-weight: 700; margin-bottom: 1mm; }
+    .summary {
+      border: 1px solid #c9dbe4;
+      border-radius: 8px;
+      padding: 5mm;
+      background: #f5f9fb;
+      margin-bottom: 5mm;
+    }
+    .callout {
+      background: #eef9f6;
+      border-right: 4px solid #1f9d8b;
+      padding: 4mm;
+      margin: 4mm 0;
+    }
+    .warning {
+      background: #fff6e8;
+      border-right: 4px solid #e59d2a;
+      padding: 4mm;
+      margin: 4mm 0;
+    }
+    .danger {
+      background: #fff0f0;
+      border-right: 4px solid #cf4d52;
+      padding: 4mm;
+      margin: 4mm 0;
+    }
+    .grid { width: 100%; border-collapse: separate; border-spacing: 3mm; margin: 0 -3mm 4mm 0; }
+    .grid td { width: 50%; vertical-align: top; background: #f7fafc; border: 1px solid #d9e5eb; padding: 4mm; }
+    .route { font-family: "DejaVu Sans", sans-serif; direction: ltr; unicode-bidi: embed; color: #315b75; font-size: 8.5pt; }
+    table.data { width: 100%; border-collapse: collapse; margin: 3mm 0 5mm; }
+    table.data th, table.data td { border: 1px solid #cddae1; padding: 2.8mm 3mm; vertical-align: top; }
+    table.data th { background: #123d67; color: #fff; font-weight: 700; }
+    table.data tr:nth-child(even) td { background: #f7fafc; }
+    .step { display: table; width: 100%; margin-bottom: 3mm; }
+    .step-num { display: table-cell; width: 11mm; height: 11mm; background: #1f9d8b; color: white; text-align: center; vertical-align: middle; font-weight: 700; border-radius: 50%; }
+    .step-body { display: table-cell; padding-right: 3mm; vertical-align: top; }
+    .decision { border: 1px solid #cfdde4; padding: 4mm; margin-bottom: 3mm; background: #fbfdfe; }
+    .decision strong { color: #123d67; }
+    .screenshot { width: auto; max-width: 100%; max-height: 86mm; border: 1px solid #c9d6dd; border-radius: 5px; display: block; margin: 2mm auto 1.5mm; }
+    .caption { color: #526b7b; font-size: 8.5pt; text-align: center; margin-bottom: 5mm; }
+    .checklist { list-style: none; padding: 0; }
+    .checklist li { position: relative; padding-right: 7mm; margin-bottom: 2mm; }
+    .checklist li::before { content: "✓"; position: absolute; right: 0; color: #1f9d8b; font-weight: 700; }
+    .footer { margin-top: 7mm; border-top: 1px solid #d6e0e5; padding-top: 2mm; color: #6b7d88; font-size: 8pt; }
+    .small { font-size: 8.6pt; color: #556c7a; }
+    .no-break { page-break-inside: avoid; }
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <div class="eyebrow">MgyPack ERP · دليل تشغيل ومراجعة</div>
+    <div class="rule"></div>
+    <h1>دليل تصحيح واستلام الإنتاج التام</h1>
+    <p class="lead">المسار المعتمد لتسليم المنتج التام، واستلامه بالمخزن، ومعالجة الأخطاء القديمة دون حذف الدليل أو كسر أثر المخزون والتكلفة.</p>
+    <div style="height:72mm"></div>
+    <p class="meta">نسخة مراجعة مبنية على التنفيذ الفعلي والمسارات والاختبارات — 12 أكتوبر 2026</p>
+    <p class="meta">النطاق: قراءة وتحليل فقط لبيانات الأعمال، مع تنظيم محدود لعناوين ومواقع القوائم.</p>
+  </section>
+
+  <section class="page">
+    <div class="kicker">الخلاصة التنفيذية</div>
+    <h2>أين تعمل كل خطوة؟</h2>
+    <div class="summary">
+      <p><strong>شاشة استلامات المنتج التام</strong> هي شاشة مخصصة وليست مجرد فلتر داخل «حركات المخزون». وهي تحافظ على رابط إذن تسليم الإنتاج، وأمر/تشغيلة الإنتاج، وصلاحيات الاستلام والاعتماد والتصحيح الخاصة بها.</p>
+      <p><strong>إذن تسليم إنتاج للمخزن</strong> يبدأ من التشغيلة بعد تسجيل الإنتاج والجودة، ثم يراجع ويعتمد في الإنتاج. لا يرحّل المخزون أو القيد المحاسبي بنفسه؛ الترحيل يحدث عند اعتماد استلام المخزن.</p>
+      <p><strong>استكمال تكلفة الاستلامات المخزنية غير المسعّرة</strong> مخصص للاستلام المخزني العام المرحّل بلا مصدر تشغيلي وبنود بلا تكلفة. لا يستخدم لتسعير استلامات المنتج التام.</p>
+    </div>
+
+    <table class="data">
+      <tr><th>المهمة</th><th>المكان النهائي في القائمة</th><th>ملاحظات الضبط</th></tr>
+      <tr><td>تسليم الإنتاج للمخزن</td><td>الإنتاج ← طلبات خامات الإنتاج ← إذن تسليم إنتاج للمخزن</td><td>ظهر بعد «طلبات خامات الإنتاج» مع بقاء صلاحياته ومساراته الأصلية.</td></tr>
+      <tr><td>استلام المنتج التام</td><td>المخزون ← استلامات المنتج التام</td><td>شاشة مخصصة فقط لاستلامات الإنتاج، منفصلة عن حركات المخزون العامة.</td></tr>
+      <tr><td>استكمال تكلفة استلام قديم</td><td>المخزون ← استكمال تكلفة الاستلامات المخزنية غير المسعّرة</td><td>للاستلام العام بلا مصدر تشغيلي وبلا تكلفة فقط.</td></tr>
+    </table>
+
+    <div class="callout"><strong>قاعدة قصيرة:</strong> صحّح المستند الذي يحمل الخطأ. إن كانت واقعة الإنتاج صحيحة والخطأ في الاستلام فقط، استخدم تصحيح استلام المنتج التام. إن كانت الكمية/التاريخ/المخرجات الإنتاجية نفسها خاطئة، استخدم تصحيح تشغيلة مكتملة.</div>
+    <div class="footer">MgyPack ERP · دليل تصحيح واستلام الإنتاج التام</div>
+  </section>
+
+  <section class="page">
+    <div class="kicker">المسار التشغيلي الصحيح</div>
+    <h2>من التشغيلة إلى المخزن</h2>
+
+    <div class="step"><div class="step-num">١</div><div class="step-body"><strong>سجل التنفيذ الفعلي.</strong> أنشئ التشغيلة من بند أمر الإنتاج، وسجل وقت التنفيذ والمعدة والعمالة والاستهلاك والكمية الفعلية بحسب ما حدث فعلاً.</div></div>
+    <div class="step"><div class="step-num">٢</div><div class="step-body"><strong>أكمل فحص الجودة والمحاسبة المادية.</strong> لا تبدأ التسليم قبل استيفاء متطلبات الفحص النهائي وحساب الخامات والهالك وفق دورة التشغيلة.</div></div>
+    <div class="step"><div class="step-num">٣</div><div class="step-body"><strong>أنشئ إذن التسليم من التشغيلة.</strong> يربط الإذن التشغيلات والكميات المراد تسليمها، ويمكن أن يجمع تشغيلات الدفعة عندما تكون ضمن السياق نفسه.</div></div>
+    <div class="step"><div class="step-num">٤</div><div class="step-body"><strong>اعتمد إذن التسليم في الإنتاج.</strong> هذه موافقة تشغيلية؛ لا تضيف مخزوناً ولا تنشئ قيداً مالياً بمفردها.</div></div>
+    <div class="step"><div class="step-num">٥</div><div class="step-body"><strong>أنشئ استلام المنتج التام في المخزن.</strong> أدخل الكمية المستلمة فعلياً والمخزن/الموقع والأرقام المسلسلة عند الحاجة. يدعم النظام الاستلام الجزئي.</div></div>
+    <div class="step"><div class="step-num">٦</div><div class="step-body"><strong>اعتمد الاستلام.</strong> هنا تترحل حركة المخزون والتكلفة/القيد وفق سياسة التكلفة والفترة المالية المسموح بها.</div></div>
+    <div class="step"><div class="step-num">٧</div><div class="step-body"><strong>أكمل التشغيلة.</strong> بعد استيفاء الاستلامات وبقية الشروط، تصبح التشغيلة مرجعاً محفوظاً لا يعدل مباشرة.</div></div>
+
+    <div class="warning"><strong>لا تختصر الدورة:</strong> لا تُدخل استلام المنتج التام كاستلام مخزني عام، ولا تستخدم «استكمال التكلفة» لتعويض خطأ في كمية أو تكلفة إنتاج.</div>
+    <div class="footer">الترحيل المخزني والمالي يحدث عند اعتماد الاستلام، لا عند اعتماد إذن التسليم.</div>
+  </section>
+
+  <section class="page">
+    <div class="kicker">تصحيح العمليات القديمة</div>
+    <h2>اختيار مسار التصحيح المناسب</h2>
+
+    <div class="decision"><strong>الحالة ١ — الاستلام ما زال مسودة:</strong><br>يمكن إلغاؤه من شاشة استلام المنتج التام، ثم إعادة إنشائه بالقيم الصحيحة. لا حاجة إلى تصحيح مرحّل لأنه لم يؤثر في المخزون أو القيود.</div>
+    <div class="decision"><strong>الحالة ٢ — الاستلام مرحّل لكن واقعة الإنتاج صحيحة:</strong><br>افتح استلام المنتج التام ← «التصحيحات». راجع التبعيات، ثم جهّز مقترح التصحيح بسبب واضح وتاريخ ترحيل مسموح. يعتمد مستخدم آخر المخطط؛ ينشئ النظام عكساً دقيقاً للحركة والقيد، ويحفظ الأصل ودليله، ثم يسمح باستلام بديل وإكمال التشغيلة مجدداً عند الحاجة.</div>
+    <div class="decision"><strong>الحالة ٣ — بيانات الإنتاج نفسها خاطئة:</strong><br>استخدم «تصحيح التشغيلة المكتملة». يعكس المسار استلامات المنتج التام والاستهلاك والهالك المتأثر، ويبقي مستندات الصرف/المرتجع/المصروفات كأدلة، ثم يعيد فتح التشغيلة لمطابقة الخامات وفحص الجودة وإعادة الاستلام.</div>
+    <div class="decision"><strong>الحالة ٤ — توجد تبعيات لاحقة:</strong><br>تعرض شاشة المعاينة خطوات المعالجة المطلوبة، مثل حركات لاحقة أو حجوزات مبيعات. عالجها بالترتيب المعروض قبل اعتماد التصحيح؛ لا تستخدم حذفاً مباشراً أو عكساً عاماً لتجاوزها.</div>
+
+    <table class="data">
+      <tr><th>ضابط</th><th>ما الذي يضمنه النظام؟</th></tr>
+      <tr><td>فصل المهام</td><td>مجهز المقترح لا يعتمد المقترح نفسه؛ يلزم مستخدم آخر بصلاحية الاعتماد.</td></tr>
+      <tr><td>فحص عدم التغير</td><td>بصمة المقترح والمصدر تمنع اعتماد خطة أصبحت قديمة بعد تغيّر الحالة.</td></tr>
+      <tr><td>الفترة المالية</td><td>يستخدم تاريخاً وفترة مفتوحة ومسموحاً بها؛ لا يفتح الفترة الأصلية المغلقة ولا يعيد كتابة سجلها.</td></tr>
+      <tr><td>الأثر التدقيقي</td><td>الأصل يبقى محفوظاً؛ التصحيح ينتج حركة/قيد عكسيين موثقين مع السبب والمجهز والمعتمد.</td></tr>
+    </table>
+    <div class="danger"><strong>غير مدعوم:</strong> حذف مستند مرحّل، تعديل قيمه مكانياً، أو استخدام العكس العام لاستلام إنتاج مرتبط. هذه الطرق تكسر سلسلة المصدر أو تُرفض صراحة.</div>
+    <div class="footer">نفّذ التصحيح أولاً ثم الاستلام البديل؛ لا تمسح التاريخ.</div>
+  </section>
+
+  <section class="page">
+    <div class="kicker">أكثر من منتج على عشرة أيام</div>
+    <h2>هل يصلح أمر واحد وتشغيلة واحدة؟</h2>
+    <p><strong>الأمر الواحد: نعم.</strong> أمر الإنتاج يمكن أن يحتوي عدة بنود لعدة منتجات تامة.</p>
+    <p><strong>الدفعة الواحدة: نعم بشرط.</strong> يمكن إنشاء دفعة تشغيل تجمع بنوداً من الأمر نفسه، لكن النظام ينشئ <strong>تشغيلة مستقلة لكل بند/منتج</strong> مع سياق زمني وتشغيلي مشترك للدفعة.</p>
+
+    <table class="data">
+      <tr><th>الواقع الفعلي</th><th>التمثيل الصحيح</th></tr>
+      <tr><td>منتجات متعددة في نفس الوردية وعلى نفس المعدة والسياق</td><td>أمر واحد متعدد البنود + دفعة تشغيل واحدة + تشغيلة مستقلة لكل بند.</td></tr>
+      <tr><td>إنتاج موزع على عشرة أيام مع كميات/وردّيات مختلفة</td><td>يبقى الأمر واحداً إن كان الهدف التجاري واحداً، لكن تسجل تشغيلات/دفعات بحسب الأيام الفعلية أو التحولات المهمة.</td></tr>
+      <tr><td>تغير المعدة أو التشغيلة/اللوط أو فحص الجودة أو التاريخ المادي</td><td>افصل التشغيلات أو الدفعات كي يبقى التتبع والتكلفة والجودة مطابقاً للواقع.</td></tr>
+      <tr><td>مجرد تجميع إداري بعد انتهاء الأيام العشرة</td><td>لا تختزل الأيام في عملية واحدة بتاريخ غير حقيقي؛ استخدم بنية الأمر الواحد مع تشغيلات متعددة.</td></tr>
+    </table>
+
+    <div class="callout"><strong>النتيجة العملية:</strong> «أمر واحد» لا يعني «تشغيلة واحدة». التجميع الصحيح يكون على مستوى الأمر أو دفعة التشغيل، بينما يحافظ كل منتج وكل سياق زمني مهم على تشغيلة مستقلة.</div>
+    <h3>لماذا هذا مهم؟</h3>
+    <ul>
+      <li>يحفظ استهلاك الخامات والهالك والعمالة لكل منتج/يوم.</li>
+      <li>يربط فحص الجودة واللوط/السيريال بالكمية التي فُحصت فعلاً.</li>
+      <li>يجعل التصحيح لاحقاً محدوداً في الجزء الخطأ بدلاً من عكس عشرة أيام دفعة واحدة.</li>
+      <li>يحسن تسوية التكلفة والمقارنة بين المخطط والفعلي.</li>
+    </ul>
+    <div class="footer">قاعدة التمثيل: أمر جامع، تشغيلات صادقة مع الواقع.</div>
+  </section>
+
+  <section class="page">
+    <div class="kicker">استكمال التكلفة</div>
+    <h2>متى تستخدم الشاشة ومتى لا تستخدمها؟</h2>
+    <div class="grid">
+      <table><tr>
+        <td><h3>استخدمها عندما</h3><ul><li>المستند استلام مخزني عام ومرحّل.</li><li>لا يحمل مصدراً تشغيلياً.</li><li>يوجد بند بلا إجمالي تكلفة.</li><li>لديك مرجع تكلفة أو تقدير موثق.</li></ul></td>
+        <td><h3>لا تستخدمها عندما</h3><ul><li>المستند استلام منتج تام من الإنتاج.</li><li>الكمية أو الصنف أو المخزن خاطئ.</li><li>التشغيلة أو إذن التسليم خاطئ.</li><li>المطلوب حذف أثر تاريخي.</li></ul></td>
+      </tr></table>
+    </div>
+    <p>يُجهّز المستخدم مقترحاً يحتوي تاريخ الترحيل، وحساب الطرف المقابل، وأساس التكلفة، والمرجع/الملف المؤيد، وتكلفة الوحدة لكل بند. لا يغير التجهيز المخزون أو القيد. يعتمد مستخدم آخر المقترح، فتُثبت فروق القيمة مع إبقاء كمية وقيمة المستند الأصليين كدليل.</p>
+    <div class="warning"><strong>إذا كانت الفترة الأصلية مغلقة:</strong> يثبت فرق التكلفة في فترة مفتوحة مخوّلة وفق السياسة، ولا يعاد فتح أو تعديل القيد التاريخي.</div>
+
+    <h2 style="margin-top:7mm">فحص قبل الاعتماد</h2>
+    <ul class="checklist">
+      <li>نوع المستند «استلام عام» وليس «استلام منتج تام».</li>
+      <li>المستند مرحّل ومن دون مصدر تشغيلي.</li>
+      <li>التكلفة والوحدة والحساب المقابل مدعومة بمرجع واضح.</li>
+      <li>المجهز والمعتمد شخصان مختلفان ولكل منهما صلاحية مناسبة.</li>
+      <li>تاريخ الترحيل داخل فترة مفتوحة ومسموح بها للفرع والشركة.</li>
+    </ul>
+    <div class="footer">التسمية الجديدة توضح أن الشاشة ليست مساراً بديلاً لتكلفة الإنتاج.</div>
+  </section>
+
+  <section class="page">
+    <div class="kicker">الواجهة الفعلية · Light Mode</div>
+    <h2>لقطات مرجعية قبل التنظيم والحالة النهائية المتحققة</h2>
+    <img class="screenshot" src="file:///mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/tmp/pdfs/library_refs/image(20261012-025445).png" alt="قائمة المخزون في الوضع الفاتح">
+    <div class="caption">لقطة مرجعية فعلية قبل إعادة التسمية. تحققت النسخة النهائية في الجلسة المحلية المصادق عليها: «استلامات المنتج التام» و«استكمال تكلفة الاستلامات المخزنية غير المسعّرة».</div>
+    <img class="screenshot" src="file:///mnt/Me/MB/Projects/ShortCoded/MgyPack/ERP/tmp/pdfs/library_refs/image(20261012-025447).png" alt="قائمة الإنتاج في الوضع الفاتح">
+    <div class="caption">لقطة مرجعية فعلية قبل إعادة الترتيب. تحققت النسخة النهائية في الجلسة المحلية المصادق عليها: «إذن تسليم إنتاج للمخزن» يظهر مباشرة بعد «طلبات خامات الإنتاج».</div>
+    <div class="footer">تم التحقق في MGYPack الفعلي على 127.0.0.1:8001 وفي Light Mode؛ منفذ 8000 يخص PLUMA ولم يُستخدم لنتائج هذا الدليل.</div>
+  </section>
+
+  <section class="page">
+    <div class="kicker">مرجع سريع</div>
+    <h2>قرار التصحيح في أقل من دقيقة</h2>
+    <table class="data">
+      <tr><th>السؤال</th><th>الإجراء</th></tr>
+      <tr><td>هل الاستلام مسودة؟</td><td>ألغِ المسودة وأنشئ استلاماً صحيحاً.</td></tr>
+      <tr><td>هل الإنتاج صحيح والاستلام المرحّل هو الخطأ؟</td><td>تصحيح استلام المنتج التام ← معالجة التبعيات ← تجهيز ← اعتماد مستقل ← استلام بديل.</td></tr>
+      <tr><td>هل واقعة الإنتاج نفسها خاطئة؟</td><td>تصحيح التشغيلة المكتملة ← معالجة التبعيات ← تجهيز ← اعتماد مستقل ← مطابقة/جودة/استلام جديد.</td></tr>
+      <tr><td>هل المستند استلام عام بلا مصدر وبلا تكلفة؟</td><td>استكمال تكلفة الاستلامات المخزنية غير المسعّرة.</td></tr>
+      <tr><td>هل الفترة الأصلية مغلقة؟</td><td>استخدم تاريخاً في فترة مفتوحة مخوّلة؛ لا تُعد كتابة الفترة التاريخية.</td></tr>
+    </table>
+
+    <h2>ما تم التحقق منه</h2>
+    <ul>
+      <li>مسارات شاشة استلام المنتج التام وصلاحيات العرض والإنشاء والاعتماد والإلغاء والتصحيح.</li>
+      <li>فلتر شاشة استكمال التكلفة: استلام عام مرحّل، بلا مصدر، وبند بلا تكلفة.</li>
+      <li>فصل التجهيز والاعتماد وبصمات عدم التغير في تصحيحات الاستلام والتشغيلة.</li>
+      <li>إنشاء دفعة تشغيل من عدة بنود في الأمر نفسه مع تشغيلة مستقلة لكل بند.</li>
+      <li>اختبارات ترتيب القائمة والمسارات والترجمات: 2 اختبار/10 تأكيدات و2 اختبار/1706 تأكيدات.</li>
+    </ul>
+    <p class="small"><strong>هوية التشغيل:</strong> MGYPack على <span class="route">http://127.0.0.1:8001</span> عبر Octane/RoadRunner من مستودع MgyPack/ERP. أما <span class="route">http://127.0.0.1:8000</span> فهو PLUMA مستقل وقد تُرك بلا تعديل.</p>
+    <p class="small route">admin.inventory.production-receipts.index · admin.production.handovers.index · admin.inventory.cost-completions.index</p>
+    <div class="callout"><strong>حدود الدليل:</strong> لا يقدم هذا المستند إذناً لتنفيذ تصحيح أو عكس على بيانات الإنتاج. كل عملية فعلية تتطلب المستخدم المخوّل، والسبب/المستند المؤيد، والفترة المفتوحة، واعتماداً مستقلاً وفق الصلاحيات.</div>
+    <div class="footer">انتهى · دليل MgyPack للإنتاج التام والتصحيحات</div>
+  </section>
+</body>
+</html>

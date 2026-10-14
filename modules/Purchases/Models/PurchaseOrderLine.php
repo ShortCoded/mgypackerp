@@ -2,6 +2,7 @@
 
 namespace Modules\Purchases\Models;
 
+use App\Casts\PurchaseUnitPriceCast;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -70,7 +71,7 @@ class PurchaseOrderLine extends Model
             'ordered_quantity' => 'decimal:8',
             'received_quantity' => 'decimal:8',
             'remaining_quantity' => 'decimal:8',
-            'unit_price' => 'decimal:8',
+            'unit_price' => PurchaseUnitPriceCast::class,
             'line_total' => 'decimal:4',
             'discount_value' => 'decimal:4',
             'discount_amount' => 'decimal:4', 'header_discount_amount' => 'decimal:4',

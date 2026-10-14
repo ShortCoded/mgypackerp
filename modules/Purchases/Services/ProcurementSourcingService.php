@@ -189,12 +189,14 @@ class ProcurementSourcingService
         return $stores->count() === 1 ? $stores->first() : null;
     }
 
-    private function requesterEmployeeId(mixed $employeeId, array $context): ?int
+    private function requesterEmployeeId(mixed $employeeId, array $context, ?int $preservedEmployeeId = null): ?int
     {
         if (blank($employeeId)) {
             return null;
         }
-        $employee = HrEmployee::query()->where('company_id', $context['company_id'])->find($employeeId);
+        $employee = HrEmployee::withTrashed()->where('company_id', $context['company_id'])
+            ->where(fn ($query) => $query->whereNull('deleted_at')->when($preservedEmployeeId !== null, fn ($preserved) => $preserved->orWhere('id', $preservedEmployeeId)))
+            ->find($employeeId);
         if (! $employee) {
             throw new DomainException(__('procurement.ui.employee_unavailable'));
         }
@@ -206,7 +208,7 @@ class ProcurementSourcingService
     {
         return [
             'branch_store_id' => $this->requisitionStore($context, $data['branch_store_uuid'] ?? $existing?->branchStore?->public_uuid)?->getKey(),
-            ...array_key_exists('requester_employee_id', $data) ? ['requester_employee_id' => $this->requesterEmployeeId($data['requester_employee_id'], $context)] : [],
+            ...array_key_exists('requester_employee_id', $data) ? ['requester_employee_id' => $this->requesterEmployeeId($data['requester_employee_id'], $context, $existing?->requester_employee_id)] : [],
             'request_date' => $data['request_date'], 'required_by_date' => $data['required_by_date'] ?? null,
             'department' => $data['department'] ?? $existing?->department, 'priority' => $data['priority'] ?? $existing?->priority ?? 'normal',
             'notes' => $data['notes'] ?? null, 'lead_time_days' => $data['lead_time_days'] ?? $existing?->lead_time_days,

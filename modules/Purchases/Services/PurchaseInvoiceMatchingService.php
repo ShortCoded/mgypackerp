@@ -98,7 +98,7 @@ class PurchaseInvoiceMatchingService
                     ->whereHas('receipt', fn ($query) => $query->where('approved', true)->where('posting_status', 'posted')->whereNotIn('status', ['cancelled', 'reversed']))
                     ->sum('accepted_quantity')),
                 'quantity_variance' => bcsub((string) $invoiceLine->quantity, $baselineQuantity, 8),
-                'unit_price_variance' => bcsub((string) $invoiceLine->unit_price, (string) $source->unit_price, 8),
+                'unit_price_variance' => bcsub((string) $invoiceLine->unit_price, (string) $source->unit_price, 15),
                 'tax_rate_variance' => bcsub((string) $invoiceLine->tax_rate, (string) $source->tax_rate, 4),
                 'match_type' => 'linked',
             ];
@@ -108,7 +108,7 @@ class PurchaseInvoiceMatchingService
 
         $hasVariance = collect($variances)->contains(fn (array $variance): bool => ($variance['match_type'] ?? null) === 'unlinked'
             || bccomp((string) $variance['quantity_variance'], '0', 8) !== 0
-            || bccomp((string) $variance['unit_price_variance'], '0', 8) !== 0
+            || bccomp((string) $variance['unit_price_variance'], '0', 15) !== 0
             || bccomp((string) $variance['tax_rate_variance'], '0', 4) !== 0)
             || bccomp((string) $freightMatch['variance'], '0', 4) !== 0;
         $invoice->forceFill([
@@ -154,7 +154,7 @@ class PurchaseInvoiceMatchingService
             'ordered_quantity' => '0.00000000',
             'received_quantity' => '0.00000000',
             'quantity_variance' => $this->quantity($invoiceLine->quantity),
-            'unit_price_variance' => bcadd((string) $invoiceLine->unit_price, '0', 8),
+            'unit_price_variance' => bcadd((string) $invoiceLine->unit_price, '0', 15),
             'tax_rate_variance' => number_format((float) $invoiceLine->tax_rate, 4, '.', ''),
             'match_type' => 'unlinked',
         ];

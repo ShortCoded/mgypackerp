@@ -2,6 +2,7 @@
 
 namespace Modules\Purchases\Models;
 
+use App\Casts\PurchaseUnitPriceCast;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -12,6 +13,7 @@ use Modules\Accounting\Models\CostCenter;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Models\ItemUnit;
 use Modules\Core\Models\Product;
+use Modules\Core\Services\ProductComponentUnitConversionService;
 use Modules\FixedAssets\Models\FixedAsset;
 use Modules\FixedAssets\Models\FixedAssetMovement;
 use Modules\FixedAssets\Services\FixedAssetPurchaseIntegrationService;
@@ -67,7 +69,7 @@ class PurchaseInvoiceLine extends Model
         return [
             'quantity' => 'decimal:8',
             'matched_quantity' => 'decimal:8',
-            'unit_price' => 'decimal:8',
+            'unit_price' => PurchaseUnitPriceCast::class,
             'discount_value' => 'decimal:4',
             'discount_amount' => 'decimal:4', 'header_discount_amount' => 'decimal:4', 'source_discount_snapshot' => 'array',
             'tax_rate' => 'decimal:4',
@@ -81,6 +83,17 @@ class PurchaseInvoiceLine extends Model
             'updated_at' => 'datetime',
             'deleted_at' => 'datetime',
         ];
+    }
+
+    public function stockConversionFactor(): string
+    {
+        $factor = $this->product_snapshot['stock_conversion_factor'] ?? app(ProductComponentUnitConversionService::class)
+            ->convert('1', $this->product, $this->unit, $this->product, $this->product->unit, 8);
+        if ($factor === null || bccomp((string) $factor, '0', 8) <= 0) {
+            throw new \DomainException(__('The selected purchase unit has no valid conversion to the stock unit.'));
+        }
+
+        return (string) $factor;
     }
 
     public function purchaseInvoice(): BelongsTo

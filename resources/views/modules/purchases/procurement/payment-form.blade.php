@@ -30,7 +30,7 @@
                     <label class="form-label" for="payment_method">{{ __('Payment method') }}</label>
                     <x-forms.select class="js-payment-method" id="payment_method" name="payment_method" variant="local" :allow-clear="false" required>
                         @foreach(\Modules\Purchases\Models\SupplierPaymentContext::methods() as $method)
-                            <option value="{{ $method }}" @selected(old('payment_method', 'cash') === $method)>{{ __(str($method)->replace('_', ' ')->title()->toString()) }}</option>
+                            <option value="{{ $method }}" @selected(old('payment_method', 'cash') === $method)>{{ __('procurement.statuses.'.$method) }}</option>
                         @endforeach
                     </x-forms.select>
                 </div>
@@ -70,6 +70,7 @@
                         @endforeach
                     </x-forms.select>
                 </div>
+                <div class="col-md-3 js-bank-reference d-none"><label class="form-label" for="reference_no">{{ __('procurement.fields.bank_reference') }}</label><x-forms.input class="form-control" id="reference_no" name="reference_no" value="{{ old('reference_no') }}" maxlength="100" dir="ltr" /></div>
                 <div class="col-md-3 js-cheque-source d-none"><label class="form-label" for="cheque_number">{{ __('Cheque number') }}</label><x-forms.input class="form-control" id="cheque_number" name="cheque_number" value="{{ old('cheque_number') }}" dir="ltr" /></div>
                 <div class="col-md-3 js-cheque-source d-none"><label class="form-label" for="cheque_date">{{ __('Cheque date') }}</label><x-forms.date-input id="cheque_date" name="cheque_date" :value="old('cheque_date', now()->toDateString())" /></div>
                 <div class="col-md-3 js-cheque-source d-none"><label class="form-label" for="cheque_due_date">{{ __('Due date') }}</label><x-forms.date-input id="cheque_due_date" name="cheque_due_date" :value="old('cheque_due_date', now()->toDateString())" /></div>
@@ -126,7 +127,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const update = function () {
         const selectedMethod = method.value;
         form.querySelectorAll('.js-cash-source').forEach((node) => node.classList.toggle('d-none', selectedMethod !== 'cash'));
-        form.querySelectorAll('.js-bank-source').forEach((node) => node.classList.toggle('d-none', !['bank', 'cheque'].includes(selectedMethod)));
+        form.querySelectorAll('.js-bank-source').forEach((node) => node.classList.toggle('d-none', !['bank', 'bank_deposit', 'transfer', 'cheque'].includes(selectedMethod)));
+        form.querySelectorAll('.js-bank-reference').forEach((node) => node.classList.toggle('d-none', !['bank', 'bank_deposit', 'transfer'].includes(selectedMethod)));
         form.querySelectorAll('.js-cheque-source').forEach((node) => node.classList.toggle('d-none', selectedMethod !== 'cheque'));
         form.querySelectorAll('.js-allocation-row').forEach((row) => row.classList.toggle('d-none', supplier.value !== '' && row.dataset.supplier !== supplier.value));
     };

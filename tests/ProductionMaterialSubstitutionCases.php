@@ -4,6 +4,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Modules\Core\Models\Branch;
 use Modules\Core\Models\Product;
+use Modules\Core\Models\ProductComponent;
+use Modules\Core\Models\ProductComponentAlternative;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Inventory\Models\InventoryCostPolicy;
 use Modules\Inventory\Models\InventoryDocument;
@@ -19,8 +21,11 @@ use Spatie\Permission\Models\Permission;
 require_once __DIR__.'/ManufacturingInventorySupport.php';
 
 /** @return array<string, mixed> */
-function materialSubstitutionFixture(string $method = InventoryCostPolicy::MovingAverage, bool $asBatch = false): array
-{
+function materialSubstitutionFixture(
+    string $method = InventoryCostPolicy::MovingAverage,
+    bool $asBatch = false,
+    string $conversionFactor = '1.00000000',
+): array {
     test()->travelTo('2026-09-28 10:00:00');
     $f = manufacturingInventoryFixture('-SUBSTITUTION', true);
     $f['branch']->update(['type' => Branch::TypeFactory]);
@@ -34,6 +39,14 @@ function materialSubstitutionFixture(string $method = InventoryCostPolicy::Movin
     $f['alternate'] = $f['raw']->replicate();
     $f['alternate']->fill(['doc_number' => (int) Product::withTrashed()->max('doc_number') + 1,
         'doc_num' => 'SYNTHETIC-TECHNICALLY-APPROVED-RESIN-'.$f['company']->id, 'name' => 'SYNTHETIC technically compatible approved resin'])->save();
+    ProductComponentAlternative::query()->create([
+        'company_id' => $f['company']->id,
+        'product_component_id' => ProductComponent::query()->where('product_id', $f['finished']->id)->sole()->id,
+        'alternative_product_id' => $f['alternate']->id,
+        'conversion_factor' => $conversionFactor,
+        'notes' => 'SYNTHETIC approved test alternative',
+        'created_by' => $f['user']->id,
+    ]);
     $opening = InventoryTransaction::query()->where('product_id', $f['raw']->id)->firstOrFail()->replicate();
     $opening->fill(['posting_key' => 'synthetic-substitution-stock-'.$f['company']->id, 'product_id' => $f['alternate']->id,
         'quantity_in' => '100', 'unit_cost' => '3', 'total_cost' => '300', 'source_doc_num' => 'SYNTHETIC-SUBSTITUTION-OPEN'])->save();
@@ -75,7 +88,7 @@ function materialSubstitutionPrepare(array $f, string $quantity = '1'): int
 function materialSubstitutionApproval(): array
 {
     return ['_submission_token' => (string) Str::uuid(), 'recipe_approved' => true,
-        'recipe_approval_evidence' => 'SYNTHETIC technical recipe approval: same grade specification, base unit and authorized 1:1 substitution'];
+        'recipe_approval_evidence' => 'SYNTHETIC technical recipe approval: same grade specification and the frozen BOM conversion factor'];
 }
 
 /** @param array<string, mixed> $f @return array<string, mixed> */
@@ -180,6 +193,26 @@ test('approved unconsumed substitution returns and issues atomically preserving 
         chmod($evidencePath, 0600);
     }
 })->with([['1', ProductionRun::StatusRunning, InventoryCostPolicy::MovingAverage], ['2', ProductionRun::StatusHeld, InventoryCostPolicy::MovingAverage], ['1.00000001', ProductionRun::StatusRunning, InventoryCostPolicy::Fifo]]);
+
+test('approved late substitution converts the replacement quantity from the frozen BOM factor', function (): void {
+    $f = materialSubstitutionFixture(conversionFactor: '1.50000000');
+    $id = materialSubstitutionPrepare($f, '1');
+    $proposal = DB::table('production_material_substitutions')->find($id);
+    expect($proposal->conversion_factor)->toBe('1.50000000')
+        ->and($proposal->replacement_quantity)->toBe('1.50000000');
+
+    $this->actingAs($f['approver'])->withSession(manufacturingIntegritySession($f));
+    $this->postJson(route('admin.production.runs.material-substitutions.approve', [$f['run'], $id]), materialSubstitutionApproval())->assertOk();
+    $proposal = DB::table('production_material_substitutions')->find($id);
+    $replacement = ProductionMaterialRequirement::query()->findOrFail($proposal->replacement_requirement_id);
+    expect($replacement->product_component_id)->toBe($f['requirement']->product_component_id)
+        ->and($replacement->original_product_id)->toBe($f['raw']->id)
+        ->and($replacement->material_conversion_factor)->toBe('1.50000000')
+        ->and($replacement->original_planned_quantity)->toBe('1.00000000')
+        ->and($replacement->planned_quantity)->toBe('1.50000000')
+        ->and($replacement->issued_quantity)->toBe('1.50000000')
+        ->and(InventoryDocument::query()->findOrFail($proposal->issue_document_id)->lines()->sole()->total_cost)->toBe('4.50000000');
+});
 
 test('substitution shows scoped paginated product selection and independent recipe approval in both locales', function (string $locale): void {
     $f = materialSubstitutionFixture();

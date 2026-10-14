@@ -42,6 +42,7 @@ use Modules\Production\Models\ProductionStageTransfer;
 use Modules\Production\Services\ProductionCorrectionContextService;
 use Modules\Production\Services\ProductionCycleService;
 use Modules\Production\Services\ProductionHandoverService;
+use Modules\Production\Services\ProductionReportService;
 use Modules\Production\Services\ProductionShiftEvidenceService;
 use Modules\Production\Services\ProductionStageOutputCostService;
 use Modules\Production\Services\ProductionStageTransferService;
@@ -51,6 +52,7 @@ class ProductionRunController extends Controller
     public function __construct(
         private readonly OperatingContextService $context,
         private readonly ProductionCycleService $cycle,
+        private readonly ProductionReportService $reports,
         private readonly CompanyPrintIdentityService $printIdentity,
         private readonly ReportPdfService $pdf,
     ) {}
@@ -407,13 +409,15 @@ class ProductionRunController extends Controller
     public function show(Request $request, ProductionRun $productionRun): View
     {
         $this->assertRunInCurrentContext($request, $productionRun, true);
+        $record = $productionRun->load([
+            'order.salesOrder', 'orderLine.stageSnapshots', 'product', 'fixedAsset', 'stageSnapshot',
+            'requirements.product', 'requirements.unit', 'requirements.originalProduct', 'requirements.originalUnit', 'progressEntries', 'inspections.results',
+            'inventoryDocuments.journalEntry', 'materialRequests', 'expenseRequests',
+        ]);
+        $this->reports->projectMaterialAllocationPlans($record->requirements);
 
         return view('modules.production.runs.show', [
-            'record' => $productionRun->load([
-                'order.salesOrder', 'orderLine.stageSnapshots', 'product', 'fixedAsset', 'stageSnapshot',
-                'requirements.product', 'requirements.unit', 'progressEntries', 'inspections.results',
-                'inventoryDocuments.journalEntry', 'materialRequests', 'expenseRequests',
-            ]),
+            'record' => $record,
             'batchRuns' => app(ProductionHandoverService::class)->runs($productionRun),
             'linkedWarehouseDocuments' => InventoryDocument::query()->where('company_id', $productionRun->company_id)->where('branch_id', $productionRun->branch_id)
                 ->whereHas('lines', fn ($query) => $query->where('production_run_id', $productionRun->id))
@@ -436,7 +440,7 @@ class ProductionRunController extends Controller
         abort_unless(isset($permissions[$operation]), 404);
         Gate::authorize($permissions[$operation]);
         $this->assertRunInCurrentContext($request, $productionRun);
-        $record = $productionRun->load(['order', 'orderLine', 'product', 'unit', 'requirements.product', 'requirements.unit', 'progressEntries', 'order.orderStageSnapshots']);
+        $record = $productionRun->load(['order', 'orderLine', 'product', 'unit', 'requirements.product', 'requirements.unit', 'requirements.originalProduct', 'requirements.originalUnit', 'progressEntries', 'order.orderStageSnapshots']);
         $workers = HrEmployee::withTrashed()->where('company_id', $record->company_id)->where('branch_id', $record->branch_id)
             ->whereIn('id', collect(old('labor_details', $record->labor_details ?? []))->pluck('employee_id'))->get()->keyBy('id');
         $dailyEntries = $record->progressEntries()->whereNull('material_documents')->whereIn('production_shift_entry_id',
@@ -461,6 +465,9 @@ class ProductionRunController extends Controller
             'order', 'runs.order', 'runs.product', 'runs.unit', 'runs.stageSnapshot',
             'runs.orderLine.product', 'runs.orderLine.unit', 'runs.requirements.product', 'runs.requirements.unit',
         ]);
+        $this->reports->projectMaterialAllocationPlans($batch->runs->flatMap(
+            fn (ProductionRun $run) => $run->requirements,
+        ));
 
         return view('modules.production.runs.batch-show', [
             'record' => $batch,
@@ -534,8 +541,9 @@ class ProductionRunController extends Controller
         $this->assertRunInCurrentContext($request, $productionRun, true);
         $record = $productionRun->load([
             'order.company', 'order.salesOrder', 'orderLine.product.unit', 'orderLine.product.equivalentUnit', 'product', 'fixedAsset', 'stageSnapshot', 'shift',
-            'requirements.product', 'requirements.unit', 'progressEntries', 'inspections.results',
+            'requirements.product', 'requirements.unit', 'requirements.originalProduct', 'requirements.originalUnit', 'progressEntries', 'inspections.results',
         ]);
+        $this->reports->projectMaterialAllocationPlans($record->requirements);
 
         return $this->pdf->stream($view, [
             'title' => $documentTitle,

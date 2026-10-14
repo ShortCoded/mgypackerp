@@ -9,6 +9,7 @@
     $preserveSourceLine = $sourceRequestLine || $lockedSourceLine || $linkedExistingLine;
     $discountInputsEnabled = $discountInputsEnabled ?? false;
     $showRequestedDate = $showRequestedDate ?? true;
+    $showPackingFields = $showPackingFields ?? false;
     $storedLine = ($record ?? null)?->lines?->firstWhere('public_id', $line['public_id'] ?? $line['invoice_line_public_id'] ?? '');
     $bookedGross = $storedLine ? bcsub(bcadd((string) $storedLine->line_total, (string) $storedLine->discount_amount, 4), (string) $storedLine->tax_amount, 4) : null;
     $taxTerms = ['quantity' => $storedLine?->quantity ?? $line['quantity'] ?? 0, 'unit_price' => $storedLine?->unit_price ?? $line['unit_price'] ?? 0,
@@ -31,7 +32,12 @@
         @if(filled($line['description'] ?? null))<x-forms.input type="hidden" name="lines[{{ $index }}][description]" value="{{ $line['description'] }}" />@endif
         <div class="invalid-feedback d-block" data-error-for="lines.{{ $index }}.product_doc_num"></div>
     </td>
+    @if($showPackingFields)
+    <td class="text-center" data-sales-line-color>—</td>
+    <td class="text-end" dir="ltr" data-sales-piece-count>—</td>
+    @endif
     <td>@if($preserveSourceLine)<x-forms.input type="hidden" name="lines[{{ $index }}][unit_doc_num]" value="{{ $selectedUnit }}" />@endif<x-forms.select class="form-select form-select-sm js-sales-unit js-select2-local" :name="$preserveSourceLine ? null : 'lines['.$index.'][unit_doc_num]'" :disabled="$preserveSourceLine" required>@foreach(($productUnits[$selectedProduct] ?? collect()) as $unit)<option value="{{ $unit['id'] }}" @selected($selectedUnit === $unit['id'])>{{ $unit['text'] }}</option>@endforeach</x-forms.select></td>
+    @if($showPackingFields)<td class="text-end" dir="ltr" data-sales-packing-factor>—</td>@endif
     <td><x-forms.input class="form-control form-control-sm text-end js-sales-quantity" name="lines[{{ $index }}][quantity]" value="{{ app(\Modules\Core\Services\NumericFormatService::class)->formatForInput($line['quantity'] ?? '') }}" inputmode="decimal" :readonly='$lockedSourceLine' required /></td>
     <td>
         <x-forms.input type="hidden" class="js-sales-price" name="lines[{{ $index }}][unit_price]" value="{{ app(\Modules\Core\Services\NumericFormatService::class)->formatForInput($line['unit_price'] ?? '') }}" />

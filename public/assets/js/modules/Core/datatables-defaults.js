@@ -199,10 +199,10 @@
             });
     }
 
-    function cappedPageLength(value) {
+    function normalizedPageLength(value) {
         const pageLength = Number(value);
 
-        if (!Number.isFinite(pageLength) || pageLength < 1 || pageLength > maxPageLength) {
+        if (!lengthMenuValues.includes(pageLength)) {
             return maxPageLength;
         }
 
@@ -214,7 +214,7 @@
             return;
         }
 
-        data.length = cappedPageLength(data.length);
+        data.length = normalizedPageLength(data.length);
     }
 
     function statePageLengthCallback(callback) {
@@ -222,7 +222,11 @@
             normalizeStatePageLength(settings, data);
 
             if (typeof callback === 'function') {
-                return callback.apply(this, arguments);
+                const result = callback.apply(this, arguments);
+
+                normalizeStatePageLength(settings, data);
+
+                return result;
             }
         };
     }
@@ -300,7 +304,7 @@
     function options(overrides) {
         const merged = $.extend(true, {}, defaults(), overrides || {});
 
-        merged.pageLength = cappedPageLength(merged.pageLength);
+        merged.pageLength = normalizedPageLength(merged.pageLength);
         merged.stateLoadParams = statePageLengthCallback(overrides && overrides.stateLoadParams);
         merged.stateSaveParams = statePageLengthCallback(overrides && overrides.stateSaveParams);
 

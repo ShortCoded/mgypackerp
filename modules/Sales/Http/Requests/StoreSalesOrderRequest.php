@@ -53,7 +53,7 @@ class StoreSalesOrderRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'withholding_basis' => ['nullable', Rule::in([SalesWithholdingService::GrossIncludingTax, SalesWithholdingService::EtaNetExcludingTax])],
+            'withholding_basis' => ['nullable', Rule::in([SalesWithholdingService::GrossIncludingTax, SalesWithholdingService::EtaNetExcludingTax, SalesWithholdingService::CommercialGrossPreview])],
             'withholding_rate' => ['nullable', 'numeric', 'decimal:0,4', 'regex:/^\d{1,3}(?:\.\d{1,4})?$/D', 'between:0,100'],
             'source_request_doc_num' => ['nullable', 'string'],
             'customer_doc_num' => ['required', 'string'], 'branch_store_uuid' => ['nullable', 'uuid'],

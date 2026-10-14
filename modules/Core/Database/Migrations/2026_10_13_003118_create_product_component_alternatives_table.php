@@ -1,0 +1,65 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('product_component_alternatives', function (Blueprint $table): void {
+            $table->id();
+            $table->uuid('public_id')->unique();
+            $table->foreignId('company_id')->constrained('companies')->restrictOnDelete();
+            $table->foreignId('product_component_id')->constrained('product_components')->restrictOnDelete();
+            $table->foreignId('alternative_product_id')->constrained('products')->restrictOnDelete();
+            $table->decimal('conversion_factor', 20, 8);
+            $table->text('notes')->nullable();
+            $table->foreignId('created_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->foreignId('updated_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->foreignId('deleted_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->timestamps();
+            $table->softDeletes()->index();
+
+            $table->index(['company_id', 'product_component_id'], 'product_component_alternatives_company_component_index');
+            $table->index(['company_id', 'alternative_product_id'], 'product_component_alternatives_company_product_index');
+        });
+
+        if (in_array(DB::getDriverName(), ['pgsql', 'sqlite'], true)) {
+            $this->createActiveUniqueIndex();
+        }
+    }
+
+    public function down(): void
+    {
+        if (DB::table('product_component_alternatives')->exists()) {
+            throw new RuntimeException('BOM alternative material definitions exist; rollback would discard approved conversion evidence.');
+        }
+
+        $this->dropIndexIfExists('product_component_alternatives_component_product_unique_active');
+        Schema::dropIfExists('product_component_alternatives');
+    }
+
+    private function createActiveUniqueIndex(): void
+    {
+        $grammar = DB::getQueryGrammar();
+        $index = $grammar->wrap('product_component_alternatives_component_product_unique_active');
+        $table = $grammar->wrapTable('product_component_alternatives');
+        $componentId = $grammar->wrap('product_component_id');
+        $productId = $grammar->wrap('alternative_product_id');
+        $deletedAt = $grammar->wrap('deleted_at');
+
+        DB::statement("CREATE UNIQUE INDEX IF NOT EXISTS {$index} ON {$table} ({$componentId}, {$productId}) WHERE {$deletedAt} IS NULL");
+    }
+
+    private function dropIndexIfExists(string $name): void
+    {
+        $index = DB::getQueryGrammar()->wrap($name);
+
+        if (in_array(DB::getDriverName(), ['pgsql', 'sqlite'], true)) {
+            DB::statement("DROP INDEX IF EXISTS {$index}");
+        }
+    }
+};

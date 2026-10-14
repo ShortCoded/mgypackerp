@@ -5,6 +5,8 @@ namespace Modules\Purchases\Services;
 use DomainException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Modules\Core\Models\Branch;
+use Modules\Core\Models\BranchStore;
 use Modules\Core\Models\Company;
 use Modules\Core\Models\FinancialPeriod;
 use Modules\Core\Services\DocumentNumberService;
@@ -12,6 +14,7 @@ use Modules\Core\Services\FinancialPeriodService;
 use Modules\Core\Services\NumericFormatService;
 use Modules\Core\Services\OperatingContextService;
 use Modules\Purchases\Models\PurchaseInvoice;
+use Modules\Purchases\Models\PurchaseInvoiceLine;
 use Modules\Purchases\Models\PurchaseOrder;
 use Modules\Purchases\Models\PurchaseOrderLine;
 use Modules\Purchases\Models\SupplyOrder;
@@ -40,12 +43,22 @@ class SupplyOrderService
     public function issue(SupplyOrder $supplyOrder): SupplyOrder
     {
         return DB::transaction(function () use ($supplyOrder): SupplyOrder {
+            Company::query()->whereKey($this->context()['company_id'])->lockForUpdate()->firstOrFail();
             $record = $this->locked($supplyOrder, true);
             if ($record->status === SupplyOrder::StatusIssued) {
                 return $record;
             }
             if ($record->status !== SupplyOrder::StatusDraft || $record->lines->isEmpty()) {
                 throw new DomainException(__('Only a complete draft supply order can be issued.'));
+            }
+            $source = $this->source($record->source_type, $record->source_doc_num, $this->context());
+            $direct = $source instanceof PurchaseInvoice && $source->purchase_order_id === null;
+            $available = $this->sourceLines($source, $record)->keyBy('id');
+            foreach ($record->lines as $line) {
+                $sourceLine = $available->get($direct ? $line->purchase_invoice_line_id : $line->purchase_order_line_id);
+                if ($sourceLine === null || bccomp((string) $line->ordered_quantity, (string) $sourceLine->getAttribute('supply_available_quantity'), 8) > 0) {
+                    throw new DomainException(__('Supply order quantity exceeds the remaining source quantity.'));
+                }
             }
             $record->forceFill([
                 'status' => SupplyOrder::StatusIssued,
@@ -127,12 +140,19 @@ class SupplyOrderService
         );
     }
 
-    /** @return Collection<int, PurchaseOrderLine> */
+    /** @return Collection<int, PurchaseOrderLine|PurchaseInvoiceLine> */
     public function sourceLines(PurchaseOrder|PurchaseInvoice $source, ?SupplyOrder $editing = null): Collection
     {
+        $this->assertSourceEligible($source);
+        if ($source instanceof PurchaseInvoice && $source->purchase_order_id === null) {
+            return $this->directInvoiceLines($source, $editing);
+        }
         $order = $source instanceof PurchaseOrder ? $source : $source->purchaseOrder;
         if (! $order instanceof PurchaseOrder) {
             throw new DomainException(__('A stock supply order requires a linked purchase order.'));
+        }
+        if (! $order->isApproved() || $order->status === PurchaseOrder::StatusClosed || $order->trashed()) {
+            throw new DomainException(__('Only an approved open purchase order can create a supply order.'));
         }
         $order->setRelation('lines', $order->lines()->withQuantityProgress()->with(['product', 'unit'])->get());
         $editing?->loadMissing('lines');
@@ -168,7 +188,7 @@ class SupplyOrderService
         }
 
         return $order->lines
-            ->reject(fn (PurchaseOrderLine $line): bool => $line->product?->isPurchasable() !== true)
+            ->reject(fn (PurchaseOrderLine $line): bool => $line->product?->isPurchasable() !== true || $line->product->isService())
             ->filter(fn (PurchaseOrderLine $line): bool => bccomp((string) $line->getAttribute('supply_available_quantity'), '0', 8) > 0
                 || $editing?->lines->contains('purchase_order_line_id', $line->getKey()));
     }
@@ -177,6 +197,7 @@ class SupplyOrderService
     {
         return DB::transaction(function () use ($data, $editing): SupplyOrder {
             $context = $this->context();
+            Company::query()->whereKey($context['company_id'])->lockForUpdate()->firstOrFail();
             app(FinancialPeriodService::class)->resolveOpenForPostingDate(
                 $context['company_id'],
                 $data['issue_date'],
@@ -189,19 +210,21 @@ class SupplyOrderService
             }
             $source = $this->source($data['source_type'], $data['source_doc_num'], $context);
             $order = $source instanceof PurchaseOrder ? $source : $source->purchaseOrder;
-            if (! $order instanceof PurchaseOrder) {
-                throw new DomainException(__('A stock supply order requires a linked purchase order.'));
+            $direct = $source instanceof PurchaseInvoice && $source->purchase_order_id === null;
+            $store = $direct ? $this->receivingStore($context['company_id'], $data['branch_store_uuid'] ?? $record->branchStore?->public_uuid) : $order?->branchStore;
+            if (! $store instanceof BranchStore) {
+                throw new DomainException(__('purchase_orders.messages.branch_store_unavailable'));
             }
             $sourceLines = $this->sourceLines($source, $record->exists ? $record : null)->keyBy('public_id');
             $record->fill([
                 ...($record->exists ? [] : $this->documents->nextForCompany('supply_orders', SupplyOrder::class, $context['company_id'])),
                 ...$context,
-                'branch_store_id' => $order->branch_store_id,
-                'supplier_id' => $order->supplier_id,
+                'branch_store_id' => $store->getKey(),
+                'supplier_id' => $source->supplier_id,
                 'source_type' => $data['source_type'],
                 'source_id' => $source->getKey(),
                 'source_doc_num' => $source->doc_num,
-                'purchase_order_id' => $order->getKey(),
+                'purchase_order_id' => $order?->getKey(),
                 'purchase_invoice_id' => $source instanceof PurchaseInvoice ? $source->getKey() : null,
                 'issue_date' => $data['issue_date'],
                 'expected_delivery_date' => $data['expected_delivery_date'] ?? null,
@@ -214,31 +237,33 @@ class SupplyOrderService
             }
 
             $kept = [];
+            $selected = [];
             $total = '0.00000000';
             foreach (array_values($data['lines']) as $index => $input) {
-                $orderLine = $sourceLines->get($input['purchase_order_line_public_id'] ?? '');
-                if (! $orderLine instanceof PurchaseOrderLine) {
+                $sourceLine = $sourceLines->get($input[$direct ? 'purchase_invoice_line_public_id' : 'purchase_order_line_public_id'] ?? '');
+                if ((! $sourceLine instanceof PurchaseOrderLine && ! $sourceLine instanceof PurchaseInvoiceLine) || isset($selected[$sourceLine->getKey()])) {
                     throw new DomainException(__('The selected supply order line is outside the source document.'));
                 }
+                $selected[$sourceLine->getKey()] = true;
                 $quantity = $this->numbers->normalizeToScale($input['ordered_quantity'] ?? null, 8);
-                $existingLine = $record->lines->firstWhere('purchase_order_line_id', $orderLine->getKey());
-                $available = (string) $orderLine->getAttribute('supply_available_quantity');
+                $existingLine = $record->lines->firstWhere($direct ? 'purchase_invoice_line_id' : 'purchase_order_line_id', $sourceLine->getKey());
+                $available = (string) $sourceLine->getAttribute('supply_available_quantity');
                 if ($quantity === null || bccomp($quantity, '0', 8) <= 0 || bccomp($quantity, $available, 8) > 0) {
                     throw new DomainException(__('Supply order quantity exceeds the remaining source quantity.'));
                 }
-                $invoiceLine = $source instanceof PurchaseInvoice
-                    ? $source->lines->firstWhere('purchase_order_line_id', $orderLine->getKey())
-                    : null;
+                $invoiceLine = $direct ? $sourceLine : ($source instanceof PurchaseInvoice
+                    ? $source->lines->firstWhere('purchase_order_line_id', $sourceLine->getKey())
+                    : null);
                 $line = $existingLine ?? new SupplyOrderLine;
                 $line->fill([
                     'supply_order_id' => $record->getKey(),
                     'company_id' => $context['company_id'],
                     'financial_period_id' => $context['financial_period_id'],
                     'line_number' => $index + 1,
-                    'purchase_order_line_id' => $orderLine->getKey(),
+                    'purchase_order_line_id' => $direct ? null : $sourceLine->getKey(),
                     'purchase_invoice_line_id' => $invoiceLine?->getKey(),
-                    'product_id' => $orderLine->product_id,
-                    'unit_id' => $orderLine->unit_id,
+                    'product_id' => $sourceLine->product_id,
+                    'unit_id' => $sourceLine->unit_id,
                     'ordered_quantity' => $quantity,
                     'notes' => $input['notes'] ?? null,
                 ]);
@@ -286,6 +311,53 @@ class SupplyOrderService
         }
 
         return $source;
+    }
+
+    private function assertSourceEligible(PurchaseOrder|PurchaseInvoice $source): void
+    {
+        $context = $this->context();
+        if ((int) $source->company_id !== $context['company_id'] || (int) $source->branch_id !== $context['branch_id']
+            || (int) $source->financial_period_id !== $context['financial_period_id'] || $source->trashed()) {
+            throw new DomainException(__('The supply order is outside the active operating context.'));
+        }
+        if ($source instanceof PurchaseInvoice) {
+            if (! in_array($source->status, [PurchaseInvoice::StatusApproved, PurchaseInvoice::StatusClosed], true) || $source->reversal_journal_entry_id !== null) {
+                throw new DomainException(__('Only an approved supplier invoice can create a supply order.'));
+            }
+        } elseif (! $source->isApproved() || $source->status === PurchaseOrder::StatusClosed) {
+            throw new DomainException(__('Only an approved open purchase order can create a supply order.'));
+        }
+    }
+
+    /** @return Collection<int, PurchaseInvoiceLine> */
+    private function directInvoiceLines(PurchaseInvoice $invoice, ?SupplyOrder $editing): Collection
+    {
+        $invoice->setRelation('lines', $invoice->lines()->with(['product', 'unit'])->get());
+        $editing?->loadMissing('lines');
+        $allocated = SupplyOrderLine::query()->whereIn('purchase_invoice_line_id', $invoice->lines->modelKeys())
+            ->when($editing, fn ($query) => $query->where('supply_order_id', '<>', $editing->getKey()))
+            ->whereHas('supplyOrder', fn ($orders) => $orders->where('status', '<>', SupplyOrder::StatusCancelled))
+            ->selectRaw('purchase_invoice_line_id, SUM(ordered_quantity) as allocated_quantity')
+            ->groupBy('purchase_invoice_line_id')->pluck('allocated_quantity', 'purchase_invoice_line_id');
+        foreach ($invoice->lines as $line) {
+            $available = bcsub((string) $line->quantity, $this->decimalQuantity($allocated->get($line->getKey(), '0')), 8);
+            $line->setAttribute('supply_available_quantity', bccomp($available, '0', 8) > 0 ? $available : '0.00000000');
+        }
+
+        return $invoice->lines->filter(fn (PurchaseInvoiceLine $line): bool => $line->purchase_order_line_id === null
+            && $line->product?->isPurchasable() === true && ! $line->product->isService()
+            && (bccomp((string) $line->getAttribute('supply_available_quantity'), '0', 8) > 0 || $editing?->lines->contains('purchase_invoice_line_id', $line->getKey())));
+    }
+
+    private function receivingStore(int $companyId, ?string $uuid): BranchStore
+    {
+        $store = BranchStore::query()->purchasingEligible()->where('public_uuid', $uuid)->whereHas('branch', fn ($branches) => $branches
+            ->where('company_id', $companyId)->where('status', 'active')->whereIn('type', [Branch::TypeFactory, Branch::TypeWarehouse]))->first();
+        if (! $store instanceof BranchStore) {
+            throw new DomainException(__('purchase_orders.messages.branch_store_unavailable'));
+        }
+
+        return $store;
     }
 
     /**
