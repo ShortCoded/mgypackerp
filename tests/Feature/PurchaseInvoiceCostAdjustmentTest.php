@@ -677,6 +677,47 @@ test('historical PPV returns use their original account and allocate the final r
     expect($refunds->flatten(1)->pluck('ppv_currency')->all())->toBe(['2.0000', '38.0000', '60.0001']);
 });
 
+test('historical quarantine returns without a frozen basis do not block partial PPV stock returns', function (): void {
+    $fixture = purchaseCostFixture();
+    $ppv = Account::withTrashed()->forCompany($fixture['company']->id)
+        ->whereHas('classification', fn ($query) => $query->where('code', PostingAccountResolver::PurchasePriceVariance))->sole();
+    $ppv->restore();
+    $posted = app(PurchaseInvoiceService::class)->approve(purchaseCostInvoice($fixture, '100', '12'));
+    $fixture['receiptLine']->forceFill(['rejected_quantity' => '10.00000000'])->save();
+
+    $settlement = app(ProcurementSettlementService::class);
+    $historicalQuarantine = $settlement->createPurchaseReturn([
+        'purchase_order_doc_num' => $fixture['order']->doc_num,
+        'purchase_invoice_doc_num' => $posted->doc_num,
+        'return_date' => now()->toDateString(),
+        'reason_code' => 'incoming_qc_rejection',
+        'lines' => [[
+            'receipt_line_public_id' => $fixture['receiptLine']->public_id,
+            'quantity' => '10',
+            'from_quarantine' => true,
+        ]],
+    ]);
+    $historicalQuarantine->forceFill([
+        'status' => PurchaseReturn::StatusPosted,
+        'approved_by' => $fixture['user']->id,
+        'approved_at' => now(),
+        'posted_by' => $fixture['user']->id,
+        'posted_at' => now(),
+    ])->save();
+
+    foreach (['1', '19', '70'] as $quantity) {
+        $settlement->approvePurchaseReturn(purchaseCostReturn($fixture, $quantity, $posted));
+    }
+
+    $refunds = DB::table('activity_log')->where('event', PurchaseReceiptCostAllocationService::ReturnBasisEvent)
+        ->get()->map(fn ($row) => json_decode($row->properties, true)['basis']['lines']);
+    expect($refunds->flatten(1)->pluck('ppv_currency')->all())->toBe(['2.0000', '38.0000', '140.0000'])
+        ->and(purchaseCostAccountBalance($ppv->id))->toBe('20.0000')
+        ->and(InventoryTransaction::query()->where('posting_key', 'like', 'purchase-return:%')->sum('quantity_out'))->toEqual(90.0)
+        ->and(fn () => purchaseCostReturn($fixture, '10', $posted))
+        ->toThrow(DomainException::class, __('Return quantity exceeds the quantity billed on the selected supplier invoice.'));
+});
+
 test('missing or corrupted PPV attribution blocks returns and rolls back all their effects', function (bool $corrupt): void {
     $fixture = purchaseCostFixture();
     $ppv = Account::withTrashed()->forCompany($fixture['company']->id)

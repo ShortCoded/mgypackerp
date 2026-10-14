@@ -207,7 +207,8 @@ class PurchaseReceiptCostAllocationService
                 $previousQuantity = '0';
                 $previousAmount = '0';
                 $previous = PurchaseReturnLine::query()->where('company_id', $return->company_id)
-                    ->where('purchase_invoice_line_id', $line->purchase_invoice_line_id)->where('purchase_return_id', '<>', $return->id)
+                    ->where('purchase_invoice_line_id', $line->purchase_invoice_line_id)->where('from_quarantine', false)
+                    ->where('purchase_return_id', '<>', $return->id)
                     ->whereHas('purchaseReturn', fn ($query) => $query->where('status', PurchaseReturn::StatusPosted))
                     ->with('purchaseReturn')->orderBy('id')->lockForUpdate()->get();
                 foreach ($previous as $credited) {
